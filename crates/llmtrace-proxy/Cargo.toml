@@ -13,9 +13,30 @@ path = "src/main.rs"
 
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
+llmtrace-storage = { path = "../llmtrace-storage" }
+llmtrace-security = { path = "../llmtrace-security" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
 tracing-subscriber = "0.3"
+axum = "0.7"
+hyper = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+serde_yaml = "0.9"
+bytes = "1"
+http = "1"
+http-body-util = "0.1"
+futures-util = "0.3"
+async-stream = "0.3"
+tokio-stream = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+axum = "0.7"
+tower = "0.5"
+tempfile = "3"

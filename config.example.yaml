@@ -1,0 +1,60 @@
+# LLMTrace Proxy — Example Configuration
+#
+# Copy this file to config.yaml and adjust values for your environment.
+# Start the proxy with:  llmtrace-proxy config.yaml
+
+# Address and port to bind the proxy server to
+listen_addr: "0.0.0.0:8080"
+
+# Upstream LLM provider URL (OpenAI, vLLM, Ollama, etc.)
+upstream_url: "https://api.openai.com"
+
+# Request timeout in milliseconds
+timeout_ms: 30000
+
+# Connection timeout in milliseconds
+connection_timeout_ms: 5000
+
+# Maximum number of concurrent connections
+max_connections: 1000
+
+# TLS settings (for the proxy listener itself)
+enable_tls: false
+# tls_cert_file: "/etc/ssl/certs/proxy.crt"
+# tls_key_file: "/etc/ssl/private/proxy.key"
+
+# Feature toggles
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+
+# Maximum request body size in bytes (default: 50MB)
+max_request_size_bytes: 52428800
+
+# Timeout for async security analysis (ms)
+security_analysis_timeout_ms: 5000
+
+# Timeout for async trace storage (ms)
+trace_storage_timeout_ms: 10000
+
+# Rate limiting
+rate_limiting:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 200
+  window_seconds: 60
+
+# Circuit breaker — degrades to pure pass-through on repeated failures
+circuit_breaker:
+  enabled: true
+  failure_threshold: 10
+  recovery_timeout_ms: 30000
+  half_open_max_calls: 3
+
+# Health check endpoint
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3
