@@ -1,0 +1,17 @@
+[package]
+name = "llmtrace-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Embeddable SDK for Rust applications"
+
+[dependencies]
+llmtrace-core = { path = "../llmtrace-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+async-trait.workspace = true

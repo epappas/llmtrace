@@ -1,0 +1,21 @@
+[package]
+name = "llmtrace-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Transparent proxy server for LLM API calls"
+
+[[bin]]
+name = "llmtrace-proxy"
+path = "src/main.rs"
+
+[dependencies]
+llmtrace-core = { path = "../llmtrace-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = "0.3"

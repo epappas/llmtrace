@@ -1,0 +1,18 @@
+[package]
+name = "llmtrace-security"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Security analysis engines for prompt injection detection"
+
+[dependencies]
+llmtrace-core = { path = "../llmtrace-core" }
+serde.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+regex = "1.10"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }

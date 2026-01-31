@@ -1,0 +1,18 @@
+[package]
+name = "llmtrace-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Storage abstraction layer with SQLite backend"
+
+[dependencies]
+llmtrace-core = { path = "../llmtrace-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
