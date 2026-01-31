@@ -2,12 +2,12 @@
 resolver = "2"
 
 members = [
-    "llmtrace-core",
-    "llmtrace-proxy", 
-    "llmtrace-sdk",
-    "llmtrace-storage",
-    "llmtrace-security",
-    "llmtrace-python",
+    "crates/llmtrace-core",
+    "crates/llmtrace-proxy",
+    "crates/llmtrace-sdk",
+    "crates/llmtrace-storage",
+    "crates/llmtrace-security",
+    "crates/llmtrace-python",
 ]
 
 [workspace.package]

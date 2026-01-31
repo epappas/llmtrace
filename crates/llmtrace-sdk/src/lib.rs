@@ -2,9 +2,7 @@
 //!
 //! This SDK provides embeddable tracing capabilities for Rust applications using LLM APIs.
 
-use chrono::Utc;
 use llmtrace_core::{LLMProvider, Result, TenantId, TraceSpan};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Configuration for the LLMTrace SDK
@@ -51,25 +49,14 @@ impl LLMTracer {
         provider: LLMProvider,
         model: &str,
     ) -> TraceSpan {
-        TraceSpan {
-            trace_id: Uuid::new_v4(),
-            span_id: Uuid::new_v4(),
-            parent_span_id: None,
-            tenant_id: self.config.tenant_id,
-            operation_name: operation_name.to_string(),
-            start_time: Utc::now(),
-            end_time: None,
+        TraceSpan::new(
+            Uuid::new_v4(), // trace_id
+            self.config.tenant_id,
+            operation_name.to_string(),
             provider,
-            model_name: model.to_string(),
-            prompt: String::new(),
-            response: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            security_score: None,
-            security_findings: Vec::new(),
-            tags: HashMap::new(),
-        }
+            model.to_string(),
+            String::new(), // empty prompt initially
+        )
     }
 
     /// Trace an LLM call with automatic instrumentation

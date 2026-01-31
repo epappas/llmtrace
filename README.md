@@ -113,13 +113,14 @@ cargo clippy --workspace -- -D warnings
 
 ```
 llmtrace/
-├── llmtrace-core/      # Core types and traits
-├── llmtrace-proxy/     # Proxy server binary
-├── llmtrace-sdk/       # Rust SDK
-├── llmtrace-storage/   # Storage backends
-├── llmtrace-security/  # Security analysis
-├── llmtrace-python/    # Python bindings
-└── docs/               # Documentation
+├── crates/
+│   ├── llmtrace-core/      # Core types and traits
+│   ├── llmtrace-proxy/     # Proxy server binary
+│   ├── llmtrace-sdk/       # Rust SDK
+│   ├── llmtrace-storage/   # Storage backends
+│   ├── llmtrace-security/  # Security analysis
+│   └── llmtrace-python/    # Python bindings
+└── docs/                    # Documentation
 ```
 
 ## Configuration
@@ -148,12 +149,12 @@ MIT License - see LICENSE file for details.
 
 ## Status
 
-🚧 **Early Development** - This project is under active development. APIs may change frequently.
+**Early Development** - This project is under active development. APIs may change frequently.
 
 Current implementation status:
-- ✅ Basic workspace and crate structure
-- 🏗️ Core types and traits (in progress)
-- ⏳ Proxy server implementation (planned)
-- ⏳ Security analysis engines (planned)
-- ⏳ Storage backends (planned)
-- ⏳ Python bindings (planned)
+- [x] Basic workspace and crate structure
+- [ ] Core types and traits (in progress)
+- [ ] Proxy server implementation (planned)
+- [ ] Security analysis engines (planned)
+- [ ] Storage backends (planned)
+- [ ] Python bindings (planned)

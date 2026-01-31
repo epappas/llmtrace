@@ -397,14 +397,14 @@ LLMSec Trace supports all major LLM inference backends through protocol-specific
 
 | Backend | Protocol | Streaming | Auth Method | URL Rewriting | Status |
 |---------|----------|-----------|-------------|---------------|---------|
-| vLLM | OpenAI-compatible HTTP | SSE | API Key | `/v1/*` → `/v1/*` | ✅ Full |
-| SGLang | OpenAI + Native HTTP | SSE | API Key | `/v1/*` + `/generate` | ✅ Full |
-| TGI | HuggingFace HTTP | SSE | API Key | `/generate*` → `/generate*` | ✅ Full |
-| Ollama | Native HTTP | SSE | None | `/api/*` → `/api/*` | ✅ Full |
-| OpenAI | OpenAI HTTP | SSE | API Key | `/v1/*` → `/v1/*` | ✅ Full |
-| Anthropic | Claude HTTP | SSE | API Key | `/v1/messages` → `/v1/messages` | ✅ Full |
-| Azure OpenAI | OpenAI + Azure | SSE | API Key | Complex rewriting | ✅ Full |
-| AWS Bedrock | AWS API | SSE | SigV4 | `/model/*` → Bedrock format | 🟡 Beta |
+| vLLM | OpenAI-compatible HTTP | SSE | API Key | `/v1/*` → `/v1/*` | Full |
+| SGLang | OpenAI + Native HTTP | SSE | API Key | `/v1/*` + `/generate` | Full |
+| TGI | HuggingFace HTTP | SSE | API Key | `/generate*` → `/generate*` | Full |
+| Ollama | Native HTTP | SSE | None | `/api/*` → `/api/*` | Full |
+| OpenAI | OpenAI HTTP | SSE | API Key | `/v1/*` → `/v1/*` | Full |
+| Anthropic | Claude HTTP | SSE | API Key | `/v1/messages` → `/v1/messages` | Full |
+| Azure OpenAI | OpenAI + Azure | SSE | API Key | Complex rewriting | Full |
+| AWS Bedrock | AWS API | SSE | SigV4 | `/model/*` → Bedrock format | Beta |
 
 ### 3.2 vLLM Integration
 
