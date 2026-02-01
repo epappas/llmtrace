@@ -134,6 +134,32 @@ See [`examples/python_sdk.py`](examples/python_sdk.py) for a full walkthrough.
 
 For detailed architecture, see [`docs/architecture/`](docs/architecture/).
 
+## Configuration & Policies
+
+LLMTrace is highly configurable — security policies, rate limits, cost caps, alerting, and anomaly detection can all be tuned via `config.yaml`.
+
+📖 **[Custom Policy Setup Guide](docs/guides/custom-policies.md)** — comprehensive guide covering all policy options with practical examples.
+
+### Example Configurations
+
+Ready-to-use configs for common scenarios:
+
+| Config | Use Case | Highlights |
+|--------|----------|------------|
+| [`config-minimal.yaml`](examples/config-minimal.yaml) | Getting started | SQLite, regex security, basic rate limits |
+| [`config-production.yaml`](examples/config-production.yaml) | Full production | ClickHouse + PostgreSQL + Redis, multi-channel alerts, anomaly detection |
+| [`config-high-security.yaml`](examples/config-high-security.yaml) | Maximum security | ML detection, streaming analysis, PII redaction, PagerDuty escalation |
+| [`config-cost-control.yaml`](examples/config-cost-control.yaml) | Cost management | Per-agent budgets, token caps, cost anomaly alerts |
+
+### Key Policy Areas
+
+- **Security Analysis** — Regex + ML-based prompt injection detection, PII scanning, encoding attack detection ([guide](docs/guides/custom-policies.md#security-analysis-policies))
+- **Rate Limiting** — Per-tenant rate limits with burst handling ([guide](docs/guides/custom-policies.md#rate-limiting))
+- **Cost Caps** — Per-agent budgets with soft/hard limits and token caps ([guide](docs/guides/custom-policies.md#cost-caps--budgets))
+- **Alerting** — Multi-channel alerts (Slack, PagerDuty, webhook) with severity filtering ([guide](docs/guides/custom-policies.md#alert-channels))
+- **Anomaly Detection** — Statistical detection of cost, token, velocity, and latency anomalies ([guide](docs/guides/custom-policies.md#anomaly-detection))
+- **OWASP LLM Top 10** — Built-in test coverage for the OWASP LLM security taxonomy ([details](docs/security/OWASP_LLM_TOP10.md))
+
 ## Configuration Reference
 
 ### Config File (`config.yaml`)
@@ -178,6 +204,10 @@ See the [`examples/`](examples/) directory:
 - **[`basic_proxy.sh`](examples/basic_proxy.sh)** — Start the proxy, send requests, query traces
 - **[`security_test.sh`](examples/security_test.sh)** — Prompt injection detection demo with 8 attack patterns
 - **[`python_sdk.py`](examples/python_sdk.py)** — Python SDK walkthrough
+- **[`config-minimal.yaml`](examples/config-minimal.yaml)** — Minimal configuration to get started
+- **[`config-production.yaml`](examples/config-production.yaml)** — Full production setup with all features
+- **[`config-high-security.yaml`](examples/config-high-security.yaml)** — Maximum security posture configuration
+- **[`config-cost-control.yaml`](examples/config-cost-control.yaml)** — Cost management focused configuration
 
 ## Development
 
