@@ -869,3 +869,233 @@ Implemented in commit `dcf100d`. ClickHouseTraceRepository with MergeTree engine
 5. **Tests**: Jest test suite
 
 **Acceptance**: `npm install` works, TypeScript types correct, tracer instruments LLM calls.
+
+---
+
+# Phase 5: AI Engineer Review Fixes
+
+> Driven by independent AI Engineer review (rated 6.5/10 AI/ML maturity, ~55% architecture coverage).
+> See ADR-009 in docs/architecture/ADR.md for rationale.
+
+## Loop 29: Statistical Anomaly Detection Engine
+
+**Goal**: Per-tenant anomaly detection using statistical baselines — the #1 gap identified by AI engineer review.
+
+**Tasks**:
+1. Create `crates/llmtrace-proxy/src/anomaly.rs` with `AnomalyDetector`
+2. Track per-tenant moving averages: request cost, token usage, request velocity, latency
+3. Sliding window with configurable size (default 100), flag on mean + Nσ (default 3σ)
+4. Severity mapping: 3σ = Medium, 5σ = High, 10σ = Critical
+5. Use `CacheLayer` for state persistence
+6. Wire into proxy pipeline (async, post-trace-capture)
+7. Integrate with alert engine
+8. Config section `anomaly_detection` in ProxyConfig
+9. Tests for statistical calculations and detection
+
+**Acceptance**: Anomalies detected and alerted for cost/token/velocity/latency spikes, all tests pass.
+
+---
+
+## Loop 30: Real-time Streaming Security Analysis
+
+**Goal**: Incremental security analysis during SSE streaming, not just after completion.
+
+**Tasks**:
+1. Extend `StreamingAccumulator` with `should_analyze()` check (every N tokens or on pattern match)
+2. Run regex patterns on accumulated buffer incrementally during streaming
+3. Generate interim `SecurityFinding`s before stream completes
+4. Fire alerts for critical findings mid-stream (don't wait for completion)
+5. Configurable analysis interval (default: every 50 tokens)
+6. Tests with mock SSE streams containing injection patterns
+
+**Acceptance**: Security findings generated during streaming, not just after. Mid-stream alerts fire.
+
+---
+
+## Loop 31: Expanded PII Detection
+
+**Goal**: International PII patterns, context-aware suppression, and PII redaction capability.
+
+**Tasks**:
+1. Add international PII patterns: UK NIN, IBAN, EU passport, non-US phone formats, NHS number
+2. Context-aware false-positive suppression (code examples, documentation patterns)
+3. Add PII redaction/masking option (replace detected PII with `[REDACTED]` or `[PII:TYPE]`)
+4. Configurable redaction mode: `alert_only` (current), `alert_and_redact`, `redact_silent`
+5. Config section for PII in ProxyConfig
+6. Tests for each new pattern, false positive tests, redaction tests
+
+**Acceptance**: International PII detected, false positives reduced, redaction works when enabled.
+
+---
+
+## Loop 32: ML-based PII Detection via NER
+
+**Goal**: Named Entity Recognition model for detecting PII that regex can't catch (names, addresses, medical terms).
+
+**Tasks**:
+1. Add NER model support in `llmtrace-security` behind `ml` feature flag
+2. Use a small NER model (e.g., `dslim/bert-base-NER`) via Candle
+3. Detect: person names, organizations, locations, medical terms
+4. Map NER entities to `SecurityFinding` with appropriate severity
+5. Integrate into ensemble analyzer (regex PII + ML NER)
+6. Tests with known PII samples
+
+**Acceptance**: ML-based PII detection works behind feature flag, ensemble combines regex + NER findings.
+
+---
+
+## Loop 33: ML Inference Monitoring + Model Warm-up
+
+**Goal**: Track ML model inference latency and pre-load models at startup.
+
+**Tasks**:
+1. Add inference timing to ML detectors (prompt injection + NER)
+2. Expose inference latency metrics (P50/P95/P99) via internal tracking
+3. Pre-load ML models at proxy startup (not on first request)
+4. Add model download health check to startup sequence
+5. Config: `ml.preload: true`, `ml.download_timeout_seconds: 300`
+6. Tests for warm-up and timing
+
+**Acceptance**: Models pre-loaded at startup, inference timing tracked, no cold-start penalty on first request.
+
+---
+
+## Loop 34: Multi-Channel Alerting
+
+**Goal**: Alert via Slack, PagerDuty, and email in addition to generic webhooks.
+
+**Tasks**:
+1. Extend alert engine with channel abstraction (`AlertChannel` trait)
+2. Implement: `SlackChannel` (Incoming Webhook API), `PagerDutyChannel` (Events API v2), `EmailChannel` (SMTP)
+3. Config: multiple alert channels per tenant, per-channel severity filters
+4. Alert escalation: if not acknowledged within N minutes, escalate to next channel
+5. Deduplication across channels (same finding doesn't alert on all channels)
+6. Tests with mock servers for each channel
+
+**Acceptance**: Alerts fire to configured channels, escalation works, deduplication prevents spam.
+
+---
+
+## Loop 35: Externalize Pricing + OWASP LLM Top 10 Tests
+
+**Goal**: Move pricing to config file and add structured security test framework.
+
+**Tasks**:
+1. Externalize model pricing to a YAML/JSON config file (not hardcoded)
+2. Support runtime pricing updates without rebuild
+3. Add OWASP LLM Top 10 test suite as integration tests:
+   - LLM01: Prompt Injection
+   - LLM02: Insecure Output Handling
+   - LLM06: Sensitive Information Disclosure
+   - LLM07: Insecure Plugin Design (agent action analysis)
+4. Document test coverage against OWASP categories
+5. Tests for pricing config loading and OWASP patterns
+
+**Acceptance**: Pricing loaded from config, OWASP test suite documents coverage.
+
+---
+
+# Phase 6: MLOps Review Fixes
+
+> Driven by independent MLOps Engineer review (rated 7.0/10 operational readiness).
+> See ADR-009 for rationale.
+
+## Loop 36: Graceful Shutdown + Signal Handling
+
+**Goal**: Handle SIGTERM/SIGINT with connection draining — critical for Kubernetes deployments.
+
+**Tasks**:
+1. Add `tokio::signal` handling for SIGTERM and SIGINT
+2. Graceful shutdown on axum server (drain existing connections)
+3. Coordinated shutdown of gRPC server
+4. Track background tasks (trace capture) via `JoinSet` or `TaskTracker`
+5. Wait for in-flight tasks before exit (with timeout)
+6. Add `terminationGracePeriodSeconds: 60` to Helm chart
+7. Tests for shutdown behavior
+
+**Acceptance**: Clean shutdown on SIGTERM, in-flight traces complete, no data loss.
+
+---
+
+## Loop 37: Prometheus Metrics Endpoint
+
+**Goal**: `/metrics` endpoint for runtime observability — currently zero metrics export.
+
+**Tasks**:
+1. Add `prometheus` or `metrics-rs` crate
+2. Expose `/metrics` endpoint with:
+   - `llmtrace_requests_total` (counter, by provider/model/status)
+   - `llmtrace_request_duration_seconds` (histogram)
+   - `llmtrace_tokens_total` (counter, prompt/completion)
+   - `llmtrace_security_findings_total` (counter, by severity/type)
+   - `llmtrace_circuit_breaker_state` (gauge, by subsystem)
+   - `llmtrace_storage_operations_total` (counter, by operation/status)
+   - `llmtrace_cost_usd_total` (counter, by tenant/model)
+   - `llmtrace_anomalies_total` (counter, by type)
+3. Wire metrics into proxy handler, storage, security, anomaly detector
+4. Tests for metric increments
+
+**Acceptance**: `/metrics` returns Prometheus-format metrics, all key operations instrumented.
+
+---
+
+## Loop 38: Database Migration Management
+
+**Goal**: Versioned schema migrations for safe evolution.
+
+**Tasks**:
+1. Add `sqlx migrate` support for PostgreSQL with versioned migration files
+2. Add versioned DDL scripts for ClickHouse
+3. Schema version tracking table
+4. CLI subcommand: `llmtrace-proxy migrate` to run pending migrations
+5. Option to auto-migrate on startup (dev) or require explicit migration (prod)
+6. Tests for migration ordering
+
+**Acceptance**: Migrations versioned and tracked, CLI can apply them, safe schema evolution.
+
+---
+
+## Loop 39: Secrets Hardening + Startup Probe
+
+**Goal**: Fix plaintext secrets in Helm and add startup probe for cold starts.
+
+**Tasks**:
+1. Remove placeholder passwords from `values-production.yaml`
+2. Enable Redis auth in production values
+3. Document External Secrets Operator / Sealed Secrets workflow
+4. Add `startupProbe` to Helm deployment (failureThreshold × periodSeconds = 300s)
+5. Add health check for storage initialization during startup
+6. Tests for startup sequence
+
+**Acceptance**: No plaintext secrets in checked-in values, startup probe prevents premature liveness kills.
+
+---
+
+## Loop 40: Integration Tests in CI + Container Scanning
+
+**Goal**: Run integration tests with Docker Compose in CI, scan container images.
+
+**Tasks**:
+1. Add Docker Compose service startup to CI test job
+2. Run integration tests against real ClickHouse/PostgreSQL/Redis
+3. Add Trivy container image scanning to release workflow
+4. Fail release on critical/high CVEs
+5. Document integration test setup
+
+**Acceptance**: Integration tests run in CI with real services, container images scanned on release.
+
+---
+
+## Loop 41: Per-tenant Rate Limiting + Compliance Report Persistence
+
+**Goal**: Tenant-isolated rate limiting and persistent compliance reports.
+
+**Tasks**:
+1. Implement per-tenant rate limiting middleware (token bucket or sliding window)
+2. Use CacheLayer for rate limit state (Redis-backed in production)
+3. Config: per-tenant rate limits with default and override
+4. Persist compliance reports to PostgreSQL (currently in-memory HashMap)
+5. Add report listing/pagination endpoint
+6. Tests for rate limiting isolation and report persistence
+
+**Acceptance**: Per-tenant rate limits enforced, compliance reports survive restarts.
