@@ -37,6 +37,8 @@ llmtrace-python/target/
 *.egg-info/
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
 
 # Build artifacts
 /dist/
