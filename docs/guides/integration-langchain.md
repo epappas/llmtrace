@@ -232,15 +232,15 @@ class CustomStreamingHandler(BaseCallbackHandler):
         self.tokens = []
         self.total_tokens = 0
     
-    def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
+    def on_llm_new_token(self, token: str, ** kwargs: Any) -> None:
         """Called when a new token is generated."""
         self.tokens.append(token)
         self.total_tokens += 1
         print(f"Token {self.total_tokens}: {token}", end="", flush=True)
     
-    def on_llm_end(self, response, **kwargs: Any) -> None:
+    def on_llm_end(self, response, ** kwargs: Any) -> None:
         """Called when LLM finishes."""
-        print(f"\n\n✅ Streaming complete. Total tokens: {self.total_tokens}")
+        print(f"\n\n Streaming complete. Total tokens: {self.total_tokens}")
 
 # Use custom handler
 llm = ChatOpenAI(
@@ -561,7 +561,7 @@ def create_resilient_llm() -> ChatOpenAI:
     try:
         response = requests.get("http://localhost:8080/health", timeout=2)
         if response.status_code == 200:
-            print("✅ Using LLMTrace proxy")
+            print(" Using LLMTrace proxy")
             return ChatOpenAI(
                 model="gpt-4",
                 openai_api_key=os.getenv("OPENAI_API_KEY"),
@@ -571,7 +571,7 @@ def create_resilient_llm() -> ChatOpenAI:
         pass
     
     # Fallback to direct OpenAI
-    print("⚠️ LLMTrace unavailable, using direct OpenAI API")
+    print(" LLMTrace unavailable, using direct OpenAI API")
     return ChatOpenAI(
         model="gpt-4",
         openai_api_key=os.getenv("OPENAI_API_KEY")
@@ -601,16 +601,16 @@ class LLMTraceMonitoringCallback(BaseCallbackHandler):
         self.llmtrace_url = llmtrace_url
         self.start_time = None
         
-    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], **kwargs) -> None:
+    def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], ** kwargs) -> None:
         """Called when LLM starts."""
         self.start_time = time.time()
-        print(f"🚀 LLM started with {len(prompts)} prompts")
+        print(f" LLM started with {len(prompts)} prompts")
         
-    def on_llm_end(self, response, **kwargs) -> None:
+    def on_llm_end(self, response, ** kwargs) -> None:
         """Called when LLM ends."""
         if self.start_time:
             duration = time.time() - self.start_time
-            print(f"✅ LLM completed in {duration:.2f}s")
+            print(f" LLM completed in {duration:.2f}s")
             
             # Check for security findings
             try:
@@ -619,13 +619,13 @@ class LLMTraceMonitoringCallback(BaseCallbackHandler):
                     findings = findings_response.json()
                     recent_findings = [f for f in findings if time.time() - f.get('timestamp', 0) < 60]
                     if recent_findings:
-                        print(f"⚠️ {len(recent_findings)} security findings in last minute")
+                        print(f" {len(recent_findings)} security findings in last minute")
             except:
                 pass
                 
-    def on_llm_error(self, error: BaseException, **kwargs) -> None:
+    def on_llm_error(self, error: BaseException, ** kwargs) -> None:
         """Called when LLM encounters an error."""
-        print(f"❌ LLM error: {error}")
+        print(f" LLM error: {error}")
 
 # Use with LangChain
 llm = ChatOpenAI(
@@ -721,7 +721,7 @@ result = chain.invoke({
 })
 
 for movie in result.movies:
-    print(f"📽️ {movie.title} ({movie.year}) - {movie.genre}")
+    print(f" {movie.title} ({movie.year}) - {movie.genre}")
     print(f"   Rating: {movie.rating}/10")
     print(f"   Reason: {movie.reason}\n")
 ```
@@ -799,7 +799,7 @@ def check_llmtrace_health():
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Direct SDK usage patterns
 - **[Python SDK](python-sdk.md)** — Native instrumentation approach
-- **[Dashboard Usage](dashboard.md)** — Monitor your LangChain applications  
+- **[Dashboard Usage](dashboard.md)** — Monitor your LangChain applications 
 - **[Custom Policies](custom-policies.md)** — Configure security for your use cases
 
 **Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](../deployment/troubleshooting.md).

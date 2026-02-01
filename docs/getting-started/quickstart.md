@@ -4,8 +4,8 @@ Get LLMTrace running in under 2 minutes. This guide shows the fastest path from 
 
 ## Prerequisites
 
-- **Docker** (for the easiest setup)
-- Or **Rust toolchain** (if building from source)
+- **Docker**(for the easiest setup)
+- Or **Rust toolchain**(if building from source)
 - An OpenAI API key or other LLM provider
 
 ## Option 1: Docker Compose (Recommended)
@@ -232,12 +232,12 @@ The dashboard provides a visual interface for:
 
 ## Next Steps
 
-🎉 **Congratulations!** You now have LLMTrace monitoring your LLM interactions.
+**Congratulations!** You now have LLMTrace monitoring your LLM interactions.
 
 ### What to explore next:
 
 1. **[Configure security policies](configuration.md)** — Set up custom prompt injection rules, PII detection, and alerts
-2. **[Set up cost controls](configuration.md#cost-control)** — Add per-agent budgets and spending alerts  
+2. **[Set up cost controls](configuration.md#cost-control)** — Add per-agent budgets and spending alerts 
 3. **[Integration guides](../guides/)** — Detailed integration examples for different frameworks
 4. **[Production deployment](../deployment/)** — Scale LLMTrace for production workloads
 5. **[Python SDK](../guides/python-sdk.md)** — Direct instrumentation without a proxy

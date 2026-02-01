@@ -6,18 +6,18 @@ LLMTrace is highly configurable to fit your security, performance, and operation
 
 | Use Case | Config File | Description |
 |----------|-------------|-------------|
-| **Development** | [config-minimal.yaml](#minimal-config) | SQLite + basic security |
-| **Production** | [config-production.yaml](#production-config) | PostgreSQL + full features |
-| **High Security** | [config-security.yaml](#security-focused) | Maximum protection |
-| **Cost Control** | [config-cost.yaml](#cost-control) | Budget limits + alerts |
+| **Development**| [config-minimal.yaml](#minimal-config) | SQLite + basic security |
+| **Production**| [config-production.yaml](#production-config) | PostgreSQL + full features |
+| **High Security**| [config-security.yaml](#security-focused) | Maximum protection |
+| **Cost Control**| [config-cost.yaml](#cost-control) | Budget limits + alerts |
 
 ## Configuration Sources
 
 LLMTrace loads configuration from multiple sources in this order (highest priority wins):
 
-1. **CLI flags:** `--upstream-url`, `--listen-addr`
-2. **Environment variables:** `LLMTRACE_*`
-3. **Config file:** `config.yaml`
+1. **CLI flags:**`--upstream-url`, `--listen-addr`
+2. **Environment variables:**`LLMTRACE_*`
+3. **Config file:**`config.yaml`
 4. **Defaults:** Built-in sensible defaults
 
 ```bash
@@ -442,11 +442,11 @@ llmtrace-proxy validate --config config.yaml --show-resolved
 
 Example validation output:
 ```
-✅ Configuration valid
-✅ Storage backend reachable
-✅ Upstream URL accessible
-⚠️  Warning: PII detection disabled
-📊 Expected memory usage: ~256MB
+ Configuration valid
+ Storage backend reachable
+ Upstream URL accessible
+  Warning: PII detection disabled
+ Expected memory usage: ~256MB
 ```
 
 ## Configuration Sections
@@ -562,7 +562,7 @@ performance:
 ## Next Steps
 
 - **[Quick Start Guide](quickstart.md)** — Test your configuration
-- **[Integration Guides](../guides/)** — Connect your applications  
+- **[Integration Guides](../guides/)** — Connect your applications 
 - **[Custom Policies Guide](../guides/custom-policies.md)** — Deep dive into security configuration
 - **[Production Deployment](../deployment/)** — Scale your configuration
 

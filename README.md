@@ -11,21 +11,21 @@ LLMTrace is a transparent proxy that captures, analyzes, and secures your LLM in
 
 Production LLM applications face three critical blind spots:
 
-- **🔒 Security vulnerabilities** — Prompt injection, data leakage, PII exposure
-- **💰 Cost runaway** — Uncontrolled API spend, inefficient token usage
-- **📊 Performance opacity** — No visibility into latency, failure rates, or user behavior
+- **Security vulnerabilities** — Prompt injection, data leakage, PII exposure
+- **Cost runaway** — Uncontrolled API spend, inefficient token usage
+- **Performance opacity** — No visibility into latency, failure rates, or user behavior
 
 LLMTrace solves this by sitting transparently between your application and LLM providers, giving you complete observability and control.
 
 ## Key Features
 
-- **🔄 Transparent Proxy** — Drop-in replacement for any OpenAI-compatible API
-- **🛡️ Real-time Security** — Prompt injection detection, PII scanning, data leakage prevention
-- **📈 Performance Monitoring** — Latency, token usage, streaming metrics (TTFT), error tracking
-- **💰 Cost Control** — Per-agent budgets, rate limits, anomaly detection
-- **🏢 Multi-tenant Ready** — Isolated per API key or custom tenant headers
-- **⚡ High Performance** — Built in Rust, handles streaming responses, circuit breaker protection
-- **🐍 SDK Integration** — Native Python bindings for direct instrumentation
+- **Transparent Proxy** — Drop-in replacement for any OpenAI-compatible API
+- **Real-time Security** — Prompt injection detection, PII scanning, data leakage prevention
+- **Performance Monitoring** — Latency, token usage, streaming metrics (TTFT), error tracking
+- **Cost Control** — Per-agent budgets, rate limits, anomaly detection
+- **Multi-tenant Ready** — Isolated per API key or custom tenant headers
+- **High Performance** — Built in Rust, handles streaming responses, circuit breaker protection
+- **SDK Integration** — Native Python bindings for direct instrumentation
 
 ## Quick Start
 
@@ -71,7 +71,7 @@ curl http://localhost:8080/security/findings | jq
 curl http://localhost:8080/metrics/costs | jq
 ```
 
-**⚡ That's it!** You now have full observability into your LLM interactions.
+**That's it!** You now have full observability into your LLM interactions.
 
 ## Architecture
 
@@ -141,7 +141,7 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-📖 **[View all integration guides →](docs/guides/)**
+**[View all integration guides →](docs/guides/)**
 
 ## Dashboard & Monitoring
 
@@ -209,7 +209,7 @@ rate_limiting:
   burst_capacity: 2000
 ```
 
-📖 **[Full configuration guide →](docs/getting-started/configuration.md)**
+**[Full configuration guide →](docs/getting-started/configuration.md)**
 
 ## API Reference
 
@@ -222,7 +222,7 @@ rate_limiting:
 | `GET /health` | Health check and circuit breaker status |
 | `POST /policies/validate` | Validate custom security policies |
 
-📖 **[Full API documentation →](docs/api/)**
+**[Full API documentation →](docs/api/)**
 
 ## Installation
 
@@ -251,7 +251,7 @@ CARGO_TARGET_DIR=/tmp/llmtrace-target  # WSL2 workaround
 ./target/release/llmtrace-proxy --config config.yaml
 ```
 
-📖 **[Installation guide with all methods →](docs/getting-started/installation.md)**
+**[Installation guide with all methods →](docs/getting-started/installation.md)**
 
 ## Python SDK
 
@@ -280,7 +280,7 @@ span.set_token_counts(prompt_tokens=5, completion_tokens=1)
 print(span.to_json())
 ```
 
-📖 **[Python SDK documentation →](docs/guides/python-sdk.md)**
+**[Python SDK documentation →](docs/guides/python-sdk.md)**
 
 ## Production Deployment
 
@@ -302,7 +302,7 @@ print(span.to_json())
 - PagerDuty/Slack integration
 - OWASP LLM Top 10 compliance reporting
 
-📖 **[Production deployment guide →](docs/deployment/)**
+**[Production deployment guide →](docs/deployment/)**
 
 ## Contributing
 
@@ -325,7 +325,7 @@ cargo test --workspace
 | `llmtrace-storage` | Storage backends |
 | `llmtrace-python` | Python bindings |
 
-📖 **[Development guide →](docs/development/)**
+**[Development guide →](docs/development/)**
 
 ## License
 
@@ -333,8 +333,8 @@ cargo test --workspace
 
 ---
 
-**⭐ Star this repo** if LLMTrace helps secure your LLM applications!
+**Star this repo** if LLMTrace helps secure your LLM applications!
 
-**🐛 Found a bug?** [Open an issue](https://github.com/epappas/llmtrace/issues)
+**Found a bug?** [Open an issue](https://github.com/epappas/llmtrace/issues)
 
-**💬 Questions?** [Start a discussion](https://github.com/epappas/llmtrace/discussions)
+**Questions?** [Start a discussion](https://github.com/epappas/llmtrace/discussions)

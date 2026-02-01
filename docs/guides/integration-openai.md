@@ -496,7 +496,7 @@ print(f"Average latency: {stats['avg_latency_ms']}ms")
 
 findings = get_recent_security_findings()
 if findings:
-    print(f"⚠️ {len(findings)} security findings detected")
+    print(f" {len(findings)} security findings detected")
 ```
 
 ## Troubleshooting

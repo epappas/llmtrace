@@ -445,7 +445,7 @@ while IFS= read -r prompt; do
     finding_count=$(echo "$findings" | jq length)
     
     if [ "$finding_count" -gt 0 ]; then
-        echo "⚠️ Security findings detected for trace $trace_id"
+        echo " Security findings detected for trace $trace_id"
         echo "$findings" | jq
     fi
     
@@ -466,18 +466,18 @@ function check_health() {
     body="${response%???}"
     
     if [ "$http_code" = "200" ]; then
-        echo "✅ LLMTrace healthy"
+        echo " LLMTrace healthy"
         echo "$body" | jq
         return 0
     else
-        echo "❌ LLMTrace unhealthy (HTTP $http_code)"
+        echo " LLMTrace unhealthy (HTTP $http_code)"
         echo "$body"
         return 1
     fi
 }
 
 function check_metrics() {
-    echo "📊 Recent activity:"
+    echo " Recent activity:"
     curl -s "$LLMTRACE_URL/metrics/summary" | jq '{
         total_requests,
         avg_latency_ms,
@@ -503,7 +503,7 @@ class LLMTraceClient:
         self.base_url = base_url
         self.api_key = os.getenv("OPENAI_API_KEY")
         
-    def chat_completion(self, messages, model="gpt-4", **kwargs):
+    def chat_completion(self, messages, model="gpt-4", ** kwargs):
         url = f"{self.base_url}/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
@@ -513,7 +513,7 @@ class LLMTraceClient:
         data = {
             "model": model,
             "messages": messages,
-            **kwargs
+            ** kwargs
         }
         
         response = requests.post(url, headers=headers, json=data)
@@ -549,7 +549,7 @@ print(f"Recent traces: {len(traces)}")
 # Check security
 findings = client.get_security_findings()
 if findings:
-    print(f"⚠️ {len(findings)} security findings")
+    print(f" {len(findings)} security findings")
 ```
 
 ## WebSocket Streaming (Advanced)
@@ -620,7 +620,7 @@ curl -k https://localhost:8443/health  # -k ignores cert errors
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Use official SDKs instead of raw HTTP
 - **[LangChain Integration](integration-langchain.md)** — Framework integration
-- **[Python SDK](python-sdk.md)** — Native Python instrumentation  
+- **[Python SDK](python-sdk.md)** — Native Python instrumentation 
 - **[Dashboard Usage](dashboard.md)** — Visual monitoring
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [API documentation](../api/).

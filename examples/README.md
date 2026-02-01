@@ -8,9 +8,9 @@ Choose your preferred approach:
 
 | Language/Tool | Directory | Description |
 |---------------|-----------|-------------|
-| **Python** | [`python/`](python/) | OpenAI SDK, LangChain, async patterns |
-| **Node.js** | [`nodejs/`](nodejs/) | OpenAI SDK, streaming, TypeScript |
-| **curl/HTTP** | [`curl/`](curl/) | Raw API usage, testing, monitoring |
+| **Python**| [`python/`](python/) | OpenAI SDK, LangChain, async patterns |
+| **Node.js**| [`nodejs/`](nodejs/) | OpenAI SDK, streaming, TypeScript |
+| ** curl/HTTP**| [`curl/`](curl/) | Raw API usage, testing, monitoring |
 
 ## Configuration Examples
 
@@ -130,7 +130,7 @@ alerts:
 Before deploying LLMTrace:
 
 - [ ] **Basic proxy**: Send requests, check traces appear
-- [ ] **Security detection**: Test prompt injection patterns  
+- [ ] **Security detection**: Test prompt injection patterns 
 - [ ] **Cost tracking**: Verify cost calculations
 - [ ] **Performance**: Check latency impact (<10% overhead)
 - [ ] **Error handling**: Test with invalid requests
@@ -199,4 +199,4 @@ Expected overhead with LLMTrace:
 4. **Set up monitoring** - Add dashboards and alerts
 5. **Scale for production** - Use `config-production.yaml`
 
-📚 **[Full Documentation](../docs/)** | 🔧 **[Configuration Guide](../docs/getting-started/configuration.md)** | 🛡️ **[Security Policies](../docs/guides/custom-policies.md)**
+**[Full Documentation](../docs/)** | **[Configuration Guide](../docs/getting-started/configuration.md)** | **[Security Policies](../docs/guides/custom-policies.md)**
