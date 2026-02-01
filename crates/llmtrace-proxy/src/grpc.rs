@@ -1,6 +1,6 @@
 //! gRPC ingestion gateway for high-throughput trace ingestion.
 //!
-//! Implements the `TraceIngestionService` defined in `proto/llmtrace.proto`
+//! Implements the `TraceIngestionService` defined in `crates/llmtrace-proto/llmtrace.proto`
 //! using `tonic`. Supports both unary batch ingestion and client-side
 //! streaming for efficient bulk uploads.
 //!
@@ -29,7 +29,7 @@ use crate::proxy::AppState;
 // Generated protobuf types
 // ---------------------------------------------------------------------------
 
-/// Generated protobuf module from `proto/llmtrace.proto`.
+/// Generated protobuf module from `crates/llmtrace-proto/llmtrace.proto`.
 pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/llmtrace.ingest.v1.rs"));
 }

@@ -251,7 +251,7 @@ cost_caps:
 grpc:
   # Enable the gRPC ingestion endpoint. When enabled, the proxy starts a
   # tonic gRPC server on a separate listen address that accepts traces in
-  # the LLMTrace-native protobuf format (see proto/llmtrace.proto).
+  # the LLMTrace-native protobuf format (see crates/llmtrace-proto/llmtrace.proto).
   # Supports both unary batch and client-side streaming RPCs.
   enabled: false
   # Address and port to bind the gRPC server to.
