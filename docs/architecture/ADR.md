@@ -148,4 +148,61 @@ Composite `Storage` struct holds all three. `StorageProfile` enum provides facto
 
 ---
 
+## ADR-013: Feature-Level Fusion for Prompt Injection Detection
+
+**Date**: 2026-02-01
+**Status**: Proposed
+**Context**: Research validation against the DMPI-PMHFE paper (arxiv.org/html/2506.06384v1, June 2025) revealed that our score-level ensemble (regex score + ML score → combined) underperforms feature-level fusion (DeBERTa embeddings + heuristic feature vector → FC classifier → prediction) by ~6% F1 and ~9% recall on external validation datasets. The paper demonstrates that ProtectAI's DeBERTa model (which we use) achieves only 75.32% recall on deepset-v2, while feature-level fusion achieves 84.31%.
+**Decision**: Evolve the `EnsembleSecurityAnalyzer` to support feature-level fusion:
+1. Extract DeBERTa's 768-dim embedding vector (average-pooled hidden states) instead of classification scores
+2. Construct a typed heuristic feature vector (12-16 binary dimensions) covering: ignore/override, urgency, flattery, covert/stealth, format manipulation, hypothetical/roleplay, impersonation, immorality, many-shot Q&A, token repetition
+3. Concatenate embeddings + heuristic features → FC layer (ReLU) → FC layer (softmax) → prediction
+4. Train the FC layers offline on labelled prompt injection datasets (safeguard-v2, PromptShield benchmark)
+5. Ship trained FC weights as a model artifact alongside DeBERTa weights
+**Consequence**: Requires modifying the Candle model loading to extract intermediate embeddings. The FC layer adds <1ms inference. Training pipeline needs to be built (can use Python + export to safetensors). Expected improvement: +6% F1, +9% recall on external datasets. Score-level ensemble remains as fallback when FC weights unavailable.
+
+---
+
+## ADR-014: Unicode Normalisation as Security Preprocessing
+
+**Date**: 2026-02-01
+**Status**: Proposed
+**Context**: Research from ACL LLMSEC 2025 (Mindgard, "Bypassing LLM Guardrails") demonstrated that character injection techniques (Unicode zero-width characters, homoglyphs, character smuggling) can bypass all tested guardrail systems including ProtectAI, Llama Guard, and Azure Prompt Shield. Our regex patterns are especially vulnerable because they match raw text without normalisation.
+**Decision**: Add a mandatory Unicode normalisation preprocessing step before all security analysis:
+1. Apply NFKC normalisation (canonical decomposition + compatibility composition)
+2. Strip zero-width characters (U+200B, U+200C, U+200D, U+FEFF, U+200E, U+200F)
+3. Normalise common homoglyphs (Cyrillic а→a, е→e, etc.)
+4. This runs before `RegexSecurityAnalyzer`, `MLSecurityAnalyzer`, and `NerDetector`
+**Consequence**: Small performance cost (<0.1ms). Closes a major adversarial vulnerability. May need a configurable allowlist for legitimate Unicode content in multilingual deployments.
+
+---
+
+## ADR-015: Output Safety Analysis Pipeline
+
+**Date**: 2026-02-01
+**Status**: Proposed
+**Context**: Security state-of-the-art research (2026-02-01) identified output safety as the #1 gap in LLMTrace. We analyse inputs extensively but barely analyse outputs beyond PII and credential leakage. Industry frameworks (LLM Guard, LlamaFirewall, NeMo Guardrails) all include output toxicity/safety analysis. OWASP LLM Top 10 2025 adds Misinformation (LLM09) as a new category requiring hallucination and factual error detection.
+**Decision**: Build a three-tier output safety pipeline:
+1. **Tier 1 — Toxicity classifier**: BERT-based toxicity model (e.g., `unitary/toxic-bert`) run on all LLM responses via Candle. Detects harmful, toxic, biased content.
+2. **Tier 2 — Streaming output moderation**: Extend existing SSE streaming analysis to run toxicity + PII + leakage checks on accumulated response tokens during streaming. Support early-stopping when harmful content threshold exceeded.
+3. **Tier 3 — Hallucination detection** (future): HaluGate-style pipeline with sentinel pre-classification → token-level detection → NLI explanation. Leverages tool-call results visible in proxy traffic as ground truth.
+**Consequence**: Tier 1 adds ~50-100ms per response (can be async). Tier 2 adds incremental cost during streaming. Tier 3 is a larger effort requiring new model training. Each tier is independently deployable behind feature flags.
+
+---
+
+## ADR-016: OWASP LLM Top 10 2025 Alignment
+
+**Date**: 2026-02-01
+**Status**: Proposed
+**Context**: The OWASP LLM Top 10 was updated for 2025 with significant changes. Two new categories were added: System Prompt Leakage (LLM07) and Vector/Embedding Weaknesses (LLM08). Misinformation (LLM09) replaced Overreliance and now explicitly covers hallucinations. Sensitive Information Disclosure jumped from #6 to #2. Our current OWASP mapping (`docs/security/OWASP_LLM_TOP10.md`) references the 2024 categories.
+**Decision**: Update OWASP mapping and test coverage for 2025:
+1. Update `OWASP_LLM_TOP10.md` to reflect 2025 categories and numbering
+2. Add detection for LLM07 (System Prompt Leakage): adversarial extraction attempt patterns, multi-turn extraction monitoring
+3. Add detection for LLM08 (Vector/Embedding Weaknesses): RAG retrieval anomaly monitoring (where proxy can observe retrieval context)
+4. Add detection for LLM09 (Misinformation): hallucination detection (see ADR-015 Tier 3)
+5. Add detection for LLM10 (Unbounded Consumption): context window flooding detection
+**Consequence**: Requires new detection patterns and potentially new models. Ensures LLMTrace remains aligned with the industry-standard threat model. Test file `owasp_llm_top10.rs` needs expansion.
+
+---
+
 *Add new ADRs as architectural decisions are made. Each ADR should capture context, decision, and consequences.*
