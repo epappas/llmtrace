@@ -2,7 +2,7 @@
  * Jest test suite for @llmtrace/node native bindings.
  *
  * These tests require the native .node binary to be built first:
- *   cd bindings/node && npm run build
+ *   cd crates/llmtrace-nodejs && npm run build
  *
  * Then run:
  *   npm test

@@ -19,7 +19,7 @@ This document captures key architecture decisions, their rationale, and status.
 **Date**: 2026-01-31
 **Status**: Adopted
 **Context**: Need clean separation of concerns while maintaining a single build.
-**Decision**: Cargo workspace with 7 crates: `core` (types/traits), `proxy` (binary), `storage` (backends), `security` (analysis), `sdk` (embeddable), `python` (PyO3), `wasm` (wasm-bindgen). Node.js bindings in `bindings/node/` excluded from workspace to avoid wasm32 target conflicts.
+**Decision**: Cargo workspace with 7 crates: `core` (types/traits), `proxy` (binary), `storage` (backends), `security` (analysis), `sdk` (embeddable), `python` (PyO3), `wasm` (wasm-bindgen). Node.js bindings in `crates/llmtrace-nodejs/` excluded from workspace to avoid wasm32 target conflicts.
 **Consequence**: Feature-gated heavy deps (ClickHouse, Postgres, Redis, ML). Dev builds are fast (SQLite-only). Production compiles all backends.
 
 ---

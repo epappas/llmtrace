@@ -811,7 +811,7 @@ Implemented in commit `dcf100d`. ClickHouseTraceRepository with MergeTree engine
 
 **Tasks**:
 
-1. **Define protobuf** schema in `proto/llmtrace.proto` for trace/span ingestion
+1. **Define protobuf** schema in `crates/llmtrace-proto/llmtrace.proto` for trace/span ingestion
 2. **Implement gRPC server** using `tonic` in the proxy (or separate binary)
 3. **Streaming ingestion**: support client-side streaming for batch trace upload
 4. **Config**: `grpc.enabled`, `grpc.listen_addr`

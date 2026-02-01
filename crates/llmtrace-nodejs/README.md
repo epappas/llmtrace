@@ -121,7 +121,7 @@ console.log(result.securityScore);  // 80
 ## Building from Source
 
 ```bash
-cd bindings/node
+cd crates/llmtrace-nodejs
 npm install
 npm run build
 npm test

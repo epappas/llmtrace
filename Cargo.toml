@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["bindings/node"]
+exclude = ["crates/llmtrace-nodejs"]
 
 members = [
     "crates/llmtrace-core",
