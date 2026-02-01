@@ -8,6 +8,7 @@ members = [
     "crates/llmtrace-storage",
     "crates/llmtrace-security",
     "crates/llmtrace-python",
+    "crates/llmtrace-wasm",
 ]
 
 [workspace.package]
