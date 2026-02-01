@@ -25,12 +25,16 @@ use regex::Regex;
 #[cfg(feature = "ml")]
 pub mod ensemble;
 #[cfg(feature = "ml")]
+pub mod inference_stats;
+#[cfg(feature = "ml")]
 pub mod ml_detector;
 #[cfg(feature = "ml")]
 pub mod ner_detector;
 
 #[cfg(feature = "ml")]
 pub use ensemble::EnsembleSecurityAnalyzer;
+#[cfg(feature = "ml")]
+pub use inference_stats::{InferenceStats, InferenceStatsTracker};
 #[cfg(feature = "ml")]
 pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
 #[cfg(feature = "ml")]

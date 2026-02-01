@@ -15,7 +15,7 @@ use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
 use llmtrace_proxy::cost_caps::CostTracker;
-use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState};
+use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState, MlModelStatus};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;
@@ -249,10 +249,8 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
-    let security = Arc::new(
-        RegexSecurityAnalyzer::new()
-            .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?,
-    ) as Arc<dyn SecurityAnalyzer>;
+    // Build the security analyzer — attempt ML warm-up if enabled and compiled
+    let (security, ml_status) = build_security_analyzer(&config).await?;
 
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
@@ -292,7 +290,131 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         cost_tracker,
         anomaly_detector,
         report_store,
+        ml_status,
     }))
+}
+
+/// Build the security analyzer, optionally pre-loading ML models at startup.
+///
+/// When the `ml` feature is compiled in and ML is enabled in config with
+/// `ml_preload: true`, this loads the prompt injection and NER models eagerly.
+/// On failure, it falls back to the regex-only analyzer and logs a warning.
+async fn build_security_analyzer(
+    config: &ProxyConfig,
+) -> anyhow::Result<(Arc<dyn SecurityAnalyzer>, MlModelStatus)> {
+    #[cfg(feature = "ml")]
+    {
+        if config.security_analysis.ml_enabled && config.security_analysis.ml_preload {
+            info!("Pre-loading ML models at startup (ml_preload=true)");
+            let load_start = std::time::Instant::now();
+
+            let ml_config = llmtrace_security::MLSecurityConfig {
+                model_id: config.security_analysis.ml_model.clone(),
+                threshold: config.security_analysis.ml_threshold,
+                cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+            };
+
+            let ner_config = if config.security_analysis.ner_enabled {
+                Some(llmtrace_security::NerConfig {
+                    model_id: config.security_analysis.ner_model.clone(),
+                    cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                })
+            } else {
+                None
+            };
+
+            // Apply download timeout
+            let timeout = std::time::Duration::from_secs(
+                config.security_analysis.ml_download_timeout_seconds,
+            );
+
+            match tokio::time::timeout(
+                timeout,
+                llmtrace_security::EnsembleSecurityAnalyzer::with_ner(
+                    &ml_config,
+                    ner_config.as_ref(),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(ensemble)) => {
+                    let load_time_ms = load_start.elapsed().as_millis() as u64;
+                    let pi_loaded = ensemble.is_ml_active();
+                    let ner_loaded = ensemble.is_ner_active();
+                    info!(
+                        prompt_injection_loaded = pi_loaded,
+                        ner_loaded = ner_loaded,
+                        load_time_ms = load_time_ms,
+                        "ML models pre-loaded at startup"
+                    );
+                    let status = MlModelStatus::Loaded {
+                        prompt_injection: pi_loaded,
+                        ner: ner_loaded,
+                        load_time_ms,
+                    };
+                    Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))
+                }
+                Ok(Err(e)) => {
+                    let err_msg = format!("{e}");
+                    tracing::warn!(
+                        error = %e,
+                        "ML model loading failed at startup — falling back to regex analyzer"
+                    );
+                    let regex = RegexSecurityAnalyzer::new().map_err(|e| {
+                        anyhow::anyhow!("Failed to initialize security analyzer: {}", e)
+                    })?;
+                    Ok((
+                        Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                        MlModelStatus::Failed { error: err_msg },
+                    ))
+                }
+                Err(_) => {
+                    let err_msg = format!(
+                        "ML model download timed out after {}s",
+                        config.security_analysis.ml_download_timeout_seconds
+                    );
+                    tracing::warn!(
+                        timeout_seconds = config.security_analysis.ml_download_timeout_seconds,
+                        "ML model download timed out — falling back to regex analyzer"
+                    );
+                    let regex = RegexSecurityAnalyzer::new().map_err(|e| {
+                        anyhow::anyhow!("Failed to initialize security analyzer: {}", e)
+                    })?;
+                    Ok((
+                        Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                        MlModelStatus::Failed { error: err_msg },
+                    ))
+                }
+            }
+        } else if config.security_analysis.ml_enabled {
+            // ML enabled but preload disabled — will load on first request
+            info!("ML enabled but ml_preload=false — models will load on first request");
+            let regex = RegexSecurityAnalyzer::new()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
+            Ok((
+                Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                MlModelStatus::Disabled,
+            ))
+        } else {
+            let regex = RegexSecurityAnalyzer::new()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
+            Ok((
+                Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                MlModelStatus::Disabled,
+            ))
+        }
+    }
+
+    #[cfg(not(feature = "ml"))]
+    {
+        let _ = &config.security_analysis; // suppress unused warning
+        let regex = RegexSecurityAnalyzer::new()
+            .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
+        Ok((
+            Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+            MlModelStatus::Disabled,
+        ))
+    }
 }
 
 /// Build the axum [`Router`] with all routes.

@@ -220,6 +220,28 @@ streaming_analysis:
   token_interval: 50
 
 # ---------------------------------------------------------------------------
+# ML-based security analysis
+# ---------------------------------------------------------------------------
+
+# security_analysis:
+#   # Enable ML-based prompt injection detection (requires binary compiled with `ml` feature).
+#   ml_enabled: false
+#   # HuggingFace model ID for prompt injection detection.
+#   ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
+#   # Confidence threshold for ML detection (0.0–1.0).
+#   ml_threshold: 0.8
+#   # Local cache directory for downloaded ML models.
+#   ml_cache_dir: "~/.cache/llmtrace/models"
+#   # Pre-load ML models at proxy startup (eliminates cold-start latency on first request).
+#   ml_preload: true
+#   # Timeout in seconds for downloading ML models at startup.
+#   ml_download_timeout_seconds: 300
+#   # Enable ML-based NER for PII detection (person names, organisations, locations).
+#   ner_enabled: false
+#   # HuggingFace model ID for NER-based PII detection.
+#   ner_model: "dslim/bert-base-NER"
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

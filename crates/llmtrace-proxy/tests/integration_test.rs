@@ -69,6 +69,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         cost_tracker: None,
         anomaly_detector: None,
         report_store: llmtrace_proxy::compliance::new_report_store(),
+        ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,
     });
 
     let app = Router::new()

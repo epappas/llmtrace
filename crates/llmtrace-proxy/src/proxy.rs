@@ -28,6 +28,27 @@ use uuid::Uuid;
 // Shared application state
 // ---------------------------------------------------------------------------
 
+/// Status of ML model loading at startup.
+#[derive(Debug, Clone)]
+pub enum MlModelStatus {
+    /// ML not enabled in configuration.
+    Disabled,
+    /// ML models loaded successfully.
+    Loaded {
+        /// Whether the prompt injection model is available.
+        prompt_injection: bool,
+        /// Whether the NER model is available.
+        ner: bool,
+        /// Time taken to load models in milliseconds.
+        load_time_ms: u64,
+    },
+    /// ML model loading failed; proxy continues with regex fallback.
+    Failed {
+        /// Error description.
+        error: String,
+    },
+}
+
 /// Shared state threaded through axum handlers via [`State`].
 pub struct AppState {
     /// Proxy configuration.
@@ -52,6 +73,8 @@ pub struct AppState {
     pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
     /// In-memory store for compliance reports.
     pub report_store: crate::compliance::ReportStore,
+    /// Status of ML model loading at startup.
+    pub ml_status: MlModelStatus,
 }
 
 impl AppState {
@@ -763,6 +786,26 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
     let storage_circuit = state.storage_breaker.state().await;
     let security_circuit = state.security_breaker.state().await;
 
+    let ml_status = match &state.ml_status {
+        MlModelStatus::Disabled => serde_json::json!({
+            "status": "disabled",
+        }),
+        MlModelStatus::Loaded {
+            prompt_injection,
+            ner,
+            load_time_ms,
+        } => serde_json::json!({
+            "status": "loaded",
+            "prompt_injection_model": prompt_injection,
+            "ner_model": ner,
+            "load_time_ms": load_time_ms,
+        }),
+        MlModelStatus::Failed { error } => serde_json::json!({
+            "status": "failed",
+            "error": error,
+        }),
+    };
+
     let all_healthy = traces_ok && metadata_ok && cache_ok && security_ok;
 
     let body = serde_json::json!({
@@ -777,6 +820,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             "healthy": security_ok,
             "circuit_breaker": format!("{:?}", security_circuit),
         },
+        "ml": ml_status,
     });
 
     Response::builder()

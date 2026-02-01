@@ -639,6 +639,7 @@ mod tests {
             cost_tracker: None,
             anomaly_detector: None,
             report_store: new_report_store(),
+            ml_status: crate::proxy::MlModelStatus::Disabled,
         })
     }
 

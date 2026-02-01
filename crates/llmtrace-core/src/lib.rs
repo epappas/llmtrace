@@ -1340,6 +1340,8 @@ pub struct PiiConfig {
 ///   ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
 ///   ml_threshold: 0.8
 ///   ml_cache_dir: "~/.cache/llmtrace/models"
+///   ml_preload: true
+///   ml_download_timeout_seconds: 300
 ///   ner_enabled: true
 ///   ner_model: "dslim/bert-base-NER"
 /// ```
@@ -1357,6 +1359,12 @@ pub struct SecurityAnalysisConfig {
     /// Local cache directory for downloaded ML models.
     #[serde(default = "default_ml_cache_dir")]
     pub ml_cache_dir: String,
+    /// Pre-load ML models at proxy startup rather than on first request.
+    #[serde(default = "default_ml_preload")]
+    pub ml_preload: bool,
+    /// Timeout in seconds for downloading ML models at startup.
+    #[serde(default = "default_ml_download_timeout_seconds")]
+    pub ml_download_timeout_seconds: u64,
     /// Enable ML-based NER for PII detection (person names, orgs, locations).
     #[serde(default)]
     pub ner_enabled: bool,
@@ -1377,6 +1385,14 @@ fn default_ml_cache_dir() -> String {
     "~/.cache/llmtrace/models".to_string()
 }
 
+fn default_ml_preload() -> bool {
+    true
+}
+
+fn default_ml_download_timeout_seconds() -> u64 {
+    300
+}
+
 fn default_ner_model() -> String {
     "dslim/bert-base-NER".to_string()
 }
@@ -1388,6 +1404,8 @@ impl Default for SecurityAnalysisConfig {
             ml_model: default_ml_model(),
             ml_threshold: default_ml_threshold(),
             ml_cache_dir: default_ml_cache_dir(),
+            ml_preload: default_ml_preload(),
+            ml_download_timeout_seconds: default_ml_download_timeout_seconds(),
             ner_enabled: false,
             ner_model: default_ner_model(),
         }
@@ -2295,6 +2313,8 @@ mod tests {
                 ml_model: "custom/model".to_string(),
                 ml_threshold: 0.9,
                 ml_cache_dir: "/tmp/models".to_string(),
+                ml_preload: true,
+                ml_download_timeout_seconds: 300,
                 ner_enabled: false,
                 ner_model: default_ner_model(),
             },
@@ -2687,6 +2707,8 @@ mod tests {
             config.security_analysis.ml_cache_dir,
             "~/.cache/llmtrace/models"
         );
+        assert!(config.security_analysis.ml_preload);
+        assert_eq!(config.security_analysis.ml_download_timeout_seconds, 300);
         assert!(!config.security_analysis.ner_enabled);
         assert_eq!(config.security_analysis.ner_model, "dslim/bert-base-NER");
     }
@@ -2701,6 +2723,8 @@ mod tests {
         );
         assert!((config.ml_threshold - 0.8).abs() < f64::EPSILON);
         assert_eq!(config.ml_cache_dir, "~/.cache/llmtrace/models");
+        assert!(config.ml_preload);
+        assert_eq!(config.ml_download_timeout_seconds, 300);
         assert!(!config.ner_enabled);
         assert_eq!(config.ner_model, "dslim/bert-base-NER");
     }
@@ -2712,6 +2736,8 @@ mod tests {
             ml_model: "custom/model".to_string(),
             ml_threshold: 0.9,
             ml_cache_dir: "/tmp/models".to_string(),
+            ml_preload: false,
+            ml_download_timeout_seconds: 600,
             ner_enabled: true,
             ner_model: "dslim/bert-base-NER".to_string(),
         };
@@ -2721,6 +2747,8 @@ mod tests {
         assert_eq!(deserialized.ml_model, "custom/model");
         assert!((deserialized.ml_threshold - 0.9).abs() < f64::EPSILON);
         assert_eq!(deserialized.ml_cache_dir, "/tmp/models");
+        assert!(!deserialized.ml_preload);
+        assert_eq!(deserialized.ml_download_timeout_seconds, 600);
         assert!(deserialized.ner_enabled);
         assert_eq!(deserialized.ner_model, "dslim/bert-base-NER");
     }

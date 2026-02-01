@@ -34,10 +34,13 @@ const AGREEMENT_BOOST: f64 = 0.1;
 ///
 /// ```no_run
 /// use llmtrace_security::{EnsembleSecurityAnalyzer, MLSecurityConfig};
+/// use llmtrace_core::SecurityAnalyzer;
 ///
+/// # async fn example() {
 /// let config = MLSecurityConfig::default();
-/// let ensemble = EnsembleSecurityAnalyzer::new(&config).unwrap();
+/// let ensemble = EnsembleSecurityAnalyzer::new(&config).await.unwrap();
 /// assert_eq!(ensemble.name(), "EnsembleSecurityAnalyzer");
+/// # }
 /// ```
 pub struct EnsembleSecurityAnalyzer {
     regex: RegexSecurityAnalyzer,

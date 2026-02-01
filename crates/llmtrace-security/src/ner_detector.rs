@@ -10,12 +10,15 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use llmtrace_core::{LLMTraceError, Result, SecurityFinding, SecuritySeverity};
 use tokenizers::Tokenizer;
+
+use crate::inference_stats::{InferenceStats, InferenceStatsTracker};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -83,6 +86,7 @@ pub struct NerDetector {
     classifier: candle_nn::Linear,
     device: Device,
     id2label: HashMap<usize, String>,
+    stats_tracker: InferenceStatsTracker,
 }
 
 impl NerDetector {
@@ -110,10 +114,13 @@ impl NerDetector {
     /// Detect named entities in the given text.
     ///
     /// Returns a list of [`NerEntity`] with entity type, text, and byte offsets.
+    /// Inference duration is tracked for latency statistics (see [`inference_stats`]).
     pub fn detect_entities(&self, text: &str) -> Result<Vec<NerEntity>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }
+
+        let start = Instant::now();
 
         let encoding = self
             .tokenizer
@@ -161,10 +168,22 @@ impl NerDetector {
             LLMTraceError::Security(format!("NER prediction extraction failed: {e}"))
         })?;
 
+        // Record inference duration (includes tokenization + forward pass)
+        self.stats_tracker.record(start.elapsed());
+
         // Convert BIO predictions into entity spans
         let entities = self.merge_bio_tags(text, &pred_vec, offsets);
 
         Ok(entities)
+    }
+
+    /// Returns inference latency statistics (P50/P95/P99) over the recent
+    /// sliding window.
+    ///
+    /// Returns `None` if no inference calls have been made yet.
+    #[must_use]
+    pub fn inference_stats(&self) -> Option<InferenceStats> {
+        self.stats_tracker.stats()
     }
 
     /// Convert detected NER entities into [`SecurityFinding`]s.
@@ -394,6 +413,7 @@ impl NerDetector {
             classifier,
             device,
             id2label,
+            stats_tracker: InferenceStatsTracker::default(),
         })
     }
 
