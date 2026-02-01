@@ -56,6 +56,11 @@ storage:
   # Redis connection URL for hot-query cache and sessions.
   # redis_url: "redis://127.0.0.1:6379"
 
+  # Automatically run pending database migrations on startup.
+  # Default: true (convenient for development). Set to false in production
+  # and use `llmtrace-proxy migrate --config config.yaml` explicitly.
+  auto_migrate: true
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------

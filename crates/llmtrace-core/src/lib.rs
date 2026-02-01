@@ -916,6 +916,12 @@ pub struct StorageConfig {
     /// Redis connection URL (used by the `"production"` profile).
     #[serde(default)]
     pub redis_url: Option<String>,
+    /// Automatically run pending database migrations on startup.
+    ///
+    /// Defaults to `true` for development (lite/memory profiles). Set to
+    /// `false` in production to require explicit `llmtrace-proxy migrate`.
+    #[serde(default = "default_auto_migrate")]
+    pub auto_migrate: bool,
 }
 
 fn default_storage_profile() -> String {
@@ -924,6 +930,10 @@ fn default_storage_profile() -> String {
 
 fn default_database_path() -> String {
     "llmtrace.db".to_string()
+}
+
+fn default_auto_migrate() -> bool {
+    true
 }
 
 impl Default for StorageConfig {
@@ -935,6 +945,7 @@ impl Default for StorageConfig {
             clickhouse_database: None,
             postgres_url: None,
             redis_url: None,
+            auto_migrate: default_auto_migrate(),
         }
     }
 }
@@ -2391,6 +2402,7 @@ mod tests {
                 clickhouse_database: None,
                 postgres_url: None,
                 redis_url: None,
+                auto_migrate: true,
             },
             timeout_ms: 60000,
             connection_timeout_ms: 10000,

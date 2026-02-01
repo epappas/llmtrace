@@ -18,93 +18,8 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// Schema migrations
+// Schema migrations — now driven by versioned SQL files via migration runner
 // ---------------------------------------------------------------------------
-
-const TRACE_MIGRATIONS: &[&str] = &[
-    // Trace-level metadata
-    "CREATE TABLE IF NOT EXISTS traces (
-        trace_id TEXT NOT NULL,
-        tenant_id TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (tenant_id, trace_id)
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_traces_created ON traces(tenant_id, created_at)",
-    // Span-level data with individual columns for efficient filtering
-    "CREATE TABLE IF NOT EXISTS spans (
-        span_id TEXT NOT NULL,
-        trace_id TEXT NOT NULL,
-        parent_span_id TEXT,
-        tenant_id TEXT NOT NULL,
-        operation_name TEXT NOT NULL,
-        start_time TEXT NOT NULL,
-        end_time TEXT,
-        provider TEXT NOT NULL,
-        model_name TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        response TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        total_tokens INTEGER,
-        time_to_first_token_ms INTEGER,
-        duration_ms INTEGER,
-        status_code INTEGER,
-        error_message TEXT,
-        estimated_cost_usd REAL,
-        security_score INTEGER,
-        security_findings TEXT NOT NULL DEFAULT '[]',
-        tags TEXT NOT NULL DEFAULT '{}',
-        events TEXT NOT NULL DEFAULT '[]',
-        PRIMARY KEY (tenant_id, span_id)
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(tenant_id, trace_id)",
-    "CREATE INDEX IF NOT EXISTS idx_spans_time ON spans(tenant_id, start_time)",
-    "CREATE INDEX IF NOT EXISTS idx_spans_provider ON spans(tenant_id, provider)",
-    "CREATE INDEX IF NOT EXISTS idx_spans_model ON spans(tenant_id, model_name)",
-    "CREATE INDEX IF NOT EXISTS idx_spans_security ON spans(tenant_id, security_score)",
-    "CREATE INDEX IF NOT EXISTS idx_spans_operation ON spans(tenant_id, operation_name)",
-    // Loop 18: agent actions column
-    "ALTER TABLE spans ADD COLUMN agent_actions TEXT NOT NULL DEFAULT '[]'",
-];
-
-const METADATA_MIGRATIONS: &[&str] = &[
-    "CREATE TABLE IF NOT EXISTS tenants (
-        id TEXT NOT NULL PRIMARY KEY,
-        name TEXT NOT NULL,
-        plan TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        config TEXT NOT NULL DEFAULT '{}'
-    )",
-    "CREATE TABLE IF NOT EXISTS tenant_configs (
-        tenant_id TEXT NOT NULL PRIMARY KEY,
-        security_thresholds TEXT NOT NULL DEFAULT '{}',
-        feature_flags TEXT NOT NULL DEFAULT '{}'
-    )",
-    "CREATE TABLE IF NOT EXISTS audit_events (
-        id TEXT NOT NULL PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        actor TEXT NOT NULL,
-        resource TEXT NOT NULL,
-        data TEXT NOT NULL DEFAULT '{}',
-        timestamp TEXT NOT NULL
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_events(tenant_id, timestamp)",
-    "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(tenant_id, event_type)",
-    // Loop 23: API key management
-    "CREATE TABLE IF NOT EXISTS api_keys (
-        id TEXT NOT NULL PRIMARY KEY,
-        tenant_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        key_hash TEXT NOT NULL UNIQUE,
-        key_prefix TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        revoked_at TEXT
-    )",
-    "CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)",
-    "CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)",
-];
 
 // ---------------------------------------------------------------------------
 // Shared pool builder
@@ -132,28 +47,13 @@ pub(crate) async fn open_pool(database_url: &str) -> Result<SqlitePool> {
         .map_err(|e| LLMTraceError::Storage(format!("Failed to connect to SQLite: {e}")))
 }
 
-/// Run a list of migration statements against the given pool.
+/// Run all versioned SQLite migrations against the given pool.
 ///
-/// `ALTER TABLE … ADD COLUMN` statements are allowed to fail silently
-/// (the column may already exist from a previous run).
-pub(crate) async fn run_migrations(pool: &SqlitePool, statements: &[&str]) -> Result<()> {
-    for statement in statements {
-        let result = sqlx::query(statement).execute(pool).await;
-        match result {
-            Ok(_) => {}
-            Err(e) => {
-                let is_alter_add = statement.to_uppercase().contains("ALTER TABLE")
-                    && statement.to_uppercase().contains("ADD COLUMN");
-                let is_duplicate = e.to_string().contains("duplicate column");
-                if is_alter_add && is_duplicate {
-                    // Column already exists — safe to ignore
-                    continue;
-                }
-                return Err(LLMTraceError::Storage(format!("Migration failed: {e}")));
-            }
-        }
-    }
-    Ok(())
+/// Delegates to the [`migration`](crate::migration) module which tracks
+/// applied versions in a `schema_version` table and only applies pending
+/// migrations.
+pub(crate) async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+    crate::migration::run_sqlite_migrations(pool).await
 }
 
 // ---------------------------------------------------------------------------
@@ -295,13 +195,13 @@ impl SqliteTraceRepository {
     /// ```
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = open_pool(database_url).await?;
-        run_migrations(&pool, TRACE_MIGRATIONS).await?;
+        run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Create from an existing pool (used by [`StorageProfile`](crate::StorageProfile) factory).
     pub(crate) async fn from_pool(pool: SqlitePool) -> Result<Self> {
-        run_migrations(&pool, TRACE_MIGRATIONS).await?;
+        run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -792,13 +692,13 @@ impl SqliteMetadataRepository {
     /// Open (or create) a SQLite database and run metadata schema migrations.
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = open_pool(database_url).await?;
-        run_migrations(&pool, METADATA_MIGRATIONS).await?;
+        run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 
     /// Create from an existing pool (used by [`StorageProfile`](crate::StorageProfile) factory).
     pub(crate) async fn from_pool(pool: SqlitePool) -> Result<Self> {
-        run_migrations(&pool, METADATA_MIGRATIONS).await?;
+        run_migrations(&pool).await?;
         Ok(Self { pool })
     }
 }

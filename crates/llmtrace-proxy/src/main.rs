@@ -53,6 +53,8 @@ struct Cli {
 enum Commands {
     /// Validate a configuration file and print resolved settings.
     Validate,
+    /// Run pending database migrations and exit.
+    Migrate,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +70,10 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Commands::Validate) => run_validate(&config),
+        Some(Commands::Migrate) => {
+            init_logging(&config)?;
+            run_migrate(&config).await
+        }
         None => {
             init_logging(&config)?;
             config::validate_config(&config)?;
@@ -124,6 +130,46 @@ fn run_validate(config: &ProxyConfig) -> anyhow::Result<()> {
     println!("✓ Configuration is valid.\n");
     println!("Resolved configuration:");
     println!("{}", serde_yaml::to_string(config)?);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: migrate
+// ---------------------------------------------------------------------------
+
+/// Run pending database migrations and exit.
+async fn run_migrate(config: &ProxyConfig) -> anyhow::Result<()> {
+    info!(
+        profile = %config.storage.profile,
+        "Running database migrations"
+    );
+
+    match config.storage.profile.as_str() {
+        "lite" => {
+            let url = format!("sqlite:{}", config.storage.database_path);
+            let pool = llmtrace_storage::migration::open_sqlite_pool(&url).await?;
+            llmtrace_storage::migration::run_sqlite_migrations(&pool).await?;
+            info!("SQLite migrations complete");
+        }
+        "memory" => {
+            info!("Memory profile uses no persistent storage — nothing to migrate");
+        }
+        "production" => {
+            // Run PostgreSQL migrations for production metadata storage.
+            if let Some(ref pg_url) = config.storage.postgres_url {
+                let pool = llmtrace_storage::migration::open_pg_pool(pg_url).await?;
+                llmtrace_storage::migration::run_pg_migrations(&pool).await?;
+                info!("PostgreSQL migrations complete");
+            } else {
+                anyhow::bail!("storage.postgres_url is required for production profile migrations");
+            }
+        }
+        other => {
+            anyhow::bail!("Unknown storage profile: {other}");
+        }
+    }
+
+    println!("✓ All migrations applied successfully.");
     Ok(())
 }
 

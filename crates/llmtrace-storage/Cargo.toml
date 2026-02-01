@@ -21,6 +21,7 @@ serde_json.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+tracing.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 dashmap = "6"
 bytes = "1"

@@ -8,6 +8,7 @@
 
 mod cache;
 mod memory;
+pub mod migration;
 mod sqlite;
 
 #[cfg(feature = "clickhouse")]
