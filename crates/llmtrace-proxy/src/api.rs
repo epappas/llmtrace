@@ -336,6 +336,8 @@ mod tests {
             &config.circuit_breaker,
         ));
 
+        let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
+
         Arc::new(AppState {
             config,
             client,
@@ -343,6 +345,7 @@ mod tests {
             security,
             storage_breaker,
             security_breaker,
+            cost_estimator,
         })
     }
 

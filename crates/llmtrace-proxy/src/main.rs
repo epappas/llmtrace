@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
 use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
+use llmtrace_proxy::cost::CostEstimator;
 use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
@@ -221,6 +222,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
+    let cost_estimator = CostEstimator::new(&config.cost_estimation);
 
     Ok(Arc::new(AppState {
         config,
@@ -229,6 +231,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         security,
         storage_breaker,
         security_breaker,
+        cost_estimator,
     }))
 }
 

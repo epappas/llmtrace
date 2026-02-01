@@ -6,10 +6,12 @@
 pub mod api;
 pub mod circuit_breaker;
 pub mod config;
+pub mod cost;
 pub mod provider;
 pub mod proxy;
 pub mod streaming;
 
 // Re-export key types for convenience
 pub use circuit_breaker::CircuitBreaker;
+pub use cost::CostEstimator;
 pub use proxy::{health_handler, proxy_handler, AppState};

@@ -54,6 +54,8 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
     let storage_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
     let security_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
 
+    let cost_estimator = llmtrace_proxy::cost::CostEstimator::new(&config.cost_estimation);
+
     let state = Arc::new(AppState {
         config,
         client,
@@ -61,6 +63,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         security,
         storage_breaker,
         security_breaker,
+        cost_estimator,
     });
 
     let app = Router::new()

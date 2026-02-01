@@ -494,6 +494,9 @@ pub struct ProxyConfig {
     /// Logging configuration.
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// Cost estimation configuration.
+    #[serde(default)]
+    pub cost_estimation: CostEstimationConfig,
 }
 
 impl Default for ProxyConfig {
@@ -518,6 +521,7 @@ impl Default for ProxyConfig {
             circuit_breaker: CircuitBreakerConfig::default(),
             health_check: HealthCheckConfig::default(),
             logging: LoggingConfig::default(),
+            cost_estimation: CostEstimationConfig::default(),
         }
     }
 }
@@ -623,6 +627,39 @@ impl Default for HealthCheckConfig {
             retries: 3,
         }
     }
+}
+
+/// Cost estimation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimationConfig {
+    /// Enable cost estimation on traced requests.
+    #[serde(default = "default_cost_estimation_enabled")]
+    pub enabled: bool,
+    /// Custom model pricing overrides (model name → pricing).
+    #[serde(default)]
+    pub custom_models: HashMap<String, ModelPricingConfig>,
+}
+
+fn default_cost_estimation_enabled() -> bool {
+    true
+}
+
+impl Default for CostEstimationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cost_estimation_enabled(),
+            custom_models: HashMap::new(),
+        }
+    }
+}
+
+/// Pricing for a single model (per 1 million tokens).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPricingConfig {
+    /// Cost per 1 million input/prompt tokens in USD.
+    pub input_per_million: f64,
+    /// Cost per 1 million output/completion tokens in USD.
+    pub output_per_million: f64,
 }
 
 /// Logging configuration.
@@ -1152,6 +1189,8 @@ mod tests {
         assert!(!config.enable_tls);
         assert_eq!(config.logging.level, "info");
         assert_eq!(config.logging.format, "text");
+        assert!(config.cost_estimation.enabled);
+        assert!(config.cost_estimation.custom_models.is_empty());
     }
 
     #[test]
@@ -1330,6 +1369,15 @@ mod tests {
 
     #[test]
     fn test_proxy_config_serialization() {
+        let mut custom_models = HashMap::new();
+        custom_models.insert(
+            "my-custom-model".to_string(),
+            ModelPricingConfig {
+                input_per_million: 1.0,
+                output_per_million: 2.0,
+            },
+        );
+
         let config = ProxyConfig {
             listen_addr: "127.0.0.1:9090".to_string(),
             upstream_url: "https://api.anthropic.com".to_string(),
@@ -1356,6 +1404,10 @@ mod tests {
                 level: "debug".to_string(),
                 format: "json".to_string(),
             },
+            cost_estimation: CostEstimationConfig {
+                enabled: true,
+                custom_models,
+            },
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -1372,6 +1424,14 @@ mod tests {
         );
         assert_eq!(config.logging.level, deserialized.logging.level);
         assert_eq!(config.logging.format, deserialized.logging.format);
+        assert!(deserialized.cost_estimation.enabled);
+        let custom = deserialized
+            .cost_estimation
+            .custom_models
+            .get("my-custom-model")
+            .unwrap();
+        assert!((custom.input_per_million - 1.0).abs() < f64::EPSILON);
+        assert!((custom.output_per_million - 2.0).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! trace storage and security analysis.
 
 use crate::circuit_breaker::CircuitBreaker;
+use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
 use crate::streaming::StreamingAccumulator;
 use axum::body::Body;
@@ -41,6 +42,8 @@ pub struct AppState {
     pub storage_breaker: Arc<CircuitBreaker>,
     /// Circuit breaker for the security subsystem.
     pub security_breaker: Arc<CircuitBreaker>,
+    /// Cost estimator for computing per-request cost in USD.
+    pub cost_estimator: CostEstimator,
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +473,14 @@ async fn run_trace_capture(
     span.completion_tokens = captured.completion_tokens;
     span.total_tokens = captured.total_tokens;
     span.time_to_first_token_ms = captured.time_to_first_token_ms;
+
+    // Estimate cost once token counts are known
+    span.estimated_cost_usd = state.cost_estimator.estimate_cost(
+        &captured.provider,
+        &captured.model_name,
+        captured.prompt_tokens,
+        captured.completion_tokens,
+    );
 
     let end_time = Utc::now();
     let duration = end_time.signed_duration_since(captured.start_time);
