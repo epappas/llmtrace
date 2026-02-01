@@ -81,7 +81,7 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 
 /// Extract tenant ID from a custom `X-LLMTrace-Tenant-ID` header, or
 /// derive one deterministically from the API key.
-fn resolve_tenant(headers: &HeaderMap) -> TenantId {
+pub(crate) fn resolve_tenant(headers: &HeaderMap) -> TenantId {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
         if let Ok(s) = raw.to_str() {
             if let Ok(uuid) = Uuid::parse_str(s) {

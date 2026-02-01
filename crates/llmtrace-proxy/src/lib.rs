@@ -3,6 +3,7 @@
 //! Re-exports the core proxy types and handlers so that integration tests
 //! and other crates can programmatically construct a proxy router.
 
+pub mod api;
 pub mod circuit_breaker;
 pub mod config;
 pub mod proxy;

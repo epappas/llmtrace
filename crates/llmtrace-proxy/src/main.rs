@@ -236,6 +236,23 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        // REST Query API
+        .route("/api/v1/traces", get(llmtrace_proxy::api::list_traces))
+        .route(
+            "/api/v1/traces/:trace_id",
+            get(llmtrace_proxy::api::get_trace),
+        )
+        .route("/api/v1/spans", get(llmtrace_proxy::api::list_spans))
+        .route(
+            "/api/v1/spans/:span_id",
+            get(llmtrace_proxy::api::get_span),
+        )
+        .route("/api/v1/stats", get(llmtrace_proxy::api::get_stats))
+        .route(
+            "/api/v1/security/findings",
+            get(llmtrace_proxy::api::list_security_findings),
+        )
+        // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))
         .with_state(state)
 }
