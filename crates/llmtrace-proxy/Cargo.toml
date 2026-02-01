@@ -53,6 +53,7 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 tonic = "0.14"
 tonic-prost = "0.14"
+prometheus = "0.13"
 
 [build-dependencies]
 tonic-prost-build = "0.14"

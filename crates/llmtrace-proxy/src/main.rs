@@ -305,6 +305,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 
     let report_store = llmtrace_proxy::compliance::new_report_store();
     let shutdown = ShutdownCoordinator::new(config.shutdown.timeout_seconds);
+    let metrics = llmtrace_proxy::metrics::Metrics::new();
 
     Ok(Arc::new(AppState {
         config,
@@ -320,6 +321,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         report_store,
         ml_status,
         shutdown,
+        metrics,
     }))
 }
 
@@ -450,6 +452,7 @@ async fn build_security_analyzer(
 fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        .route("/metrics", get(llmtrace_proxy::metrics::metrics_handler))
         // Auth key management API
         .route(
             "/api/v1/auth/keys",
@@ -636,6 +639,48 @@ mod tests {
         let config = load_and_merge_config(&cli).unwrap();
         assert_eq!(config.logging.level, "debug");
         assert_eq!(config.logging.format, "json");
+    }
+
+    #[tokio::test]
+    async fn test_metrics_endpoint_returns_prometheus_format() {
+        let app = test_app().await;
+        let req = Request::builder()
+            .uri("/metrics")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let ct = response
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            ct.contains("text/plain"),
+            "Expected text/plain content type for Prometheus, got: {ct}"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+
+        // Should contain Prometheus HELP/TYPE declarations
+        assert!(
+            text.contains("# HELP llmtrace_active_connections"),
+            "Missing active_connections metric"
+        );
+        assert!(
+            text.contains("# TYPE llmtrace_active_connections gauge"),
+            "Missing active_connections type"
+        );
+        assert!(
+            text.contains("# HELP llmtrace_circuit_breaker_state"),
+            "Missing circuit_breaker_state metric"
+        );
     }
 
     #[test]

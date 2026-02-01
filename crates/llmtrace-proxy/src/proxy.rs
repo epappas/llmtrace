@@ -77,6 +77,8 @@ pub struct AppState {
     pub ml_status: MlModelStatus,
     /// Shutdown coordinator for graceful shutdown and task tracking.
     pub shutdown: crate::shutdown::ShutdownCoordinator,
+    /// Prometheus metrics collectors.
+    pub metrics: crate::metrics::Metrics,
 }
 
 impl AppState {
@@ -181,6 +183,7 @@ pub async fn proxy_handler(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
 ) -> Response<Body> {
+    state.metrics.active_connections.inc();
     let start_time = Utc::now();
     let trace_id = Uuid::new_v4();
 
@@ -383,6 +386,7 @@ pub async fn proxy_handler(
         // Hold the task guard for the lifetime of this background task so the
         // shutdown coordinator knows when all in-flight work has drained.
         let _guard = task_guard;
+        // We'll decrement active_connections at the end of this task.
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
             Some(StreamingAccumulator::new())
@@ -583,6 +587,49 @@ pub async fn proxy_handler(
 
         // --- Trace capture with enriched security findings ---
         run_trace_capture(&state_bg, &captured, &security_findings).await;
+
+        // --- Prometheus metrics instrumentation ---
+        {
+            let provider_lbl = crate::metrics::provider_label(&captured.provider);
+            let model_lbl = &captured.model_name;
+            let duration_secs = Utc::now()
+                .signed_duration_since(captured.start_time)
+                .num_milliseconds()
+                .max(0) as f64
+                / 1000.0;
+
+            state_bg.metrics.record_request(
+                provider_lbl,
+                model_lbl,
+                captured.status_code,
+                duration_secs,
+            );
+
+            state_bg.metrics.record_tokens(
+                provider_lbl,
+                model_lbl,
+                captured.prompt_tokens,
+                captured.completion_tokens,
+            );
+
+            state_bg
+                .metrics
+                .record_security_findings(&security_findings);
+            state_bg.metrics.record_anomalies(&security_findings);
+
+            if let Some(cost) = state_bg.cost_estimator.estimate_cost(
+                &captured.provider,
+                &captured.model_name,
+                captured.prompt_tokens,
+                captured.completion_tokens,
+            ) {
+                state_bg
+                    .metrics
+                    .record_cost(&captured.tenant_id.0.to_string(), model_lbl, cost);
+            }
+
+            state_bg.metrics.active_connections.dec();
+        }
     });
 
     // Build and return the response to the client
@@ -651,6 +698,7 @@ async fn run_security_analysis(
     }
     if !state.security_breaker.allow().await {
         debug!(trace_id = %captured.trace_id, "Security circuit breaker open — skipping analysis");
+        state.metrics.set_circuit_breaker_state("security", "open");
         return Vec::new();
     }
 
@@ -670,6 +718,10 @@ async fn run_security_analysis(
     {
         Ok(findings) => {
             state.security_breaker.record_success().await;
+            let cb_state = state.security_breaker.state().await;
+            state
+                .metrics
+                .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             if findings.is_empty() {
                 debug!(trace_id = %captured.trace_id, "Security analysis: no findings");
             } else {
@@ -683,6 +735,10 @@ async fn run_security_analysis(
         }
         Err(e) => {
             state.security_breaker.record_failure().await;
+            let cb_state = state.security_breaker.state().await;
+            state
+                .metrics
+                .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             error!(trace_id = %captured.trace_id, "Security analysis failed: {}", e);
             Vec::new()
         }
@@ -703,6 +759,7 @@ async fn run_trace_capture(
     }
     if !state.storage_breaker.allow().await {
         debug!(trace_id = %captured.trace_id, "Storage circuit breaker open — skipping trace capture");
+        state.metrics.set_circuit_breaker_state("storage", "open");
         return;
     }
 
@@ -770,10 +827,20 @@ async fn run_trace_capture(
     match state.storage.traces.store_trace(&trace).await {
         Ok(()) => {
             state.storage_breaker.record_success().await;
+            state.metrics.record_storage_operation("store_trace", true);
+            let cb_state = state.storage_breaker.state().await;
+            state
+                .metrics
+                .set_circuit_breaker_state("storage", circuit_breaker_state_label(cb_state));
             info!(trace_id = %captured.trace_id, "Trace stored successfully");
         }
         Err(e) => {
             state.storage_breaker.record_failure().await;
+            state.metrics.record_storage_operation("store_trace", false);
+            let cb_state = state.storage_breaker.state().await;
+            state
+                .metrics
+                .set_circuit_breaker_state("storage", circuit_breaker_state_label(cb_state));
             error!(trace_id = %captured.trace_id, "Failed to store trace: {}", e);
         }
     }
@@ -856,6 +923,15 @@ fn cap_rejected_response(message: &str, retry_after_secs: u64) -> Response<Body>
         builder = builder.header("retry-after", retry_after_secs.to_string());
     }
     builder.body(Body::from(body.to_string())).unwrap()
+}
+
+/// Map a [`CircuitState`] to the label string used in Prometheus metrics.
+fn circuit_breaker_state_label(state: crate::circuit_breaker::CircuitState) -> &'static str {
+    match state {
+        crate::circuit_breaker::CircuitState::Closed => "closed",
+        crate::circuit_breaker::CircuitState::Open => "open",
+        crate::circuit_breaker::CircuitState::HalfOpen => "half_open",
+    }
 }
 
 /// Build a JSON error response.

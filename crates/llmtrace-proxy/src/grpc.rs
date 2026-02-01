@@ -455,6 +455,7 @@ mod tests {
             report_store: crate::compliance::new_report_store(),
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
+            metrics: crate::metrics::Metrics::new(),
         })
     }
 
