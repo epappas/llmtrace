@@ -13,8 +13,8 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::StreamExt;
 use llmtrace_core::{
-    AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, StorageBackend, TenantId,
-    TraceEvent, TraceSpan,
+    AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding, StorageBackend,
+    TenantId, TraceEvent, TraceSpan,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -291,12 +291,9 @@ pub async fn proxy_handler(
                     acc.total_tokens(),
                 )
             } else {
-                (
-                    String::from_utf8_lossy(&raw_collected).to_string(),
-                    None,
-                    None,
-                    None,
-                )
+                let response_str = String::from_utf8_lossy(&raw_collected).to_string();
+                let (pt, ct, tt) = extract_usage_from_response(&raw_collected);
+                (response_str, pt, ct, tt)
             };
 
         let captured = CapturedInteraction {
@@ -314,11 +311,11 @@ pub async fn proxy_handler(
             total_tokens,
         };
 
-        // --- Async trace capture ---
-        spawn_trace_capture(&state_bg, &captured).await;
+        // --- Security analysis first, so findings can be persisted with the trace ---
+        let security_findings = run_security_analysis(&state_bg, &captured).await;
 
-        // --- Async security analysis ---
-        spawn_security_analysis(&state_bg, &captured).await;
+        // --- Trace capture with enriched security findings ---
+        run_trace_capture(&state_bg, &captured, &security_findings).await;
     });
 
     // Build and return the response to the client
@@ -369,8 +366,82 @@ struct CapturedInteraction {
     total_tokens: Option<u32>,
 }
 
-/// Spawn a background task that stores a trace event (never blocks the response).
-async fn spawn_trace_capture(state: &Arc<AppState>, captured: &CapturedInteraction) {
+/// Extract token usage from a non-streaming response body.
+///
+/// Parses the JSON response and returns `(prompt_tokens, completion_tokens, total_tokens)`.
+fn extract_usage_from_response(body: &[u8]) -> (Option<u32>, Option<u32>, Option<u32>) {
+    let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return (None, None, None);
+    };
+    let usage = &parsed["usage"];
+    (
+        usage["prompt_tokens"].as_u64().map(|v| v as u32),
+        usage["completion_tokens"].as_u64().map(|v| v as u32),
+        usage["total_tokens"].as_u64().map(|v| v as u32),
+    )
+}
+
+/// Run security analysis and return findings.
+///
+/// Called inline within the background task so findings can be attached to
+/// the trace span before storage. Returns an empty vec when analysis is
+/// disabled, the circuit breaker is open, or analysis fails.
+async fn run_security_analysis(
+    state: &Arc<AppState>,
+    captured: &CapturedInteraction,
+) -> Vec<SecurityFinding> {
+    if !state.config.enable_security_analysis {
+        return Vec::new();
+    }
+    if !state.security_breaker.allow().await {
+        debug!(trace_id = %captured.trace_id, "Security circuit breaker open — skipping analysis");
+        return Vec::new();
+    }
+
+    let context = AnalysisContext {
+        tenant_id: captured.tenant_id,
+        trace_id: captured.trace_id,
+        span_id: Uuid::new_v4(),
+        provider: LLMProvider::OpenAI,
+        model_name: captured.model_name.clone(),
+        parameters: std::collections::HashMap::new(),
+    };
+
+    match state
+        .security
+        .analyze_interaction(&captured.prompt_text, &captured.response_text, &context)
+        .await
+    {
+        Ok(findings) => {
+            state.security_breaker.record_success().await;
+            if findings.is_empty() {
+                debug!(trace_id = %captured.trace_id, "Security analysis: no findings");
+            } else {
+                info!(
+                    trace_id = %captured.trace_id,
+                    finding_count = findings.len(),
+                    "Security findings detected"
+                );
+            }
+            findings
+        }
+        Err(e) => {
+            state.security_breaker.record_failure().await;
+            error!(trace_id = %captured.trace_id, "Security analysis failed: {}", e);
+            Vec::new()
+        }
+    }
+}
+
+/// Store a trace event enriched with security findings.
+///
+/// Called inline within the background task after security analysis completes,
+/// ensuring findings are persisted alongside the trace span.
+async fn run_trace_capture(
+    state: &Arc<AppState>,
+    captured: &CapturedInteraction,
+    security_findings: &[SecurityFinding],
+) {
     if !state.config.enable_trace_storage {
         return;
     }
@@ -379,121 +450,54 @@ async fn spawn_trace_capture(state: &Arc<AppState>, captured: &CapturedInteracti
         return;
     }
 
-    let storage = Arc::clone(&state.storage);
-    let breaker = Arc::clone(&state.storage_breaker);
-    let trace_id = captured.trace_id;
-    let tenant_id = captured.tenant_id;
-    let model_name = captured.model_name.clone();
-    let prompt_text = captured.prompt_text.clone();
-    let response_text = captured.response_text.clone();
-    let status_code = captured.status_code;
-    let start_time = captured.start_time;
+    let operation = if captured.is_streaming {
+        "chat_completion_stream"
+    } else {
+        "chat_completion"
+    };
 
-    let is_streaming = captured.is_streaming;
-    let ttft_ms = captured.time_to_first_token_ms;
-    let prompt_tokens = captured.prompt_tokens;
-    let completion_tokens = captured.completion_tokens;
-    let total_tokens = captured.total_tokens;
+    let mut span = TraceSpan::new(
+        captured.trace_id,
+        captured.tenant_id,
+        operation.to_string(),
+        LLMProvider::OpenAI, // default; future loops will detect provider
+        captured.model_name.clone(),
+        captured.prompt_text.clone(),
+    )
+    .finish_with_response(captured.response_text.clone());
 
-    tokio::spawn(async move {
-        let operation = if is_streaming {
-            "chat_completion_stream"
-        } else {
-            "chat_completion"
-        };
+    span.status_code = Some(captured.status_code);
+    span.prompt_tokens = captured.prompt_tokens;
+    span.completion_tokens = captured.completion_tokens;
+    span.total_tokens = captured.total_tokens;
+    span.time_to_first_token_ms = captured.time_to_first_token_ms;
 
-        let span = TraceSpan::new(
-            trace_id,
-            tenant_id,
-            operation.to_string(),
-            LLMProvider::OpenAI, // default; future loops will detect provider
-            model_name,
-            prompt_text,
-        )
-        .finish_with_response(response_text);
+    let end_time = Utc::now();
+    let duration = end_time.signed_duration_since(captured.start_time);
+    span.duration_ms = Some(duration.num_milliseconds().max(0) as u64);
 
-        let mut completed_span = span;
-        completed_span.status_code = Some(status_code);
-        completed_span.prompt_tokens = prompt_tokens;
-        completed_span.completion_tokens = completion_tokens;
-        completed_span.total_tokens = total_tokens;
-        completed_span.time_to_first_token_ms = ttft_ms;
-
-        let end_time = Utc::now();
-        let duration = end_time.signed_duration_since(start_time);
-        completed_span.duration_ms = Some(duration.num_milliseconds().max(0) as u64);
-
-        let trace = TraceEvent {
-            trace_id,
-            tenant_id,
-            spans: vec![completed_span],
-            created_at: start_time,
-        };
-
-        match storage.store_trace(&trace).await {
-            Ok(()) => {
-                breaker.record_success().await;
-                info!(%trace_id, "Trace stored successfully");
-            }
-            Err(e) => {
-                breaker.record_failure().await;
-                error!(%trace_id, "Failed to store trace: {}", e);
-            }
-        }
-    });
-}
-
-/// Spawn a background task that performs security analysis (never blocks the response).
-async fn spawn_security_analysis(state: &Arc<AppState>, captured: &CapturedInteraction) {
-    if !state.config.enable_security_analysis {
-        return;
-    }
-    if !state.security_breaker.allow().await {
-        debug!(trace_id = %captured.trace_id, "Security circuit breaker open — skipping analysis");
-        return;
+    // Attach security findings to the span
+    for finding in security_findings {
+        span.add_security_finding(finding.clone());
     }
 
-    let security = Arc::clone(&state.security);
-    let breaker = Arc::clone(&state.security_breaker);
-    let trace_id = captured.trace_id;
-    let tenant_id = captured.tenant_id;
-    let model_name = captured.model_name.clone();
-    let prompt_text = captured.prompt_text.clone();
-    let response_text = captured.response_text.clone();
+    let trace = TraceEvent {
+        trace_id: captured.trace_id,
+        tenant_id: captured.tenant_id,
+        spans: vec![span],
+        created_at: captured.start_time,
+    };
 
-    tokio::spawn(async move {
-        let context = AnalysisContext {
-            tenant_id,
-            trace_id,
-            span_id: Uuid::new_v4(),
-            provider: LLMProvider::OpenAI,
-            model_name,
-            parameters: std::collections::HashMap::new(),
-        };
-
-        let result = security
-            .analyze_interaction(&prompt_text, &response_text, &context)
-            .await;
-
-        match result {
-            Ok(findings) => {
-                breaker.record_success().await;
-                if findings.is_empty() {
-                    debug!(%trace_id, "Security analysis: no findings");
-                } else {
-                    info!(
-                        %trace_id,
-                        finding_count = findings.len(),
-                        "Security findings detected"
-                    );
-                }
-            }
-            Err(e) => {
-                breaker.record_failure().await;
-                error!(%trace_id, "Security analysis failed: {}", e);
-            }
+    match state.storage.store_trace(&trace).await {
+        Ok(()) => {
+            state.storage_breaker.record_success().await;
+            info!(trace_id = %captured.trace_id, "Trace stored successfully");
         }
-    });
+        Err(e) => {
+            state.storage_breaker.record_failure().await;
+            error!(trace_id = %captured.trace_id, "Failed to store trace: {}", e);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
