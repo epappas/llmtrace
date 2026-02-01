@@ -959,6 +959,7 @@ mod tests {
             toxicity_enabled: true,
             toxicity_threshold: 0.5,
             block_on_critical: false,
+            ..Default::default()
         }
     }
 
@@ -1047,6 +1048,7 @@ mod tests {
             toxicity_enabled: false,
             toxicity_threshold: 0.5,
             block_on_critical: false,
+            ..Default::default()
         };
         let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
 
@@ -1074,6 +1076,7 @@ mod tests {
             toxicity_enabled: false,
             toxicity_threshold: 0.5,
             block_on_critical: false,
+            ..Default::default()
         };
         let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
 

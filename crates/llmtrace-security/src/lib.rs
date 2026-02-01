@@ -23,6 +23,9 @@ use llmtrace_core::{
 use regex::Regex;
 use std::collections::HashMap as StdHashMap;
 
+pub use jailbreak_detector::{JailbreakConfig, JailbreakDetector, JailbreakResult};
+
+pub mod jailbreak_detector;
 pub mod normalise;
 pub mod pii_validation;
 
@@ -32,6 +35,8 @@ pub mod ensemble;
 pub mod feature_extraction;
 #[cfg(feature = "ml")]
 pub mod fusion_classifier;
+#[cfg(feature = "ml")]
+pub mod hallucination_detector;
 #[cfg(feature = "ml")]
 pub mod inference_stats;
 #[cfg(feature = "ml")]
@@ -49,6 +54,8 @@ pub use ensemble::EnsembleSecurityAnalyzer;
 pub use feature_extraction::{extract_heuristic_features, HEURISTIC_FEATURE_DIM};
 #[cfg(feature = "ml")]
 pub use fusion_classifier::FusionClassifier;
+#[cfg(feature = "ml")]
+pub use hallucination_detector::{HallucinationDetector, HallucinationResult};
 #[cfg(feature = "ml")]
 pub use inference_stats::{InferenceStats, InferenceStatsTracker};
 #[cfg(feature = "ml")]
@@ -174,6 +181,8 @@ pub struct RegexSecurityAnalyzer {
     leakage_patterns: Vec<DetectionPattern>,
     /// Pre-compiled regex for identifying base64 candidates in text
     base64_candidate_regex: Regex,
+    /// Dedicated jailbreak detector (runs alongside injection detection)
+    jailbreak_detector: JailbreakDetector,
 }
 
 impl RegexSecurityAnalyzer {
@@ -183,11 +192,23 @@ impl RegexSecurityAnalyzer {
     ///
     /// Returns an error if any regex pattern fails to compile.
     pub fn new() -> Result<Self> {
+        Self::with_jailbreak_config(JailbreakConfig::default())
+    }
+
+    /// Create a new regex-based security analyzer with custom jailbreak configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any regex pattern fails to compile.
+    pub fn with_jailbreak_config(jailbreak_config: JailbreakConfig) -> Result<Self> {
         let injection_patterns = Self::build_injection_patterns()?;
         let pii_patterns = Self::build_pii_patterns()?;
         let leakage_patterns = Self::build_leakage_patterns()?;
         let base64_candidate_regex = Regex::new(r"[A-Za-z0-9+/]{20,}={0,2}").map_err(|e| {
             LLMTraceError::Security(format!("Failed to compile base64 regex: {}", e))
+        })?;
+        let jailbreak_detector = JailbreakDetector::new(jailbreak_config).map_err(|e| {
+            LLMTraceError::Security(format!("Failed to create jailbreak detector: {}", e))
         })?;
 
         Ok(Self {
@@ -195,6 +216,7 @@ impl RegexSecurityAnalyzer {
             pii_patterns,
             leakage_patterns,
             base64_candidate_regex,
+            jailbreak_detector,
         })
     }
 
@@ -1340,6 +1362,11 @@ impl SecurityAnalyzer for RegexSecurityAnalyzer {
         let normalised = normalise::normalise_text(prompt);
         let mut findings = self.detect_injection_patterns(&normalised);
         findings.extend(self.detect_pii_patterns(&normalised));
+
+        // Dedicated jailbreak detection (runs alongside injection detection —
+        // a text can be BOTH a prompt injection AND a jailbreak attempt)
+        let jailbreak_result = self.jailbreak_detector.detect(&normalised);
+        findings.extend(jailbreak_result.findings);
 
         // Tag all request findings with their location
         for finding in &mut findings {

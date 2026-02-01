@@ -297,6 +297,23 @@ output_safety:
   # (severe_toxic, threat, or score >= 0.9). Use with caution.
   block_on_critical: false
 
+  # --- Hallucination detection (R9) ---
+  # Enable hallucination detection on response content. Uses a two-stage
+  # pipeline: a sentinel heuristic gates expensive cross-encoder inference,
+  # then each response sentence is scored against the user's prompt for
+  # factual consistency.
+  hallucination_enabled: false
+  # HuggingFace model ID for the cross-encoder hallucination detector.
+  # The model scores (premise, hypothesis) pairs for factual consistency.
+  hallucination_model: "vectara/hallucination_evaluation_model"
+  # Threshold below which a sentence is considered potentially hallucinated
+  # (0.0–1.0). Lower values are more permissive; higher values flag more.
+  hallucination_threshold: 0.5
+  # Minimum response length (in characters) to run hallucination detection.
+  # Responses shorter than this are skipped to avoid false positives on
+  # brief answers and save compute.
+  hallucination_min_response_length: 50
+
 # ---------------------------------------------------------------------------
 # ML-based security analysis
 # ---------------------------------------------------------------------------
@@ -318,6 +335,12 @@ output_safety:
 #   ner_enabled: false
 #   # HuggingFace model ID for NER-based PII detection.
 #   ner_model: "dslim/bert-base-NER"
+#   # Enable dedicated jailbreak detection (runs alongside prompt injection detection).
+#   # Detects DAN/character jailbreaks, system prompt extraction, privilege escalation,
+#   # and encoding-based evasion (base64, ROT13, leetspeak, reversed text).
+#   jailbreak_enabled: true
+#   # Confidence threshold for jailbreak detection (0.0–1.0).
+#   jailbreak_threshold: 0.7
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown — connection draining and task completion

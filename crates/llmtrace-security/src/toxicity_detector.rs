@@ -576,6 +576,7 @@ mod tests {
             toxicity_enabled: false,
             toxicity_threshold: 0.7,
             block_on_critical: false,
+            ..Default::default()
         };
         let detector = ToxicityDetector::new(&config).await.unwrap();
         assert!(!detector.is_model_loaded());

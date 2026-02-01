@@ -1399,8 +1399,8 @@ impl Default for StreamingAnalysisConfig {
 /// Output safety configuration for response content analysis.
 ///
 /// When enabled, the proxy analyses LLM response content for toxicity,
-/// PII leakage, and secret exposure. This is a post-processing step that
-/// runs after the upstream response is received.
+/// PII leakage, secret exposure, and hallucination detection. This is a
+/// post-processing step that runs after the upstream response is received.
 ///
 /// # Example (YAML)
 ///
@@ -1410,6 +1410,10 @@ impl Default for StreamingAnalysisConfig {
 ///   toxicity_enabled: true
 ///   toxicity_threshold: 0.7
 ///   block_on_critical: false
+///   hallucination_enabled: false
+///   hallucination_model: "vectara/hallucination_evaluation_model"
+///   hallucination_threshold: 0.5
+///   hallucination_min_response_length: 50
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputSafetyConfig {
@@ -1425,10 +1429,39 @@ pub struct OutputSafetyConfig {
     /// Block (replace) the response if critical toxicity is detected.
     #[serde(default)]
     pub block_on_critical: bool,
+    /// Enable hallucination detection on response content.
+    ///
+    /// When enabled, response sentences are scored against the user's prompt
+    /// for factual consistency using a cross-encoder model.
+    #[serde(default)]
+    pub hallucination_enabled: bool,
+    /// HuggingFace model ID for hallucination detection.
+    #[serde(default = "default_hallucination_model")]
+    pub hallucination_model: String,
+    /// Threshold below which a sentence is considered potentially hallucinated
+    /// (0.0–1.0). Sentences scoring below this are flagged.
+    #[serde(default = "default_hallucination_threshold")]
+    pub hallucination_threshold: f32,
+    /// Minimum response length (in characters) to run hallucination detection.
+    /// Responses shorter than this are skipped to save compute.
+    #[serde(default = "default_hallucination_min_response_length")]
+    pub hallucination_min_response_length: usize,
 }
 
 fn default_toxicity_threshold() -> f32 {
     0.7
+}
+
+fn default_hallucination_model() -> String {
+    "vectara/hallucination_evaluation_model".to_string()
+}
+
+fn default_hallucination_threshold() -> f32 {
+    0.5
+}
+
+fn default_hallucination_min_response_length() -> usize {
+    50
 }
 
 impl Default for OutputSafetyConfig {
@@ -1438,6 +1471,10 @@ impl Default for OutputSafetyConfig {
             toxicity_enabled: false,
             toxicity_threshold: default_toxicity_threshold(),
             block_on_critical: false,
+            hallucination_enabled: false,
+            hallucination_model: default_hallucination_model(),
+            hallucination_threshold: default_hallucination_threshold(),
+            hallucination_min_response_length: default_hallucination_min_response_length(),
         }
     }
 }
@@ -1538,6 +1575,8 @@ impl Default for ShutdownConfig {
 ///   ml_download_timeout_seconds: 300
 ///   ner_enabled: true
 ///   ner_model: "dslim/bert-base-NER"
+///   jailbreak_enabled: true
+///   jailbreak_threshold: 0.7
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAnalysisConfig {
@@ -1578,6 +1617,16 @@ pub struct SecurityAnalysisConfig {
     /// (suitable for architecture validation; not for production inference).
     #[serde(default)]
     pub fusion_model_path: Option<String>,
+    /// Enable dedicated jailbreak detection (runs alongside prompt injection).
+    ///
+    /// When `true` (the default when security analysis is enabled), a separate
+    /// jailbreak detector with heuristic patterns and encoding evasion checks
+    /// is run on every request.
+    #[serde(default = "default_jailbreak_enabled")]
+    pub jailbreak_enabled: bool,
+    /// Confidence threshold for jailbreak detection (0.0–1.0).
+    #[serde(default = "default_jailbreak_threshold")]
+    pub jailbreak_threshold: f32,
 }
 
 fn default_ml_model() -> String {
@@ -1604,6 +1653,14 @@ fn default_ner_model() -> String {
     "dslim/bert-base-NER".to_string()
 }
 
+fn default_jailbreak_enabled() -> bool {
+    true
+}
+
+fn default_jailbreak_threshold() -> f32 {
+    0.7
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -1617,6 +1674,8 @@ impl Default for SecurityAnalysisConfig {
             ner_model: default_ner_model(),
             fusion_enabled: false,
             fusion_model_path: None,
+            jailbreak_enabled: default_jailbreak_enabled(),
+            jailbreak_threshold: default_jailbreak_threshold(),
         }
     }
 }
@@ -2604,6 +2663,8 @@ mod tests {
                 ner_model: default_ner_model(),
                 fusion_enabled: false,
                 fusion_model_path: None,
+                jailbreak_enabled: true,
+                jailbreak_threshold: 0.7,
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -3059,6 +3120,8 @@ mod tests {
         assert_eq!(config.security_analysis.ner_model, "dslim/bert-base-NER");
         assert!(!config.security_analysis.fusion_enabled);
         assert!(config.security_analysis.fusion_model_path.is_none());
+        assert!(config.security_analysis.jailbreak_enabled);
+        assert!((config.security_analysis.jailbreak_threshold - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -3077,6 +3140,8 @@ mod tests {
         assert_eq!(config.ner_model, "dslim/bert-base-NER");
         assert!(!config.fusion_enabled);
         assert!(config.fusion_model_path.is_none());
+        assert!(config.jailbreak_enabled);
+        assert!((config.jailbreak_threshold - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -3092,6 +3157,8 @@ mod tests {
             ner_model: "dslim/bert-base-NER".to_string(),
             fusion_enabled: false,
             fusion_model_path: None,
+            jailbreak_enabled: true,
+            jailbreak_threshold: 0.7,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();
