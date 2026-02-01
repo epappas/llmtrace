@@ -1,13 +1,15 @@
-//! SQLite storage backend implementation.
+//! SQLite storage backend implementations.
 //!
-//! Stores traces and spans in a local SQLite database with proper schema,
-//! indexes, and query filtering support.
+//! Provides [`SqliteTraceRepository`] for trace/span storage and
+//! [`SqliteMetadataRepository`] for tenant/config/audit storage,
+//! both backed by a shared SQLite connection pool.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    LLMProvider, LLMTraceError, Result, SecurityFinding, SpanEvent, StorageBackend, StorageStats,
-    TenantId, TraceEvent, TraceQuery, TraceSpan,
+    AuditEvent, AuditQuery, LLMProvider, LLMTraceError, MetadataRepository, Result,
+    SecurityFinding, SpanEvent, StorageStats, Tenant, TenantConfig, TenantId, TraceEvent,
+    TraceQuery, TraceRepository, TraceSpan,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -16,10 +18,10 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// Schema migrations — executed once on startup
+// Schema migrations
 // ---------------------------------------------------------------------------
 
-const MIGRATIONS: &[&str] = &[
+const TRACE_MIGRATIONS: &[&str] = &[
     // Trace-level metadata
     "CREATE TABLE IF NOT EXISTS traces (
         trace_id TEXT NOT NULL,
@@ -62,6 +64,69 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_spans_security ON spans(tenant_id, security_score)",
     "CREATE INDEX IF NOT EXISTS idx_spans_operation ON spans(tenant_id, operation_name)",
 ];
+
+const METADATA_MIGRATIONS: &[&str] = &[
+    "CREATE TABLE IF NOT EXISTS tenants (
+        id TEXT NOT NULL PRIMARY KEY,
+        name TEXT NOT NULL,
+        plan TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        config TEXT NOT NULL DEFAULT '{}'
+    )",
+    "CREATE TABLE IF NOT EXISTS tenant_configs (
+        tenant_id TEXT NOT NULL PRIMARY KEY,
+        security_thresholds TEXT NOT NULL DEFAULT '{}',
+        feature_flags TEXT NOT NULL DEFAULT '{}'
+    )",
+    "CREATE TABLE IF NOT EXISTS audit_events (
+        id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        data TEXT NOT NULL DEFAULT '{}',
+        timestamp TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_events(tenant_id, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(tenant_id, event_type)",
+];
+
+// ---------------------------------------------------------------------------
+// Shared pool builder
+// ---------------------------------------------------------------------------
+
+/// Open (or create) a SQLite connection pool configured for LLMTrace.
+pub(crate) async fn open_pool(database_url: &str) -> Result<SqlitePool> {
+    let connect_opts = SqliteConnectOptions::from_str(database_url)
+        .map_err(|e| LLMTraceError::Storage(format!("Invalid database URL: {e}")))?
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal);
+
+    // For in-memory databases every connection gets its own database, so
+    // restrict the pool to a single connection to keep a consistent view.
+    let max_conns: u32 = if database_url.contains(":memory:") {
+        1
+    } else {
+        10
+    };
+
+    sqlx::pool::PoolOptions::<Sqlite>::new()
+        .max_connections(max_conns)
+        .connect_with(connect_opts)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to connect to SQLite: {e}")))
+}
+
+/// Run a list of migration statements against the given pool.
+pub(crate) async fn run_migrations(pool: &SqlitePool, statements: &[&str]) -> Result<()> {
+    for statement in statements {
+        sqlx::query(statement)
+            .execute(pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Migration failed: {e}")))?;
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Serialisation helpers
@@ -170,64 +235,40 @@ fn span_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TraceSpan> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// SqliteStorage
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// SqliteTraceRepository
+// ===========================================================================
 
-/// SQLite-backed storage for LLMTrace data.
+/// SQLite-backed trace repository.
 ///
 /// Stores trace metadata in a `traces` table and individual spans in a `spans`
 /// table with proper indexes for efficient querying by tenant, time range,
 /// provider, model, and security score.
-pub struct SqliteStorage {
+pub struct SqliteTraceRepository {
     pool: SqlitePool,
 }
 
-impl SqliteStorage {
-    /// Open (or create) a SQLite database and run schema migrations.
+impl SqliteTraceRepository {
+    /// Open (or create) a SQLite database and run trace schema migrations.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// # async fn example() -> llmtrace_core::Result<()> {
-    /// let storage = llmtrace_storage::SqliteStorage::new("sqlite::memory:").await?;
+    /// let repo = llmtrace_storage::SqliteTraceRepository::new("sqlite::memory:").await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn new(database_url: &str) -> Result<Self> {
-        let connect_opts = SqliteConnectOptions::from_str(database_url)
-            .map_err(|e| LLMTraceError::Storage(format!("Invalid database URL: {e}")))?
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal);
-
-        // For in-memory databases every connection gets its own database, so
-        // restrict the pool to a single connection to keep a consistent view.
-        let max_conns: u32 = if database_url.contains(":memory:") {
-            1
-        } else {
-            10
-        };
-
-        let pool = sqlx::pool::PoolOptions::<Sqlite>::new()
-            .max_connections(max_conns)
-            .connect_with(connect_opts)
-            .await
-            .map_err(|e| LLMTraceError::Storage(format!("Failed to connect to SQLite: {e}")))?;
-
-        let storage = Self { pool };
-        storage.run_migrations().await?;
-        Ok(storage)
+        let pool = open_pool(database_url).await?;
+        run_migrations(&pool, TRACE_MIGRATIONS).await?;
+        Ok(Self { pool })
     }
 
-    /// Execute all migration statements.
-    async fn run_migrations(&self) -> Result<()> {
-        for statement in MIGRATIONS {
-            sqlx::query(statement)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| LLMTraceError::Storage(format!("Migration failed: {e}")))?;
-        }
-        Ok(())
+    /// Create from an existing pool (used by [`StorageProfile`](crate::StorageProfile) factory).
+    pub(crate) async fn from_pool(pool: SqlitePool) -> Result<Self> {
+        run_migrations(&pool, TRACE_MIGRATIONS).await?;
+        Ok(Self { pool })
     }
 
     /// Insert a single span using the provided executor (pool or transaction).
@@ -432,12 +473,8 @@ impl SqliteStorage {
     }
 }
 
-// ---------------------------------------------------------------------------
-// StorageBackend implementation
-// ---------------------------------------------------------------------------
-
 #[async_trait]
-impl StorageBackend for SqliteStorage {
+impl TraceRepository for SqliteTraceRepository {
     async fn store_trace(&self, trace: &TraceEvent) -> Result<()> {
         let mut tx = self
             .pool
@@ -445,7 +482,6 @@ impl StorageBackend for SqliteStorage {
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to begin transaction: {e}")))?;
 
-        // Upsert trace metadata
         sqlx::query(
             "INSERT OR REPLACE INTO traces (trace_id, tenant_id, created_at) VALUES (?1, ?2, ?3)",
         )
@@ -456,7 +492,6 @@ impl StorageBackend for SqliteStorage {
         .await
         .map_err(|e| LLMTraceError::Storage(format!("Failed to insert trace: {e}")))?;
 
-        // Upsert every span
         for span in &trace.spans {
             self.insert_span(&mut *tx, span).await?;
         }
@@ -475,7 +510,6 @@ impl StorageBackend for SqliteStorage {
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to begin transaction: {e}")))?;
 
-        // Ensure a parent trace row exists (idempotent)
         sqlx::query(
             "INSERT OR IGNORE INTO traces (trace_id, tenant_id, created_at) VALUES (?1, ?2, ?3)",
         )
@@ -496,7 +530,6 @@ impl StorageBackend for SqliteStorage {
     }
 
     async fn query_traces(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
-        // Step 1: find matching trace IDs via span-level filters
         let mut qb = self.build_trace_id_query(query);
         let rows = qb
             .build()
@@ -505,12 +538,10 @@ impl StorageBackend for SqliteStorage {
             .map_err(|e| LLMTraceError::Storage(format!("Failed to query trace IDs: {e}")))?;
 
         let trace_ids: Vec<String> = rows.iter().map(|r| r.get("trace_id")).collect();
-
         if trace_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Step 2: load trace metadata
         let mut meta_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM traces WHERE tenant_id = ");
         meta_qb.push_bind(query.tenant_id.0.to_string());
         meta_qb.push(" AND trace_id IN (");
@@ -525,12 +556,10 @@ impl StorageBackend for SqliteStorage {
                 LLMTraceError::Storage(format!("Failed to load trace metadata: {e}"))
             })?;
 
-        // Step 3: load all spans for these traces
         let spans_map = self
             .load_spans_for_traces(&query.tenant_id, &trace_ids)
             .await?;
 
-        // Step 4: reconstruct TraceEvent objects
         let mut results = Vec::with_capacity(meta_rows.len());
         for row in &meta_rows {
             let tid_str: String = row.get("trace_id");
@@ -575,7 +604,6 @@ impl StorageBackend for SqliteStorage {
 
         let created_at = parse_datetime(&row.get::<String, _>("created_at"))?;
 
-        // Load spans for the trace
         let span_rows = sqlx::query(
             "SELECT * FROM spans WHERE tenant_id = ?1 AND trace_id = ?2 ORDER BY start_time ASC",
         )
@@ -623,7 +651,6 @@ impl StorageBackend for SqliteStorage {
         let before_str = before.to_rfc3339();
         let tid = tenant_id.0.to_string();
 
-        // Delete child spans first
         sqlx::query(
             "DELETE FROM spans WHERE tenant_id = ?1 AND trace_id IN \
              (SELECT trace_id FROM traces WHERE tenant_id = ?2 AND created_at < ?3)",
@@ -635,7 +662,6 @@ impl StorageBackend for SqliteStorage {
         .await
         .map_err(|e| LLMTraceError::Storage(format!("Failed to delete spans: {e}")))?;
 
-        // Delete traces
         let result = sqlx::query("DELETE FROM traces WHERE tenant_id = ?1 AND created_at < ?2")
             .bind(&tid)
             .bind(&before_str)
@@ -714,6 +740,259 @@ impl StorageBackend for SqliteStorage {
     }
 }
 
+// ===========================================================================
+// SqliteMetadataRepository
+// ===========================================================================
+
+/// SQLite-backed metadata repository for tenants, configurations, and audit events.
+pub struct SqliteMetadataRepository {
+    pool: SqlitePool,
+}
+
+impl SqliteMetadataRepository {
+    /// Open (or create) a SQLite database and run metadata schema migrations.
+    pub async fn new(database_url: &str) -> Result<Self> {
+        let pool = open_pool(database_url).await?;
+        run_migrations(&pool, METADATA_MIGRATIONS).await?;
+        Ok(Self { pool })
+    }
+
+    /// Create from an existing pool (used by [`StorageProfile`](crate::StorageProfile) factory).
+    pub(crate) async fn from_pool(pool: SqlitePool) -> Result<Self> {
+        run_migrations(&pool, METADATA_MIGRATIONS).await?;
+        Ok(Self { pool })
+    }
+}
+
+#[async_trait]
+impl MetadataRepository for SqliteMetadataRepository {
+    async fn create_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let config_json = serde_json::to_string(&tenant.config)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO tenants (id, name, plan, created_at, config) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .bind(tenant.id.0.to_string())
+        .bind(&tenant.name)
+        .bind(&tenant.plan)
+        .bind(tenant.created_at.to_rfc3339())
+        .bind(&config_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create tenant: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>> {
+        let row = sqlx::query("SELECT * FROM tenants WHERE id = ?1")
+            .bind(id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get tenant: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let config_str: String = row.get("config");
+        let config: serde_json::Value = serde_json::from_str(&config_str)
+            .map_err(|e| LLMTraceError::Storage(format!("Invalid tenant config JSON: {e}")))?;
+
+        Ok(Some(Tenant {
+            id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
+            name: row.get("name"),
+            plan: row.get("plan"),
+            created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+            config,
+        }))
+    }
+
+    async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let config_json = serde_json::to_string(&tenant.config)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
+
+        let result =
+            sqlx::query("UPDATE tenants SET name = ?1, plan = ?2, config = ?3 WHERE id = ?4")
+                .bind(&tenant.name)
+                .bind(&tenant.plan)
+                .bind(&config_json)
+                .bind(tenant.id.0.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to update tenant: {e}")))?;
+
+        if result.rows_affected() == 0 {
+            return Err(LLMTraceError::InvalidTenant {
+                tenant_id: tenant.id,
+            });
+        }
+        Ok(())
+    }
+
+    async fn list_tenants(&self) -> Result<Vec<Tenant>> {
+        let rows = sqlx::query("SELECT * FROM tenants ORDER BY created_at DESC")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to list tenants: {e}")))?;
+
+        rows.iter()
+            .map(|row| {
+                let config_str: String = row.get("config");
+                let config: serde_json::Value = serde_json::from_str(&config_str).map_err(|e| {
+                    LLMTraceError::Storage(format!("Invalid tenant config JSON: {e}"))
+                })?;
+                Ok(Tenant {
+                    id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
+                    name: row.get("name"),
+                    plan: row.get("plan"),
+                    created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+                    config,
+                })
+            })
+            .collect()
+    }
+
+    async fn delete_tenant(&self, id: TenantId) -> Result<()> {
+        sqlx::query("DELETE FROM tenants WHERE id = ?1")
+            .bind(id.0.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to delete tenant: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_tenant_config(&self, tenant_id: TenantId) -> Result<Option<TenantConfig>> {
+        let row = sqlx::query("SELECT * FROM tenant_configs WHERE tenant_id = ?1")
+            .bind(tenant_id.0.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get tenant config: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let thresholds_str: String = row.get("security_thresholds");
+        let flags_str: String = row.get("feature_flags");
+
+        Ok(Some(TenantConfig {
+            tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+            security_thresholds: serde_json::from_str(&thresholds_str).map_err(|e| {
+                LLMTraceError::Storage(format!("Invalid security_thresholds JSON: {e}"))
+            })?,
+            feature_flags: serde_json::from_str(&flags_str)
+                .map_err(|e| LLMTraceError::Storage(format!("Invalid feature_flags JSON: {e}")))?,
+        }))
+    }
+
+    async fn upsert_tenant_config(&self, config: &TenantConfig) -> Result<()> {
+        let thresholds_json = serde_json::to_string(&config.security_thresholds)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize thresholds: {e}")))?;
+        let flags_json = serde_json::to_string(&config.feature_flags)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize feature_flags: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO tenant_configs (tenant_id, security_thresholds, feature_flags)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(tenant_id) DO UPDATE SET
+                security_thresholds = excluded.security_thresholds,
+                feature_flags = excluded.feature_flags",
+        )
+        .bind(config.tenant_id.0.to_string())
+        .bind(&thresholds_json)
+        .bind(&flags_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to upsert tenant config: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn record_audit_event(&self, event: &AuditEvent) -> Result<()> {
+        let data_json = serde_json::to_string(&event.data)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize audit data: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO audit_events (id, tenant_id, event_type, actor, resource, data, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(event.id.to_string())
+        .bind(event.tenant_id.0.to_string())
+        .bind(&event.event_type)
+        .bind(&event.actor)
+        .bind(&event.resource)
+        .bind(&data_json)
+        .bind(event.timestamp.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to record audit event: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn query_audit_events(&self, query: &AuditQuery) -> Result<Vec<AuditEvent>> {
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT * FROM audit_events WHERE tenant_id = ");
+        qb.push_bind(query.tenant_id.0.to_string());
+
+        if let Some(ref event_type) = query.event_type {
+            qb.push(" AND event_type = ");
+            qb.push_bind(event_type.clone());
+        }
+        if let Some(ref start) = query.start_time {
+            qb.push(" AND timestamp >= ");
+            qb.push_bind(start.to_rfc3339());
+        }
+        if let Some(ref end) = query.end_time {
+            qb.push(" AND timestamp <= ");
+            qb.push_bind(end.to_rfc3339());
+        }
+
+        qb.push(" ORDER BY timestamp DESC");
+
+        if let Some(limit) = query.limit {
+            qb.push(" LIMIT ");
+            qb.push_bind(limit as i64);
+        }
+        if let Some(offset) = query.offset {
+            qb.push(" OFFSET ");
+            qb.push_bind(offset as i64);
+        }
+
+        let rows =
+            qb.build().fetch_all(&self.pool).await.map_err(|e| {
+                LLMTraceError::Storage(format!("Failed to query audit events: {e}"))
+            })?;
+
+        rows.iter()
+            .map(|row| {
+                let data_str: String = row.get("data");
+                let data: serde_json::Value = serde_json::from_str(&data_str).map_err(|e| {
+                    LLMTraceError::Storage(format!("Invalid audit event data JSON: {e}"))
+                })?;
+                Ok(AuditEvent {
+                    id: parse_uuid(&row.get::<String, _>("id"))?,
+                    tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+                    event_type: row.get("event_type"),
+                    actor: row.get("actor"),
+                    resource: row.get("resource"),
+                    data,
+                    timestamp: parse_datetime(&row.get::<String, _>("timestamp"))?,
+                })
+            })
+            .collect()
+    }
+
+    async fn health_check(&self) -> Result<()> {
+        sqlx::query("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Metadata health check failed: {e}")))?;
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -723,9 +1002,9 @@ mod tests {
     use super::*;
     use llmtrace_core::{SecurityFinding, SecuritySeverity, SpanEvent};
 
-    /// Create a fresh in-memory [`SqliteStorage`] for testing.
-    async fn test_storage() -> SqliteStorage {
-        SqliteStorage::new("sqlite::memory:").await.unwrap()
+    /// Create a fresh in-memory [`SqliteTraceRepository`] for testing.
+    async fn test_storage() -> SqliteTraceRepository {
+        SqliteTraceRepository::new("sqlite::memory:").await.unwrap()
     }
 
     /// Build a minimal [`TraceSpan`] for testing.
@@ -799,7 +1078,6 @@ mod tests {
         assert_eq!(retrieved.provider, LLMProvider::Anthropic);
         assert_eq!(retrieved.model_name, "claude-3");
 
-        // A trace row should also have been created
         let trace = storage
             .get_trace(tenant, trace_id)
             .await
@@ -858,7 +1136,6 @@ mod tests {
         let old_time = Utc::now() - chrono::Duration::hours(2);
         let recent_time = Utc::now();
 
-        // Old trace
         let trace_id_old = Uuid::new_v4();
         let mut span_old = make_span(trace_id_old, tenant, LLMProvider::OpenAI, "gpt-4");
         span_old.start_time = old_time;
@@ -869,7 +1146,6 @@ mod tests {
             created_at: old_time,
         };
 
-        // Recent trace
         let trace_id_new = Uuid::new_v4();
         let mut span_new = make_span(trace_id_new, tenant, LLMProvider::OpenAI, "gpt-4");
         span_new.start_time = recent_time;
@@ -883,7 +1159,6 @@ mod tests {
         storage.store_trace(&old_trace).await.unwrap();
         storage.store_trace(&new_trace).await.unwrap();
 
-        // Query only recent traces (last hour)
         let one_hour_ago = Utc::now() - chrono::Duration::hours(1);
         let query = TraceQuery::new(tenant).with_time_range(one_hour_ago, Utc::now());
         let results = storage.query_traces(&query).await.unwrap();
@@ -896,7 +1171,6 @@ mod tests {
         let storage = test_storage().await;
         let tenant = TenantId::new();
 
-        // OpenAI trace
         let tid1 = Uuid::new_v4();
         let t1 = TraceEvent {
             trace_id: tid1,
@@ -904,7 +1178,6 @@ mod tests {
             spans: vec![make_span(tid1, tenant, LLMProvider::OpenAI, "gpt-4")],
             created_at: Utc::now(),
         };
-        // Anthropic trace
         let tid2 = Uuid::new_v4();
         let t2 = TraceEvent {
             trace_id: tid2,
@@ -935,7 +1208,6 @@ mod tests {
             "test finding".to_string(),
             0.99,
         ));
-        // security_score should now be 95
 
         let trace = TraceEvent {
             trace_id: tid,
@@ -944,8 +1216,6 @@ mod tests {
             created_at: Utc::now(),
         };
         storage.store_trace(&trace).await.unwrap();
-
-        // Also store a benign trace
         storage.store_trace(&make_trace(tenant)).await.unwrap();
 
         let query = TraceQuery::new(tenant).with_security_score_range(80, 100);
@@ -959,7 +1229,6 @@ mod tests {
         let storage = test_storage().await;
         let tenant = TenantId::new();
 
-        // Insert 5 traces
         for _ in 0..5 {
             storage.store_trace(&make_trace(tenant)).await.unwrap();
         }
@@ -973,7 +1242,6 @@ mod tests {
         let page2 = storage.query_traces(&query2).await.unwrap();
         assert_eq!(page2.len(), 2);
 
-        // Pages should not overlap
         let ids1: Vec<Uuid> = page1.iter().map(|t| t.trace_id).collect();
         let ids2: Vec<Uuid> = page2.iter().map(|t| t.trace_id).collect();
         for id in &ids2 {
@@ -994,8 +1262,6 @@ mod tests {
             .unwrap();
         assert!(results.is_empty());
     }
-
-    // -- query_spans -------------------------------------------------------
 
     #[tokio::test]
     async fn test_query_spans_directly() {
@@ -1027,8 +1293,6 @@ mod tests {
         assert_eq!(spans[0].provider, LLMProvider::OpenAI);
     }
 
-    // -- delete ------------------------------------------------------------
-
     #[tokio::test]
     async fn test_delete_traces_before() {
         let storage = test_storage().await;
@@ -1037,7 +1301,6 @@ mod tests {
         let old_time = Utc::now() - chrono::Duration::hours(2);
         let recent_time = Utc::now();
 
-        // Old trace
         let tid_old = Uuid::new_v4();
         let old_trace = TraceEvent {
             trace_id: tid_old,
@@ -1045,7 +1308,6 @@ mod tests {
             spans: vec![make_span(tid_old, tenant, LLMProvider::OpenAI, "gpt-4")],
             created_at: old_time,
         };
-        // Recent trace
         let tid_new = Uuid::new_v4();
         let new_trace = TraceEvent {
             trace_id: tid_new,
@@ -1057,12 +1319,10 @@ mod tests {
         storage.store_trace(&old_trace).await.unwrap();
         storage.store_trace(&new_trace).await.unwrap();
 
-        // Delete traces older than 1 hour
         let cutoff = Utc::now() - chrono::Duration::hours(1);
         let deleted = storage.delete_traces_before(tenant, cutoff).await.unwrap();
         assert_eq!(deleted, 1);
 
-        // Only recent trace should remain
         let remaining = storage
             .query_traces(&TraceQuery::new(tenant))
             .await
@@ -1070,19 +1330,15 @@ mod tests {
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].trace_id, tid_new);
 
-        // Spans of deleted trace should also be gone
         let old_span = storage.get_trace(tenant, tid_old).await.unwrap();
         assert!(old_span.is_none());
     }
-
-    // -- stats -------------------------------------------------------------
 
     #[tokio::test]
     async fn test_get_stats() {
         let storage = test_storage().await;
         let tenant = TenantId::new();
 
-        // Store two traces with one span each
         storage.store_trace(&make_trace(tenant)).await.unwrap();
         storage.store_trace(&make_trace(tenant)).await.unwrap();
 
@@ -1105,15 +1361,11 @@ mod tests {
         assert!(stats.oldest_trace.is_none());
     }
 
-    // -- health check ------------------------------------------------------
-
     #[tokio::test]
     async fn test_health_check() {
         let storage = test_storage().await;
         assert!(storage.health_check().await.is_ok());
     }
-
-    // -- idempotent store --------------------------------------------------
 
     #[tokio::test]
     async fn test_duplicate_store_is_idempotent() {
@@ -1122,7 +1374,7 @@ mod tests {
         let trace = make_trace(tenant);
 
         storage.store_trace(&trace).await.unwrap();
-        storage.store_trace(&trace).await.unwrap(); // should not error
+        storage.store_trace(&trace).await.unwrap();
 
         let results = storage
             .query_traces(&TraceQuery::new(tenant))
@@ -1130,8 +1382,6 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
     }
-
-    // -- empty spans -------------------------------------------------------
 
     #[tokio::test]
     async fn test_store_trace_with_no_spans() {
@@ -1153,8 +1403,6 @@ mod tests {
             .expect("trace row should exist");
         assert!(retrieved.spans.is_empty());
     }
-
-    // -- complex span fields -----------------------------------------------
 
     #[tokio::test]
     async fn test_roundtrip_complex_span_fields() {
@@ -1215,15 +1463,13 @@ mod tests {
         assert_eq!(retrieved.duration_ms, Some(123));
         assert_eq!(retrieved.status_code, Some(200));
         assert!((retrieved.estimated_cost_usd.unwrap() - 0.0015).abs() < f64::EPSILON);
-        assert_eq!(retrieved.security_score, Some(60)); // Medium = 60
+        assert_eq!(retrieved.security_score, Some(60));
         assert_eq!(retrieved.security_findings.len(), 1);
         assert_eq!(retrieved.security_findings[0].finding_type, "pii_detected");
         assert_eq!(retrieved.tags.get("env"), Some(&"test".to_string()));
         assert_eq!(retrieved.events.len(), 1);
         assert_eq!(retrieved.events[0].event_type, "token_received");
     }
-
-    // -- multiple spans per trace ------------------------------------------
 
     #[tokio::test]
     async fn test_trace_with_multiple_spans() {
@@ -1252,12 +1498,192 @@ mod tests {
             .expect("trace should exist");
         assert_eq!(retrieved.spans.len(), 2);
 
-        // Verify parent linkage survived the roundtrip
         let child = retrieved
             .spans
             .iter()
             .find(|s| s.parent_span_id.is_some())
             .expect("child span should be present");
         assert_eq!(child.parent_span_id, Some(span1.span_id));
+    }
+
+    // -- Metadata repository tests -----------------------------------------
+
+    async fn test_metadata() -> SqliteMetadataRepository {
+        SqliteMetadataRepository::new("sqlite::memory:")
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_tenant_crud() {
+        let repo = test_metadata().await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Acme Corp".to_string(),
+            plan: "pro".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({"max_traces": 10000}),
+        };
+
+        repo.create_tenant(&tenant).await.unwrap();
+
+        let retrieved = repo
+            .get_tenant(tenant.id)
+            .await
+            .unwrap()
+            .expect("tenant should exist");
+        assert_eq!(retrieved.name, "Acme Corp");
+        assert_eq!(retrieved.plan, "pro");
+
+        let mut updated = tenant.clone();
+        updated.name = "Acme Inc".to_string();
+        updated.plan = "enterprise".to_string();
+        repo.update_tenant(&updated).await.unwrap();
+
+        let after_update = repo
+            .get_tenant(tenant.id)
+            .await
+            .unwrap()
+            .expect("tenant should exist");
+        assert_eq!(after_update.name, "Acme Inc");
+        assert_eq!(after_update.plan, "enterprise");
+
+        let tenants = repo.list_tenants().await.unwrap();
+        assert_eq!(tenants.len(), 1);
+
+        repo.delete_tenant(tenant.id).await.unwrap();
+        let gone = repo.get_tenant(tenant.id).await.unwrap();
+        assert!(gone.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_nonexistent_tenant_returns_error() {
+        let repo = test_metadata().await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Ghost".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+        };
+        let result = repo.update_tenant(&tenant).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_tenant_config_crud() {
+        let repo = test_metadata().await;
+        let tenant_id = TenantId::new();
+
+        // Create tenant first
+        let tenant = Tenant {
+            id: tenant_id,
+            name: "Test".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+        };
+        repo.create_tenant(&tenant).await.unwrap();
+
+        // No config yet
+        let cfg = repo.get_tenant_config(tenant_id).await.unwrap();
+        assert!(cfg.is_none());
+
+        // Upsert config
+        let mut thresholds = HashMap::new();
+        thresholds.insert("alert_min_score".to_string(), 80.0);
+        let mut flags = HashMap::new();
+        flags.insert("enable_pii".to_string(), true);
+
+        let config = TenantConfig {
+            tenant_id,
+            security_thresholds: thresholds,
+            feature_flags: flags,
+        };
+        repo.upsert_tenant_config(&config).await.unwrap();
+
+        let retrieved = repo
+            .get_tenant_config(tenant_id)
+            .await
+            .unwrap()
+            .expect("config should exist");
+        assert_eq!(
+            retrieved.security_thresholds.get("alert_min_score"),
+            Some(&80.0)
+        );
+        assert_eq!(retrieved.feature_flags.get("enable_pii"), Some(&true));
+
+        // Update config
+        let mut updated = config.clone();
+        updated
+            .feature_flags
+            .insert("enable_pii".to_string(), false);
+        repo.upsert_tenant_config(&updated).await.unwrap();
+
+        let after = repo
+            .get_tenant_config(tenant_id)
+            .await
+            .unwrap()
+            .expect("config should exist");
+        assert_eq!(after.feature_flags.get("enable_pii"), Some(&false));
+    }
+
+    #[tokio::test]
+    async fn test_audit_events() {
+        let repo = test_metadata().await;
+        let tenant_id = TenantId::new();
+
+        let event1 = AuditEvent {
+            id: Uuid::new_v4(),
+            tenant_id,
+            event_type: "config_changed".to_string(),
+            actor: "admin".to_string(),
+            resource: "tenant_config".to_string(),
+            data: serde_json::json!({"field": "enable_pii", "old": false, "new": true}),
+            timestamp: Utc::now() - chrono::Duration::minutes(5),
+        };
+        let event2 = AuditEvent {
+            id: Uuid::new_v4(),
+            tenant_id,
+            event_type: "tenant_created".to_string(),
+            actor: "system".to_string(),
+            resource: "tenant".to_string(),
+            data: serde_json::json!({}),
+            timestamp: Utc::now(),
+        };
+
+        repo.record_audit_event(&event1).await.unwrap();
+        repo.record_audit_event(&event2).await.unwrap();
+
+        // Query all
+        let all = repo
+            .query_audit_events(&AuditQuery::new(tenant_id))
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Query by type
+        let config_events = repo
+            .query_audit_events(
+                &AuditQuery::new(tenant_id).with_event_type("config_changed".to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(config_events.len(), 1);
+        assert_eq!(config_events[0].event_type, "config_changed");
+        assert_eq!(config_events[0].actor, "admin");
+
+        // Query with limit
+        let limited = repo
+            .query_audit_events(&AuditQuery::new(tenant_id).with_limit(1))
+            .await
+            .unwrap();
+        assert_eq!(limited.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_metadata_health_check() {
+        let repo = test_metadata().await;
+        assert!(repo.health_check().await.is_ok());
     }
 }

@@ -13,7 +13,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::StreamExt;
 use llmtrace_core::{
-    AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding, StorageBackend,
+    AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding, Storage,
     TenantId, TraceEvent, TraceSpan,
 };
 use reqwest::Client;
@@ -32,8 +32,8 @@ pub struct AppState {
     pub config: ProxyConfig,
     /// HTTP client for forwarding requests upstream.
     pub client: Client,
-    /// Storage backend for persisting traces.
-    pub storage: Arc<dyn StorageBackend>,
+    /// Composite storage (traces, metadata, cache).
+    pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
     /// Circuit breaker for the storage subsystem.
@@ -488,7 +488,7 @@ async fn run_trace_capture(
         created_at: captured.start_time,
     };
 
-    match state.storage.store_trace(&trace).await {
+    match state.storage.traces.store_trace(&trace).await {
         Ok(()) => {
             state.storage_breaker.record_success().await;
             info!(trace_id = %captured.trace_id, "Trace stored successfully");
@@ -506,15 +506,21 @@ async fn run_trace_capture(
 
 /// Health check handler returning a JSON status object.
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body> {
-    let storage_ok = state.storage.health_check().await.is_ok();
+    let traces_ok = state.storage.traces.health_check().await.is_ok();
+    let metadata_ok = state.storage.metadata.health_check().await.is_ok();
+    let cache_ok = state.storage.cache.health_check().await.is_ok();
     let security_ok = state.security.health_check().await.is_ok();
     let storage_circuit = state.storage_breaker.state().await;
     let security_circuit = state.security_breaker.state().await;
 
+    let all_healthy = traces_ok && metadata_ok && cache_ok && security_ok;
+
     let body = serde_json::json!({
-        "status": if storage_ok && security_ok { "healthy" } else { "degraded" },
+        "status": if all_healthy { "healthy" } else { "degraded" },
         "storage": {
-            "healthy": storage_ok,
+            "traces": { "healthy": traces_ok },
+            "metadata": { "healthy": metadata_ok },
+            "cache": { "healthy": cache_ok },
             "circuit_breaker": format!("{:?}", storage_circuit),
         },
         "security": {

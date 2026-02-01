@@ -14,9 +14,9 @@ use crate::circuit_breaker::CircuitBreaker;
 use crate::proxy::{health_handler, proxy_handler, AppState};
 use axum::routing::{any, get};
 use axum::Router;
-use llmtrace_core::ProxyConfig;
+use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
 use llmtrace_security::RegexSecurityAnalyzer;
-use llmtrace_storage::SqliteStorage;
+use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -84,17 +84,27 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .timeout(std::time::Duration::from_millis(config.timeout_ms))
         .build()?;
 
-    info!(database_url = %config.database_url, "Initializing SQLite storage");
-    let storage = Arc::new(
-        SqliteStorage::new(&config.database_url)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize SQLite storage: {}", e))?,
-    ) as Arc<dyn llmtrace_core::StorageBackend>;
+    let profile = match config.storage.profile.as_str() {
+        "memory" => StorageProfile::Memory,
+        _ => StorageProfile::Lite {
+            database_path: config.storage.database_path.clone(),
+        },
+    };
+
+    info!(
+        profile = %config.storage.profile,
+        database_path = %config.storage.database_path,
+        "Initializing storage"
+    );
+    let storage = profile
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     let security = Arc::new(
         RegexSecurityAnalyzer::new()
             .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?,
-    ) as Arc<dyn llmtrace_core::SecurityAnalyzer>;
+    ) as Arc<dyn SecurityAnalyzer>;
 
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
@@ -122,15 +132,23 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use llmtrace_core::StorageConfig;
     use tower::ServiceExt;
 
-    /// Build a test router with default config (in-memory SQLite).
-    async fn test_app() -> Router {
-        let config = ProxyConfig {
-            database_url: "sqlite::memory:".to_string(),
+    /// Build a test config that uses the in-memory storage profile.
+    fn memory_config() -> ProxyConfig {
+        ProxyConfig {
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+            },
             ..ProxyConfig::default()
-        };
-        let state = build_app_state(config).await.unwrap();
+        }
+    }
+
+    /// Build a test router with default config (in-memory storage).
+    async fn test_app() -> Router {
+        let state = build_app_state(memory_config()).await.unwrap();
         build_router(state)
     }
 
@@ -150,7 +168,7 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["status"], "healthy");
-        assert!(json["storage"]["healthy"].as_bool().unwrap());
+        assert!(json["storage"]["traces"]["healthy"].as_bool().unwrap());
         assert!(json["security"]["healthy"].as_bool().unwrap());
     }
 
@@ -161,7 +179,10 @@ mod tests {
             upstream_url: "http://127.0.0.1:1".to_string(), // nothing listening
             connection_timeout_ms: 100,
             timeout_ms: 500,
-            database_url: "sqlite::memory:".to_string(),
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+            },
             ..ProxyConfig::default()
         };
         let state = build_app_state(config).await.unwrap();
@@ -186,11 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_app_state_succeeds() {
-        let config = ProxyConfig {
-            database_url: "sqlite::memory:".to_string(),
-            ..ProxyConfig::default()
-        };
-        let state = build_app_state(config).await;
+        let state = build_app_state(memory_config()).await;
         assert!(state.is_ok());
     }
 }

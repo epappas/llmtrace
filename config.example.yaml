@@ -9,9 +9,12 @@ listen_addr: "0.0.0.0:8080"
 # Upstream LLM provider URL (OpenAI, vLLM, Ollama, etc.)
 upstream_url: "https://api.openai.com"
 
-# SQLite database path for trace storage
-# Use "sqlite::memory:" for in-memory only (lost on restart)
-database_url: "sqlite:llmtrace.db"
+# Storage configuration
+storage:
+  # Profile: "lite" (SQLite, zero infrastructure) or "memory" (in-memory, lost on restart)
+  profile: "lite"
+  # Database file path (used by the "lite" profile)
+  database_path: "llmtrace.db"
 
 # Request timeout in milliseconds
 timeout_ms: 30000

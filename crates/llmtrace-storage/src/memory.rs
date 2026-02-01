@@ -1,26 +1,31 @@
-//! In-memory storage backend for testing.
+//! In-memory storage backends for testing.
 //!
-//! Stores all data in `Vec`s behind `RwLock`s. Not intended for production use.
+//! Stores all data in memory. Not intended for production use.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    Result, StorageBackend, StorageStats, TenantId, TraceEvent, TraceQuery, TraceSpan,
+    AuditEvent, AuditQuery, LLMTraceError, MetadataRepository, Result, StorageStats, Tenant,
+    TenantConfig, TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-/// In-memory storage backend for testing.
+// ===========================================================================
+// InMemoryTraceRepository
+// ===========================================================================
+
+/// In-memory trace repository for testing.
 ///
 /// Data is lost when the struct is dropped. All methods are `O(n)` linear scans.
-pub struct InMemoryStorage {
+pub struct InMemoryTraceRepository {
     traces: RwLock<Vec<TraceEvent>>,
-    /// Spans stored via [`StorageBackend::store_span`] outside of a full trace.
+    /// Spans stored via [`TraceRepository::store_span`] outside of a full trace.
     standalone_spans: RwLock<Vec<TraceSpan>>,
 }
 
-impl InMemoryStorage {
-    /// Create a new, empty in-memory storage.
+impl InMemoryTraceRepository {
+    /// Create a new, empty in-memory trace repository.
     pub fn new() -> Self {
         Self {
             traces: RwLock::new(Vec::new()),
@@ -97,17 +102,16 @@ impl InMemoryStorage {
     }
 }
 
-impl Default for InMemoryStorage {
+impl Default for InMemoryTraceRepository {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl StorageBackend for InMemoryStorage {
+impl TraceRepository for InMemoryTraceRepository {
     async fn store_trace(&self, trace: &TraceEvent) -> Result<()> {
         let mut traces = self.traces.write().await;
-        // Replace if already present (idempotent)
         traces.retain(|t| !(t.tenant_id == trace.tenant_id && t.trace_id == trace.trace_id));
         traces.push(trace.clone());
         Ok(())
@@ -123,7 +127,6 @@ impl StorageBackend for InMemoryStorage {
     async fn query_traces(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
         let all_spans = self.all_spans_for_tenant(query.tenant_id).await;
 
-        // Find trace IDs that have at least one span matching the filters
         let mut matching_trace_ids: Vec<Uuid> = all_spans
             .iter()
             .filter(|s| Self::span_matches(s, query))
@@ -132,20 +135,17 @@ impl StorageBackend for InMemoryStorage {
         matching_trace_ids.sort();
         matching_trace_ids.dedup();
 
-        // Reconstruct TraceEvents
         let traces = self.traces.read().await;
         let standalone = self.standalone_spans.read().await;
 
         let mut results: Vec<TraceEvent> = Vec::new();
         for tid in &matching_trace_ids {
-            // Try to find the trace in the stored traces
             if let Some(t) = traces
                 .iter()
                 .find(|t| t.tenant_id == query.tenant_id && t.trace_id == *tid)
             {
                 results.push(t.clone());
             } else {
-                // Build a synthetic trace from standalone spans
                 let spans: Vec<TraceSpan> = standalone
                     .iter()
                     .filter(|s| s.tenant_id == query.tenant_id && s.trace_id == *tid)
@@ -214,7 +214,6 @@ impl StorageBackend for InMemoryStorage {
     }
 
     async fn get_span(&self, tenant_id: TenantId, span_id: Uuid) -> Result<Option<TraceSpan>> {
-        // Search in traces
         let traces = self.traces.read().await;
         for trace in traces.iter() {
             if trace.tenant_id != tenant_id {
@@ -226,7 +225,6 @@ impl StorageBackend for InMemoryStorage {
         }
         drop(traces);
 
-        // Search in standalone spans
         let standalone = self.standalone_spans.read().await;
         let span = standalone
             .iter()
@@ -245,7 +243,6 @@ impl StorageBackend for InMemoryStorage {
         traces.retain(|t| !(t.tenant_id == tenant_id && t.created_at < before));
         let deleted = initial - traces.len();
 
-        // Also remove standalone spans whose start_time is before the cutoff
         let mut standalone = self.standalone_spans.write().await;
         standalone.retain(|s| !(s.tenant_id == tenant_id && s.start_time < before));
 
@@ -272,7 +269,7 @@ impl StorageBackend for InMemoryStorage {
         Ok(StorageStats {
             total_traces,
             total_spans,
-            storage_size_bytes: 0, // not meaningful for in-memory storage
+            storage_size_bytes: 0,
             oldest_trace,
             newest_trace,
         })
@@ -282,6 +279,148 @@ impl StorageBackend for InMemoryStorage {
         Ok(())
     }
 }
+
+// ===========================================================================
+// InMemoryMetadataRepository
+// ===========================================================================
+
+/// In-memory metadata repository for testing.
+pub struct InMemoryMetadataRepository {
+    tenants: RwLock<Vec<Tenant>>,
+    configs: RwLock<Vec<TenantConfig>>,
+    audit_events: RwLock<Vec<AuditEvent>>,
+}
+
+impl InMemoryMetadataRepository {
+    /// Create a new, empty in-memory metadata repository.
+    pub fn new() -> Self {
+        Self {
+            tenants: RwLock::new(Vec::new()),
+            configs: RwLock::new(Vec::new()),
+            audit_events: RwLock::new(Vec::new()),
+        }
+    }
+}
+
+impl Default for InMemoryMetadataRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl MetadataRepository for InMemoryMetadataRepository {
+    async fn create_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let mut tenants = self.tenants.write().await;
+        if tenants.iter().any(|t| t.id == tenant.id) {
+            return Err(LLMTraceError::Storage(format!(
+                "Tenant {} already exists",
+                tenant.id
+            )));
+        }
+        tenants.push(tenant.clone());
+        Ok(())
+    }
+
+    async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>> {
+        let tenants = self.tenants.read().await;
+        Ok(tenants.iter().find(|t| t.id == id).cloned())
+    }
+
+    async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
+        let mut tenants = self.tenants.write().await;
+        if let Some(existing) = tenants.iter_mut().find(|t| t.id == tenant.id) {
+            *existing = tenant.clone();
+            Ok(())
+        } else {
+            Err(LLMTraceError::InvalidTenant {
+                tenant_id: tenant.id,
+            })
+        }
+    }
+
+    async fn list_tenants(&self) -> Result<Vec<Tenant>> {
+        let tenants = self.tenants.read().await;
+        Ok(tenants.clone())
+    }
+
+    async fn delete_tenant(&self, id: TenantId) -> Result<()> {
+        let mut tenants = self.tenants.write().await;
+        tenants.retain(|t| t.id != id);
+        Ok(())
+    }
+
+    async fn get_tenant_config(&self, tenant_id: TenantId) -> Result<Option<TenantConfig>> {
+        let configs = self.configs.read().await;
+        Ok(configs.iter().find(|c| c.tenant_id == tenant_id).cloned())
+    }
+
+    async fn upsert_tenant_config(&self, config: &TenantConfig) -> Result<()> {
+        let mut configs = self.configs.write().await;
+        configs.retain(|c| c.tenant_id != config.tenant_id);
+        configs.push(config.clone());
+        Ok(())
+    }
+
+    async fn record_audit_event(&self, event: &AuditEvent) -> Result<()> {
+        let mut events = self.audit_events.write().await;
+        events.push(event.clone());
+        Ok(())
+    }
+
+    async fn query_audit_events(&self, query: &AuditQuery) -> Result<Vec<AuditEvent>> {
+        let events = self.audit_events.read().await;
+        let mut results: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                if e.tenant_id != query.tenant_id {
+                    return false;
+                }
+                if let Some(ref et) = query.event_type {
+                    if e.event_type != *et {
+                        return false;
+                    }
+                }
+                if let Some(ref start) = query.start_time {
+                    if e.timestamp < *start {
+                        return false;
+                    }
+                }
+                if let Some(ref end) = query.end_time {
+                    if e.timestamp > *end {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        if let Some(offset) = query.offset {
+            let offset = offset as usize;
+            if offset < results.len() {
+                results = results.split_off(offset);
+            } else {
+                results.clear();
+            }
+        }
+        if let Some(limit) = query.limit {
+            results.truncate(limit as usize);
+        }
+
+        Ok(results)
+    }
+
+    async fn health_check(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -312,7 +451,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_store_and_retrieve() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         let tenant = TenantId::new();
         let trace = make_trace(tenant);
 
@@ -326,7 +465,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_store_span() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         let tenant = TenantId::new();
         let trace_id = Uuid::new_v4();
         let span = make_span(trace_id, tenant);
@@ -343,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_tenant_isolation() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         let t1 = TenantId::new();
         let t2 = TenantId::new();
 
@@ -357,13 +496,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_health_check() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         assert!(storage.health_check().await.is_ok());
     }
 
     #[tokio::test]
     async fn test_in_memory_get_stats() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         let tenant = TenantId::new();
 
         storage.store_trace(&make_trace(tenant)).await.unwrap();
@@ -376,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_delete_before() {
-        let storage = InMemoryStorage::new();
+        let storage = InMemoryTraceRepository::new();
         let tenant = TenantId::new();
 
         let old = TraceEvent {
@@ -399,5 +538,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(remaining.len(), 1);
+    }
+
+    // -- In-memory metadata tests ------------------------------------------
+
+    #[tokio::test]
+    async fn test_in_memory_metadata_tenant_crud() {
+        let repo = InMemoryMetadataRepository::new();
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Test".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+        };
+
+        repo.create_tenant(&tenant).await.unwrap();
+        let retrieved = repo.get_tenant(tenant.id).await.unwrap().unwrap();
+        assert_eq!(retrieved.name, "Test");
+
+        let mut updated = tenant.clone();
+        updated.name = "Updated".to_string();
+        repo.update_tenant(&updated).await.unwrap();
+        let after = repo.get_tenant(tenant.id).await.unwrap().unwrap();
+        assert_eq!(after.name, "Updated");
+
+        repo.delete_tenant(tenant.id).await.unwrap();
+        assert!(repo.get_tenant(tenant.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_in_memory_metadata_health() {
+        let repo = InMemoryMetadataRepository::new();
+        assert!(repo.health_check().await.is_ok());
     }
 }
