@@ -491,6 +491,9 @@ pub struct ProxyConfig {
     pub circuit_breaker: CircuitBreakerConfig,
     /// Health check configuration.
     pub health_check: HealthCheckConfig,
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 impl Default for ProxyConfig {
@@ -514,6 +517,7 @@ impl Default for ProxyConfig {
             rate_limiting: RateLimitConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             health_check: HealthCheckConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -617,6 +621,34 @@ impl Default for HealthCheckConfig {
             interval_seconds: 10,
             timeout_ms: 5000,
             retries: 3,
+        }
+    }
+}
+
+/// Logging configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    /// Log level: `trace`, `debug`, `info`, `warn`, or `error`.
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// Output format: `text` (human-readable) or `json` (structured).
+    #[serde(default = "default_log_format")]
+    pub format: String,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_log_format() -> String {
+    "text".to_string()
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            format: default_log_format(),
         }
     }
 }
@@ -1118,6 +1150,8 @@ mod tests {
         assert_eq!(config.timeout_ms, 30000);
         assert_eq!(config.max_connections, 1000);
         assert!(!config.enable_tls);
+        assert_eq!(config.logging.level, "info");
+        assert_eq!(config.logging.format, "text");
     }
 
     #[test]
@@ -1125,6 +1159,25 @@ mod tests {
         let config = StorageConfig::default();
         assert_eq!(config.profile, "lite");
         assert_eq!(config.database_path, "llmtrace.db");
+    }
+
+    #[test]
+    fn test_logging_config_default() {
+        let config = LoggingConfig::default();
+        assert_eq!(config.level, "info");
+        assert_eq!(config.format, "text");
+    }
+
+    #[test]
+    fn test_logging_config_serialization() {
+        let config = LoggingConfig {
+            level: "debug".to_string(),
+            format: "json".to_string(),
+        };
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: LoggingConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config.level, deserialized.level);
+        assert_eq!(config.format, deserialized.format);
     }
 
     #[test]
@@ -1299,6 +1352,10 @@ mod tests {
             rate_limiting: RateLimitConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
             health_check: HealthCheckConfig::default(),
+            logging: LoggingConfig {
+                level: "debug".to_string(),
+                format: "json".to_string(),
+            },
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -1313,6 +1370,8 @@ mod tests {
             config.storage.database_path,
             deserialized.storage.database_path
         );
+        assert_eq!(config.logging.level, deserialized.logging.level);
+        assert_eq!(config.logging.format, deserialized.logging.format);
     }
 
     #[test]

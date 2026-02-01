@@ -14,6 +14,7 @@ use crate::circuit_breaker::CircuitBreaker;
 use crate::proxy::{health_handler, proxy_handler, AppState};
 use axum::routing::{any, get};
 use axum::Router;
+use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
@@ -21,17 +22,120 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
+// ---------------------------------------------------------------------------
+// CLI definition
+// ---------------------------------------------------------------------------
+
+/// LLMTrace transparent proxy server for LLM API observability and security.
+#[derive(Parser)]
+#[command(name = "llmtrace-proxy", version, about, long_about = None)]
+struct Cli {
+    /// Path to YAML configuration file.
+    #[arg(short, long, global = true, env = "LLMTRACE_CONFIG")]
+    config: Option<PathBuf>,
+
+    /// Override log level (trace, debug, info, warn, error).
+    #[arg(long, global = true, env = "LLMTRACE_LOG_LEVEL")]
+    log_level: Option<String>,
+
+    /// Override log output format (text, json).
+    #[arg(long, global = true, env = "LLMTRACE_LOG_FORMAT")]
+    log_format: Option<String>,
+
+    /// Subcommand to run. If omitted, starts the proxy server.
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+/// CLI subcommands.
+#[derive(Subcommand)]
+enum Commands {
+    /// Validate a configuration file and print resolved settings.
+    Validate,
+}
+
+// ---------------------------------------------------------------------------
+// Entrypoint
+// ---------------------------------------------------------------------------
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize structured logging
-    tracing_subscriber::fmt::init();
+    let cli = Cli::parse();
 
-    // Load configuration: from CLI arg, env var, or default
-    let config = load_proxy_config()?;
+    // Load, merge, and validate configuration
+    let config = load_and_merge_config(&cli)?;
 
+    match cli.command {
+        Some(Commands::Validate) => run_validate(&config),
+        None => {
+            init_logging(&config)?;
+            config::validate_config(&config)?;
+            run_proxy(config).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration loading
+// ---------------------------------------------------------------------------
+
+/// Load configuration from file/defaults, then apply env var and CLI overrides.
+///
+/// Precedence (highest wins):
+/// 1. CLI flags (`--log-level`, `--log-format`)
+/// 2. Environment variables (`LLMTRACE_LISTEN_ADDR`, etc.)
+/// 3. Config file values
+/// 4. Built-in defaults
+fn load_and_merge_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
+    let mut config = match &cli.config {
+        Some(path) => {
+            // Logging isn't initialised yet — use eprintln for early diagnostics.
+            eprintln!("Loading configuration from {}", path.display());
+            config::load_config(path)?
+        }
+        None => {
+            eprintln!("No config file specified, using defaults");
+            ProxyConfig::default()
+        }
+    };
+
+    // Apply environment variable overrides
+    config::apply_env_overrides(&mut config);
+
+    // Apply CLI flag overrides (highest precedence)
+    if let Some(ref level) = cli.log_level {
+        config.logging.level.clone_from(level);
+    }
+    if let Some(ref format) = cli.log_format {
+        config.logging.format.clone_from(format);
+    }
+
+    Ok(config)
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: validate
+// ---------------------------------------------------------------------------
+
+/// Validate configuration and print resolved settings.
+fn run_validate(config: &ProxyConfig) -> anyhow::Result<()> {
+    config::validate_config(config)?;
+    println!("✓ Configuration is valid.\n");
+    println!("Resolved configuration:");
+    println!("{}", serde_yaml::to_string(config)?);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand: run proxy (default)
+// ---------------------------------------------------------------------------
+
+/// Start the proxy server.
+async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
     info!(
         listen_addr = %config.listen_addr,
         upstream_url = %config.upstream_url,
+        storage_profile = %config.storage.profile,
         "Starting LLMTrace proxy server"
     );
 
@@ -51,29 +155,42 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Load proxy configuration from a YAML file or fall back to defaults.
-///
-/// Checks (in order):
-/// 1. First CLI argument as config path
-/// 2. `LLMTRACE_CONFIG` environment variable
-/// 3. Default configuration
-fn load_proxy_config() -> anyhow::Result<ProxyConfig> {
-    let config_path: Option<PathBuf> = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("LLMTRACE_CONFIG").ok())
-        .map(PathBuf::from);
+// ---------------------------------------------------------------------------
+// Structured logging
+// ---------------------------------------------------------------------------
 
-    match config_path {
-        Some(path) => {
-            info!(path = %path.display(), "Loading configuration from file");
-            config::load_config(&path)
+/// Initialize structured logging based on configuration.
+///
+/// The `RUST_LOG` environment variable takes highest precedence for
+/// filter directives. Otherwise the `logging.level` from the resolved
+/// configuration is used.
+fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&config.logging.level));
+
+    match config.logging.format.as_str() {
+        "json" => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(filter)
+                .with_target(true)
+                .with_thread_ids(true)
+                .init();
         }
-        None => {
-            info!("No config file specified, using defaults");
-            Ok(ProxyConfig::default())
+        _ => {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_target(true)
+                .init();
         }
     }
+
+    Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Application wiring
+// ---------------------------------------------------------------------------
 
 /// Build the shared [`AppState`] from the proxy configuration.
 async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
@@ -209,5 +326,83 @@ mod tests {
     async fn test_build_app_state_succeeds() {
         let state = build_app_state(memory_config()).await;
         assert!(state.is_ok());
+    }
+
+    #[test]
+    fn test_load_and_merge_config_defaults() {
+        let cli = Cli {
+            config: None,
+            log_level: None,
+            log_format: None,
+            command: None,
+        };
+        let config = load_and_merge_config(&cli).unwrap();
+        assert_eq!(config.listen_addr, "0.0.0.0:8080");
+        assert_eq!(config.logging.level, "info");
+        assert_eq!(config.logging.format, "text");
+    }
+
+    #[test]
+    fn test_load_and_merge_config_cli_overrides() {
+        let cli = Cli {
+            config: None,
+            log_level: Some("debug".to_string()),
+            log_format: Some("json".to_string()),
+            command: None,
+        };
+        let config = load_and_merge_config(&cli).unwrap();
+        assert_eq!(config.logging.level, "debug");
+        assert_eq!(config.logging.format, "json");
+    }
+
+    #[test]
+    fn test_load_and_merge_config_from_file() {
+        use std::io::Write;
+        let yaml = r#"
+listen_addr: "127.0.0.1:9999"
+upstream_url: "http://localhost:11434"
+timeout_ms: 60000
+connection_timeout_ms: 5000
+max_connections: 500
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 52428800
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
+rate_limiting:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 200
+  window_seconds: 60
+circuit_breaker:
+  enabled: true
+  failure_threshold: 10
+  recovery_timeout_ms: 30000
+  half_open_max_calls: 3
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3
+logging:
+  level: "warn"
+  format: "json"
+"#;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(yaml.as_bytes()).unwrap();
+
+        let cli = Cli {
+            config: Some(f.path().to_path_buf()),
+            log_level: None,
+            log_format: None,
+            command: None,
+        };
+        let config = load_and_merge_config(&cli).unwrap();
+        assert_eq!(config.listen_addr, "127.0.0.1:9999");
+        assert_eq!(config.logging.level, "warn");
+        assert_eq!(config.logging.format, "json");
     }
 }

@@ -1,64 +1,129 @@
+# ============================================================================
 # LLMTrace Proxy — Example Configuration
+# ============================================================================
 #
 # Copy this file to config.yaml and adjust values for your environment.
-# Start the proxy with:  llmtrace-proxy config.yaml
+#
+# Usage:
+#   llmtrace-proxy --config config.yaml          # start the proxy
+#   llmtrace-proxy validate --config config.yaml  # validate without starting
+#   llmtrace-proxy --help                          # show CLI help
+#   llmtrace-proxy --version                       # show version
+#
+# Environment variable overrides (highest precedence after CLI flags):
+#   LLMTRACE_CONFIG                — path to this config file
+#   LLMTRACE_LISTEN_ADDR           — override listen_addr
+#   LLMTRACE_UPSTREAM_URL          — override upstream_url
+#   LLMTRACE_STORAGE_PROFILE       — override storage.profile
+#   LLMTRACE_STORAGE_DATABASE_PATH — override storage.database_path
+#   LLMTRACE_LOG_LEVEL             — override logging.level
+#   LLMTRACE_LOG_FORMAT            — override logging.format
+#   RUST_LOG                       — fine-grained tracing filter (e.g. "llmtrace_proxy=debug,info")
+# ============================================================================
 
-# Address and port to bind the proxy server to
+# ---------------------------------------------------------------------------
+# Network
+# ---------------------------------------------------------------------------
+
+# Address and port to bind the proxy server to.
 listen_addr: "0.0.0.0:8080"
 
-# Upstream LLM provider URL (OpenAI, vLLM, Ollama, etc.)
+# Upstream LLM provider URL (OpenAI, vLLM, Ollama, etc.).
 upstream_url: "https://api.openai.com"
 
-# Storage configuration
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+
 storage:
-  # Profile: "lite" (SQLite, zero infrastructure) or "memory" (in-memory, lost on restart)
+  # Profile: "lite" (SQLite, zero infrastructure) or "memory" (in-memory, lost on restart).
   profile: "lite"
-  # Database file path (used by the "lite" profile)
+  # Database file path (used by the "lite" profile).
   database_path: "llmtrace.db"
 
-# Request timeout in milliseconds
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging:
+  # Log level: trace, debug, info, warn, error.
+  # Can be overridden by LLMTRACE_LOG_LEVEL env var or --log-level CLI flag.
+  # RUST_LOG env var takes highest precedence for fine-grained control.
+  level: "info"
+  # Output format: "text" (human-readable) or "json" (structured, machine-parseable).
+  # Can be overridden by LLMTRACE_LOG_FORMAT env var or --log-format CLI flag.
+  format: "text"
+
+# ---------------------------------------------------------------------------
+# Timeouts
+# ---------------------------------------------------------------------------
+
+# Request timeout in milliseconds (covers full upstream round-trip).
 timeout_ms: 30000
 
-# Connection timeout in milliseconds
+# Connection timeout in milliseconds (TCP connect phase only).
 connection_timeout_ms: 5000
 
-# Maximum number of concurrent connections
+# Maximum number of concurrent connections.
 max_connections: 1000
 
-# TLS settings (for the proxy listener itself)
+# ---------------------------------------------------------------------------
+# TLS (for the proxy listener itself)
+# ---------------------------------------------------------------------------
+
 enable_tls: false
 # tls_cert_file: "/etc/ssl/certs/proxy.crt"
 # tls_key_file: "/etc/ssl/private/proxy.key"
 
+# ---------------------------------------------------------------------------
 # Feature toggles
+# ---------------------------------------------------------------------------
+
+# Enable regex-based security analysis (prompt injection, PII detection).
 enable_security_analysis: true
+
+# Enable trace storage to the configured storage backend.
 enable_trace_storage: true
+
+# Enable streaming SSE passthrough for "stream": true requests.
 enable_streaming: true
 
-# Maximum request body size in bytes (default: 50MB)
+# Maximum request body size in bytes (default: 50 MB).
 max_request_size_bytes: 52428800
 
-# Timeout for async security analysis (ms)
+# Timeout for async security analysis in milliseconds.
 security_analysis_timeout_ms: 5000
 
-# Timeout for async trace storage (ms)
+# Timeout for async trace storage in milliseconds.
 trace_storage_timeout_ms: 10000
 
+# ---------------------------------------------------------------------------
 # Rate limiting
+# ---------------------------------------------------------------------------
+
 rate_limiting:
   enabled: true
   requests_per_second: 100
   burst_size: 200
   window_seconds: 60
 
+# ---------------------------------------------------------------------------
 # Circuit breaker — degrades to pure pass-through on repeated failures
+# ---------------------------------------------------------------------------
+
 circuit_breaker:
   enabled: true
+  # Number of consecutive failures before opening the circuit.
   failure_threshold: 10
+  # Time in ms to wait before trying a probe call (half-open state).
   recovery_timeout_ms: 30000
+  # Number of probe calls allowed in half-open state.
   half_open_max_calls: 3
 
+# ---------------------------------------------------------------------------
 # Health check endpoint
+# ---------------------------------------------------------------------------
+
 health_check:
   enabled: true
   path: "/health"
