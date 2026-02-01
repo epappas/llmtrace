@@ -73,6 +73,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # --------------------------------------------------------------------------
+  # Dashboard — Next.js web UI for LLMTrace
+  # --------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      # Server-side proxy URL (container networking)
+      LLMTRACE_API_URL: "http://host.docker.internal:8080"
+      # Client-side URL (browser → proxy)
+      NEXT_PUBLIC_API_URL: "http://localhost:8080"
+    restart: unless-stopped
+
 volumes:
   clickhouse_data:
   postgres_data:
