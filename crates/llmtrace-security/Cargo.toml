@@ -28,6 +28,7 @@ chrono.workspace = true
 uuid.workspace = true
 regex = "1.10"
 base64 = "0.22"
+unicode-normalization = "0.1"
 
 # ML dependencies (opt-in via `ml` feature)
 candle-core = { version = "0.9", optional = true }

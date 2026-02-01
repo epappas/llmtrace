@@ -2010,6 +2010,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
 ]
 
