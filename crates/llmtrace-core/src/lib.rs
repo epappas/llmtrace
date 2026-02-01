@@ -847,6 +847,9 @@ pub struct ProxyConfig {
     /// Anomaly detection configuration.
     #[serde(default)]
     pub anomaly_detection: AnomalyDetectionConfig,
+    /// Streaming security analysis configuration.
+    #[serde(default)]
+    pub streaming_analysis: StreamingAnalysisConfig,
 }
 
 impl Default for ProxyConfig {
@@ -879,6 +882,7 @@ impl Default for ProxyConfig {
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
             anomaly_detection: AnomalyDetectionConfig::default(),
+            streaming_analysis: StreamingAnalysisConfig::default(),
         }
     }
 }
@@ -1233,6 +1237,43 @@ impl Default for AnomalyDetectionConfig {
             check_tokens: true,
             check_velocity: true,
             check_latency: true,
+        }
+    }
+}
+
+/// Configuration for real-time streaming security analysis.
+///
+/// When enabled, the proxy runs lightweight regex-based security pattern checks
+/// incrementally during SSE streaming — every N tokens — producing interim
+/// `SecurityFinding`s before the stream completes. This provides an early
+/// warning layer; the full security analysis still runs after stream completion.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// streaming_analysis:
+///   enabled: true
+///   token_interval: 50
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingAnalysisConfig {
+    /// Enable incremental security analysis during SSE streaming.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Number of tokens between each incremental analysis check.
+    #[serde(default = "default_streaming_token_interval")]
+    pub token_interval: u32,
+}
+
+fn default_streaming_token_interval() -> u32 {
+    50
+}
+
+impl Default for StreamingAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token_interval: default_streaming_token_interval(),
         }
     }
 }
@@ -2197,6 +2238,7 @@ mod tests {
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
             anomaly_detection: AnomalyDetectionConfig::default(),
+            streaming_analysis: StreamingAnalysisConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

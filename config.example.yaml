@@ -205,6 +205,21 @@ grpc:
   listen_addr: "0.0.0.0:50051"
 
 # ---------------------------------------------------------------------------
+# Streaming security analysis — real-time analysis during SSE streaming
+# ---------------------------------------------------------------------------
+
+streaming_analysis:
+  # Enable incremental regex-based security checks during SSE streaming.
+  # When enabled, the proxy runs lightweight pattern matching every N tokens
+  # while the stream is still in progress. Findings are tagged with
+  # "detection": "streaming" metadata and critical issues trigger alerts
+  # mid-stream rather than waiting for stream completion.
+  enabled: false
+  # Number of completion tokens between each incremental analysis check.
+  # Lower values detect threats faster but add marginal CPU overhead per chunk.
+  token_interval: 50
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

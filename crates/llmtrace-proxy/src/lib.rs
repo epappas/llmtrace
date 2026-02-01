@@ -27,3 +27,4 @@ pub use cost::CostEstimator;
 pub use cost_caps::CostTracker;
 pub use grpc::run_grpc_server;
 pub use proxy::{health_handler, proxy_handler, AppState};
+pub use streaming::StreamingSecurityMonitor;

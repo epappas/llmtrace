@@ -320,7 +320,11 @@ impl RegexSecurityAnalyzer {
     // -- Detection methods --------------------------------------------------
 
     /// Scan text against all injection patterns (including base64) and return findings.
-    fn detect_injection_patterns(&self, text: &str) -> Vec<SecurityFinding> {
+    ///
+    /// This is exposed publicly so that the streaming security monitor can
+    /// call it synchronously on content deltas without the async overhead of
+    /// the full `SecurityAnalyzer` trait.
+    pub fn detect_injection_patterns(&self, text: &str) -> Vec<SecurityFinding> {
         let mut findings: Vec<SecurityFinding> = self
             .injection_patterns
             .iter()
@@ -401,7 +405,9 @@ impl RegexSecurityAnalyzer {
     }
 
     /// Scan text for PII patterns and return findings.
-    fn detect_pii_patterns(&self, text: &str) -> Vec<SecurityFinding> {
+    ///
+    /// Exposed publicly for use by the streaming security monitor.
+    pub fn detect_pii_patterns(&self, text: &str) -> Vec<SecurityFinding> {
         self.pii_patterns
             .iter()
             .filter(|p| p.regex.is_match(text))
@@ -418,7 +424,9 @@ impl RegexSecurityAnalyzer {
     }
 
     /// Scan response text for data-leakage patterns.
-    fn detect_leakage_patterns(&self, text: &str) -> Vec<SecurityFinding> {
+    ///
+    /// Exposed publicly for use by the streaming security monitor.
+    pub fn detect_leakage_patterns(&self, text: &str) -> Vec<SecurityFinding> {
         self.leakage_patterns
             .iter()
             .filter(|p| p.regex.is_match(text))

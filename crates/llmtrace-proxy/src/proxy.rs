@@ -7,7 +7,7 @@
 use crate::circuit_breaker::CircuitBreaker;
 use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
-use crate::streaming::StreamingAccumulator;
+use crate::streaming::{StreamingAccumulator, StreamingSecurityMonitor};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, Response, StatusCode};
@@ -360,6 +360,13 @@ pub async fn proxy_handler(
         } else {
             None
         };
+        // Initialise the streaming security monitor (only for SSE streams
+        // when streaming analysis is enabled).
+        let mut streaming_monitor = if is_streaming {
+            StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
+        } else {
+            None
+        };
         let mut raw_collected = Vec::new();
         let mut ttft_ms: Option<u64> = None;
 
@@ -372,6 +379,26 @@ pub async fn proxy_handler(
                         if is_first_token {
                             let elapsed = Utc::now().signed_duration_since(start_time);
                             ttft_ms = Some(elapsed.num_milliseconds().max(0) as u64);
+                        }
+
+                        // --- Real-time streaming security analysis ---
+                        if let Some(ref mut monitor) = streaming_monitor {
+                            if monitor.should_analyze(acc.completion_token_count) {
+                                let new_findings = monitor
+                                    .analyze_incremental(&acc.content, acc.completion_token_count);
+                                // Fire mid-stream alerts for critical findings
+                                if !new_findings.is_empty() {
+                                    info!(
+                                        %trace_id,
+                                        count = new_findings.len(),
+                                        tokens = acc.completion_token_count,
+                                        "Streaming security findings detected mid-stream"
+                                    );
+                                    if let Some(ref engine) = state_bg.alert_engine {
+                                        engine.check_and_alert(trace_id, tenant_id, &new_findings);
+                                    }
+                                }
+                            }
                         }
                     }
                     raw_collected.extend_from_slice(&bytes);
@@ -389,6 +416,29 @@ pub async fn proxy_handler(
         }
         // body_sender is dropped here, closing the stream to the client.
         drop(body_sender);
+
+        // Run one final streaming analysis on any remaining content that
+        // didn't cross a token-interval boundary.
+        if let (Some(ref acc), Some(ref mut monitor)) = (&sse_accumulator, &mut streaming_monitor) {
+            let final_findings =
+                monitor.analyze_incremental(&acc.content, acc.completion_token_count);
+            if !final_findings.is_empty() {
+                info!(
+                    %trace_id,
+                    count = final_findings.len(),
+                    "Streaming security findings in final flush"
+                );
+                if let Some(ref engine) = state_bg.alert_engine {
+                    engine.check_and_alert(trace_id, tenant_id, &final_findings);
+                }
+            }
+        }
+
+        // Collect streaming security findings for attachment to the trace span.
+        let streaming_findings: Vec<SecurityFinding> = streaming_monitor
+            .as_mut()
+            .map(|m| m.take_findings())
+            .unwrap_or_default();
 
         // Build the captured interaction with streaming metrics if applicable
         let (response_text, prompt_tokens, completion_tokens, total_tokens) =
@@ -453,6 +503,11 @@ pub async fn proxy_handler(
 
         // --- Security analysis first, so findings can be persisted with the trace ---
         let mut security_findings = run_security_analysis(&state_bg, &captured).await;
+
+        // Merge in any findings detected during streaming (early warning layer).
+        // These have already been alerted on mid-stream; now we persist them
+        // alongside the full post-stream analysis findings.
+        security_findings.extend(streaming_findings);
 
         // --- Anomaly detection (async, non-blocking) ---
         if let Some(ref detector) = state_bg.anomaly_detector {
