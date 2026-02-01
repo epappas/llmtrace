@@ -743,6 +743,9 @@ pub struct ProxyConfig {
     /// Cost cap configuration for budget and token enforcement.
     #[serde(default)]
     pub cost_caps: CostCapConfig,
+    /// Security analysis configuration (ML-based detection, thresholds).
+    #[serde(default)]
+    pub security_analysis: SecurityAnalysisConfig,
 }
 
 impl Default for ProxyConfig {
@@ -770,6 +773,7 @@ impl Default for ProxyConfig {
             cost_estimation: CostEstimationConfig::default(),
             alerts: AlertConfig::default(),
             cost_caps: CostCapConfig::default(),
+            security_analysis: SecurityAnalysisConfig::default(),
         }
     }
 }
@@ -1029,6 +1033,60 @@ pub struct CostCapConfig {
     /// Per-agent overrides.
     #[serde(default)]
     pub agents: Vec<AgentCostCap>,
+}
+
+/// Security analysis configuration for ML-based prompt injection detection.
+///
+/// Controls whether ML-based detection is enabled alongside regex-based analysis,
+/// which HuggingFace model to use, the confidence threshold, and the local
+/// model cache directory.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// security_analysis:
+///   ml_enabled: true
+///   ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
+///   ml_threshold: 0.8
+///   ml_cache_dir: "~/.cache/llmtrace/models"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityAnalysisConfig {
+    /// Enable ML-based security analysis (requires `ml` feature in `llmtrace-security`).
+    #[serde(default)]
+    pub ml_enabled: bool,
+    /// HuggingFace model ID for ML-based prompt injection detection.
+    #[serde(default = "default_ml_model")]
+    pub ml_model: String,
+    /// Confidence threshold for ML detection (0.0–1.0).
+    #[serde(default = "default_ml_threshold")]
+    pub ml_threshold: f64,
+    /// Local cache directory for downloaded ML models.
+    #[serde(default = "default_ml_cache_dir")]
+    pub ml_cache_dir: String,
+}
+
+fn default_ml_model() -> String {
+    "protectai/deberta-v3-base-prompt-injection-v2".to_string()
+}
+
+fn default_ml_threshold() -> f64 {
+    0.8
+}
+
+fn default_ml_cache_dir() -> String {
+    "~/.cache/llmtrace/models".to_string()
+}
+
+impl Default for SecurityAnalysisConfig {
+    fn default() -> Self {
+        Self {
+            ml_enabled: false,
+            ml_model: default_ml_model(),
+            ml_threshold: default_ml_threshold(),
+            ml_cache_dir: default_ml_cache_dir(),
+        }
+    }
 }
 
 /// Alert engine configuration for webhook notifications.
@@ -1835,6 +1893,12 @@ mod tests {
             },
             alerts: AlertConfig::default(),
             cost_caps: CostCapConfig::default(),
+            security_analysis: SecurityAnalysisConfig {
+                ml_enabled: true,
+                ml_model: "custom/model".to_string(),
+                ml_threshold: 0.9,
+                ml_cache_dir: "/tmp/models".to_string(),
+            },
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -1859,6 +1923,8 @@ mod tests {
             .unwrap();
         assert!((custom.input_per_million - 1.0).abs() < f64::EPSILON);
         assert!((custom.output_per_million - 2.0).abs() < f64::EPSILON);
+        assert!(deserialized.security_analysis.ml_enabled);
+        assert_eq!(deserialized.security_analysis.ml_model, "custom/model");
     }
 
     #[test]
@@ -2196,6 +2262,49 @@ mod tests {
         let config = ProxyConfig::default();
         assert!(!config.cost_caps.enabled);
         assert!(config.cost_caps.default_budget_caps.is_empty());
+    }
+
+    #[test]
+    fn test_proxy_config_default_includes_security_analysis() {
+        let config = ProxyConfig::default();
+        assert!(!config.security_analysis.ml_enabled);
+        assert_eq!(
+            config.security_analysis.ml_model,
+            "protectai/deberta-v3-base-prompt-injection-v2"
+        );
+        assert!((config.security_analysis.ml_threshold - 0.8).abs() < f64::EPSILON);
+        assert_eq!(
+            config.security_analysis.ml_cache_dir,
+            "~/.cache/llmtrace/models"
+        );
+    }
+
+    #[test]
+    fn test_security_analysis_config_default() {
+        let config = SecurityAnalysisConfig::default();
+        assert!(!config.ml_enabled);
+        assert_eq!(
+            config.ml_model,
+            "protectai/deberta-v3-base-prompt-injection-v2"
+        );
+        assert!((config.ml_threshold - 0.8).abs() < f64::EPSILON);
+        assert_eq!(config.ml_cache_dir, "~/.cache/llmtrace/models");
+    }
+
+    #[test]
+    fn test_security_analysis_config_serialization() {
+        let config = SecurityAnalysisConfig {
+            ml_enabled: true,
+            ml_model: "custom/model".to_string(),
+            ml_threshold: 0.9,
+            ml_cache_dir: "/tmp/models".to_string(),
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.ml_enabled);
+        assert_eq!(deserialized.ml_model, "custom/model");
+        assert!((deserialized.ml_threshold - 0.9).abs() < f64::EPSILON);
+        assert_eq!(deserialized.ml_cache_dir, "/tmp/models");
     }
 
     // ---------------------------------------------------------------

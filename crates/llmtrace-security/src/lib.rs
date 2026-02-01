@@ -3,6 +3,16 @@
 //! This crate provides regex-based security analyzers for detecting prompt injection
 //! attacks, encoding-based attacks, role injection, PII leakage, and data leakage
 //! in LLM interactions.
+//!
+//! # Feature: `ml`
+//!
+//! When the `ml` feature is enabled, an ML-based analyzer using the Candle framework
+//! becomes available:
+//!
+//! - [`MLSecurityAnalyzer`] — runs local inference with a HuggingFace text
+//!   classification model (BERT or DeBERTa v2).
+//! - [`EnsembleSecurityAnalyzer`] — combines regex and ML results for higher
+//!   accuracy.
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
@@ -11,6 +21,16 @@ use llmtrace_core::{
     SecurityFinding, SecuritySeverity,
 };
 use regex::Regex;
+
+#[cfg(feature = "ml")]
+pub mod ensemble;
+#[cfg(feature = "ml")]
+pub mod ml_detector;
+
+#[cfg(feature = "ml")]
+pub use ensemble::EnsembleSecurityAnalyzer;
+#[cfg(feature = "ml")]
+pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
 
 // ---------------------------------------------------------------------------
 // Internal pattern types

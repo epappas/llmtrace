@@ -7,6 +7,19 @@ authors.workspace = true
 repository.workspace = true
 description = "Security analysis engines for prompt injection detection"
 
+[features]
+default = []
+ml = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+    "dep:hf-hub",
+    "dep:tracing",
+    "dep:serde_json",
+    "dep:tokio",
+]
+
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
 serde.workspace = true
@@ -15,6 +28,16 @@ chrono.workspace = true
 uuid.workspace = true
 regex = "1.10"
 base64 = "0.22"
+
+# ML dependencies (opt-in via `ml` feature)
+candle-core = { version = "0.9", optional = true }
+candle-nn = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
+tokenizers = { version = "0.22", optional = true }
+hf-hub = { version = "0.4", optional = true, default-features = false, features = ["tokio", "rustls-tls"] }
+tracing = { version = "0.1", optional = true }
+serde_json = { version = "1.0", optional = true }
+tokio = { version = "1", optional = true, features = ["rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
