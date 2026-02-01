@@ -3,7 +3,7 @@ name = "llmtrace-nodejs"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["LLMTrace Contributors"]
+authors = ["Evangelos Pappas <epappas@evalonlabs.com>"]
 repository = "https://github.com/example/llmtrace"
 description = "Native Node.js bindings for LLMTrace via NAPI-RS"
 

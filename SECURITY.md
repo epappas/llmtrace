@@ -15,7 +15,7 @@ LLMTrace is pre-1.0. Only the latest commit on `main` receives security fixes.
 
 Instead, please report them privately:
 
-- **Email:** [security@epappas.dev](mailto:security@epappas.dev)
+- **Email:** [epappas@evalonlabs.com](mailto:epappas@evalonlabs.com)
 - **GitHub:** Use [GitHub's private vulnerability reporting](https://github.com/epappas/llmtrace/security/advisories/new)
 
 Include:

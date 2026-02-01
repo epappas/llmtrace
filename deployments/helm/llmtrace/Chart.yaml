@@ -13,12 +13,13 @@ keywords:
   - proxy
   - security
   - tracing
-home: https://github.com/evansosenko/llmtrace
+home: https://github.com/epappas/llmtrace
 sources:
-  - https://github.com/evansosenko/llmtrace
+  - https://github.com/epappas/llmtrace
 maintainers:
-  - name: llmtrace
-    url: https://github.com/evansosenko/llmtrace
+  - name: Evangelos Pappas
+    email: epappas@evalonlabs.com
+    url: https://github.com/epappas
 
 dependencies:
   - name: clickhouse
