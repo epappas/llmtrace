@@ -841,6 +841,9 @@ pub struct ProxyConfig {
     /// Authentication and RBAC configuration.
     #[serde(default)]
     pub auth: AuthConfig,
+    /// gRPC ingestion gateway configuration.
+    #[serde(default)]
+    pub grpc: GrpcConfig,
 }
 
 impl Default for ProxyConfig {
@@ -871,6 +874,7 @@ impl Default for ProxyConfig {
             security_analysis: SecurityAnalysisConfig::default(),
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
+            grpc: GrpcConfig::default(),
         }
     }
 }
@@ -1226,6 +1230,42 @@ pub struct AuthConfig {
     /// This key is not stored hashed; it's compared directly from config.
     #[serde(default)]
     pub admin_key: Option<String>,
+}
+
+/// gRPC ingestion gateway configuration.
+///
+/// When enabled, the proxy starts a `tonic` gRPC server on a separate
+/// listen address that accepts traces in the LLMTrace-native protobuf
+/// format. Supports both unary and client-streaming ingestion RPCs.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// grpc:
+///   enabled: true
+///   listen_addr: "0.0.0.0:50051"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrpcConfig {
+    /// Enable the gRPC ingestion endpoint.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Address and port to bind the gRPC server to.
+    #[serde(default = "default_grpc_listen_addr")]
+    pub listen_addr: String,
+}
+
+fn default_grpc_listen_addr() -> String {
+    "0.0.0.0:50051".to_string()
+}
+
+impl Default for GrpcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen_addr: default_grpc_listen_addr(),
+        }
+    }
 }
 
 /// Alert engine configuration for webhook notifications.
@@ -2054,6 +2094,7 @@ mod tests {
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
+            grpc: GrpcConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -2080,6 +2121,8 @@ mod tests {
         assert!((custom.output_per_million - 2.0).abs() < f64::EPSILON);
         assert!(deserialized.security_analysis.ml_enabled);
         assert_eq!(deserialized.security_analysis.ml_model, "custom/model");
+        assert!(!deserialized.grpc.enabled);
+        assert_eq!(deserialized.grpc.listen_addr, "0.0.0.0:50051");
     }
 
     #[test]

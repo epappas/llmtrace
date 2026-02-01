@@ -1,0 +1,121 @@
+// LLMTrace gRPC ingestion service.
+//
+// Provides high-throughput trace ingestion via unary and client-streaming RPCs.
+// Clients send traces in the LLMTrace-native format and the server stores them
+// via the existing TraceRepository pipeline with security analysis and cost
+// estimation.
+
+syntax = "proto3";
+
+package llmtrace.ingest.v1;
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
+/// High-throughput trace ingestion gateway.
+service TraceIngestionService {
+  /// Ingest a batch of trace spans in a single request.
+  rpc IngestTraces(IngestTracesRequest) returns (IngestTracesResponse);
+
+  /// Stream trace spans from the client. The server acknowledges once the
+  /// stream is closed and all spans have been processed.
+  rpc StreamTraces(stream StreamTracesRequest) returns (StreamTracesResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Request / Response messages
+// ---------------------------------------------------------------------------
+
+/// Batch ingestion request containing one or more trace spans.
+message IngestTracesRequest {
+  /// Spans to ingest (grouped by trace_id on the client side is recommended
+  /// but not required — the server groups internally).
+  repeated TraceSpanProto spans = 1;
+}
+
+/// Response to a batch ingestion request.
+message IngestTracesResponse {
+  /// Number of spans successfully accepted.
+  int64 accepted_spans = 1;
+  /// Number of spans that could not be processed.
+  int64 rejected_spans = 2;
+  /// Human-readable error message (only set when rejected_spans > 0).
+  string error_message = 3;
+}
+
+/// A single message in a client-streaming ingestion call.
+message StreamTracesRequest {
+  /// One or more spans per stream message.
+  repeated TraceSpanProto spans = 1;
+}
+
+/// Response returned after the client closes the stream.
+message StreamTracesResponse {
+  /// Total spans accepted across all stream messages.
+  int64 accepted_spans = 1;
+  /// Total spans rejected across all stream messages.
+  int64 rejected_spans = 2;
+  /// Human-readable error message (only set when rejected_spans > 0).
+  string error_message = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Data model
+// ---------------------------------------------------------------------------
+
+/// A trace span in LLMTrace-native format.
+message TraceSpanProto {
+  /// 16-byte trace ID encoded as a hex string (32 hex chars).
+  string trace_id = 1;
+  /// 16-byte span ID encoded as a hex string (32 hex chars).
+  string span_id = 2;
+  /// Optional parent span ID (hex string, empty if root span).
+  string parent_span_id = 3;
+  /// Tenant identifier (UUID string). Required.
+  string tenant_id = 4;
+  /// Human-readable operation name (e.g. "chat_completion").
+  string operation_name = 5;
+  /// Start time in nanoseconds since Unix epoch.
+  uint64 start_time_unix_nano = 6;
+  /// End time in nanoseconds since Unix epoch (0 if still in progress).
+  uint64 end_time_unix_nano = 7;
+  /// LLM provider identifier.
+  LLMProviderProto provider = 8;
+  /// Model name / identifier (e.g. "gpt-4", "claude-3-sonnet").
+  string model_name = 9;
+  /// Input prompt or concatenated messages.
+  string prompt = 10;
+  /// LLM response text (empty if not yet completed).
+  string response = 11;
+  /// Number of prompt (input) tokens.
+  uint32 prompt_tokens = 12;
+  /// Number of completion (output) tokens.
+  uint32 completion_tokens = 13;
+  /// Total token count.
+  uint32 total_tokens = 14;
+  /// Time to first token in milliseconds (0 if not applicable).
+  uint64 time_to_first_token_ms = 15;
+  /// Duration of the span in milliseconds (0 if not yet finished).
+  uint64 duration_ms = 16;
+  /// HTTP status code of the upstream response (0 if not applicable).
+  uint32 status_code = 17;
+  /// Error message (empty if the request succeeded).
+  string error_message = 18;
+  /// Custom tags / metadata as string key-value pairs.
+  map<string, string> tags = 19;
+}
+
+/// Enumeration of supported LLM providers.
+enum LLMProviderProto {
+  LLM_PROVIDER_UNSPECIFIED = 0;
+  LLM_PROVIDER_OPENAI = 1;
+  LLM_PROVIDER_ANTHROPIC = 2;
+  LLM_PROVIDER_VLLM = 3;
+  LLM_PROVIDER_SGLANG = 4;
+  LLM_PROVIDER_TGI = 5;
+  LLM_PROVIDER_OLLAMA = 6;
+  LLM_PROVIDER_AZURE_OPENAI = 7;
+  LLM_PROVIDER_BEDROCK = 8;
+  LLM_PROVIDER_CUSTOM = 9;
+}

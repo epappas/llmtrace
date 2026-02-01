@@ -192,6 +192,19 @@ cost_caps:
   #       max_completion_tokens: 8192
 
 # ---------------------------------------------------------------------------
+# gRPC ingestion gateway — high-throughput trace ingestion via tonic
+# ---------------------------------------------------------------------------
+
+grpc:
+  # Enable the gRPC ingestion endpoint. When enabled, the proxy starts a
+  # tonic gRPC server on a separate listen address that accepts traces in
+  # the LLMTrace-native protobuf format (see proto/llmtrace.proto).
+  # Supports both unary batch and client-side streaming RPCs.
+  enabled: false
+  # Address and port to bind the gRPC server to.
+  listen_addr: "0.0.0.0:50051"
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

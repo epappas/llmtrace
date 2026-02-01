@@ -144,6 +144,16 @@ async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
     // Build shared application state
     let state = build_app_state(config).await?;
 
+    // Optionally start the gRPC ingestion gateway in a background task
+    if state.config.grpc.enabled {
+        let grpc_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(e) = llmtrace_proxy::run_grpc_server(grpc_state).await {
+                tracing::error!("gRPC server exited with error: {e}");
+            }
+        });
+    }
+
     // Build the axum router
     let app = build_router(state);
 
