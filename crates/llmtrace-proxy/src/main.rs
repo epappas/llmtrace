@@ -5,7 +5,8 @@
 //! and `/v1/completions` endpoints, streaming SSE passthrough, async trace
 //! capture, async security analysis, and circuit-breaker degradation.
 
-use axum::routing::{any, get, post};
+use axum::middleware;
+use axum::routing::{any, delete, get, post};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
@@ -277,6 +278,16 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health_handler))
+        // Auth key management API
+        .route(
+            "/api/v1/auth/keys",
+            post(llmtrace_proxy::auth::create_api_key)
+                .get(llmtrace_proxy::auth::list_api_keys),
+        )
+        .route(
+            "/api/v1/auth/keys/:id",
+            delete(llmtrace_proxy::auth::revoke_api_key),
+        )
         // REST Query API
         .route("/api/v1/traces", get(llmtrace_proxy::api::list_traces))
         .route(
@@ -325,6 +336,11 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))
+        // Auth middleware — applied to all routes (skips /health internally)
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            llmtrace_proxy::auth::auth_middleware,
+        ))
         .with_state(state)
 }
 

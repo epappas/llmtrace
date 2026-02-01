@@ -5,8 +5,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    AuditEvent, AuditQuery, LLMTraceError, MetadataRepository, Result, StorageStats, Tenant,
-    TenantConfig, TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
+    ApiKeyRecord, AuditEvent, AuditQuery, LLMTraceError, MetadataRepository, Result, StorageStats,
+    Tenant, TenantConfig, TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -294,6 +294,7 @@ pub struct InMemoryMetadataRepository {
     tenants: RwLock<Vec<Tenant>>,
     configs: RwLock<Vec<TenantConfig>>,
     audit_events: RwLock<Vec<AuditEvent>>,
+    api_keys: RwLock<Vec<ApiKeyRecord>>,
 }
 
 impl InMemoryMetadataRepository {
@@ -303,6 +304,7 @@ impl InMemoryMetadataRepository {
             tenants: RwLock::new(Vec::new()),
             configs: RwLock::new(Vec::new()),
             audit_events: RwLock::new(Vec::new()),
+            api_keys: RwLock::new(Vec::new()),
         }
     }
 }
@@ -416,6 +418,45 @@ impl MetadataRepository for InMemoryMetadataRepository {
         }
 
         Ok(results)
+    }
+
+    async fn create_api_key(&self, key: &ApiKeyRecord) -> Result<()> {
+        let mut keys = self.api_keys.write().await;
+        if keys.iter().any(|k| k.id == key.id) {
+            return Err(LLMTraceError::Storage(format!(
+                "API key {} already exists",
+                key.id
+            )));
+        }
+        keys.push(key.clone());
+        Ok(())
+    }
+
+    async fn get_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>> {
+        let keys = self.api_keys.read().await;
+        Ok(keys
+            .iter()
+            .find(|k| k.key_hash == key_hash && k.revoked_at.is_none())
+            .cloned())
+    }
+
+    async fn list_api_keys(&self, tenant_id: TenantId) -> Result<Vec<ApiKeyRecord>> {
+        let keys = self.api_keys.read().await;
+        Ok(keys
+            .iter()
+            .filter(|k| k.tenant_id == tenant_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn revoke_api_key(&self, key_id: Uuid) -> Result<bool> {
+        let mut keys = self.api_keys.write().await;
+        if let Some(key) = keys.iter_mut().find(|k| k.id == key_id) {
+            key.revoked_at = Some(Utc::now());
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     async fn health_check(&self) -> Result<()> {

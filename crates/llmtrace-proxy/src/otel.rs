@@ -38,7 +38,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use crate::proxy::{resolve_tenant, AppState};
+use crate::proxy::AppState;
 
 // ---------------------------------------------------------------------------
 // OTLP JSON wire types
@@ -648,6 +648,7 @@ async fn analyze_span(state: &Arc<AppState>, span: &TraceSpan) -> Vec<SecurityFi
 /// (`application/x-protobuf`) content types.
 pub async fn ingest_traces(
     State(state): State<Arc<AppState>>,
+    axum::Extension(auth): axum::Extension<llmtrace_core::AuthContext>,
     headers: HeaderMap,
     body: Body,
 ) -> Response {
@@ -711,7 +712,7 @@ pub async fn ingest_traces(
         }
     };
 
-    let tenant_id = resolve_tenant(&headers);
+    let tenant_id = auth.tenant_id;
 
     // Process the request
     let (accepted, rejected) = process_otlp_request(&state, &request, tenant_id).await;
@@ -913,6 +914,10 @@ mod tests {
     fn otel_router(state: Arc<AppState>) -> Router {
         Router::new()
             .route("/v1/traces", post(ingest_traces))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::auth::auth_middleware,
+            ))
             .with_state(state)
     }
 

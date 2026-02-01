@@ -7,9 +7,9 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    AgentAction, AuditEvent, AuditQuery, LLMProvider, LLMTraceError, MetadataRepository, Result,
-    SecurityFinding, SpanEvent, StorageStats, Tenant, TenantConfig, TenantId, TraceEvent,
-    TraceQuery, TraceRepository, TraceSpan,
+    AgentAction, ApiKeyRecord, ApiKeyRole, AuditEvent, AuditQuery, LLMProvider, LLMTraceError,
+    MetadataRepository, Result, SecurityFinding, SpanEvent, StorageStats, Tenant, TenantConfig,
+    TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -91,6 +91,19 @@ const METADATA_MIGRATIONS: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_events(tenant_id, timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(tenant_id, event_type)",
+    // Loop 23: API key management
+    "CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT NOT NULL PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        key_hash TEXT NOT NULL UNIQUE,
+        key_prefix TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+    )",
+    "CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)",
+    "CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id)",
 ];
 
 // ---------------------------------------------------------------------------
@@ -1008,6 +1021,98 @@ impl MetadataRepository for SqliteMetadataRepository {
                 })
             })
             .collect()
+    }
+
+    async fn create_api_key(&self, key: &ApiKeyRecord) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO api_keys (id, tenant_id, name, key_hash, key_prefix, role, created_at, revoked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(key.id.to_string())
+        .bind(key.tenant_id.0.to_string())
+        .bind(&key.name)
+        .bind(&key.key_hash)
+        .bind(&key.key_prefix)
+        .bind(key.role.to_string())
+        .bind(key.created_at.to_rfc3339())
+        .bind(key.revoked_at.map(|t| t.to_rfc3339()))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to create API key: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>> {
+        let row = sqlx::query("SELECT * FROM api_keys WHERE key_hash = ?1 AND revoked_at IS NULL")
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to look up API key: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(ApiKeyRecord {
+            id: parse_uuid(&row.get::<String, _>("id"))?,
+            tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+            name: row.get("name"),
+            key_hash: row.get("key_hash"),
+            key_prefix: row.get("key_prefix"),
+            role: row
+                .get::<String, _>("role")
+                .parse::<ApiKeyRole>()
+                .map_err(|e| LLMTraceError::Storage(format!("Invalid API key role: {e}")))?,
+            created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+            revoked_at: {
+                let s: Option<String> = row.get("revoked_at");
+                s.map(|v| parse_datetime(&v)).transpose()?
+            },
+        }))
+    }
+
+    async fn list_api_keys(&self, tenant_id: TenantId) -> Result<Vec<ApiKeyRecord>> {
+        let rows =
+            sqlx::query("SELECT * FROM api_keys WHERE tenant_id = ?1 ORDER BY created_at DESC")
+                .bind(tenant_id.0.to_string())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to list API keys: {e}")))?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(ApiKeyRecord {
+                    id: parse_uuid(&row.get::<String, _>("id"))?,
+                    tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+                    name: row.get("name"),
+                    key_hash: row.get("key_hash"),
+                    key_prefix: row.get("key_prefix"),
+                    role: row
+                        .get::<String, _>("role")
+                        .parse::<ApiKeyRole>()
+                        .map_err(|e| {
+                            LLMTraceError::Storage(format!("Invalid API key role: {e}"))
+                        })?,
+                    created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+                    revoked_at: {
+                        let s: Option<String> = row.get("revoked_at");
+                        s.map(|v| parse_datetime(&v)).transpose()?
+                    },
+                })
+            })
+            .collect()
+    }
+
+    async fn revoke_api_key(&self, key_id: Uuid) -> Result<bool> {
+        let result =
+            sqlx::query("UPDATE api_keys SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL")
+                .bind(Utc::now().to_rfc3339())
+                .bind(key_id.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to revoke API key: {e}")))?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     async fn health_check(&self) -> Result<()> {

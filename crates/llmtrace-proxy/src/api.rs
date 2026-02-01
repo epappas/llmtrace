@@ -2,21 +2,24 @@
 //!
 //! These endpoints allow users to query stored LLM traces and security
 //! findings via HTTP without direct database access. All endpoints
-//! identify the tenant from the request headers using the same
-//! [`resolve_tenant`](crate::proxy::resolve_tenant) logic as the proxy.
+//! identify the tenant via the auth middleware (when auth is enabled) or
+//! from request headers (legacy fallback).
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Extension;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use llmtrace_core::{AgentAction, AgentActionType, LLMProvider, TraceQuery};
+use llmtrace_core::{
+    AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, TraceQuery,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::proxy::{resolve_tenant, AppState};
+use crate::proxy::AppState;
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -128,6 +131,27 @@ fn parse_provider(s: &str) -> LLMProvider {
     }
 }
 
+/// Check that the caller has at least viewer role.
+fn require_role_viewer(auth: &AuthContext) -> Option<Response> {
+    if !auth.role.has_permission(ApiKeyRole::Viewer) {
+        Some(api_error(StatusCode::FORBIDDEN, "Insufficient permissions"))
+    } else {
+        None
+    }
+}
+
+/// Check that the caller has at least operator role.
+fn require_role_operator(auth: &AuthContext) -> Option<Response> {
+    if !auth.role.has_permission(ApiKeyRole::Operator) {
+        Some(api_error(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions: requires operator role",
+        ))
+    } else {
+        None
+    }
+}
+
 /// Build a JSON error response.
 fn api_error(status: StatusCode, message: &str) -> Response {
     let body = ApiError {
@@ -149,10 +173,13 @@ fn api_error(status: StatusCode, message: &str) -> Response {
 /// paginated via `limit` and `offset` query parameters.
 pub async fn list_traces(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Query(params): Query<ListTracesParams>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
     let limit = clamp_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
 
@@ -188,10 +215,13 @@ pub async fn list_traces(
 /// `GET /api/v1/traces/:trace_id` — get a single trace with all spans.
 pub async fn get_trace(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Path(trace_id): Path<Uuid>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
 
     match state.storage.traces.get_trace(tenant_id, trace_id).await {
         Ok(Some(trace)) => Json(trace).into_response(),
@@ -206,10 +236,13 @@ pub async fn get_trace(
 /// Results are paginated via `limit` and `offset` query parameters.
 pub async fn list_spans(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Query(params): Query<ListSpansParams>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
     let limit = clamp_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
 
@@ -242,10 +275,13 @@ pub async fn list_spans(
 /// `GET /api/v1/spans/:span_id` — get a single span.
 pub async fn get_span(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Path(span_id): Path<Uuid>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
 
     match state.storage.traces.get_span(tenant_id, span_id).await {
         Ok(Some(span)) => Json(span).into_response(),
@@ -255,8 +291,14 @@ pub async fn get_span(
 }
 
 /// `GET /api/v1/stats` — storage statistics for the tenant.
-pub async fn get_stats(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+pub async fn get_stats(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
 
     match state.storage.traces.get_stats(tenant_id).await {
         Ok(stats) => Json(stats).into_response(),
@@ -271,10 +313,13 @@ pub async fn get_stats(State(state): State<Arc<AppState>>, headers: HeaderMap) -
 /// utilization percentage.
 pub async fn get_current_costs(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Query(params): Query<CostQueryParams>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
 
     let tracker = match &state.cost_tracker {
         Some(t) => t,
@@ -300,10 +345,13 @@ pub struct CostQueryParams {
 /// Returns all spans where `security_score > 0`, paginated.
 pub async fn list_security_findings(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Query(params): Query<ListFindingsParams>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
     let limit = clamp_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
 
@@ -393,11 +441,14 @@ fn parse_action_type(s: &str) -> Option<AgentActionType> {
 /// no spans, returns 404.
 pub async fn report_action(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Path(trace_id): Path<Uuid>,
     Json(body): Json<ReportActionRequest>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_operator(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
 
     let action_type = match parse_action_type(&body.action_type) {
         Some(t) => t,
@@ -494,10 +545,13 @@ pub struct ActionFrequency {
 /// `GET /api/v1/actions/summary` — aggregate view of agent actions.
 pub async fn actions_summary(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    Extension(auth): Extension<AuthContext>,
     Query(params): Query<ListSpansParams>,
 ) -> Response {
-    let tenant_id = resolve_tenant(&headers);
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+    let tenant_id = auth.tenant_id;
     let mut query = TraceQuery::new(tenant_id);
     query.model_name = params.model;
     query.operation_name = params.operation_name;
@@ -672,6 +726,10 @@ mod tests {
                 axum::routing::post(report_action),
             )
             .route("/api/v1/actions/summary", get(actions_summary))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::auth::auth_middleware,
+            ))
             .with_state(state)
     }
 

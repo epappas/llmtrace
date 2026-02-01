@@ -5,6 +5,7 @@
 
 pub mod alerts;
 pub mod api;
+pub mod auth;
 pub mod circuit_breaker;
 pub mod config;
 pub mod cost;

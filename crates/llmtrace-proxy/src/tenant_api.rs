@@ -6,9 +6,10 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use axum::Extension;
 use axum::Json;
 use chrono::Utc;
-use llmtrace_core::{AuditEvent, Tenant, TenantId};
+use llmtrace_core::{ApiKeyRole, AuditEvent, AuthContext, Tenant, TenantId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -81,6 +82,19 @@ fn api_error(status: StatusCode, message: &str) -> Response {
 }
 
 /// Record an audit event (best-effort — log but don't fail the request).
+///
+/// Public variant for use by other modules (e.g. auth).
+pub async fn record_audit_for(
+    state: &Arc<AppState>,
+    tenant_id: TenantId,
+    event_type: &str,
+    resource: &str,
+    data: serde_json::Value,
+) {
+    record_audit(state, tenant_id, event_type, resource, data).await;
+}
+
+/// Record an audit event (best-effort — log but don't fail the request).
 async fn record_audit(
     state: &Arc<AppState>,
     tenant_id: TenantId,
@@ -110,11 +124,27 @@ async fn record_audit(
 // Handlers
 // ---------------------------------------------------------------------------
 
+/// Check that the caller has admin role.
+fn require_admin(auth: &AuthContext) -> Option<Response> {
+    if !auth.role.has_permission(ApiKeyRole::Admin) {
+        Some(api_error(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions: requires admin role",
+        ))
+    } else {
+        None
+    }
+}
+
 /// `POST /api/v1/tenants` — create a new tenant.
 pub async fn create_tenant(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Json(body): Json<CreateTenantRequest>,
 ) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
     if body.name.trim().is_empty() {
         return api_error(StatusCode::BAD_REQUEST, "Tenant name must not be empty");
     }
@@ -144,7 +174,13 @@ pub async fn create_tenant(
 }
 
 /// `GET /api/v1/tenants` — list all tenants.
-pub async fn list_tenants(State(state): State<Arc<AppState>>) -> Response {
+pub async fn list_tenants(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
     match state.metadata().list_tenants().await {
         Ok(tenants) => Json(tenants).into_response(),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -152,7 +188,14 @@ pub async fn list_tenants(State(state): State<Arc<AppState>>) -> Response {
 }
 
 /// `GET /api/v1/tenants/:id` — get tenant details.
-pub async fn get_tenant(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> Response {
+pub async fn get_tenant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
     let tenant_id = TenantId(id);
     match state.metadata().get_tenant(tenant_id).await {
         Ok(Some(tenant)) => Json(tenant).into_response(),
@@ -164,9 +207,13 @@ pub async fn get_tenant(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>
 /// `PUT /api/v1/tenants/:id` — update tenant name, plan, or config.
 pub async fn update_tenant(
     State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateTenantRequest>,
 ) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
     let tenant_id = TenantId(id);
 
     // Fetch existing tenant
@@ -201,7 +248,14 @@ pub async fn update_tenant(
 }
 
 /// `DELETE /api/v1/tenants/:id` — delete a tenant.
-pub async fn delete_tenant(State(state): State<Arc<AppState>>, Path(id): Path<Uuid>) -> Response {
+pub async fn delete_tenant(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
     let tenant_id = TenantId(id);
 
     // Check existence first so we can return 404 for unknown tenants
@@ -338,6 +392,10 @@ mod tests {
                 "/api/v1/tenants/:id",
                 get(get_tenant).put(update_tenant).delete(delete_tenant),
             )
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::auth::auth_middleware,
+            ))
             .with_state(state)
     }
 

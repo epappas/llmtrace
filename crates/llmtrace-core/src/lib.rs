@@ -39,6 +39,95 @@ impl Default for TenantId {
 }
 
 // ---------------------------------------------------------------------------
+// RBAC & Auth types
+// ---------------------------------------------------------------------------
+
+/// Role for API key-based access control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiKeyRole {
+    /// Full access: manage tenants, keys, read/write traces.
+    Admin,
+    /// Read + write traces, report actions; no tenant/key management.
+    Operator,
+    /// Read-only access to traces, spans, stats.
+    Viewer,
+}
+
+impl ApiKeyRole {
+    /// Check whether this role is at least as privileged as `required`.
+    #[must_use]
+    pub fn has_permission(self, required: ApiKeyRole) -> bool {
+        self.privilege_level() >= required.privilege_level()
+    }
+
+    /// Numeric privilege level (higher = more privileged).
+    fn privilege_level(self) -> u8 {
+        match self {
+            Self::Admin => 2,
+            Self::Operator => 1,
+            Self::Viewer => 0,
+        }
+    }
+}
+
+impl std::fmt::Display for ApiKeyRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admin => write!(f, "admin"),
+            Self::Operator => write!(f, "operator"),
+            Self::Viewer => write!(f, "viewer"),
+        }
+    }
+}
+
+impl std::str::FromStr for ApiKeyRole {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "admin" => Ok(Self::Admin),
+            "operator" => Ok(Self::Operator),
+            "viewer" => Ok(Self::Viewer),
+            _ => Err(format!("unknown role: {s}")),
+        }
+    }
+}
+
+/// A stored API key record (the plaintext key is never persisted).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyRecord {
+    /// Unique identifier for this key.
+    pub id: Uuid,
+    /// Tenant this key belongs to.
+    pub tenant_id: TenantId,
+    /// Human-readable name / label for the key.
+    pub name: String,
+    /// SHA-256 hex digest of the plaintext key.
+    #[serde(skip_serializing)]
+    pub key_hash: String,
+    /// Key prefix for identification (e.g. `llmt_ab12...`).
+    pub key_prefix: String,
+    /// Role granted by this key.
+    pub role: ApiKeyRole,
+    /// When the key was created.
+    pub created_at: DateTime<Utc>,
+    /// When the key was revoked (`None` if still active).
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// Authenticated context injected by the auth middleware.
+#[derive(Debug, Clone)]
+pub struct AuthContext {
+    /// Tenant the caller is authenticated as.
+    pub tenant_id: TenantId,
+    /// Role granted by the API key (or admin bootstrap key).
+    pub role: ApiKeyRole,
+    /// ID of the API key used (`None` for bootstrap admin key).
+    pub key_id: Option<Uuid>,
+}
+
+// ---------------------------------------------------------------------------
 // Security types
 // ---------------------------------------------------------------------------
 
@@ -749,6 +838,9 @@ pub struct ProxyConfig {
     /// OpenTelemetry OTLP ingestion configuration.
     #[serde(default)]
     pub otel_ingest: OtelIngestConfig,
+    /// Authentication and RBAC configuration.
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 impl Default for ProxyConfig {
@@ -778,6 +870,7 @@ impl Default for ProxyConfig {
             cost_caps: CostCapConfig::default(),
             security_analysis: SecurityAnalysisConfig::default(),
             otel_ingest: OtelIngestConfig::default(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -1111,6 +1204,30 @@ pub struct OtelIngestConfig {
     pub enabled: bool,
 }
 
+/// Authentication and RBAC configuration.
+///
+/// When `enabled` is `true`, every request (except `/health`) must carry
+/// a valid API key in the `Authorization: Bearer <key>` header. The
+/// `admin_key` serves as a bootstrap key for initial setup.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// auth:
+///   enabled: true
+///   admin_key: "llmt_bootstrap_secret"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// Enable API-key authentication and RBAC enforcement.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Bootstrap admin key — grants full admin access when auth is enabled.
+    /// This key is not stored hashed; it's compared directly from config.
+    #[serde(default)]
+    pub admin_key: Option<String>,
+}
+
 /// Alert engine configuration for webhook notifications.
 ///
 /// When enabled, the alert engine sends HTTP POST requests to a webhook URL
@@ -1388,6 +1505,20 @@ pub trait MetadataRepository: Send + Sync {
 
     /// Query audit events.
     async fn query_audit_events(&self, query: &AuditQuery) -> Result<Vec<AuditEvent>>;
+
+    // -- API key management --------------------------------------------------
+
+    /// Store a new API key record (the plaintext key is NOT stored — only its hash).
+    async fn create_api_key(&self, key: &ApiKeyRecord) -> Result<()>;
+
+    /// Look up an active (non-revoked) API key by its SHA-256 hash.
+    async fn get_api_key_by_hash(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>>;
+
+    /// List all API keys for a tenant (includes revoked keys).
+    async fn list_api_keys(&self, tenant_id: TenantId) -> Result<Vec<ApiKeyRecord>>;
+
+    /// Revoke an API key by setting its `revoked_at` timestamp.
+    async fn revoke_api_key(&self, key_id: Uuid) -> Result<bool>;
 
     /// Health check for the metadata repository.
     async fn health_check(&self) -> Result<()>;
@@ -1922,6 +2053,7 @@ mod tests {
                 ml_cache_dir: "/tmp/models".to_string(),
             },
             otel_ingest: OtelIngestConfig::default(),
+            auth: AuthConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -2553,5 +2685,89 @@ mod tests {
         }"#;
         let span: TraceSpan = serde_json::from_str(json).unwrap();
         assert!(span.agent_actions.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Auth & RBAC types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_api_key_role_has_permission() {
+        // Admin can do everything
+        assert!(ApiKeyRole::Admin.has_permission(ApiKeyRole::Admin));
+        assert!(ApiKeyRole::Admin.has_permission(ApiKeyRole::Operator));
+        assert!(ApiKeyRole::Admin.has_permission(ApiKeyRole::Viewer));
+
+        // Operator can do operator + viewer things
+        assert!(!ApiKeyRole::Operator.has_permission(ApiKeyRole::Admin));
+        assert!(ApiKeyRole::Operator.has_permission(ApiKeyRole::Operator));
+        assert!(ApiKeyRole::Operator.has_permission(ApiKeyRole::Viewer));
+
+        // Viewer can only view
+        assert!(!ApiKeyRole::Viewer.has_permission(ApiKeyRole::Admin));
+        assert!(!ApiKeyRole::Viewer.has_permission(ApiKeyRole::Operator));
+        assert!(ApiKeyRole::Viewer.has_permission(ApiKeyRole::Viewer));
+    }
+
+    #[test]
+    fn test_api_key_role_roundtrip() {
+        for role in &[ApiKeyRole::Admin, ApiKeyRole::Operator, ApiKeyRole::Viewer] {
+            let s = role.to_string();
+            let parsed: ApiKeyRole = s.parse().unwrap();
+            assert_eq!(*role, parsed);
+        }
+    }
+
+    #[test]
+    fn test_api_key_role_serialization() {
+        let role = ApiKeyRole::Operator;
+        let json = serde_json::to_string(&role).unwrap();
+        assert_eq!(json, r#""operator""#);
+        let deserialized: ApiKeyRole = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, ApiKeyRole::Operator);
+    }
+
+    #[test]
+    fn test_api_key_record_serialization_skips_hash() {
+        let record = ApiKeyRecord {
+            id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            name: "test-key".to_string(),
+            key_hash: "abc123".to_string(),
+            key_prefix: "llmt_ab…".to_string(),
+            role: ApiKeyRole::Viewer,
+            created_at: Utc::now(),
+            revoked_at: None,
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        // key_hash is skip_serializing — should not appear in JSON output
+        assert!(!json.contains("abc123"));
+        assert!(json.contains("llmt_ab"));
+    }
+
+    #[test]
+    fn test_auth_config_default() {
+        let cfg = AuthConfig::default();
+        assert!(!cfg.enabled);
+        assert!(cfg.admin_key.is_none());
+    }
+
+    #[test]
+    fn test_auth_config_serialization() {
+        let cfg = AuthConfig {
+            enabled: true,
+            admin_key: Some("my-secret".to_string()),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let deser: AuthConfig = serde_json::from_str(&json).unwrap();
+        assert!(deser.enabled);
+        assert_eq!(deser.admin_key.as_deref(), Some("my-secret"));
+    }
+
+    #[test]
+    fn test_proxy_config_includes_auth() {
+        let config = ProxyConfig::default();
+        assert!(!config.auth.enabled);
+        assert!(config.auth.admin_key.is_none());
     }
 }
