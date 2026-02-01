@@ -33,7 +33,8 @@ services:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -54,6 +55,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # --------------------------------------------------------------------------
@@ -71,6 +73,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   # --------------------------------------------------------------------------

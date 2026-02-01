@@ -12,7 +12,7 @@
 # ---------------------------------------------------------------------------
 FROM rust:1.93-alpine AS builder
 
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static build-base protobuf-dev
 
 WORKDIR /build
 
