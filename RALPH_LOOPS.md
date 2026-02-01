@@ -616,3 +616,256 @@ Implemented in commit `dcf100d`. ClickHouseTraceRepository with MergeTree engine
 **Do NOT**: implement action streaming/replay, capture full stdout/response bodies (truncate at 4KB).
 
 **Acceptance**: Tool calls auto-extracted from LLM responses, client reporting API works, actions queryable, suspicious actions flagged, Python SDK supports reporting, all tests pass.
+
+---
+
+# Phase 4: Platform Maturity
+
+## Loop 19: ML-Based Prompt Injection Detection (Candle)
+
+**Goal**: Upgrade from regex-only prompt injection detection to an ML classifier using HuggingFace's `candle` framework, running inference locally in Rust with no Python dependency.
+
+**Context files**: `docs/architecture/SYSTEM_ARCHITECTURE.md` (Security Architecture), `crates/llmtrace-security/src/lib.rs` (existing RegexSecurityAnalyzer)
+
+**Tasks**:
+
+1. **Add candle dependencies** to `llmtrace-security/Cargo.toml` behind an `ml` feature gate:
+   - `candle-core`, `candle-nn`, `candle-transformers`, `tokenizers`, `hf-hub` (for model download)
+   - Keep regex analyzer as the default — ML is opt-in
+
+2. **Create `crates/llmtrace-security/src/ml_detector.rs`**:
+   - `MLSecurityAnalyzer` struct implementing `SecurityAnalyzer` trait
+   - Use a small text classification model (e.g., `distilbert-base-uncased` fine-tuned for injection detection, or a similar small model from HuggingFace)
+   - Model loading: download from HuggingFace Hub on first use, cache locally
+   - `analyze_request` — tokenize prompt, run inference, return `SecurityFinding` if injection score > threshold
+   - `analyze_response` — same for response content
+   - Configurable confidence threshold (default 0.8)
+   - Fallback: if ML model fails to load, log warning and delegate to regex analyzer
+
+3. **Create `crates/llmtrace-security/src/ensemble.rs`**:
+   - `EnsembleSecurityAnalyzer` that combines regex + ML results
+   - Strategy: run both, take highest severity finding, boost confidence when both agree
+   - This becomes the default analyzer when `ml` feature is enabled
+
+4. **Add config options** to `ProxyConfig`:
+   ```yaml
+   security_analysis:
+     ml_enabled: true
+     ml_model: "protectai/deberta-v3-base-prompt-injection-v2"  # or similar
+     ml_threshold: 0.8
+     ml_cache_dir: "~/.cache/llmtrace/models"
+   ```
+
+5. **Benchmark**: add a simple benchmark comparing regex vs ML vs ensemble latency (use `criterion` or just a test with timing)
+
+6. **Tests**:
+   - ML analyzer detects known injection patterns
+   - ML analyzer doesn't false-positive on benign prompts
+   - Ensemble combines results correctly
+   - Graceful fallback when model unavailable
+   - Feature-gated: `#[cfg(feature = "ml")]`
+
+**Acceptance**: ML detection works behind feature flag, ensemble combines regex+ML, fallback works, all existing tests pass.
+
+---
+
+## Loop 20: OpenTelemetry Ingestion Gateway
+
+**Goal**: Accept traces in OpenTelemetry format (OTLP/HTTP) alongside the existing proxy, so users can send OTEL-instrumented traces directly.
+
+**Context files**: `docs/architecture/SYSTEM_ARCHITECTURE.md` (Trace Ingestion Engine)
+
+**Tasks**:
+
+1. **Add OTEL dependencies** to a new `crates/llmtrace-ingest/` crate (or extend proxy):
+   - `opentelemetry-proto` for protobuf types
+   - `prost` for protobuf decoding
+   - `tonic` for gRPC (optional, behind feature gate — HTTP/JSON first)
+
+2. **Add OTLP/HTTP endpoint** to the proxy:
+   - `POST /v1/traces` — accepts OTLP JSON or protobuf trace export requests
+   - Parse `ExportTraceServiceRequest`, convert OTEL spans to `TraceSpan`
+   - Map OTEL attributes to LLMTrace fields (model name, token counts, etc. from semantic conventions)
+   - Store via existing `TraceRepository`
+   - Run security analysis on span content
+
+3. **OTEL → LLMTrace mapping**:
+   - `service.name` → tenant identification
+   - `gen_ai.system` → `LLMProvider`
+   - `gen_ai.request.model` → `model_name`
+   - `gen_ai.usage.prompt_tokens` / `gen_ai.usage.completion_tokens` → token counts
+   - `gen_ai.prompt` / `gen_ai.completion` → prompt/response content
+   - Unknown attributes → `tags` map
+
+4. **Config**: `otel_ingest.enabled`, `otel_ingest.listen_addr` (can share port with proxy)
+
+5. **Tests**: OTLP JSON roundtrip, attribute mapping, security analysis on ingested traces
+
+**Acceptance**: OTLP/HTTP endpoint accepts traces, maps to internal format, stores and analyzes them, all existing tests pass.
+
+---
+
+## Loop 21: Web Dashboard (Next.js)
+
+**Goal**: Build a web dashboard for viewing traces, security findings, cost data, and tenant management.
+
+**Tasks**:
+
+1. **Scaffold Next.js app** in `dashboard/`:
+   - Next.js 14+ with App Router, TypeScript, Tailwind CSS
+   - shadcn/ui component library for consistent UI
+
+2. **Pages**:
+   - `/` — Overview dashboard: trace count, security score distribution, cost summary, recent alerts
+   - `/traces` — Trace list with filters (tenant, time range, provider, model, security score)
+   - `/traces/[id]` — Trace detail: spans, agent actions, security findings, cost
+   - `/security` — Security findings list, severity breakdown, top attack patterns
+   - `/costs` — Cost dashboard: spend by tenant/agent/model, budget cap status, trends
+   - `/tenants` — Tenant management CRUD
+   - `/settings` — Configuration viewer
+
+3. **API client**: typed fetch wrapper hitting the LLMTrace REST API
+
+4. **Charts**: use `recharts` or `tremor` for time series, bar charts, pie charts
+
+5. **Docker**: add `dashboard` service to `compose.yaml`, Dockerfile for Next.js
+
+**Acceptance**: Dashboard runs, connects to proxy API, displays real data, all pages functional.
+
+---
+
+## Loop 22: CI/CD Pipeline (GitHub Actions)
+
+**Goal**: Automated lint, test, build, and publish pipeline on every push/PR.
+
+**Tasks**:
+
+1. **`.github/workflows/ci.yml`** — runs on every push and PR:
+   - `cargo fmt --check`
+   - `cargo clippy --workspace -- -D warnings`
+   - `cargo test --workspace`
+   - Cache `~/.cargo` and `target/` for fast builds
+
+2. **`.github/workflows/release.yml`** — runs on tag push (`v*`):
+   - Build Docker image
+   - Push to `ghcr.io/epappas/llmtrace-proxy`
+   - Create GitHub Release with changelog
+
+3. **`.github/workflows/security.yml`** — weekly:
+   - `cargo audit`
+   - `cargo deny check`
+   - Dependabot alerts
+
+4. **Badge**: add CI status badge to README.md
+
+**Acceptance**: CI runs on every push, release workflow builds+pushes Docker image on tags, security scanning runs weekly.
+
+---
+
+## Loop 23: RBAC & Auth
+
+**Goal**: API key management and role-based access control for multi-tenant security.
+
+**Tasks**:
+
+1. **API key management**:
+   - Generate API keys per tenant (stored hashed in PostgreSQL)
+   - `POST /api/v1/auth/keys` — create key, `DELETE` — revoke
+   - Keys identify tenant + permission level
+
+2. **Roles**: `admin` (full access), `operator` (read + write traces), `viewer` (read only)
+
+3. **Auth middleware**: validate API key on every request, inject tenant context
+
+4. **Tenant isolation enforcement**: all queries scoped to authenticated tenant
+
+5. **Config**: `auth.enabled`, `auth.admin_key` (bootstrap key)
+
+**Acceptance**: API keys work, roles enforced, tenant isolation via auth, admin can manage keys.
+
+---
+
+## Loop 24: Compliance Reporting
+
+**Goal**: Automated compliance report generation for SOC2, GDPR, HIPAA.
+
+**Tasks**:
+
+1. **Report generator** in `crates/llmtrace-proxy/src/compliance.rs`:
+   - Query audit events, security findings, access logs for a time period
+   - Generate structured JSON reports
+
+2. **Report types**: SOC2 audit trail, GDPR data processing records, HIPAA access logs
+
+3. **API**: `POST /api/v1/reports/generate` with report type and date range, `GET /api/v1/reports/:id`
+
+4. **PDF export**: optional, using a lightweight PDF library
+
+**Acceptance**: Reports generate with real data, cover required compliance fields, API works.
+
+---
+
+## Loop 25: gRPC Ingestion Gateway
+
+**Goal**: High-throughput gRPC endpoint for trace ingestion using `tonic`.
+
+**Tasks**:
+
+1. **Define protobuf** schema in `proto/llmtrace.proto` for trace/span ingestion
+2. **Implement gRPC server** using `tonic` in the proxy (or separate binary)
+3. **Streaming ingestion**: support client-side streaming for batch trace upload
+4. **Config**: `grpc.enabled`, `grpc.listen_addr`
+
+**Acceptance**: gRPC endpoint accepts traces, stores them, high throughput (benchmark vs HTTP).
+
+---
+
+## Loop 26: Kubernetes Operator + Helm Chart
+
+**Goal**: K8s-native deployment with Helm chart and optional CRD operator.
+
+**Tasks**:
+
+1. **Helm chart** in `deployments/helm/llmtrace/`:
+   - Proxy deployment + service + HPA
+   - ClickHouse, PostgreSQL, Redis as subcharts (or external references)
+   - ConfigMap for proxy config, Secret for credentials
+   - Ingress configuration
+   - `values.yaml` with sensible defaults, `values-production.yaml` for prod
+
+2. **CRD** (optional): `LLMTraceInstance` custom resource for declarative config
+
+3. **Docs**: deployment guide in `docs/deployment/kubernetes.md`
+
+**Acceptance**: `helm install` deploys working stack, HPA scales proxy, docs cover setup.
+
+---
+
+## Loop 27: WASM Bindings
+
+**Goal**: WebAssembly bindings for browser-based security analysis and trace viewing.
+
+**Tasks**:
+
+1. **Create `crates/llmtrace-wasm/`** using `wasm-bindgen`
+2. **Expose**: prompt injection analysis, PII detection, cost estimation to JS
+3. **Build**: `wasm-pack build` producing npm package
+4. **Tests**: browser-compatible test suite
+
+**Acceptance**: WASM module loads in browser, security analysis works client-side.
+
+---
+
+## Loop 28: Node.js Bindings (NAPI)
+
+**Goal**: Native Node.js bindings via NAPI-RS for server-side JS/TS integration.
+
+**Tasks**:
+
+1. **Create `bindings/node/`** using `napi-rs`
+2. **Expose**: `LLMSecTracer` class, `instrument()` function, action reporting
+3. **TypeScript types**: generated `.d.ts` files
+4. **npm package**: `package.json`, build scripts, publish-ready
+5. **Tests**: Jest test suite
+
+**Acceptance**: `npm install` works, TypeScript types correct, tracer instruments LLM calls.
