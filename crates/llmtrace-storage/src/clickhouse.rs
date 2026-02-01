@@ -80,12 +80,16 @@ struct SizeRow {
 }
 
 /// Row type for time-range queries on the traces table.
+///
+/// Uses non-optional `DateTime64(3)` fields because ClickHouse's `min`/`max`
+/// aggregate functions return a non-nullable `DateTime64(3)`.  The caller
+/// should only execute this query when at least one row exists.
 #[derive(Debug, clickhouse::Row, Deserialize)]
 struct TimeRangeRow {
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
-    oldest: Option<DateTime<Utc>>,
-    #[serde(with = "clickhouse::serde::chrono::datetime64::millis::option")]
-    newest: Option<DateTime<Utc>>,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    oldest: DateTime<Utc>,
+    #[serde(with = "clickhouse::serde::chrono::datetime64::millis")]
+    newest: DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -710,22 +714,27 @@ impl TraceRepository for ClickHouseTraceRepository {
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate size: {e}")))?;
 
-        let time_row: TimeRangeRow = self
-            .client
-            .query(&format!(
-                "SELECT min(created_at) as oldest, max(created_at) as newest \
-                 FROM traces WHERE tenant_id = {tid}"
-            ))
-            .fetch_one()
-            .await
-            .map_err(|e| LLMTraceError::Storage(format!("Failed to get time range: {e}")))?;
+        let (oldest_trace, newest_trace) = if trace_count.cnt > 0 {
+            let time_row: TimeRangeRow = self
+                .client
+                .query(&format!(
+                    "SELECT min(created_at) as oldest, max(created_at) as newest \
+                     FROM traces WHERE tenant_id = {tid}"
+                ))
+                .fetch_one()
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to get time range: {e}")))?;
+            (Some(time_row.oldest), Some(time_row.newest))
+        } else {
+            (None, None)
+        };
 
         Ok(StorageStats {
             total_traces: trace_count.cnt,
             total_spans: span_count.cnt,
             storage_size_bytes: size_row.sz,
-            oldest_trace: time_row.oldest,
-            newest_trace: time_row.newest,
+            oldest_trace,
+            newest_trace,
         })
     }
 

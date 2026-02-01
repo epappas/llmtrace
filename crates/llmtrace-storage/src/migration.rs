@@ -173,27 +173,52 @@ pub async fn run_sqlite_migrations(pool: &sqlx::SqlitePool) -> Result<()> {
 
 #[cfg(feature = "postgres")]
 /// Create the `schema_version` tracking table if it does not exist (PostgreSQL).
+///
+/// Handles the race condition where concurrent connections both attempt
+/// `CREATE TABLE IF NOT EXISTS` at the same time — PostgreSQL can raise a
+/// `unique_violation` on the internal `pg_type_typname_nsp_index` catalogue
+/// constraint even with the `IF NOT EXISTS` guard.
 async fn ensure_pg_version_table(pool: &sqlx::PgPool) -> Result<()> {
-    sqlx::query(
+    let result = sqlx::query(
         "CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
+            version BIGINT PRIMARY KEY,
             applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             description TEXT
         )",
     )
     .execute(pool)
-    .await
-    .map_err(|e| LLMTraceError::Storage(format!("Failed to create schema_version table: {e}")))?;
-    Ok(())
+    .await;
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            // Concurrent CREATE TABLE can fail with a pg_type catalogue
+            // duplicate or a generic "already exists" message — both are
+            // harmless because the table exists by the time we continue.
+            if msg.contains("pg_type_typname_nsp_index") || msg.contains("already exists") {
+                Ok(())
+            } else {
+                Err(LLMTraceError::Storage(format!(
+                    "Failed to create schema_version table: {e}"
+                )))
+            }
+        }
+    }
 }
 
 #[cfg(feature = "postgres")]
 /// Return the highest applied migration version for PostgreSQL, or 0 if none.
+///
+/// The explicit `CAST(… AS BIGINT)` ensures the result is always `INT8`
+/// regardless of whether the `version` column was created as `INTEGER`
+/// (INT4) or `BIGINT` (INT8).
 async fn pg_current_version(pool: &sqlx::PgPool) -> Result<i64> {
-    let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(version), 0) FROM schema_version")
-        .fetch_one(pool)
-        .await
-        .map_err(|e| LLMTraceError::Storage(format!("Failed to query schema_version: {e}")))?;
+    let row: (i64,) =
+        sqlx::query_as("SELECT CAST(COALESCE(MAX(version), 0) AS BIGINT) FROM schema_version")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to query schema_version: {e}")))?;
     Ok(row.0)
 }
 
@@ -221,6 +246,32 @@ pub async fn run_pg_migrations(pool: &sqlx::PgPool) -> Result<()> {
         let mut tx = pool.begin().await.map_err(|e| {
             LLMTraceError::Storage(format!("Failed to begin migration transaction: {e}"))
         })?;
+
+        // Acquire a transaction-scoped advisory lock so that concurrent
+        // connections serialise on migration application.  The lock is
+        // automatically released when the transaction commits or rolls back.
+        sqlx::query("SELECT pg_advisory_xact_lock(8675309)")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                LLMTraceError::Storage(format!("Failed to acquire migration lock: {e}"))
+            })?;
+
+        // Re-check the current version inside the lock — another connection
+        // may have already applied this migration while we were waiting.
+        let inner: (i64,) =
+            sqlx::query_as("SELECT CAST(COALESCE(MAX(version), 0) AS BIGINT) FROM schema_version")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| {
+                    LLMTraceError::Storage(format!("Failed to re-check schema version: {e}"))
+                })?;
+
+        if m.version <= inner.0 {
+            // Already applied by a concurrent runner — skip.
+            tx.rollback().await.ok();
+            continue;
+        }
 
         // Execute each statement in the migration file.
         for statement in m.sql.split(';') {
