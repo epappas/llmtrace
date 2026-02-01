@@ -44,3 +44,4 @@ __pycache__/
 config.dev.yaml
 config.local.yaml
 llmtrace-python/target/
+config.yaml
