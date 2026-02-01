@@ -2,6 +2,8 @@
 # LLMTrace — Model Pricing Configuration
 # ============================================================================
 #
+# Last updated: 2026-02-01
+#
 # This file defines per-model pricing (cost per 1 million tokens) used by the
 # cost estimation engine.  The proxy loads this at startup and reloads it on
 # SIGHUP without a rebuild.
@@ -12,46 +14,556 @@
 # and prefix match so that e.g. "gpt-4o-2024-08-06" matches "gpt-4o".
 #
 # All prices are in USD per 1 000 000 tokens (input / output).
+# Prices reflect STANDARD processing tier unless otherwise noted.
 # ============================================================================
 
+
 # ---------------------------------------------------------------------------
-# OpenAI
+# OpenAI — Flagship / GPT-5 series
+# Source: https://platform.openai.com/docs/pricing (Standard tier)
+# Verified: 2026-02-01
 # ---------------------------------------------------------------------------
-gpt-4o-mini:
-  input_per_million: 0.15
-  output_per_million: 0.60
+
+gpt-5.2:
+  input_per_million: 1.75
+  output_per_million: 14.00
+  # Cached input: $0.175/M
+
+gpt-5.1:
+  input_per_million: 1.25
+  output_per_million: 10.00
+  # Cached input: $0.125/M
+
+gpt-5:
+  input_per_million: 1.25
+  output_per_million: 10.00
+  # Cached input: $0.125/M
+
+gpt-5-mini:
+  input_per_million: 0.25
+  output_per_million: 2.00
+  # Cached input: $0.025/M
+
+gpt-5-nano:
+  input_per_million: 0.05
+  output_per_million: 0.40
+  # Cached input: $0.005/M
+
+gpt-5.2-pro:
+  input_per_million: 21.00
+  output_per_million: 168.00
+
+gpt-5-pro:
+  input_per_million: 15.00
+  output_per_million: 120.00
+
+
+# ---------------------------------------------------------------------------
+# OpenAI — GPT-4.1 series
+# Source: https://platform.openai.com/docs/pricing (Standard tier)
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+gpt-4.1:
+  input_per_million: 2.00
+  output_per_million: 8.00
+  # Cached input: $0.50/M
+
+gpt-4.1-mini:
+  input_per_million: 0.40
+  output_per_million: 1.60
+  # Cached input: $0.10/M
+
+gpt-4.1-nano:
+  input_per_million: 0.10
+  output_per_million: 0.40
+  # Cached input: $0.025/M
+
+
+# ---------------------------------------------------------------------------
+# OpenAI — GPT-4o series
+# Source: https://platform.openai.com/docs/pricing (Standard tier)
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
 
 gpt-4o:
   input_per_million: 2.50
   output_per_million: 10.00
+  # Cached input: $1.25/M
+
+gpt-4o-mini:
+  input_per_million: 0.15
+  output_per_million: 0.60
+  # Cached input: $0.075/M
+
+
+# ---------------------------------------------------------------------------
+# OpenAI — o-series (reasoning models)
+# Source: https://platform.openai.com/docs/pricing (Standard tier)
+# Verified: 2026-02-01
+# Note: Reasoning tokens are billed as output tokens.
+# ---------------------------------------------------------------------------
+
+o1:
+  input_per_million: 15.00
+  output_per_million: 60.00
+  # Cached input: $7.50/M
+
+o1-pro:
+  input_per_million: 150.00
+  output_per_million: 600.00
+
+o3-pro:
+  input_per_million: 20.00
+  output_per_million: 80.00
+
+o3:
+  input_per_million: 2.00
+  output_per_million: 8.00
+  # Cached input: $0.50/M
+
+o4-mini:
+  input_per_million: 1.10
+  output_per_million: 4.40
+  # Cached input: $0.275/M
+
+o3-mini:
+  input_per_million: 1.10
+  output_per_million: 4.40
+  # Cached input: $0.55/M
+
+o1-mini:
+  input_per_million: 1.10
+  output_per_million: 4.40
+  # Cached input: $0.55/M
+
+
+# ---------------------------------------------------------------------------
+# OpenAI — Legacy / older models
+# Source: https://platform.openai.com/docs/pricing (Standard tier)
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+chatgpt-4o-latest:
+  input_per_million: 5.00
+  output_per_million: 15.00
+
+gpt-4-turbo:
+  input_per_million: 10.00
+  output_per_million: 30.00
 
 gpt-4:
   input_per_million: 30.00
   output_per_million: 60.00
 
+gpt-4-32k:
+  input_per_million: 60.00
+  output_per_million: 120.00
+
 gpt-3.5-turbo:
   input_per_million: 0.50
   output_per_million: 1.50
 
+
 # ---------------------------------------------------------------------------
-# Anthropic
+# OpenAI — Embeddings
+# Source: https://platform.openai.com/docs/pricing
+# Verified: 2026-02-01
+# Note: Embedding models are input-only; output_per_million set to 0.
 # ---------------------------------------------------------------------------
-claude-3-5-sonnet:
+
+text-embedding-3-small:
+  input_per_million: 0.02
+  output_per_million: 0.00
+  # Batch: $0.01/M
+
+text-embedding-3-large:
+  input_per_million: 0.13
+  output_per_million: 0.00
+  # Batch: $0.065/M
+
+text-embedding-ada-002:
+  input_per_million: 0.10
+  output_per_million: 0.00
+  # Batch: $0.05/M
+
+
+# ---------------------------------------------------------------------------
+# Anthropic — Latest models
+# Source: https://claude.com/pricing
+# Verified: 2026-02-01
+# Note: Batch processing saves 50%.
+# ---------------------------------------------------------------------------
+
+claude-opus-4.5:
+  input_per_million: 5.00
+  output_per_million: 25.00
+  # Cache write: $6.25/M, Cache read: $0.50/M
+
+claude-sonnet-4.5:
   input_per_million: 3.00
   output_per_million: 15.00
+  # Prompts >200K tokens: input $6.00/M, output $22.50/M
+  # Cache write (≤200K): $3.75/M, Cache read (≤200K): $0.30/M
 
-claude-3.5-sonnet:
+claude-haiku-4.5:
+  input_per_million: 1.00
+  output_per_million: 5.00
+  # Cache write: $1.25/M, Cache read: $0.10/M
+
+
+# ---------------------------------------------------------------------------
+# Anthropic — Legacy models
+# Source: https://claude.com/pricing
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+claude-opus-4.1:
+  input_per_million: 15.00
+  output_per_million: 75.00
+  # Cache write: $18.75/M, Cache read: $1.50/M
+
+claude-sonnet-4:
   input_per_million: 3.00
   output_per_million: 15.00
+  # Cache write: $3.75/M, Cache read: $0.30/M
 
-claude-3-5-haiku:
-  input_per_million: 0.80
-  output_per_million: 4.00
-
-claude-3.5-haiku:
-  input_per_million: 0.80
-  output_per_million: 4.00
+claude-opus-4:
+  input_per_million: 15.00
+  output_per_million: 75.00
+  # Cache write: $18.75/M, Cache read: $1.50/M
 
 claude-3-opus:
   input_per_million: 15.00
   output_per_million: 75.00
+
+claude-3-haiku:
+  input_per_million: 0.25
+  output_per_million: 1.25
+  # Cache write: $0.30/M, Cache read: $0.03/M
+
+# Aliases for older naming conventions (dot notation)
+claude-3.5-sonnet:
+  input_per_million: 3.00
+  output_per_million: 15.00
+
+claude-3-5-sonnet:
+  input_per_million: 3.00
+  output_per_million: 15.00
+
+claude-3.5-haiku:
+  input_per_million: 1.00
+  output_per_million: 5.00
+
+claude-3-5-haiku:
+  input_per_million: 1.00
+  output_per_million: 5.00
+
+
+# ---------------------------------------------------------------------------
+# Google — Gemini 3 series (Preview)
+# Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+# Verified: 2026-02-01
+# Note: Vertex AI pricing shown. Google AI Studio may differ slightly.
+# ---------------------------------------------------------------------------
+
+gemini-3-pro:
+  input_per_million: 2.00
+  output_per_million: 12.00
+  # >200K context: input $4.00/M, output $18.00/M
+  # Cached input: $0.20/M (≤200K), $0.40/M (>200K)
+  # Batch: 50% discount
+
+gemini-3-flash:
+  input_per_million: 0.50
+  output_per_million: 3.00
+  # Cached input: $0.05/M
+  # Batch: 50% discount
+
+
+# ---------------------------------------------------------------------------
+# Google — Gemini 2.5 series
+# Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+gemini-2.5-pro:
+  input_per_million: 1.25
+  output_per_million: 10.00
+  # >200K context: input $2.50/M, output $15.00/M
+  # Cached input: $0.125/M (≤200K), $0.250/M (>200K)
+  # Batch: 50% discount
+
+gemini-2.5-flash:
+  input_per_million: 0.30
+  output_per_million: 2.50
+  # Audio input: $1.00/M
+  # Cached input: $0.030/M
+  # Batch: 50% discount
+
+gemini-2.5-flash-lite:
+  input_per_million: 0.10
+  output_per_million: 0.40
+  # Audio input: $0.30/M
+  # Cached input: $0.010/M
+  # Batch: 50% discount
+
+
+# ---------------------------------------------------------------------------
+# Google — Gemini 2.0 series
+# Source: https://cloud.google.com/vertex-ai/generative-ai/pricing
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+gemini-2.0-flash:
+  input_per_million: 0.15
+  output_per_million: 0.60
+  # Audio input: $1.00/M
+  # Batch: 50% discount
+
+gemini-2.0-flash-lite:
+  input_per_million: 0.075
+  output_per_million: 0.30
+  # Batch: 50% discount
+
+
+# ---------------------------------------------------------------------------
+# Google — Gemini 1.5 series
+# Source: https://ai.google.dev/gemini-api/docs/pricing (via MetaCTO)
+# Verified: 2026-02-01
+# Note: Tiered pricing based on prompt length.
+# ---------------------------------------------------------------------------
+
+gemini-1.5-pro:
+  input_per_million: 1.25
+  output_per_million: 5.00
+  # >128K context: input $2.50/M, output $10.00/M
+  # Cached input (≤128K): $0.3125/M
+  # Context cache storage: $4.50/hour
+
+gemini-1.5-flash:
+  input_per_million: 0.075
+  output_per_million: 0.30
+  # >128K context: input $0.15/M, output $0.60/M
+
+gemini-1.5-flash-8b:
+  input_per_million: 0.0375
+  output_per_million: 0.15
+  # >128K context: input $0.075/M, output $0.30/M
+
+
+# ---------------------------------------------------------------------------
+# Google — Embeddings
+# Source: https://ai.google.dev/gemini-api/docs/pricing (via MetaCTO)
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+text-embedding-004:
+  input_per_million: 0.00
+  output_per_million: 0.00
+  # Free of charge (Google AI Studio)
+
+
+# ---------------------------------------------------------------------------
+# Mistral — La Plateforme API
+# Source: https://mistral.ai/pricing, https://pricepertoken.com/pricing-page/provider/mistral-ai
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+mistral-large-2512:
+  input_per_million: 0.50
+  output_per_million: 1.50
+
+mistral-large:
+  input_per_million: 2.00
+  output_per_million: 6.00
+  # Covers mistral-large-2411 and mistral-large-2407
+
+mistral-medium-3.1:
+  input_per_million: 0.40
+  output_per_million: 2.00
+
+mistral-medium-3:
+  input_per_million: 0.40
+  output_per_million: 2.00
+
+mistral-small-3.1:
+  input_per_million: 0.03
+  output_per_million: 0.11
+
+mistral-small-3.2:
+  input_per_million: 0.06
+  output_per_million: 0.18
+
+mistral-small-3:
+  input_per_million: 0.03
+  output_per_million: 0.11
+
+codestral:
+  input_per_million: 0.30
+  output_per_million: 0.90
+  # codestral-2508
+
+devstral-2512:
+  input_per_million: 0.05
+  output_per_million: 0.22
+
+devstral-medium:
+  input_per_million: 0.40
+  output_per_million: 2.00
+
+devstral-small:
+  input_per_million: 0.10
+  output_per_million: 0.30
+
+pixtral-12b:
+  input_per_million: 0.10
+  output_per_million: 0.10
+
+pixtral-large:
+  input_per_million: 2.00
+  output_per_million: 6.00
+  # pixtral-large-2411
+
+mistral-nemo:
+  input_per_million: 0.02
+  output_per_million: 0.04
+
+mistral-saba:
+  input_per_million: 0.20
+  output_per_million: 0.60
+
+ministral-3b:
+  input_per_million: 0.04
+  output_per_million: 0.04
+
+ministral-8b:
+  input_per_million: 0.10
+  output_per_million: 0.10
+
+mistral-small-creative:
+  input_per_million: 0.10
+  output_per_million: 0.30
+
+
+# ---------------------------------------------------------------------------
+# Cohere
+# Source: https://cohere.com/pricing (via MetaCTO verified Jan 2026)
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+command-r-plus:
+  input_per_million: 2.50
+  output_per_million: 10.00
+  # command-r-plus-08-2024
+
+command-a:
+  input_per_million: 2.50
+  output_per_million: 10.00
+
+command-r:
+  input_per_million: 0.15
+  output_per_million: 0.60
+  # command-r-08-2024
+
+command-r7b:
+  input_per_million: 0.0375
+  output_per_million: 0.15
+
+embed-4:
+  input_per_million: 0.12
+  output_per_million: 0.00
+  # Text embedding; image embedding priced separately
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek
+# Source: https://api-docs.deepseek.com/quick_start/pricing
+# Verified: 2026-02-01
+# Note: Both deepseek-chat and deepseek-reasoner run DeepSeek-V3.2.
+#       Cache hit input: $0.028/M (90% discount)
+# ---------------------------------------------------------------------------
+
+deepseek-chat:
+  input_per_million: 0.28
+  output_per_million: 0.42
+  # Cache hit input: $0.028/M
+
+deepseek-reasoner:
+  input_per_million: 0.28
+  output_per_million: 0.42
+  # Cache hit input: $0.028/M
+  # Thinking mode of DeepSeek-V3.2
+
+
+# ---------------------------------------------------------------------------
+# Meta Llama — via Together AI (hosted inference)
+# Source: https://www.together.ai/pricing
+# Verified: 2026-02-01
+# Note: These are Together AI serverless inference prices.
+#       Other providers (Fireworks, AWS Bedrock, etc.) may differ.
+# ---------------------------------------------------------------------------
+
+llama-4-maverick:
+  input_per_million: 0.27
+  output_per_million: 0.85
+
+llama-4-scout:
+  input_per_million: 0.18
+  output_per_million: 0.59
+
+llama-3.3-70b:
+  input_per_million: 0.88
+  output_per_million: 0.88
+
+llama-3.1-405b:
+  input_per_million: 3.50
+  output_per_million: 3.50
+
+llama-3.1-70b:
+  input_per_million: 0.88
+  output_per_million: 0.88
+
+llama-3.1-8b:
+  input_per_million: 0.18
+  output_per_million: 0.18
+
+llama-3.2-3b:
+  input_per_million: 0.06
+  output_per_million: 0.06
+
+
+# ---------------------------------------------------------------------------
+# Amazon Bedrock — Select models (US East / Oregon region)
+# Source: https://aws.amazon.com/bedrock/pricing/
+# Verified: 2026-02-01
+# Note: Bedrock prices per 1,000 tokens; converted to per 1M here.
+#       Prices may vary by region. Batch pricing is 50% of on-demand.
+# ---------------------------------------------------------------------------
+
+# Bedrock Mistral Large 3
+bedrock/mistral-large-3:
+  input_per_million: 0.50
+  output_per_million: 1.50
+
+# Bedrock Magistral Small 1.2
+bedrock/magistral-small:
+  input_per_million: 0.50
+  output_per_million: 1.50
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek — via Together AI (hosted inference)
+# Source: https://www.together.ai/pricing
+# Verified: 2026-02-01
+# ---------------------------------------------------------------------------
+
+deepseek-r1:
+  input_per_million: 3.00
+  output_per_million: 7.00
+  # DeepSeek-R1-0528 via Together AI
+
+deepseek-v3.1:
+  input_per_million: 0.60
+  output_per_million: 1.25
+  # DeepSeek-V3.1 via Together AI
