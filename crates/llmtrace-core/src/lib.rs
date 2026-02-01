@@ -1340,6 +1340,8 @@ pub struct PiiConfig {
 ///   ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
 ///   ml_threshold: 0.8
 ///   ml_cache_dir: "~/.cache/llmtrace/models"
+///   ner_enabled: true
+///   ner_model: "dslim/bert-base-NER"
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAnalysisConfig {
@@ -1355,6 +1357,12 @@ pub struct SecurityAnalysisConfig {
     /// Local cache directory for downloaded ML models.
     #[serde(default = "default_ml_cache_dir")]
     pub ml_cache_dir: String,
+    /// Enable ML-based NER for PII detection (person names, orgs, locations).
+    #[serde(default)]
+    pub ner_enabled: bool,
+    /// HuggingFace model ID for NER-based PII detection.
+    #[serde(default = "default_ner_model")]
+    pub ner_model: String,
 }
 
 fn default_ml_model() -> String {
@@ -1369,6 +1377,10 @@ fn default_ml_cache_dir() -> String {
     "~/.cache/llmtrace/models".to_string()
 }
 
+fn default_ner_model() -> String {
+    "dslim/bert-base-NER".to_string()
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -1376,6 +1388,8 @@ impl Default for SecurityAnalysisConfig {
             ml_model: default_ml_model(),
             ml_threshold: default_ml_threshold(),
             ml_cache_dir: default_ml_cache_dir(),
+            ner_enabled: false,
+            ner_model: default_ner_model(),
         }
     }
 }
@@ -2281,6 +2295,8 @@ mod tests {
                 ml_model: "custom/model".to_string(),
                 ml_threshold: 0.9,
                 ml_cache_dir: "/tmp/models".to_string(),
+                ner_enabled: false,
+                ner_model: default_ner_model(),
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -2671,6 +2687,8 @@ mod tests {
             config.security_analysis.ml_cache_dir,
             "~/.cache/llmtrace/models"
         );
+        assert!(!config.security_analysis.ner_enabled);
+        assert_eq!(config.security_analysis.ner_model, "dslim/bert-base-NER");
     }
 
     #[test]
@@ -2683,6 +2701,8 @@ mod tests {
         );
         assert!((config.ml_threshold - 0.8).abs() < f64::EPSILON);
         assert_eq!(config.ml_cache_dir, "~/.cache/llmtrace/models");
+        assert!(!config.ner_enabled);
+        assert_eq!(config.ner_model, "dslim/bert-base-NER");
     }
 
     #[test]
@@ -2692,6 +2712,8 @@ mod tests {
             ml_model: "custom/model".to_string(),
             ml_threshold: 0.9,
             ml_cache_dir: "/tmp/models".to_string(),
+            ner_enabled: true,
+            ner_model: "dslim/bert-base-NER".to_string(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();
@@ -2699,6 +2721,8 @@ mod tests {
         assert_eq!(deserialized.ml_model, "custom/model");
         assert!((deserialized.ml_threshold - 0.9).abs() < f64::EPSILON);
         assert_eq!(deserialized.ml_cache_dir, "/tmp/models");
+        assert!(deserialized.ner_enabled);
+        assert_eq!(deserialized.ner_model, "dslim/bert-base-NER");
     }
 
     // ---------------------------------------------------------------

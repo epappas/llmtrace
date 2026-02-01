@@ -26,11 +26,15 @@ use regex::Regex;
 pub mod ensemble;
 #[cfg(feature = "ml")]
 pub mod ml_detector;
+#[cfg(feature = "ml")]
+pub mod ner_detector;
 
 #[cfg(feature = "ml")]
 pub use ensemble::EnsembleSecurityAnalyzer;
 #[cfg(feature = "ml")]
 pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
+#[cfg(feature = "ml")]
+pub use ner_detector::{NerConfig, NerDetector};
 
 // ---------------------------------------------------------------------------
 // Internal pattern types
