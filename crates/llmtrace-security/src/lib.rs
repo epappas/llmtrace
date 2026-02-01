@@ -3726,7 +3726,7 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
             "Slack token: {}",
             ["xoxb", "123456789012", "1234567890123", "AbCdEfGhIjKlMnOp"].join("-")
         );
-        let findings = a.analyze_response(text, &test_context()).await.unwrap();
+        let findings = a.analyze_response(&text, &test_context()).await.unwrap();
         assert!(
             findings.iter().any(|f| {
                 f.finding_type == "secret_leakage"
