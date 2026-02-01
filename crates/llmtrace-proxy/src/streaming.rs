@@ -48,6 +48,9 @@ pub struct SseChoice {
     #[serde(default)]
     pub delta: Option<SseDelta>,
     /// Finish reason (e.g. `"stop"`). `None` while streaming.
+    /// Present in the SSE protocol but not read directly — the accumulator
+    /// detects stream completion via the `[DONE]` sentinel instead.
+    #[allow(dead_code)]
     pub finish_reason: Option<String>,
 }
 

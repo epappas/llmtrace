@@ -5,6 +5,7 @@
 //! trace storage and security analysis.
 
 use crate::circuit_breaker::CircuitBreaker;
+use crate::streaming::StreamingAccumulator;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, Response, StatusCode};
@@ -235,19 +236,36 @@ pub async fn proxy_handler(
         }
     };
 
+    // Detect whether this is a streaming request
+    let is_streaming = llm_body.as_ref().and_then(|b| b.stream).unwrap_or(false);
+
     // Spawn a task that reads from the upstream stream and fans out to both
     // the client response and a background buffer for trace capture.
     let state_bg = Arc::clone(&state);
     let prompt_text_bg = prompt_text.clone();
     let model_name_bg = model_name.clone();
     tokio::spawn(async move {
-        let mut collected = Vec::new();
         let mut stream = response_stream;
+        let mut sse_accumulator = if is_streaming {
+            Some(StreamingAccumulator::new())
+        } else {
+            None
+        };
+        let mut raw_collected = Vec::new();
+        let mut ttft_ms: Option<u64> = None;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    collected.extend_from_slice(&bytes);
+                    // For streaming responses, parse SSE chunks incrementally
+                    if let Some(ref mut acc) = sse_accumulator {
+                        let is_first_token = acc.process_chunk(&bytes);
+                        if is_first_token {
+                            let elapsed = Utc::now().signed_duration_since(start_time);
+                            ttft_ms = Some(elapsed.num_milliseconds().max(0) as u64);
+                        }
+                    }
+                    raw_collected.extend_from_slice(&bytes);
                     if body_sender.send(Ok(bytes)).await.is_err() {
                         // Client disconnected
                         break;
@@ -263,7 +281,23 @@ pub async fn proxy_handler(
         // body_sender is dropped here, closing the stream to the client.
         drop(body_sender);
 
-        let response_text = String::from_utf8_lossy(&collected).to_string();
+        // Build the captured interaction with streaming metrics if applicable
+        let (response_text, prompt_tokens, completion_tokens, total_tokens) =
+            if let Some(acc) = sse_accumulator {
+                (
+                    acc.content.clone(),
+                    acc.prompt_tokens(),
+                    Some(acc.final_completion_tokens()),
+                    acc.total_tokens(),
+                )
+            } else {
+                (
+                    String::from_utf8_lossy(&raw_collected).to_string(),
+                    None,
+                    None,
+                    None,
+                )
+            };
 
         let captured = CapturedInteraction {
             trace_id,
@@ -273,6 +307,11 @@ pub async fn proxy_handler(
             response_text,
             status_code: response_status.as_u16(),
             start_time,
+            is_streaming,
+            time_to_first_token_ms: ttft_ms,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
         };
 
         // --- Async trace capture ---
@@ -318,6 +357,16 @@ struct CapturedInteraction {
     response_text: String,
     status_code: u16,
     start_time: chrono::DateTime<Utc>,
+    /// Whether this was a streaming (SSE) response.
+    is_streaming: bool,
+    /// Time to first token in milliseconds (streaming only).
+    time_to_first_token_ms: Option<u64>,
+    /// Prompt tokens (from provider usage data, if reported).
+    prompt_tokens: Option<u32>,
+    /// Completion tokens (observed or provider-reported).
+    completion_tokens: Option<u32>,
+    /// Total tokens (from provider usage data, if reported).
+    total_tokens: Option<u32>,
 }
 
 /// Spawn a background task that stores a trace event (never blocks the response).
@@ -340,11 +389,23 @@ async fn spawn_trace_capture(state: &Arc<AppState>, captured: &CapturedInteracti
     let status_code = captured.status_code;
     let start_time = captured.start_time;
 
+    let is_streaming = captured.is_streaming;
+    let ttft_ms = captured.time_to_first_token_ms;
+    let prompt_tokens = captured.prompt_tokens;
+    let completion_tokens = captured.completion_tokens;
+    let total_tokens = captured.total_tokens;
+
     tokio::spawn(async move {
+        let operation = if is_streaming {
+            "chat_completion_stream"
+        } else {
+            "chat_completion"
+        };
+
         let span = TraceSpan::new(
             trace_id,
             tenant_id,
-            "chat_completion".to_string(),
+            operation.to_string(),
             LLMProvider::OpenAI, // default; future loops will detect provider
             model_name,
             prompt_text,
@@ -353,6 +414,10 @@ async fn spawn_trace_capture(state: &Arc<AppState>, captured: &CapturedInteracti
 
         let mut completed_span = span;
         completed_span.status_code = Some(status_code);
+        completed_span.prompt_tokens = prompt_tokens;
+        completed_span.completion_tokens = completion_tokens;
+        completed_span.total_tokens = total_tokens;
+        completed_span.time_to_first_token_ms = ttft_ms;
 
         let end_time = Utc::now();
         let duration = end_time.signed_duration_since(start_time);
