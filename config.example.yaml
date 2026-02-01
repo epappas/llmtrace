@@ -178,6 +178,25 @@ alerts:
   #   escalate_after_seconds: 600
 
 # ---------------------------------------------------------------------------
+# Cost estimation — model pricing for per-request cost tracking
+# ---------------------------------------------------------------------------
+
+cost_estimation:
+  # Enable cost estimation on traced requests.
+  enabled: true
+
+  # Optional: external pricing file. When set, the proxy loads model pricing
+  # from this YAML file at startup and reloads it on SIGHUP — no rebuild needed.
+  # If the file is missing or invalid, built-in defaults are used.
+  # pricing_file: "config/pricing.yaml"
+
+  # Inline custom model pricing overrides (take highest precedence).
+  # custom_models:
+  #   my-fine-tuned-model:
+  #     input_per_million: 5.0
+  #     output_per_million: 10.0
+
+# ---------------------------------------------------------------------------
 # Cost caps — per-agent budget & token enforcement
 # ---------------------------------------------------------------------------
 

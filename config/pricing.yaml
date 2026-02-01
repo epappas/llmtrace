@@ -1,0 +1,57 @@
+# ============================================================================
+# LLMTrace — Model Pricing Configuration
+# ============================================================================
+#
+# This file defines per-model pricing (cost per 1 million tokens) used by the
+# cost estimation engine.  The proxy loads this at startup and reloads it on
+# SIGHUP without a rebuild.
+#
+# If this file is missing or cannot be parsed, built-in defaults are used.
+#
+# Keys are lowercase model name prefixes — lookup tries both exact match
+# and prefix match so that e.g. "gpt-4o-2024-08-06" matches "gpt-4o".
+#
+# All prices are in USD per 1 000 000 tokens (input / output).
+# ============================================================================
+
+# ---------------------------------------------------------------------------
+# OpenAI
+# ---------------------------------------------------------------------------
+gpt-4o-mini:
+  input_per_million: 0.15
+  output_per_million: 0.60
+
+gpt-4o:
+  input_per_million: 2.50
+  output_per_million: 10.00
+
+gpt-4:
+  input_per_million: 30.00
+  output_per_million: 60.00
+
+gpt-3.5-turbo:
+  input_per_million: 0.50
+  output_per_million: 1.50
+
+# ---------------------------------------------------------------------------
+# Anthropic
+# ---------------------------------------------------------------------------
+claude-3-5-sonnet:
+  input_per_million: 3.00
+  output_per_million: 15.00
+
+claude-3.5-sonnet:
+  input_per_million: 3.00
+  output_per_million: 15.00
+
+claude-3-5-haiku:
+  input_per_million: 0.80
+  output_per_million: 4.00
+
+claude-3.5-haiku:
+  input_per_million: 0.80
+  output_per_million: 4.00
+
+claude-3-opus:
+  input_per_million: 15.00
+  output_per_million: 75.00

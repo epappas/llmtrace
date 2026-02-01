@@ -1016,6 +1016,13 @@ pub struct CostEstimationConfig {
     /// Enable cost estimation on traced requests.
     #[serde(default = "default_cost_estimation_enabled")]
     pub enabled: bool,
+    /// Optional path to an external pricing YAML/JSON file.
+    ///
+    /// When set, the proxy loads model pricing from this file at startup
+    /// (and reloads on SIGHUP). If the file is missing, built-in defaults
+    /// are used as a fallback.
+    #[serde(default)]
+    pub pricing_file: Option<String>,
     /// Custom model pricing overrides (model name → pricing).
     #[serde(default)]
     pub custom_models: HashMap<String, ModelPricingConfig>,
@@ -1029,6 +1036,7 @@ impl Default for CostEstimationConfig {
     fn default() -> Self {
         Self {
             enabled: default_cost_estimation_enabled(),
+            pricing_file: None,
             custom_models: HashMap::new(),
         }
     }
@@ -2367,6 +2375,7 @@ mod tests {
             },
             cost_estimation: CostEstimationConfig {
                 enabled: true,
+                pricing_file: None,
                 custom_models,
             },
             alerts: AlertConfig::default(),
