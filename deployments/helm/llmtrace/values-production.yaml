@@ -112,12 +112,21 @@ podDisruptionBudget:
 # ============================================================================
 # Secrets — override via --set or external secrets manager
 # ============================================================================
+# IMPORTANT: Do NOT commit real credentials. Use one of:
+#   1. --set secrets.postgresUrl=... on the helm install command
+#   2. An External Secrets Operator (ExternalSecret CR)
+#   3. Sealed Secrets (SealedSecret CR)
+#   4. A pre-existing Secret (secrets.create=false + secrets.existingSecret)
+# See docs/deployment/secrets-management.md for details.
 secrets:
   create: true
+  # existingSecret: "my-llmtrace-secret"  # uncomment to use a pre-existing Secret
   clickhouseUrl: "http://llmtrace-clickhouse:8123"
   clickhouseDatabase: "llmtrace"
-  postgresUrl: "postgres://llmtrace:CHANGE_ME@llmtrace-postgresql:5432/llmtrace"
-  redisUrl: "redis://llmtrace-redis-master:6379"
+  # MUST be set — do not deploy with empty password
+  postgresUrl: ""
+  # MUST be set when redis.auth.enabled=true
+  redisUrl: ""
 
 # ============================================================================
 # ClickHouse — production sizing
@@ -128,6 +137,8 @@ clickhouse:
   replicaCount: 1
   auth:
     username: default
+    # MUST be set — do not deploy with empty password
+    # Use: --set clickhouse.auth.password=<secure-password>
     password: ""
   persistence:
     enabled: true
@@ -147,8 +158,9 @@ postgresql:
   enabled: true
   auth:
     username: llmtrace
-    # Set via --set postgresql.auth.password=... or external secret
-    password: "CHANGE_ME"
+    # MUST be set — do not deploy with empty password
+    # Use: --set postgresql.auth.password=<secure-password>
+    password: ""
     database: llmtrace
   primary:
     persistence:
@@ -169,7 +181,10 @@ redis:
   enabled: true
   architecture: standalone
   auth:
-    enabled: false
+    enabled: true
+    # MUST be set — do not deploy with empty password
+    # Use: --set redis.auth.password=<secure-password>
+    password: ""
   master:
     persistence:
       enabled: true

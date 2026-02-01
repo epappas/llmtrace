@@ -65,6 +65,10 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+          {{- with .Values.proxy.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             {{- toYaml .Values.proxy.livenessProbe | nindent 12 }}
           readinessProbe:

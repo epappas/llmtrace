@@ -123,12 +123,23 @@ proxy:
       drop:
         - ALL
 
-  # -- Liveness probe
+  # -- Startup probe — allows slow cold starts (e.g. ML model download,
+  # storage initialisation) without triggering liveness kills.
+  # failureThreshold × periodSeconds = 300s total startup budget.
+  startupProbe:
+    httpGet:
+      path: /health
+      port: http
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+
+  # -- Liveness probe (only active after startupProbe succeeds)
   livenessProbe:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 5
+    initialDelaySeconds: 0
     periodSeconds: 10
     timeoutSeconds: 3
     failureThreshold: 3
@@ -138,7 +149,7 @@ proxy:
     httpGet:
       path: /health
       port: http
-    initialDelaySeconds: 3
+    initialDelaySeconds: 0
     periodSeconds: 5
     timeoutSeconds: 3
     failureThreshold: 3

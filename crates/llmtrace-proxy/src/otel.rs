@@ -878,6 +878,7 @@ mod tests {
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
+            ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
@@ -918,6 +919,7 @@ mod tests {
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
+            ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 

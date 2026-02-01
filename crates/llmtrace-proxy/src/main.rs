@@ -352,6 +352,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let report_store = llmtrace_proxy::compliance::new_report_store();
     let shutdown = ShutdownCoordinator::new(config.shutdown.timeout_seconds);
     let metrics = llmtrace_proxy::metrics::Metrics::new();
+    let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     Ok(Arc::new(AppState {
         config,
@@ -368,6 +369,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         ml_status,
         shutdown,
         metrics,
+        ready,
     }))
 }
 

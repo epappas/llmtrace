@@ -20,6 +20,7 @@ use llmtrace_core::{
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -79,6 +80,13 @@ pub struct AppState {
     pub shutdown: crate::shutdown::ShutdownCoordinator,
     /// Prometheus metrics collectors.
     pub metrics: crate::metrics::Metrics,
+    /// Whether storage initialisation is complete.
+    ///
+    /// Set to `true` once all storage backends have been confirmed healthy
+    /// at least once. The `/health` endpoint reports `"starting": true` until
+    /// this flag flips, which lets Kubernetes `startupProbe` differentiate a
+    /// cold start from a genuine failure.
+    pub ready: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -851,6 +859,11 @@ async fn run_trace_capture(
 // ---------------------------------------------------------------------------
 
 /// Health check handler returning a JSON status object.
+///
+/// During startup (before all storage backends have been confirmed healthy at
+/// least once) the response includes `"starting": true` and returns HTTP 503.
+/// Kubernetes `startupProbe` will keep retrying until the endpoint returns 200,
+/// at which point the liveness and readiness probes take over.
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body> {
     let traces_ok = state.storage.traces.health_check().await.is_ok();
     let metadata_ok = state.storage.metadata.health_check().await.is_ok();
@@ -881,8 +894,26 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
 
     let all_healthy = traces_ok && metadata_ok && cache_ok && security_ok;
 
+    // Once every backend is healthy for the first time, mark the proxy as
+    // ready. This is a one-way latch: once set it stays set so transient
+    // blips don't re-trigger startup mode.
+    let was_ready = state.ready.load(Ordering::Acquire);
+    if !was_ready && all_healthy {
+        state.ready.store(true, Ordering::Release);
+    }
+    let is_ready = was_ready || all_healthy;
+
+    let (status_label, http_status) = if !is_ready {
+        ("starting", StatusCode::SERVICE_UNAVAILABLE)
+    } else if all_healthy {
+        ("healthy", StatusCode::OK)
+    } else {
+        ("degraded", StatusCode::OK)
+    };
+
     let body = serde_json::json!({
-        "status": if all_healthy { "healthy" } else { "degraded" },
+        "status": status_label,
+        "starting": !is_ready,
         "storage": {
             "traces": { "healthy": traces_ok },
             "metadata": { "healthy": metadata_ok },
@@ -897,7 +928,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
     });
 
     Response::builder()
-        .status(StatusCode::OK)
+        .status(http_status)
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap()

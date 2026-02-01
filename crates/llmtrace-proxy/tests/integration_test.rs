@@ -72,6 +72,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,
         shutdown: llmtrace_proxy::shutdown::ShutdownCoordinator::new(30),
         metrics: llmtrace_proxy::metrics::Metrics::new(),
+        ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     let app = Router::new()
