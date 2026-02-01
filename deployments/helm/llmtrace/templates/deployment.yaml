@@ -31,6 +31,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "llmtrace.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.proxy.terminationGracePeriodSeconds | default 60 }}
       securityContext:
         {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
       containers:

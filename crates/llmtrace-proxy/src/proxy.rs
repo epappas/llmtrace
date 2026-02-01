@@ -75,6 +75,8 @@ pub struct AppState {
     pub report_store: crate::compliance::ReportStore,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
+    /// Shutdown coordinator for graceful shutdown and task tracking.
+    pub shutdown: crate::shutdown::ShutdownCoordinator,
 }
 
 impl AppState {
@@ -376,7 +378,11 @@ pub async fn proxy_handler(
     let model_name_bg = model_name.clone();
     let provider_bg = detected_provider;
     let agent_id_bg = agent_id;
+    let task_guard = state.shutdown.track_task();
     tokio::spawn(async move {
+        // Hold the task guard for the lifetime of this background task so the
+        // shutdown coordinator knows when all in-flight work has drained.
+        let _guard = task_guard;
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
             Some(StreamingAccumulator::new())

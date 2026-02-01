@@ -84,6 +84,12 @@ proxy:
     minSecurityScore: 70
     cooldownSeconds: 300
 
+  # -- Graceful shutdown timeout (should be < terminationGracePeriodSeconds)
+  shutdownTimeoutSeconds: 30
+
+  # -- Kubernetes terminationGracePeriodSeconds (should be > shutdownTimeoutSeconds)
+  terminationGracePeriodSeconds: 60
+
   # -- Cost caps
   costCaps:
     enabled: false

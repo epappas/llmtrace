@@ -16,6 +16,7 @@ use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
 use llmtrace_proxy::cost_caps::CostTracker;
 use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState, MlModelStatus};
+use llmtrace_proxy::shutdown::{self, ShutdownCoordinator};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;
@@ -136,15 +137,19 @@ async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
         listen_addr = %config.listen_addr,
         upstream_url = %config.upstream_url,
         storage_profile = %config.storage.profile,
+        shutdown_timeout_seconds = config.shutdown.timeout_seconds,
         "Starting LLMTrace proxy server"
     );
 
     let listen_addr = config.listen_addr.clone();
 
-    // Build shared application state
+    // Build shared application state (includes the ShutdownCoordinator)
     let state = build_app_state(config).await?;
+    let coordinator = state.shutdown.clone();
 
-    // Optionally start the gRPC ingestion gateway in a background task
+    // Optionally start the gRPC ingestion gateway in a background task.
+    // The gRPC server shares the same cancellation token so it drains
+    // gracefully when a shutdown signal arrives.
     if state.config.grpc.enabled {
         let grpc_state = Arc::clone(&state);
         tokio::spawn(async move {
@@ -157,10 +162,29 @@ async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
     // Build the axum router
     let app = build_router(state);
 
-    // Bind and serve
+    // Bind and serve with graceful shutdown
     let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
     info!(%listen_addr, "Proxy server listening");
-    axum::serve(listener, app).await?;
+
+    let shutdown_coord = coordinator.clone();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown::shutdown_signal(shutdown_coord))
+        .await?;
+
+    // -------------------------------------------------------------------
+    // Axum has stopped accepting new connections and is draining existing
+    // ones. Now wait for in-flight background tasks (trace capture,
+    // security analysis) to complete, up to the configured timeout.
+    // -------------------------------------------------------------------
+    let n = coordinator.in_flight_count();
+    if n > 0 {
+        info!(
+            in_flight_tasks = n,
+            "Waiting for in-flight background tasks to complete"
+        );
+    }
+    coordinator.wait_for_tasks().await;
+    info!("Shutdown complete");
 
     Ok(())
 }
@@ -203,6 +227,9 @@ fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Build the shared [`AppState`] from the proxy configuration.
+///
+/// Includes a [`ShutdownCoordinator`] initialised from the config's
+/// `shutdown.timeout_seconds`.
 async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(
@@ -277,6 +304,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     }
 
     let report_store = llmtrace_proxy::compliance::new_report_store();
+    let shutdown = ShutdownCoordinator::new(config.shutdown.timeout_seconds);
 
     Ok(Arc::new(AppState {
         config,
@@ -291,6 +319,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         anomaly_detector,
         report_store,
         ml_status,
+        shutdown,
     }))
 }
 

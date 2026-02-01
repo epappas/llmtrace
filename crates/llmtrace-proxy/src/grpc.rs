@@ -385,16 +385,23 @@ pub fn build_grpc_server(
 
 /// Spawn the gRPC server on the configured listen address.
 ///
+/// When the `shutdown_token` is cancelled the server gracefully drains
+/// in-flight RPCs and exits.
+///
 /// Returns `Ok(())` when the server shuts down (e.g., via signal or error).
 pub async fn run_grpc_server(state: Arc<AppState>) -> anyhow::Result<()> {
     let addr = state.config.grpc.listen_addr.parse()?;
+    let shutdown_token = state.shutdown.token();
     let service = build_grpc_server(state);
 
     info!(%addr, "gRPC ingestion gateway listening");
 
     tonic::transport::Server::builder()
         .add_service(service)
-        .serve(addr)
+        .serve_with_shutdown(addr, async move {
+            shutdown_token.cancelled().await;
+            info!("gRPC server shutting down gracefully");
+        })
         .await?;
 
     Ok(())
@@ -447,6 +454,7 @@ mod tests {
             anomaly_detector: None,
             report_store: crate::compliance::new_report_store(),
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            shutdown: crate::shutdown::ShutdownCoordinator::new(30),
         })
     }
 

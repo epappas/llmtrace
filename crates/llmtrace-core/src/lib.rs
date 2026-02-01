@@ -853,6 +853,9 @@ pub struct ProxyConfig {
     /// PII detection and redaction configuration.
     #[serde(default)]
     pub pii: PiiConfig,
+    /// Graceful shutdown configuration.
+    #[serde(default)]
+    pub shutdown: ShutdownConfig,
 }
 
 impl Default for ProxyConfig {
@@ -887,6 +890,7 @@ impl Default for ProxyConfig {
             anomaly_detection: AnomalyDetectionConfig::default(),
             streaming_analysis: StreamingAnalysisConfig::default(),
             pii: PiiConfig::default(),
+            shutdown: ShutdownConfig::default(),
         }
     }
 }
@@ -1332,6 +1336,40 @@ pub struct PiiConfig {
     /// Action to take when PII is detected.
     #[serde(default)]
     pub action: PiiAction,
+}
+
+/// Graceful shutdown configuration.
+///
+/// Controls how the proxy handles SIGTERM/SIGINT signals during Kubernetes
+/// pod termination. The proxy drains in-flight connections, waits for
+/// background tasks (trace capture, security analysis) to complete, and
+/// then exits cleanly.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// shutdown:
+///   timeout_seconds: 30
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShutdownConfig {
+    /// Maximum seconds to wait for in-flight tasks to complete after a
+    /// shutdown signal is received. After this timeout the process exits
+    /// regardless of pending work.
+    #[serde(default = "default_shutdown_timeout_seconds")]
+    pub timeout_seconds: u64,
+}
+
+fn default_shutdown_timeout_seconds() -> u64 {
+    30
+}
+
+impl Default for ShutdownConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: default_shutdown_timeout_seconds(),
+        }
+    }
 }
 
 /// Security analysis configuration for ML-based prompt injection detection.
@@ -2398,6 +2436,7 @@ mod tests {
             pii: PiiConfig {
                 action: PiiAction::AlertAndRedact,
             },
+            shutdown: ShutdownConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

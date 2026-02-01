@@ -285,6 +285,18 @@ streaming_analysis:
 #   ner_model: "dslim/bert-base-NER"
 
 # ---------------------------------------------------------------------------
+# Graceful shutdown — connection draining and task completion
+# ---------------------------------------------------------------------------
+
+shutdown:
+  # Maximum seconds to wait for in-flight background tasks (trace capture,
+  # security analysis) to complete after a SIGTERM/SIGINT signal. If tasks
+  # are still running after this timeout the process force-exits.
+  # In Kubernetes, set terminationGracePeriodSeconds > timeout_seconds
+  # (e.g. 60s grace period with 30s shutdown timeout gives 30s headroom).
+  timeout_seconds: 30
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

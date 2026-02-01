@@ -16,6 +16,7 @@ pub mod grpc;
 pub mod otel;
 pub mod provider;
 pub mod proxy;
+pub mod shutdown;
 pub mod streaming;
 pub mod tenant_api;
 
@@ -27,4 +28,5 @@ pub use cost::CostEstimator;
 pub use cost_caps::CostTracker;
 pub use grpc::run_grpc_server;
 pub use proxy::{health_handler, proxy_handler, AppState};
+pub use shutdown::ShutdownCoordinator;
 pub use streaming::StreamingSecurityMonitor;
