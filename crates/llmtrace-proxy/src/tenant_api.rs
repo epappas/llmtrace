@@ -326,6 +326,7 @@ mod tests {
             security_breaker,
             cost_estimator,
             alert_engine: None,
+            cost_tracker: None,
         })
     }
 

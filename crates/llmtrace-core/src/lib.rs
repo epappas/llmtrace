@@ -527,6 +527,9 @@ pub struct ProxyConfig {
     /// Alert engine configuration for webhook notifications.
     #[serde(default)]
     pub alerts: AlertConfig,
+    /// Cost cap configuration for budget and token enforcement.
+    #[serde(default)]
+    pub cost_caps: CostCapConfig,
 }
 
 impl Default for ProxyConfig {
@@ -553,6 +556,7 @@ impl Default for ProxyConfig {
             logging: LoggingConfig::default(),
             cost_estimation: CostEstimationConfig::default(),
             alerts: AlertConfig::default(),
+            cost_caps: CostCapConfig::default(),
         }
     }
 }
@@ -707,6 +711,111 @@ pub struct ModelPricingConfig {
     pub input_per_million: f64,
     /// Cost per 1 million output/completion tokens in USD.
     pub output_per_million: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Cost cap types
+// ---------------------------------------------------------------------------
+
+/// Time window for budget enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BudgetWindow {
+    /// Rolling one-hour window.
+    Hourly,
+    /// Rolling one-day (24 h) window.
+    Daily,
+    /// Rolling seven-day window.
+    Weekly,
+    /// Rolling thirty-day window.
+    Monthly,
+}
+
+impl BudgetWindow {
+    /// Duration of this window in seconds.
+    #[must_use]
+    pub fn duration_secs(&self) -> u64 {
+        match self {
+            Self::Hourly => 3_600,
+            Self::Daily => 86_400,
+            Self::Weekly => 604_800,
+            Self::Monthly => 2_592_000, // 30 days
+        }
+    }
+
+    /// TTL for cache keys — slightly longer than the window so late
+    /// writes are not lost.
+    #[must_use]
+    pub fn cache_ttl(&self) -> Duration {
+        Duration::from_secs(self.duration_secs() + 300)
+    }
+}
+
+impl std::fmt::Display for BudgetWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hourly => write!(f, "hourly"),
+            Self::Daily => write!(f, "daily"),
+            Self::Weekly => write!(f, "weekly"),
+            Self::Monthly => write!(f, "monthly"),
+        }
+    }
+}
+
+/// A USD budget cap for a given time window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetCap {
+    /// Which time window this cap applies to.
+    pub window: BudgetWindow,
+    /// Hard cap in USD — requests are rejected (429) when exceeded.
+    pub hard_limit_usd: f64,
+    /// Optional soft cap in USD — triggers an alert but allows the request.
+    #[serde(default)]
+    pub soft_limit_usd: Option<f64>,
+}
+
+/// Per-request token caps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenCap {
+    /// Maximum prompt (input) tokens per request. `None` = unlimited.
+    #[serde(default)]
+    pub max_prompt_tokens: Option<u32>,
+    /// Maximum completion (output) tokens per request. `None` = unlimited.
+    #[serde(default)]
+    pub max_completion_tokens: Option<u32>,
+    /// Maximum total tokens per request. `None` = unlimited.
+    #[serde(default)]
+    pub max_total_tokens: Option<u32>,
+}
+
+/// Per-agent cost cap override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentCostCap {
+    /// Agent identifier (matched against `X-LLMTrace-Agent-ID` header).
+    pub agent_id: String,
+    /// Budget caps that override the defaults for this agent.
+    #[serde(default)]
+    pub budget_caps: Vec<BudgetCap>,
+    /// Token caps that override the defaults for this agent.
+    #[serde(default)]
+    pub token_cap: Option<TokenCap>,
+}
+
+/// Top-level cost cap configuration section within [`ProxyConfig`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CostCapConfig {
+    /// Enable cost cap enforcement.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Default budget caps applied to all tenants/agents unless overridden.
+    #[serde(default)]
+    pub default_budget_caps: Vec<BudgetCap>,
+    /// Default per-request token caps.
+    #[serde(default)]
+    pub default_token_cap: Option<TokenCap>,
+    /// Per-agent overrides.
+    #[serde(default)]
+    pub agents: Vec<AgentCostCap>,
 }
 
 /// Alert engine configuration for webhook notifications.
@@ -1512,6 +1621,7 @@ mod tests {
                 custom_models,
             },
             alerts: AlertConfig::default(),
+            cost_caps: CostCapConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -1727,5 +1837,151 @@ mod tests {
             SecuritySeverity::Critical
         );
         assert!("unknown".parse::<SecuritySeverity>().is_err());
+    }
+
+    // -- Cost cap types ---------------------------------------------------
+
+    #[test]
+    fn test_budget_window_duration_secs() {
+        assert_eq!(BudgetWindow::Hourly.duration_secs(), 3_600);
+        assert_eq!(BudgetWindow::Daily.duration_secs(), 86_400);
+        assert_eq!(BudgetWindow::Weekly.duration_secs(), 604_800);
+        assert_eq!(BudgetWindow::Monthly.duration_secs(), 2_592_000);
+    }
+
+    #[test]
+    fn test_budget_window_cache_ttl_exceeds_window() {
+        for window in [
+            BudgetWindow::Hourly,
+            BudgetWindow::Daily,
+            BudgetWindow::Weekly,
+            BudgetWindow::Monthly,
+        ] {
+            assert!(window.cache_ttl().as_secs() > window.duration_secs());
+        }
+    }
+
+    #[test]
+    fn test_budget_window_display() {
+        assert_eq!(BudgetWindow::Hourly.to_string(), "hourly");
+        assert_eq!(BudgetWindow::Daily.to_string(), "daily");
+        assert_eq!(BudgetWindow::Weekly.to_string(), "weekly");
+        assert_eq!(BudgetWindow::Monthly.to_string(), "monthly");
+    }
+
+    #[test]
+    fn test_budget_window_serialization() {
+        let window = BudgetWindow::Daily;
+        let json = serde_json::to_string(&window).unwrap();
+        assert_eq!(json, r#""daily""#);
+        let deser: BudgetWindow = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, window);
+    }
+
+    #[test]
+    fn test_budget_cap_serialization() {
+        let cap = BudgetCap {
+            window: BudgetWindow::Hourly,
+            hard_limit_usd: 10.0,
+            soft_limit_usd: Some(8.0),
+        };
+        let json = serde_json::to_string(&cap).unwrap();
+        let deser: BudgetCap = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.window, BudgetWindow::Hourly);
+        assert!((deser.hard_limit_usd - 10.0).abs() < f64::EPSILON);
+        assert!((deser.soft_limit_usd.unwrap() - 8.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_budget_cap_no_soft_limit() {
+        let json = r#"{"window":"monthly","hard_limit_usd":100.0}"#;
+        let cap: BudgetCap = serde_json::from_str(json).unwrap();
+        assert_eq!(cap.window, BudgetWindow::Monthly);
+        assert!(cap.soft_limit_usd.is_none());
+    }
+
+    #[test]
+    fn test_token_cap_serialization() {
+        let cap = TokenCap {
+            max_prompt_tokens: Some(4096),
+            max_completion_tokens: Some(2048),
+            max_total_tokens: None,
+        };
+        let json = serde_json::to_string(&cap).unwrap();
+        let deser: TokenCap = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.max_prompt_tokens, Some(4096));
+        assert_eq!(deser.max_completion_tokens, Some(2048));
+        assert!(deser.max_total_tokens.is_none());
+    }
+
+    #[test]
+    fn test_agent_cost_cap_serialization() {
+        let agent_cap = AgentCostCap {
+            agent_id: "agent-007".to_string(),
+            budget_caps: vec![BudgetCap {
+                window: BudgetWindow::Daily,
+                hard_limit_usd: 50.0,
+                soft_limit_usd: Some(40.0),
+            }],
+            token_cap: Some(TokenCap {
+                max_prompt_tokens: Some(8192),
+                max_completion_tokens: None,
+                max_total_tokens: Some(16384),
+            }),
+        };
+        let json = serde_json::to_string(&agent_cap).unwrap();
+        let deser: AgentCostCap = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.agent_id, "agent-007");
+        assert_eq!(deser.budget_caps.len(), 1);
+        assert!(deser.token_cap.is_some());
+    }
+
+    #[test]
+    fn test_cost_cap_config_default() {
+        let config = CostCapConfig::default();
+        assert!(!config.enabled);
+        assert!(config.default_budget_caps.is_empty());
+        assert!(config.default_token_cap.is_none());
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn test_cost_cap_config_serialization() {
+        let config = CostCapConfig {
+            enabled: true,
+            default_budget_caps: vec![BudgetCap {
+                window: BudgetWindow::Daily,
+                hard_limit_usd: 100.0,
+                soft_limit_usd: Some(80.0),
+            }],
+            default_token_cap: Some(TokenCap {
+                max_prompt_tokens: Some(4096),
+                max_completion_tokens: Some(4096),
+                max_total_tokens: None,
+            }),
+            agents: vec![AgentCostCap {
+                agent_id: "heavy-agent".to_string(),
+                budget_caps: vec![BudgetCap {
+                    window: BudgetWindow::Daily,
+                    hard_limit_usd: 200.0,
+                    soft_limit_usd: None,
+                }],
+                token_cap: None,
+            }],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deser: CostCapConfig = serde_json::from_str(&json).unwrap();
+        assert!(deser.enabled);
+        assert_eq!(deser.default_budget_caps.len(), 1);
+        assert!(deser.default_token_cap.is_some());
+        assert_eq!(deser.agents.len(), 1);
+        assert_eq!(deser.agents[0].agent_id, "heavy-agent");
+    }
+
+    #[test]
+    fn test_proxy_config_default_includes_cost_caps() {
+        let config = ProxyConfig::default();
+        assert!(!config.cost_caps.enabled);
+        assert!(config.cost_caps.default_budget_caps.is_empty());
     }
 }

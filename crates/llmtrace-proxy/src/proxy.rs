@@ -46,6 +46,8 @@ pub struct AppState {
     pub cost_estimator: CostEstimator,
     /// Alert engine for webhook notifications (`None` if alerts are disabled).
     pub alert_engine: Option<crate::alerts::AlertEngine>,
+    /// Cost cap tracker (`None` if cost caps are disabled).
+    pub cost_tracker: Option<crate::cost_caps::CostTracker>,
 }
 
 impl AppState {
@@ -82,6 +84,14 @@ struct ChatMessage {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Extract the agent ID from the `X-LLMTrace-Agent-ID` header.
+pub(crate) fn extract_agent_id(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-llmtrace-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
 
 /// Extract the API key from the `Authorization` header (Bearer token).
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
@@ -152,6 +162,7 @@ pub async fn proxy_handler(
     let headers = req.headers().clone();
     let tenant_id = resolve_tenant(&headers);
     let _api_key = extract_api_key(&headers);
+    let agent_id = extract_agent_id(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
     // Auto-create tenant on first request (best-effort, non-blocking).
@@ -208,6 +219,68 @@ pub async fn proxy_handler(
             }
         })
         .unwrap_or_default();
+
+    // --- Pre-request cost cap enforcement ---
+    if let Some(ref tracker) = state.cost_tracker {
+        // Token cap (best-effort from request body — max_tokens field)
+        let req_max_tokens: Option<u32> = llm_body
+            .as_ref()
+            .and_then(|b| serde_json::to_value(b).ok())
+            .and_then(|v| v.get("max_tokens").and_then(|t| t.as_u64()))
+            .map(|t| t as u32);
+
+        let token_result = tracker.check_token_caps(
+            agent_id.as_deref(),
+            None,           // prompt tokens unknown pre-request
+            req_max_tokens, // requested max completion tokens
+            None,
+        );
+        if let crate::cost_caps::CapCheckResult::TokenCapExceeded { reason } = token_result {
+            warn!(%trace_id, %reason, "Token cap exceeded — rejecting request");
+            return cap_rejected_response(&reason, 0);
+        }
+
+        // Budget cap
+        let budget_result = tracker
+            .check_budget_caps(tenant_id, agent_id.as_deref())
+            .await;
+        match budget_result {
+            crate::cost_caps::CapCheckResult::Rejected {
+                window,
+                current_spend_usd,
+                hard_limit_usd,
+                retry_after_secs,
+            } => {
+                let msg = format!(
+                    "{window} budget exceeded: ${current_spend_usd:.4} / ${hard_limit_usd:.2}"
+                );
+                warn!(%trace_id, %msg, "Budget cap exceeded — rejecting request");
+                return cap_rejected_response(&msg, retry_after_secs);
+            }
+            crate::cost_caps::CapCheckResult::AllowedWithWarning { warnings } => {
+                for w in &warnings {
+                    info!(%trace_id, warning = %w, "Cost cap warning");
+                }
+                // Fire alerts for soft caps / 80% threshold
+                if let Some(ref engine) = state.alert_engine {
+                    let alert_findings: Vec<llmtrace_core::SecurityFinding> = warnings
+                        .iter()
+                        .map(|w| {
+                            llmtrace_core::SecurityFinding::new(
+                                llmtrace_core::SecuritySeverity::Medium,
+                                "cost_cap_warning".to_string(),
+                                w.clone(),
+                                0.9,
+                            )
+                            .with_alert_required(true)
+                        })
+                        .collect();
+                    engine.check_and_alert(trace_id, tenant_id, &alert_findings);
+                }
+            }
+            _ => {}
+        }
+    }
 
     // Build the upstream request
     let upstream_url = build_upstream_url(&state.config, &path, query.as_deref());
@@ -275,6 +348,7 @@ pub async fn proxy_handler(
     let prompt_text_bg = prompt_text.clone();
     let model_name_bg = model_name.clone();
     let provider_bg = detected_provider;
+    let agent_id_bg = agent_id;
     tokio::spawn(async move {
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
@@ -349,6 +423,21 @@ pub async fn proxy_handler(
             completion_tokens,
             total_tokens,
         };
+
+        // --- Async spend recording for cost caps ---
+        if let Some(ref tracker) = state_bg.cost_tracker {
+            let estimated = state_bg.cost_estimator.estimate_cost(
+                &captured.provider,
+                &captured.model_name,
+                captured.prompt_tokens,
+                captured.completion_tokens,
+            );
+            if let Some(cost) = estimated {
+                tracker
+                    .record_spend(captured.tenant_id, agent_id_bg.as_deref(), cost)
+                    .await;
+            }
+        }
 
         // --- Security analysis first, so findings can be persisted with the trace ---
         let security_findings = run_security_analysis(&state_bg, &captured).await;
@@ -579,6 +668,24 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
 // Utilities
 // ---------------------------------------------------------------------------
 
+/// Build a 429 Too Many Requests response for cost cap rejections.
+fn cap_rejected_response(message: &str, retry_after_secs: u64) -> Response<Body> {
+    let body = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": "cost_cap_exceeded",
+            "retry_after_secs": retry_after_secs,
+        }
+    });
+    let mut builder = Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("content-type", "application/json");
+    if retry_after_secs > 0 {
+        builder = builder.header("retry-after", retry_after_secs.to_string());
+    }
+    builder.body(Body::from(body.to_string())).unwrap()
+}
+
 /// Build a JSON error response.
 fn error_response(status: StatusCode, message: &str) -> Response<Body> {
     let body = serde_json::json!({
@@ -653,6 +760,29 @@ mod tests {
         let tenant = resolve_tenant(&headers);
         // Should produce a valid (non-nil) UUID
         assert_ne!(tenant.0, Uuid::nil());
+    }
+
+    #[test]
+    fn test_extract_agent_id_present() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-llmtrace-agent-id", "my-agent".parse().unwrap());
+        assert_eq!(extract_agent_id(&headers), Some("my-agent".to_string()));
+    }
+
+    #[test]
+    fn test_extract_agent_id_missing() {
+        let headers = HeaderMap::new();
+        assert_eq!(extract_agent_id(&headers), None);
+    }
+
+    #[test]
+    fn test_cap_rejected_response_format() {
+        let resp = cap_rejected_response("budget exceeded", 3600);
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers().get("retry-after").unwrap().to_str().unwrap(),
+            "3600"
+        );
     }
 
     #[test]

@@ -154,6 +154,44 @@ alerts:
   cooldown_seconds: 300
 
 # ---------------------------------------------------------------------------
+# Cost caps — per-agent budget & token enforcement
+# ---------------------------------------------------------------------------
+
+cost_caps:
+  # Enable cost cap enforcement. When enabled, requests are checked against
+  # budget limits (USD) and per-request token caps before being forwarded.
+  enabled: false
+
+  # Default budget caps applied to all tenants/agents unless overridden.
+  # Each cap specifies a time window and a hard limit. Requests that would
+  # push spend above the hard limit are rejected with HTTP 429.
+  # Soft limits trigger an alert but still allow the request through.
+  default_budget_caps:
+    - window: hourly
+      hard_limit_usd: 10.0
+      soft_limit_usd: 8.0
+    - window: daily
+      hard_limit_usd: 100.0
+      # soft_limit_usd: 80.0
+
+  # Default per-request token caps (applied before the request is forwarded).
+  # default_token_cap:
+  #   max_prompt_tokens: 8192
+  #   max_completion_tokens: 4096
+  #   max_total_tokens: 16384
+
+  # Per-agent overrides. An agent is identified by the X-LLMTrace-Agent-ID header.
+  # agents:
+  #   - agent_id: "heavy-agent"
+  #     budget_caps:
+  #       - window: daily
+  #         hard_limit_usd: 500.0
+  #         soft_limit_usd: 400.0
+  #     token_cap:
+  #       max_prompt_tokens: 16384
+  #       max_completion_tokens: 8192
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

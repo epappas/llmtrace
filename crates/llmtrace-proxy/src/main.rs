@@ -13,6 +13,7 @@ use llmtrace_proxy::alerts::AlertEngine;
 use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
+use llmtrace_proxy::cost_caps::CostTracker;
 use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
@@ -246,6 +247,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
     let alert_engine = AlertEngine::from_config(&config.alerts, client.clone());
+    let cost_tracker = CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
 
     if alert_engine.is_some() {
         info!(
@@ -253,6 +255,9 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
             min_severity = %config.alerts.min_severity,
             "Alert engine enabled"
         );
+    }
+    if cost_tracker.is_some() {
+        info!("Cost cap enforcement enabled");
     }
 
     Ok(Arc::new(AppState {
@@ -264,6 +269,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         security_breaker,
         cost_estimator,
         alert_engine,
+        cost_tracker,
     }))
 }
 
@@ -286,6 +292,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/security/findings",
             get(llmtrace_proxy::api::list_security_findings),
+        )
+        .route(
+            "/api/v1/costs/current",
+            get(llmtrace_proxy::api::get_current_costs),
         )
         // Tenant Management API
         .route(

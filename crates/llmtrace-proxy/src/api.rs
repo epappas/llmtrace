@@ -263,6 +263,37 @@ pub async fn get_stats(State(state): State<Arc<AppState>>, headers: HeaderMap) -
     }
 }
 
+/// `GET /api/v1/costs/current` — real-time spend per budget window.
+///
+/// Returns the current spend for the tenant (and optionally a specific agent)
+/// across all configured budget windows, including remaining budget and
+/// utilization percentage.
+pub async fn get_current_costs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<CostQueryParams>,
+) -> Response {
+    let tenant_id = resolve_tenant(&headers);
+
+    let tracker = match &state.cost_tracker {
+        Some(t) => t,
+        None => return api_error(StatusCode::NOT_FOUND, "Cost caps are not enabled"),
+    };
+
+    let snapshot = tracker
+        .current_spend(tenant_id, params.agent_id.as_deref())
+        .await;
+
+    Json(snapshot).into_response()
+}
+
+/// Query parameters for `GET /api/v1/costs/current`.
+#[derive(Debug, Deserialize)]
+pub struct CostQueryParams {
+    /// Optional agent ID to filter spend for.
+    pub agent_id: Option<String>,
+}
+
 /// `GET /api/v1/security/findings` — spans with security findings.
 ///
 /// Returns all spans where `security_score > 0`, paginated.
@@ -348,6 +379,54 @@ mod tests {
             security_breaker,
             cost_estimator,
             alert_engine: None,
+            cost_tracker: None,
+        })
+    }
+
+    /// Build shared application state with cost caps enabled.
+    async fn test_state_with_cost_caps() -> Arc<AppState> {
+        let storage = StorageProfile::Memory.build().await.unwrap();
+        let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
+        let client = reqwest::Client::new();
+        let cost_cap_config = llmtrace_core::CostCapConfig {
+            enabled: true,
+            default_budget_caps: vec![llmtrace_core::BudgetCap {
+                window: llmtrace_core::BudgetWindow::Daily,
+                hard_limit_usd: 100.0,
+                soft_limit_usd: Some(80.0),
+            }],
+            default_token_cap: None,
+            agents: Vec::new(),
+        };
+        let config = ProxyConfig {
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..StorageConfig::default()
+            },
+            cost_caps: cost_cap_config.clone(),
+            ..ProxyConfig::default()
+        };
+        let storage_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let security_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&cost_cap_config, Arc::clone(&storage.cache));
+
+        Arc::new(AppState {
+            config,
+            client,
+            storage,
+            security,
+            storage_breaker,
+            security_breaker,
+            cost_estimator,
+            alert_engine: None,
+            cost_tracker,
         })
     }
 
@@ -360,6 +439,7 @@ mod tests {
             .route("/api/v1/spans/:span_id", get(get_span))
             .route("/api/v1/stats", get(get_stats))
             .route("/api/v1/security/findings", get(list_security_findings))
+            .route("/api/v1/costs/current", get(get_current_costs))
             .with_state(state)
     }
 
@@ -1077,5 +1157,89 @@ mod tests {
         let resp = app.oneshot(req).await.unwrap();
         let body = json_body(resp).await;
         assert_eq!(body["total"], 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // GET /api/v1/costs/current
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_costs_disabled_returns_not_found() {
+        let state = test_state().await; // cost_tracker = None
+        let (_, hdr) = tenant_header();
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/costs/current")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_costs_enabled_returns_snapshot() {
+        let state = test_state_with_cost_caps().await;
+        let (_, hdr) = tenant_header();
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/costs/current")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        assert_eq!(body["agent_id"], "_default");
+        assert!(body["windows"].is_array());
+        let windows = body["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 1); // daily only
+        assert_eq!(windows[0]["window"], "daily");
+        assert!((windows[0]["current_spend_usd"].as_f64().unwrap()).abs() < 1e-10);
+        assert!((windows[0]["hard_limit_usd"].as_f64().unwrap() - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_costs_with_agent_id_param() {
+        let state = test_state_with_cost_caps().await;
+        let (_, hdr) = tenant_header();
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/costs/current?agent_id=my-agent")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        assert_eq!(body["agent_id"], "my-agent");
+    }
+
+    #[tokio::test]
+    async fn test_costs_after_spend_recording() {
+        let state = test_state_with_cost_caps().await;
+        let (tid, hdr) = tenant_header();
+
+        // Record some spend
+        if let Some(ref tracker) = state.cost_tracker {
+            tracker.record_spend(tid, None, 25.0).await;
+        }
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/costs/current")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let body = json_body(resp).await;
+        let windows = body["windows"].as_array().unwrap();
+        assert!((windows[0]["current_spend_usd"].as_f64().unwrap() - 25.0).abs() < 1e-6);
+        assert!((windows[0]["utilization_pct"].as_f64().unwrap() - 25.0).abs() < 1e-6);
     }
 }
