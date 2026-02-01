@@ -157,6 +157,106 @@ Each loop is a self-contained task. The spawned coding agent must:
 
 ---
 
+## Loop 5.5: Storage Layer — Repository Pattern Refactoring
+
+**Goal**: Refactor the storage layer into modular, swappable repositories. SQLite stays as the lite/dev backend. The abstraction must cleanly support ClickHouse + PostgreSQL + Redis as the production stack without touching the proxy or analysis layers.
+
+**Context files**: `docs/architecture/SYSTEM_ARCHITECTURE.md` (Storage Architecture section, Technical Choices 2–4), `docs/architecture/ARCHITECTURE_SUPPLEMENT.md`
+
+**Design**:
+
+The north-star architecture has *three* storage concerns, each with different backends:
+
+| Concern | Dev/Lite (SQLite) | Production |
+|---|---|---|
+| **Traces & Spans** (analytical, high-volume) | SQLite | ClickHouse |
+| **Metadata** (tenants, configs, audit) | SQLite | PostgreSQL |
+| **Cache** (hot queries, sessions) | In-memory HashMap | Redis |
+
+The current `StorageBackend` trait handles only traces. Refactor into focused repository traits and a composite `Storage` struct.
+
+**Tasks**:
+
+1. **Split `StorageBackend` into focused repository traits** in `llmtrace-core`:
+   - `TraceRepository` — store/query traces and spans (same methods as current `StorageBackend`)
+   - `MetadataRepository` — tenant CRUD, security config, audit events
+   - `CacheLayer` — generic get/set/invalidate with TTL
+   - Keep `SecurityAnalyzer` unchanged (it's already clean)
+
+2. **Add metadata types** to `llmtrace-core`:
+   - `Tenant` — id, name, plan, quotas, created_at, config (JsonValue)
+   - `TenantConfig` — security thresholds, feature flags
+   - `AuditEvent` — tenant_id, event_type, actor, resource, data, timestamp
+   - Keep it minimal — only what's needed for the trait signatures
+
+3. **Add a `Storage` composite struct** in `llmtrace-core`:
+   ```rust
+   pub struct Storage {
+       pub traces: Arc<dyn TraceRepository>,
+       pub metadata: Arc<dyn MetadataRepository>,
+       pub cache: Arc<dyn CacheLayer>,
+   }
+   ```
+
+4. **Add `StorageProfile` enum + factory** in `llmtrace-storage`:
+   ```rust
+   pub enum StorageProfile {
+       /// SQLite for everything — zero infrastructure
+       Lite { database_path: String },
+       /// In-memory only — for tests
+       Memory,
+   }
+   
+   impl StorageProfile {
+       pub async fn build(self) -> Result<Storage> { ... }
+   }
+   ```
+   Production profiles (ClickHouse/PG/Redis) will be added in later loops — the factory just needs to be extensible.
+
+5. **Implement SQLite backends for all three traits**:
+   - `SqliteTraceRepository` — migrate existing `SqliteStorage` (rename, impl new trait)
+   - `SqliteMetadataRepository` — new, with tables for tenants, security_configs, audit_events
+   - `InMemoryCacheLayer` — simple `DashMap<String, (Bytes, Instant)>` with TTL expiry
+
+6. **Keep `InMemoryStorage` as `InMemoryTraceRepository`** — rename, impl `TraceRepository`
+
+7. **Update the proxy** (`llmtrace-proxy`):
+   - Replace `Arc<dyn StorageBackend>` with `Storage` in `AppState`
+   - Use `storage.traces` for trace capture
+   - Update health endpoint to report health of all three subsystems
+   - Load storage from `StorageProfile::Lite` or `StorageProfile::Memory` based on config
+
+8. **Update `ProxyConfig`** to include a `storage` section:
+   ```yaml
+   storage:
+     profile: "lite"          # "lite" | "memory"
+     database_path: "llmtrace.db"
+   ```
+   Replace the flat `database_url` field with a structured storage config.
+
+**Performance considerations** (don't be dogmatic):
+- Trait objects (`dyn TraceRepository`) at the boundary are fine — the overhead is negligible vs IO
+- No unnecessary wrapper layers within a single backend implementation
+- The cache layer is *optional* — if cache misses, go direct to the backing store
+- Hot path (trace ingestion) should not go through the cache layer at all
+- Keep `store_trace` / `store_span` as lean as possible — no extra allocations
+
+**Do NOT**:
+- Add ClickHouse, PostgreSQL, or Redis implementations yet — that's a later loop
+- Over-abstract — three traits + one composite is enough
+- Add a generic `Repository<T>` pattern — the three concerns have different query shapes
+
+**Acceptance**:
+- `StorageBackend` trait is removed, replaced by `TraceRepository` + `MetadataRepository` + `CacheLayer`
+- `Storage` composite works with `StorageProfile::Lite` (SQLite) and `StorageProfile::Memory`
+- Proxy compiles and works with the new storage layer
+- All existing tests pass (adapted to new trait names)
+- New tests for `MetadataRepository` (tenant CRUD, audit events)
+- New tests for `CacheLayer` (get/set/TTL/invalidate)
+- `cargo test --workspace` passes, `cargo clippy --workspace -- -D warnings` clean
+
+---
+
 ## Loop 6: Configuration & CLI
 
 **Goal**: Add proper CLI and configuration management.
