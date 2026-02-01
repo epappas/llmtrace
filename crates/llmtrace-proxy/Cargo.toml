@@ -29,6 +29,9 @@ uuid.workspace = true
 async-trait.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4", features = ["derive", "env"] }
+opentelemetry-proto = { version = "0.31", features = ["gen-tonic-messages", "trace"] }
+prost = "0.14"
+hex = "0.4"
 axum = "0.7"
 hyper = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }

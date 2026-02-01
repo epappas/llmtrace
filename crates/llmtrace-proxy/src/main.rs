@@ -318,6 +318,11 @@ fn build_router(state: Arc<AppState>) -> Router {
                 .put(llmtrace_proxy::tenant_api::update_tenant)
                 .delete(llmtrace_proxy::tenant_api::delete_tenant),
         )
+        // OpenTelemetry OTLP/HTTP trace ingestion
+        .route(
+            "/v1/traces",
+            post(llmtrace_proxy::otel::ingest_traces),
+        )
         // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))
         .with_state(state)

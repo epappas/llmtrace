@@ -746,6 +746,9 @@ pub struct ProxyConfig {
     /// Security analysis configuration (ML-based detection, thresholds).
     #[serde(default)]
     pub security_analysis: SecurityAnalysisConfig,
+    /// OpenTelemetry OTLP ingestion configuration.
+    #[serde(default)]
+    pub otel_ingest: OtelIngestConfig,
 }
 
 impl Default for ProxyConfig {
@@ -774,6 +777,7 @@ impl Default for ProxyConfig {
             alerts: AlertConfig::default(),
             cost_caps: CostCapConfig::default(),
             security_analysis: SecurityAnalysisConfig::default(),
+            otel_ingest: OtelIngestConfig::default(),
         }
     }
 }
@@ -1087,6 +1091,24 @@ impl Default for SecurityAnalysisConfig {
             ml_cache_dir: default_ml_cache_dir(),
         }
     }
+}
+
+/// OpenTelemetry OTLP ingestion configuration.
+///
+/// When enabled, the proxy exposes `POST /v1/traces` to accept traces in
+/// the standard OTLP/HTTP format (JSON and protobuf).
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// otel_ingest:
+///   enabled: true
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OtelIngestConfig {
+    /// Enable the OTLP/HTTP ingestion endpoint.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Alert engine configuration for webhook notifications.
@@ -1899,6 +1921,7 @@ mod tests {
                 ml_threshold: 0.9,
                 ml_cache_dir: "/tmp/models".to_string(),
             },
+            otel_ingest: OtelIngestConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

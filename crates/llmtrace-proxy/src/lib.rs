@@ -9,6 +9,7 @@ pub mod circuit_breaker;
 pub mod config;
 pub mod cost;
 pub mod cost_caps;
+pub mod otel;
 pub mod provider;
 pub mod proxy;
 pub mod streaming;
