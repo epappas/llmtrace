@@ -440,3 +440,179 @@ The current `StorageBackend` trait handles only traces. Refactor into focused re
 - Commit and push
 
 **Acceptance**: Tenant CRUD works, auto-creation on first proxy request, audit trail recorded.
+
+---
+
+# Phase 3: Production Storage Backends
+
+## Loop 14: ClickHouse TraceRepository ✅ COMPLETE
+
+Implemented in commit `dcf100d`. ClickHouseTraceRepository with MergeTree engine, ZSTD compression, feature-gated, 9 ignored tests. See `crates/llmtrace-storage/src/clickhouse.rs`.
+
+---
+
+## Loop 15: PostgreSQL MetadataRepository
+
+**Goal**: Implement a PostgreSQL-backed `MetadataRepository` in `llmtrace-storage` for production tenant/config/audit storage.
+
+**Context files**: `docs/architecture/SYSTEM_ARCHITECTURE.md` (PostgreSQL Configuration)
+
+**Tasks**:
+
+1. **Add `sqlx` PostgreSQL feature** to `llmtrace-storage/Cargo.toml`:
+   - Gate behind a `postgres` Cargo feature:
+     ```toml
+     [features]
+     default = []
+     clickhouse = ["dep:clickhouse"]
+     postgres = ["sqlx/postgres"]
+     ```
+   - The existing `sqlx` dependency already has `runtime-tokio-rustls` and `chrono`/`uuid` features — just add `postgres` conditionally.
+
+2. **Create `crates/llmtrace-storage/src/postgres.rs`** implementing `PostgresMetadataRepository`:
+   - Constructor takes a PostgreSQL connection URL (e.g., `postgres://user:pass@localhost/llmtrace`)
+   - On construction, run migrations to create tables:
+     ```sql
+     CREATE TABLE IF NOT EXISTS tenants (
+         id UUID PRIMARY KEY,
+         name VARCHAR(255) NOT NULL,
+         plan VARCHAR(50) NOT NULL,
+         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         config JSONB NOT NULL DEFAULT '{}'
+     );
+     CREATE TABLE IF NOT EXISTS tenant_configs (
+         tenant_id UUID PRIMARY KEY REFERENCES tenants(id),
+         security_thresholds JSONB NOT NULL DEFAULT '{}',
+         feature_flags JSONB NOT NULL DEFAULT '{}'
+     );
+     CREATE TABLE IF NOT EXISTS audit_events (
+         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+         tenant_id UUID NOT NULL REFERENCES tenants(id),
+         event_type VARCHAR(100) NOT NULL,
+         actor VARCHAR(255) NOT NULL,
+         resource VARCHAR(255) NOT NULL,
+         data JSONB NOT NULL DEFAULT '{}',
+         timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     );
+     CREATE INDEX IF NOT EXISTS idx_audit_tenant_time ON audit_events(tenant_id, timestamp DESC);
+     CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(tenant_id, event_type);
+     ```
+
+3. **Implement `MetadataRepository` trait** for `PostgresMetadataRepository`:
+   - `create_tenant` — INSERT with conflict handling
+   - `get_tenant` — SELECT by id
+   - `update_tenant` — UPDATE name, plan, config
+   - `list_tenants` — SELECT all
+   - `delete_tenant` — DELETE (hard delete)
+   - `get_tenant_config` — SELECT from tenant_configs
+   - `upsert_tenant_config` — INSERT ON CONFLICT UPDATE
+   - `record_audit_event` — INSERT into audit_events
+   - `query_audit_events` — SELECT with filters from `AuditQuery`
+   - `health_check` — simple `SELECT 1`
+   - Use native JSONB, UUID, TIMESTAMPTZ
+
+4. **Add tests** (same pattern as Loop 14):
+   - `#[cfg(feature = "postgres")]` gated, `#[ignore]` by default
+   - Env var: `LLMTRACE_POSTGRES_URL`
+   - Test: create_tenant → get_tenant roundtrip
+   - Test: update_tenant changes fields
+   - Test: list_tenants returns all
+   - Test: delete_tenant removes tenant
+   - Test: upsert_tenant_config create + update
+   - Test: record_audit_event → query_audit_events
+   - Test: audit query with event_type filter
+   - Test: audit query with time range filter
+   - Test: health_check succeeds
+
+5. **Update `llmtrace-storage/src/lib.rs`** — conditionally export.
+
+**Acceptance**:
+- `cargo build --workspace` passes (postgres not compiled by default)
+- `cargo build -p llmtrace-storage --features postgres` compiles cleanly
+- `cargo clippy --workspace -- -D warnings` passes
+- `cargo test --workspace` passes
+- With a running PostgreSQL: `cargo test -p llmtrace-storage --features postgres -- --ignored` passes
+- All existing tests still pass
+
+---
+
+## Loop 16: Redis CacheLayer + Production StorageProfile + Docker Compose
+
+**Goal**: Implement Redis-backed `CacheLayer`, wire everything into a `StorageProfile::Production` variant, update config/proxy to support it, and provide a Docker Compose file for local dev.
+
+**Tasks**:
+
+1. **Add `redis` crate dependency** to `llmtrace-storage/Cargo.toml` behind a `redis_backend` feature.
+
+2. **Create `crates/llmtrace-storage/src/redis_cache.rs`** implementing `RedisCacheLayer`:
+   - Use `redis::aio::ConnectionManager`
+   - `get` → GET, `set` → SET EX, `invalidate` → DEL, `health_check` → PING
+
+3. **Add `StorageProfile::Production`** wiring ClickHouse + PostgreSQL + Redis.
+
+4. **Update `StorageConfig`** in core with optional `clickhouse_url`, `clickhouse_database`, `postgres_url`, `redis_url` fields.
+
+5. **Update proxy** to construct `StorageProfile::Production` when `profile = "production"`. Enable all storage features in proxy Cargo.toml.
+
+6. **Update `config.example.yaml`** with production storage examples.
+
+7. **Create `docker-compose.yml`** with ClickHouse, PostgreSQL, and Redis services.
+
+8. **Add Redis tests** (`#[ignore]`, env var `LLMTRACE_REDIS_URL`).
+
+9. **Add full production profile integration test** (`#[ignore]`).
+
+**Acceptance**: Default build works, proxy compiles with all backends, Docker Compose starts all services, all ignored tests pass with services running.
+
+---
+
+## Loop 17: Agent Cost Caps & Budget Enforcement
+
+**Goal**: Per-agent budget caps (hourly/daily/weekly/monthly USD) and per-request token limits with real-time enforcement.
+
+**Design**: Hard caps → 429 rejection with reset time. Soft caps → allow + alert. Agent identified via `X-LLMTrace-Agent-ID` header.
+
+**Tasks**:
+
+1. **Core types**: `BudgetWindow`, `BudgetCap`, `TokenCap`, `CostCapConfig`, `AgentCostCap` in llmtrace-core.
+2. **Config**: Add `cost_caps` section to `ProxyConfig` + `config.example.yaml`.
+3. **CostTracker** module (`cost_caps.rs`): cache-backed spend tracking per tenant/agent/window/period. Period keys with auto-TTL.
+4. **Pre-request enforcement**: token caps (reject if exceeded), budget caps (check running total).
+5. **Post-request tracking**: async spend recording via cost estimation engine.
+6. **REST API**: `GET /api/v1/costs/current` — real-time spend per window with remaining budget.
+7. **Alert integration**: soft cap exceeded or 80% threshold → webhook alert.
+8. **Tests**: period key calculation, token cap enforcement, budget checking, integration tests.
+
+**Acceptance**: Hard caps reject with 429 + reset time, soft caps alert, agent overrides work, visibility API returns spend data, all tests pass.
+
+---
+
+## Loop 18: Agent Tool & Skill Usage Tracing
+
+**Goal**: Capture what an agent *did* — which tools/skills it invoked, why, and any external actions (commands, web requests, file access). Full agent action observability.
+
+**Design**:
+
+| Action Type | Examples | Captured Data |
+|-------------|----------|---------------|
+| Tool call | function_call, tool_use | tool name, args, result, duration |
+| Skill invocation | agent skill/plugin | skill name, trigger reason, outcome |
+| Command execution | shell, subprocess, exec | command, exit code, stdout summary |
+| Web access | HTTP, curl, fetch, browser | URL, method, status code, response size |
+| File access | read, write, delete | path, operation, size |
+
+**Tasks**:
+
+1. **Core types**: `AgentActionType` enum, `AgentAction` struct in llmtrace-core.
+2. **Extend `TraceSpan`** with `agent_actions: Vec<AgentAction>` + helper methods (`add_agent_action`, `tool_calls()`, `web_accesses()`, `commands()`).
+3. **Auto-parse tool calls** from proxied OpenAI (`tool_calls`/`function_call`) and Anthropic (`tool_use`) responses into `AgentAction` entries automatically.
+4. **Reporting API**: `POST /api/v1/traces/:trace_id/actions` — client reports actions that happened after the LLM call (commands executed, web requests made, etc.).
+5. **Query extensions**: `has_tool_calls=true`, `has_web_access=true`, `has_commands=true`, `action_name=X` filters. `GET /api/v1/actions/summary` for aggregate view.
+6. **Security analysis**: flag suspicious commands (`rm -rf`, `curl | sh`, base64-encoded), bad domains, sensitive file paths → generate `SecurityFinding`.
+7. **Storage**: `agent_actions` as JSON string column in SQLite and ClickHouse (ZSTD compressed).
+8. **Python SDK**: `tracer.report_action(...)` method.
+9. **Tests**: serialization, auto-parsing, security analysis, API roundtrips.
+
+**Do NOT**: implement action streaming/replay, capture full stdout/response bodies (truncate at 4KB).
+
+**Acceptance**: Tool calls auto-extracted from LLM responses, client reporting API works, actions queryable, suspicious actions flagged, Python SDK supports reporting, all tests pass.
