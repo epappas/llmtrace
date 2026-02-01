@@ -1,245 +1,76 @@
-# ============================================================================
-# LLMTrace — Cost Control Configuration
-# ============================================================================
-#
-# Focused on cost management: tight per-agent budgets, token caps, cost anomaly
-# alerting, and detailed cost tracking. Use this when your primary concern is
-# preventing billing surprises across multiple agents or teams.
-#
-# Good for:
-#   - Teams with many LLM-powered agents sharing a single API key
-#   - Startups watching their OpenAI/Anthropic bill closely
-#   - Batch processing pipelines where cost predictability matters
-#   - Multi-tenant platforms that need per-customer billing
-#
-# Usage:
-#   cp examples/config-cost-control.yaml config.yaml
-#   # Edit upstream_url, agent IDs, and budget limits for your setup
-#   ./target/release/llmtrace-proxy validate --config config.yaml
-#   ./target/release/llmtrace-proxy --config config.yaml
-#
-# See also:
-#   - config-minimal.yaml        — bare minimum for getting started
-#   - config-production.yaml     — full production setup
-#   - config-high-security.yaml  — maximum security posture
-#   - docs/guides/custom-policies.md — comprehensive configuration guide
-# ============================================================================
+# Cost Control Configuration  
+# Focus on managing LLM expenses and preventing budget overruns
 
-# --- Network ----------------------------------------------------------------
-
+# Network
 listen_addr: "0.0.0.0:8080"
 upstream_url: "https://api.openai.com"
 
-# --- Storage ----------------------------------------------------------------
-
+# Storage
 storage:
-  # SQLite is fine for cost tracking — switch to "production" for scale
   profile: "lite"
   database_path: "llmtrace.db"
-  auto_migrate: true
 
-# --- Logging ----------------------------------------------------------------
-
-logging:
-  level: "info"
-  format: "text"
-
-# --- Timeouts ---------------------------------------------------------------
-
-timeout_ms: 30000
-connection_timeout_ms: 5000
-max_connections: 1000
-max_request_size_bytes: 52428800
-
-# --- Security (basic — this config focuses on cost, not security) -----------
-
-enable_security_analysis: true
-security_analysis_timeout_ms: 5000
-
-# --- Trace Storage ----------------------------------------------------------
-
-enable_trace_storage: true
-trace_storage_timeout_ms: 10000
-
-# --- Streaming --------------------------------------------------------------
-
-enable_streaming: true
-
-# --- Cost Estimation (Critical — must be enabled for cost caps) -------------
-
-cost_estimation:
-  enabled: true    # Required for cost cap enforcement
-
-  # Add your custom/fine-tuned models here so cost tracking is accurate
-  custom_models:
-    # Self-hosted models: zero API cost, but track for utilization metrics
-    # local-llama-70b:
-    #   input_per_million: 0.0
-    #   output_per_million: 0.0
-
-    # Fine-tuned models: often have different pricing than base models
-    # ft:gpt-4o-mini-2024-07-18:my-org:my-model:abc123:
-    #   input_per_million: 3.0
-    #   output_per_million: 6.0
-    {}
-
-# --- Cost Caps (the heart of this config) -----------------------------------
-
-cost_caps:
+# Aggressive Cost Controls
+cost_control:
   enabled: true
+  
+  # Budget Limits
+  daily_budget_usd: 500
+  weekly_budget_usd: 3000
+  monthly_budget_usd: 10000
+  
+  # Per-Agent Limits
+  per_agent_daily_budget_usd: 50
+  per_agent_weekly_budget_usd: 300
+  
+  # Per-Model Budgets
+  per_model_daily_budget_usd:
+    gpt-4: 200
+    gpt-3.5-turbo: 100
+    claude-3: 150
+  
+  # Token Limits
+  max_prompt_tokens: 3000
+  max_completion_tokens: 1500
+  
+  # Business Hours Only for Expensive Models
+  schedule:
+    business_hours_only:
+      models: ["gpt-4", "claude-3-opus"]
+      hours: "09:00-17:00"
+      timezone: "UTC"
 
-  # === Default budgets (applied to all agents unless overridden) ===
-  default_budget_caps:
-    # Hourly: catch runaway loops quickly
-    # $5/hour = ~250 GPT-4o requests or ~2500 GPT-4o-mini requests
-    - window: hourly
-      hard_limit_usd: 5.0
-      soft_limit_usd: 4.0       # Alert at 80% — gives time to react
-
-    # Daily: overall spending control
-    # $50/day = reasonable for a small team
-    - window: daily
-      hard_limit_usd: 50.0
-      soft_limit_usd: 40.0
-
-    # Monthly: budget alignment
-    # $1000/month = the "oh no" limit
-    - window: monthly
-      hard_limit_usd: 1000.0
-      soft_limit_usd: 800.0
-
-  # === Default token caps (prevent individual expensive requests) ===
-  default_token_cap:
-    max_prompt_tokens: 4096      # Most prompts don't need more
-    max_completion_tokens: 2048  # Limit verbose responses
-    max_total_tokens: 8192       # Combined safety net
-
-  # === Per-agent overrides ===
-  # Agents identify themselves via the X-LLMTrace-Agent-ID header
-  agents:
-    # --- Customer-facing chatbot ---
-    # High volume, small requests — needs generous RPS but low per-request cost
-    - agent_id: "customer-chatbot"
-      budget_caps:
-        - window: hourly
-          hard_limit_usd: 10.0
-          soft_limit_usd: 8.0
-        - window: daily
-          hard_limit_usd: 100.0
-          soft_limit_usd: 80.0
-      token_cap:
-        max_prompt_tokens: 2048   # Short prompts only
-        max_completion_tokens: 1024
-        max_total_tokens: 4096
-
-    # --- Research/RAG agent ---
-    # Lower volume, larger context windows — needs bigger token caps
-    - agent_id: "research-agent"
-      budget_caps:
-        - window: hourly
-          hard_limit_usd: 25.0
-          soft_limit_usd: 20.0
-        - window: daily
-          hard_limit_usd: 200.0
-          soft_limit_usd: 160.0
-      token_cap:
-        max_prompt_tokens: 16384  # Large context for RAG
-        max_completion_tokens: 4096
-        max_total_tokens: 32768
-
-    # --- Batch embedding pipeline ---
-    # High volume, predictable cost — weekly budget, no hourly cap
-    - agent_id: "embedding-pipeline"
-      budget_caps:
-        - window: daily
-          hard_limit_usd: 30.0
-          soft_limit_usd: 25.0
-        - window: weekly
-          hard_limit_usd: 150.0
-          soft_limit_usd: 120.0
-      token_cap:
-        max_prompt_tokens: 8192
-        max_completion_tokens: 0    # Embeddings don't produce completions
-
-    # --- Code generation agent ---
-    # Expensive model usage, needs room for large outputs
-    - agent_id: "code-agent"
-      budget_caps:
-        - window: hourly
-          hard_limit_usd: 15.0
-          soft_limit_usd: 12.0
-        - window: daily
-          hard_limit_usd: 150.0
-          soft_limit_usd: 120.0
-      token_cap:
-        max_prompt_tokens: 8192
-        max_completion_tokens: 8192  # Code generation needs long outputs
-        max_total_tokens: 32768
-
-# --- Anomaly Detection (cost-focused) --------------------------------------
-
+# Cost Anomaly Detection
 anomaly_detection:
   enabled: true
-  window_size: 100
-  sigma_threshold: 3.0
+  cost:
+    threshold_multiplier: 1.5  # Alert at 50% increase
+    window_minutes: 30
+  tokens:
+    threshold_multiplier: 2.0
+    window_minutes: 15
 
-  # Focus on cost-related anomalies
-  check_cost: true               # Flag abnormally expensive requests
-  check_tokens: true             # Flag abnormally large token usage
-  check_velocity: true           # Flag abnormal request rates (cost multiplier)
-  check_latency: false           # Not cost-relevant — skip to reduce noise
-
-# --- Rate Limiting ----------------------------------------------------------
-
-rate_limiting:
-  enabled: true
-  requests_per_second: 100
-  burst_size: 200
-  window_seconds: 60
-
-# --- Circuit Breaker --------------------------------------------------------
-
-circuit_breaker:
-  enabled: true
-  failure_threshold: 10
-  recovery_timeout_ms: 30000
-  half_open_max_calls: 3
-
-# --- Alerting (cost-focused) -----------------------------------------------
-
+# Cost-Focused Alerts
 alerts:
-  enabled: true
-  cooldown_seconds: 180          # 3-minute cooldown — alert fast on cost issues
-
-  channels:
-    # Slack: cost alerts (soft limit breaches, anomalies)
-    # Set to Medium to catch soft-limit warnings early
-    - type: slack
-      url: "https://hooks.slack.com/services/YOUR/COST-ALERTS/CHANNEL"
-      min_severity: "Medium"
-      min_security_score: 40
-
-    # Webhook to your billing/analytics system
-    - type: webhook
-      url: "https://your-analytics.internal/api/cost-events"
-      min_severity: "Low"
-      min_security_score: 0
-
-  # Escalate if nobody acts on a cost alert within 15 minutes
-  escalation:
+  slack:
     enabled: true
-    escalate_after_seconds: 900
+    webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    channel: "#cost-alerts"
+  
+  cost_thresholds:
+    daily_spend_percentage: 80   # Alert at 80% of budget
+    hourly_spend_usd: 50        # Alert if >$50/hour
+    single_request_usd: 5       # Alert on expensive requests
 
-# --- Health Check -----------------------------------------------------------
+# Basic Security (cost-optimized)
+security:
+  enable_prompt_injection_detection: true
+  enable_pii_detection: false  # Disabled to reduce processing cost
+  prompt_injection:
+    sensitivity: "low"
+    fast_mode: true
 
-health_check:
-  enabled: true
-  path: "/health"
-  interval_seconds: 10
-  timeout_ms: 5000
-  retries: 3
-
-# --- Graceful Shutdown ------------------------------------------------------
-
-shutdown:
-  timeout_seconds: 30
+# Minimal Logging
+logging:
+  level: "warn"
+  format: "json"

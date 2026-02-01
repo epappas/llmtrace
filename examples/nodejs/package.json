@@ -1,0 +1,24 @@
+{
+  "name": "llmtrace-nodejs-examples",
+  "version": "1.0.0",
+  "description": "Node.js examples for LLMTrace integration",
+  "type": "module",
+  "scripts": {
+    "basic": "node openai_basic.js",
+    "streaming": "node streaming.js", 
+    "typescript": "npx ts-node typescript_example.ts",
+    "all": "npm run basic && npm run streaming"
+  },
+  "dependencies": {
+    "openai": "^4.0.0",
+    "dotenv": "^16.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

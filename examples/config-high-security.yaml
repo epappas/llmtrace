@@ -1,256 +1,76 @@
-# ============================================================================
-# LLMTrace — High Security Configuration
-# ============================================================================
-#
-# Maximum security posture: ML-based detection, streaming analysis, aggressive
-# rate limits, PII redaction, and PagerDuty escalation. Designed for
-# environments handling sensitive data, untrusted user inputs, or regulated
-# industries (healthcare, finance, government).
-#
-# Prerequisites:
-#   - Binary built with `cargo build --release --features ml`
-#   - ClickHouse + PostgreSQL + Redis running
-#   - PagerDuty account with Events API v2 routing key
-#   - Slack incoming webhook URL
-#   - ~500MB disk space for ML model cache
-#
-# Usage:
-#   cp examples/config-high-security.yaml config.yaml
-#   # Edit connection strings, webhook URLs, and routing keys
-#   ./target/release/llmtrace-proxy validate --config config.yaml
-#   ./target/release/llmtrace-proxy --config config.yaml
-#
-# See also:
-#   - config-minimal.yaml      — bare minimum for getting started
-#   - config-production.yaml   — standard production setup
-#   - config-cost-control.yaml — cost management focus
-#   - docs/guides/custom-policies.md — comprehensive configuration guide
-# ============================================================================
+# High Security Configuration
+# Maximum protection for sensitive environments
 
-# --- Network ----------------------------------------------------------------
-
-listen_addr: "0.0.0.0:8443"    # Non-standard port for security
+# Network
+listen_addr: "0.0.0.0:8080"
 upstream_url: "https://api.openai.com"
 
-# --- TLS (mandatory for high security) -------------------------------------
-
-enable_tls: true
-tls_cert_file: "/etc/ssl/certs/llmtrace.crt"
-tls_key_file: "/etc/ssl/private/llmtrace.key"
-
-# --- Storage ----------------------------------------------------------------
-
+# Storage
 storage:
   profile: "production"
-  clickhouse_url: "http://localhost:8123"
-  clickhouse_database: "llmtrace"
-  postgres_url: "postgres://llmtrace:llmtrace@localhost:5432/llmtrace"
-  redis_url: "redis://127.0.0.1:6379"
+  postgres_url: "postgresql://llmtrace:password@postgres:5432/llmtrace"
+  redis_url: "redis://redis:6379"
 
-  # NEVER auto-migrate in high-security environments
-  # Run: llmtrace-proxy migrate --config config.yaml
-  auto_migrate: false
+# Maximum Security
+security:
+  enable_prompt_injection_detection: true
+  enable_pii_detection: true
+  enable_data_leakage_detection: true
+  enable_streaming_analysis: true
+  
+  prompt_injection:
+    sensitivity: "maximum"
+    block_suspicious_requests: true
+    custom_patterns:
+      - "ignore.*previous.*instructions"
+      - "system.*prompt.*override"
+      - "jailbreak|jail break"
+      - "bypass.*safety"
+      
+  pii_detection:
+    types: ["email", "phone", "ssn", "credit_card", "passport", "driver_license"]
+    redaction_enabled: true
+    strict_mode: true
+    
+  data_leakage:
+    detect_credential_exposure: true
+    detect_system_prompt_leaks: true
+    detect_api_key_exposure: true
 
-# --- Logging ----------------------------------------------------------------
-
-logging:
-  level: "info"
-  # JSON for structured ingestion into your SIEM
-  format: "json"
-
-# --- Timeouts ---------------------------------------------------------------
-
-timeout_ms: 30000                # Keep tight — don't let requests hang
-connection_timeout_ms: 5000
-max_connections: 2000            # Lower max to prevent resource exhaustion
-
-# Smaller max body to limit attack surface
-max_request_size_bytes: 10485760  # 10MB — reject excessively large prompts
-
-# --- Security Analysis (Full Ensemble) -------------------------------------
-
-# Master toggle
-enable_security_analysis: true
-
-# Generous timeout for ML inference (DeBERTa takes ~50-200ms per request)
-security_analysis_timeout_ms: 10000
-
-# ML-based detection — the core of high-security posture
-security_analysis:
-  ml_enabled: true
-
-  # DeBERTa v3 — state-of-the-art prompt injection detection
-  # Trained specifically on adversarial prompt injection datasets
-  ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
-
-  # Lower threshold = more aggressive detection
-  # 0.7 catches more attacks but may flag some legitimate prompts
-  # Review flagged requests in the first week and adjust
-  ml_threshold: 0.7
-
-  ml_cache_dir: "/var/lib/llmtrace/models"
-
-  # Always pre-load in production — first-request latency is unacceptable
-  ml_preload: true
-  ml_download_timeout_seconds: 600   # Give extra time for model download
-
-  # NER for person names, organizations, locations
-  # Critical for GDPR/HIPAA — catches PII that regex can't
-  ner_enabled: true
-  ner_model: "dslim/bert-base-NER"
-
-# --- PII Handling -----------------------------------------------------------
-
-pii:
-  # Redact PII in stored traces AND generate alerts
-  # Ensures no PII persists in your trace database
-  action: "alert_and_redact"
-
-# --- Streaming Security Analysis --------------------------------------------
-
-enable_streaming: true
-
-streaming_analysis:
-  enabled: true
-  # Check every 25 tokens — aggressive but catches threats faster
-  # Slightly higher CPU cost per stream, but worth it for high-security
-  token_interval: 25
-
-# --- Trace Storage ----------------------------------------------------------
-
-enable_trace_storage: true
-trace_storage_timeout_ms: 10000
-
-# --- Rate Limiting (Strict) ------------------------------------------------
-
+# Strict Rate Limiting
 rate_limiting:
   enabled: true
-  # Conservative defaults — prevent abuse
-  requests_per_second: 50
-  burst_size: 75               # 1.5x RPS — minimal burst tolerance
-  window_seconds: 60
+  requests_per_minute: 100
+  burst_capacity: 200
+  per_tenant:
+    requests_per_minute: 10
 
-  tenant_overrides: {}
-    # Override only for known, trusted tenants:
-    # "trusted-tenant-uuid":
-    #   requests_per_second: 200
-    #   burst_size: 300
-
-# --- Circuit Breaker --------------------------------------------------------
-
-circuit_breaker:
+# Conservative Cost Controls
+cost_control:
   enabled: true
-  failure_threshold: 5           # Open quickly — don't accumulate failures
-  recovery_timeout_ms: 60000     # Wait 60s before probing — conservative
-  half_open_max_calls: 2
+  daily_budget_usd: 100
+  per_agent_daily_budget_usd: 10
+  max_prompt_tokens: 2000
+  max_completion_tokens: 1000
+  blocked_models: ["gpt-4-turbo", "claude-3-opus"]  # Block expensive models
 
-# --- Cost Estimation --------------------------------------------------------
-
-cost_estimation:
-  enabled: true
-
-# --- Cost Caps (Strict) ----------------------------------------------------
-
-cost_caps:
-  enabled: true
-
-  default_budget_caps:
-    # Tight hourly cap — catch runaway loops within minutes
-    - window: hourly
-      hard_limit_usd: 10.0
-      soft_limit_usd: 7.0
-
-    # Strict daily cap
-    - window: daily
-      hard_limit_usd: 100.0
-      soft_limit_usd: 75.0
-
-    # Weekly rollup
-    - window: weekly
-      hard_limit_usd: 500.0
-      soft_limit_usd: 400.0
-
-  # Strict token limits — prevent context window abuse
-  default_token_cap:
-    max_prompt_tokens: 4096      # No massive prompts by default
-    max_completion_tokens: 2048  # Limit response length
-    max_total_tokens: 8192
-
-  agents:
-    # Even trusted agents get explicit limits in high-security
-    - agent_id: "primary-agent"
-      budget_caps:
-        - window: daily
-          hard_limit_usd: 200.0
-          soft_limit_usd: 150.0
-      token_cap:
-        max_prompt_tokens: 8192
-        max_completion_tokens: 4096
-
-# --- Anomaly Detection (Aggressive) ----------------------------------------
-
-anomaly_detection:
-  enabled: true
-  window_size: 50                # Smaller window — react faster to anomalies
-  sigma_threshold: 2.5           # Lower threshold — more sensitive
-  check_cost: true
-  check_tokens: true
-  check_velocity: true
-  check_latency: true
-
-# --- Alerting (Multi-Channel with Escalation) ------------------------------
-
+# Immediate Security Alerts
 alerts:
-  enabled: true
-  cooldown_seconds: 120          # 2-minute cooldown — faster alerting
-
-  channels:
-    # Slack: everything Medium and above — full visibility
-    - type: slack
-      url: "https://hooks.slack.com/services/YOUR/SECURITY/CHANNEL"
-      min_severity: "Medium"
-      min_security_score: 40
-
-    # PagerDuty: High and above — immediate response
-    - type: pagerduty
-      routing_key: "YOUR_PAGERDUTY_ROUTING_KEY"
-      min_severity: "High"
-      min_security_score: 70
-
-    # SIEM webhook: all findings for audit trail
-    - type: webhook
-      url: "https://siem.internal/api/llmtrace"
-      min_severity: "Low"
-      min_security_score: 20
-
-  # Escalate unacknowledged alerts after 10 minutes
-  escalation:
+  slack:
     enabled: true
-    escalate_after_seconds: 600
+    webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+    channel: "#security-alerts"
+    mention_users: ["@security-team", "@incident-response"]
+  
+  security_thresholds:
+    prompt_injection: "any"  # Alert on any security finding
+    pii_detection: "any"
+    data_leakage: "any"
 
-# --- Authentication ---------------------------------------------------------
-
-auth:
-  enabled: true
-  # Use a strong, unique bootstrap key — rotate immediately after first setup
-  admin_key: "llmt_CHANGE_THIS_TO_A_STRONG_RANDOM_VALUE"
-
-# --- gRPC Ingestion ---------------------------------------------------------
-
-# Disable gRPC unless explicitly needed — reduce attack surface
-grpc:
-  enabled: false
-
-# --- Health Check -----------------------------------------------------------
-
-health_check:
-  enabled: true
-  path: "/health"
-  interval_seconds: 5            # More frequent health checks
-  timeout_ms: 3000
-  retries: 2                     # Fail faster
-
-# --- Graceful Shutdown ------------------------------------------------------
-
-shutdown:
-  timeout_seconds: 15            # Shorter shutdown — don't linger
+# Audit Logging
+logging:
+  level: "debug"
+  format: "json"
+  audit:
+    enabled: true
+    destination: "syslog://audit.company.com:514"
