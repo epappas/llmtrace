@@ -6,6 +6,7 @@
 pub mod api;
 pub mod circuit_breaker;
 pub mod config;
+pub mod provider;
 pub mod proxy;
 pub mod streaming;
 

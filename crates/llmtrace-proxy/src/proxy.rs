@@ -5,6 +5,7 @@
 //! trace storage and security analysis.
 
 use crate::circuit_breaker::CircuitBreaker;
+use crate::provider::{self, ParsedResponse};
 use crate::streaming::StreamingAccumulator;
 use axum::body::Body;
 use axum::extract::State;
@@ -139,12 +140,14 @@ pub async fn proxy_handler(
     let headers = req.headers().clone();
     let tenant_id = resolve_tenant(&headers);
     let _api_key = extract_api_key(&headers);
+    let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
     debug!(
         %trace_id,
         %tenant_id,
         %method,
         %path,
+        provider = ?detected_provider,
         "Proxying request"
     );
 
@@ -244,6 +247,7 @@ pub async fn proxy_handler(
     let state_bg = Arc::clone(&state);
     let prompt_text_bg = prompt_text.clone();
     let model_name_bg = model_name.clone();
+    let provider_bg = detected_provider;
     tokio::spawn(async move {
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
@@ -291,14 +295,22 @@ pub async fn proxy_handler(
                     acc.total_tokens(),
                 )
             } else {
-                let response_str = String::from_utf8_lossy(&raw_collected).to_string();
-                let (pt, ct, tt) = extract_usage_from_response(&raw_collected);
-                (response_str, pt, ct, tt)
+                let ParsedResponse { text, usage } =
+                    provider::parse_response(&provider_bg, &raw_collected);
+                let response_str =
+                    text.unwrap_or_else(|| String::from_utf8_lossy(&raw_collected).to_string());
+                (
+                    response_str,
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                    usage.total_tokens,
+                )
             };
 
         let captured = CapturedInteraction {
             trace_id,
             tenant_id,
+            provider: provider_bg,
             model_name: model_name_bg,
             prompt_text: prompt_text_bg,
             response_text,
@@ -349,6 +361,8 @@ pub async fn proxy_handler(
 struct CapturedInteraction {
     trace_id: Uuid,
     tenant_id: TenantId,
+    /// Detected LLM provider for this request.
+    provider: LLMProvider,
     model_name: String,
     prompt_text: String,
     response_text: String,
@@ -364,21 +378,6 @@ struct CapturedInteraction {
     completion_tokens: Option<u32>,
     /// Total tokens (from provider usage data, if reported).
     total_tokens: Option<u32>,
-}
-
-/// Extract token usage from a non-streaming response body.
-///
-/// Parses the JSON response and returns `(prompt_tokens, completion_tokens, total_tokens)`.
-fn extract_usage_from_response(body: &[u8]) -> (Option<u32>, Option<u32>, Option<u32>) {
-    let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(body) else {
-        return (None, None, None);
-    };
-    let usage = &parsed["usage"];
-    (
-        usage["prompt_tokens"].as_u64().map(|v| v as u32),
-        usage["completion_tokens"].as_u64().map(|v| v as u32),
-        usage["total_tokens"].as_u64().map(|v| v as u32),
-    )
 }
 
 /// Run security analysis and return findings.
@@ -402,7 +401,7 @@ async fn run_security_analysis(
         tenant_id: captured.tenant_id,
         trace_id: captured.trace_id,
         span_id: Uuid::new_v4(),
-        provider: LLMProvider::OpenAI,
+        provider: captured.provider.clone(),
         model_name: captured.model_name.clone(),
         parameters: std::collections::HashMap::new(),
     };
@@ -460,7 +459,7 @@ async fn run_trace_capture(
         captured.trace_id,
         captured.tenant_id,
         operation.to_string(),
-        LLMProvider::OpenAI, // default; future loops will detect provider
+        captured.provider.clone(),
         captured.model_name.clone(),
         captured.prompt_text.clone(),
     )
