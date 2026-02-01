@@ -26,7 +26,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use llmtrace_core::{LLMProvider, SecuritySeverity, TenantId, TraceSpan};
+use llmtrace_core::{
+    AgentAction, AgentActionType, LLMProvider, SecuritySeverity, TenantId, TraceSpan,
+};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,20 @@ fn parse_provider(provider: &str) -> PyResult<LLMProvider> {
         "azure_openai" | "azure-openai" | "azureopenai" => Ok(LLMProvider::AzureOpenAI),
         "bedrock" => Ok(LLMProvider::Bedrock),
         other => Ok(LLMProvider::Custom(other.to_string())),
+    }
+}
+
+/// Parse an action type string into an [`AgentActionType`].
+fn parse_action_type(s: &str) -> PyResult<AgentActionType> {
+    match s {
+        "tool_call" => Ok(AgentActionType::ToolCall),
+        "skill_invocation" => Ok(AgentActionType::SkillInvocation),
+        "command_execution" => Ok(AgentActionType::CommandExecution),
+        "web_access" => Ok(AgentActionType::WebAccess),
+        "file_access" => Ok(AgentActionType::FileAccess),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid action_type: '{other}'. Expected one of: tool_call, skill_invocation, command_execution, web_access, file_access"
+        ))),
     }
 }
 
@@ -236,6 +252,54 @@ impl PyTraceSpan {
     /// Add a custom tag (key-value pair) to this span.
     fn add_tag(&mut self, key: String, value: String) {
         self.inner.tags.insert(key, value);
+    }
+
+    /// Report an agent action on this span.
+    ///
+    /// Args:
+    ///     action_type: One of ``"tool_call"``, ``"skill_invocation"``,
+    ///                  ``"command_execution"``, ``"web_access"``, ``"file_access"``.
+    ///     name: Name of the tool, skill, command, URL, or file path.
+    ///     arguments: Optional arguments or parameters.
+    ///     result: Optional result (truncated to 4KB).
+    ///     duration_ms: Optional duration in milliseconds.
+    ///     success: Whether the action succeeded (default ``True``).
+    ///
+    /// Returns:
+    ///     The action ID (UUID string).
+    #[pyo3(signature = (action_type, name, *, arguments=None, result=None, duration_ms=None, success=None))]
+    fn report_action(
+        &mut self,
+        action_type: &str,
+        name: String,
+        arguments: Option<String>,
+        result: Option<String>,
+        duration_ms: Option<u64>,
+        success: Option<bool>,
+    ) -> PyResult<String> {
+        let at = parse_action_type(action_type)?;
+        let mut action = AgentAction::new(at, name);
+        if let Some(args) = arguments {
+            action = action.with_arguments(args);
+        }
+        if let Some(res) = result {
+            action = action.with_result(res);
+        }
+        if let Some(ms) = duration_ms {
+            action = action.with_duration_ms(ms);
+        }
+        if let Some(false) = success {
+            action = action.with_failure();
+        }
+        let action_id = action.id.to_string();
+        self.inner.add_agent_action(action);
+        Ok(action_id)
+    }
+
+    /// Number of agent actions recorded on this span.
+    #[getter]
+    fn agent_actions_count(&self) -> usize {
+        self.inner.agent_actions.len()
     }
 
     // -- serialisation -------------------------------------------------------

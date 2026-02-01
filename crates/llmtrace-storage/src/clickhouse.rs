@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use clickhouse::Client;
 use llmtrace_core::{
-    LLMProvider, LLMTraceError, Result, SecurityFinding, SpanEvent, StorageStats, TenantId,
-    TraceEvent, TraceQuery, TraceRepository, TraceSpan,
+    AgentAction, LLMProvider, LLMTraceError, Result, SecurityFinding, SpanEvent, StorageStats,
+    TenantId, TraceEvent, TraceQuery, TraceRepository, TraceSpan,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -64,6 +64,7 @@ struct SpanRow {
     security_findings: String,
     tags: String,
     events: String,
+    agent_actions: String,
 }
 
 /// Row type returned by the count query used in [`ClickHouseTraceRepository::get_stats`].
@@ -135,6 +136,8 @@ fn span_to_row(span: &TraceSpan) -> Result<SpanRow> {
         .map_err(|e| LLMTraceError::Storage(format!("serialize tags: {e}")))?;
     let events_json = serde_json::to_string(&span.events)
         .map_err(|e| LLMTraceError::Storage(format!("serialize events: {e}")))?;
+    let agent_actions_json = serde_json::to_string(&span.agent_actions)
+        .map_err(|e| LLMTraceError::Storage(format!("serialize agent_actions: {e}")))?;
 
     Ok(SpanRow {
         tenant_id: span.tenant_id.0,
@@ -160,6 +163,7 @@ fn span_to_row(span: &TraceSpan) -> Result<SpanRow> {
         security_findings: security_findings_json,
         tags: tags_json,
         events: events_json,
+        agent_actions: agent_actions_json,
     })
 }
 
@@ -171,6 +175,8 @@ fn row_to_span(row: SpanRow) -> Result<TraceSpan> {
         .map_err(|e| LLMTraceError::Storage(format!("Invalid tags JSON: {e}")))?;
     let events: Vec<SpanEvent> = serde_json::from_str(&row.events)
         .map_err(|e| LLMTraceError::Storage(format!("Invalid events JSON: {e}")))?;
+    let agent_actions: Vec<AgentAction> = serde_json::from_str(&row.agent_actions)
+        .map_err(|e| LLMTraceError::Storage(format!("Invalid agent_actions JSON: {e}")))?;
 
     Ok(TraceSpan {
         trace_id: row.trace_id,
@@ -196,6 +202,7 @@ fn row_to_span(row: SpanRow) -> Result<TraceSpan> {
         security_findings,
         tags,
         events,
+        agent_actions,
     })
 }
 
@@ -296,7 +303,8 @@ impl ClickHouseTraceRepository {
                     security_score Nullable(UInt8),
                     security_findings String DEFAULT '[]',
                     tags String DEFAULT '{{}}',
-                    events String DEFAULT '[]'
+                    events String DEFAULT '[]',
+                    agent_actions String DEFAULT '[]' CODEC(ZSTD(1))
                 ) ENGINE = MergeTree()
                 PARTITION BY (tenant_id, toYYYYMM(start_time))
                 ORDER BY (tenant_id, start_time, trace_id, span_id)"
@@ -304,6 +312,16 @@ impl ClickHouseTraceRepository {
             .execute()
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to create spans table: {e}")))?;
+
+        // Migration: add agent_actions column to existing spans tables
+        let _ = self
+            .client
+            .query(&format!(
+                "ALTER TABLE `{db}`.spans ADD COLUMN IF NOT EXISTS \
+                 agent_actions String DEFAULT '[]' CODEC(ZSTD(1))"
+            ))
+            .execute()
+            .await;
 
         Ok(())
     }

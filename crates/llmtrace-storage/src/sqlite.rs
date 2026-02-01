@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    AuditEvent, AuditQuery, LLMProvider, LLMTraceError, MetadataRepository, Result,
+    AgentAction, AuditEvent, AuditQuery, LLMProvider, LLMTraceError, MetadataRepository, Result,
     SecurityFinding, SpanEvent, StorageStats, Tenant, TenantConfig, TenantId, TraceEvent,
     TraceQuery, TraceRepository, TraceSpan,
 };
@@ -63,6 +63,8 @@ const TRACE_MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_spans_model ON spans(tenant_id, model_name)",
     "CREATE INDEX IF NOT EXISTS idx_spans_security ON spans(tenant_id, security_score)",
     "CREATE INDEX IF NOT EXISTS idx_spans_operation ON spans(tenant_id, operation_name)",
+    // Loop 18: agent actions column
+    "ALTER TABLE spans ADD COLUMN agent_actions TEXT NOT NULL DEFAULT '[]'",
 ];
 
 const METADATA_MIGRATIONS: &[&str] = &[
@@ -118,12 +120,25 @@ pub(crate) async fn open_pool(database_url: &str) -> Result<SqlitePool> {
 }
 
 /// Run a list of migration statements against the given pool.
+///
+/// `ALTER TABLE … ADD COLUMN` statements are allowed to fail silently
+/// (the column may already exist from a previous run).
 pub(crate) async fn run_migrations(pool: &SqlitePool, statements: &[&str]) -> Result<()> {
     for statement in statements {
-        sqlx::query(statement)
-            .execute(pool)
-            .await
-            .map_err(|e| LLMTraceError::Storage(format!("Migration failed: {e}")))?;
+        let result = sqlx::query(statement).execute(pool).await;
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                let is_alter_add = statement.to_uppercase().contains("ALTER TABLE")
+                    && statement.to_uppercase().contains("ADD COLUMN");
+                let is_duplicate = e.to_string().contains("duplicate column");
+                if is_alter_add && is_duplicate {
+                    // Column already exists — safe to ignore
+                    continue;
+                }
+                return Err(LLMTraceError::Storage(format!("Migration failed: {e}")));
+            }
+        }
     }
     Ok(())
 }
@@ -207,6 +222,11 @@ fn span_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TraceSpan> {
         serde_json::from_str(&raw)
             .map_err(|e| LLMTraceError::Storage(format!("Invalid events JSON: {e}")))?
     };
+    let agent_actions: Vec<AgentAction> = {
+        let raw: String = row.get("agent_actions");
+        serde_json::from_str(&raw)
+            .map_err(|e| LLMTraceError::Storage(format!("Invalid agent_actions JSON: {e}")))?
+    };
 
     Ok(TraceSpan {
         trace_id,
@@ -232,6 +252,7 @@ fn span_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TraceSpan> {
         security_findings,
         tags,
         events,
+        agent_actions,
     })
 }
 
@@ -282,6 +303,8 @@ impl SqliteTraceRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize tags: {e}")))?;
         let events_json = serde_json::to_string(&span.events)
             .map_err(|e| LLMTraceError::Storage(format!("serialize events: {e}")))?;
+        let agent_actions_json = serde_json::to_string(&span.agent_actions)
+            .map_err(|e| LLMTraceError::Storage(format!("serialize agent_actions: {e}")))?;
 
         sqlx::query(
             "INSERT OR REPLACE INTO spans (
@@ -289,13 +312,15 @@ impl SqliteTraceRepository {
                 start_time, end_time, provider, model_name, prompt,
                 response, prompt_tokens, completion_tokens, total_tokens,
                 time_to_first_token_ms, duration_ms, status_code, error_message,
-                estimated_cost_usd, security_score, security_findings, tags, events
+                estimated_cost_usd, security_score, security_findings, tags, events,
+                agent_actions
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9, ?10,
                 ?11, ?12, ?13, ?14,
                 ?15, ?16, ?17, ?18,
-                ?19, ?20, ?21, ?22, ?23
+                ?19, ?20, ?21, ?22, ?23,
+                ?24
             )",
         )
         .bind(span.span_id.to_string())
@@ -321,6 +346,7 @@ impl SqliteTraceRepository {
         .bind(&security_findings_json)
         .bind(&tags_json)
         .bind(&events_json)
+        .bind(&agent_actions_json)
         .execute(executor)
         .await
         .map_err(|e| LLMTraceError::Storage(format!("Failed to insert span: {e}")))?;

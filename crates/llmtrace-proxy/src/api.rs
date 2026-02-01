@@ -10,8 +10,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
-use llmtrace_core::{LLMProvider, TraceQuery};
+use llmtrace_core::{AgentAction, AgentActionType, LLMProvider, TraceQuery};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -330,6 +331,232 @@ pub async fn list_security_findings(
 }
 
 // ---------------------------------------------------------------------------
+// Agent action types
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/v1/traces/:trace_id/actions`.
+#[derive(Debug, Deserialize)]
+pub struct ReportActionRequest {
+    /// Type of action: "tool_call", "skill_invocation", "command_execution",
+    /// "web_access", "file_access".
+    pub action_type: String,
+    /// Name of the tool, skill, command, URL, or file path.
+    pub name: String,
+    /// Arguments or parameters.
+    #[serde(default)]
+    pub arguments: Option<String>,
+    /// Result or output of the action (truncated at 4KB).
+    #[serde(default)]
+    pub result: Option<String>,
+    /// Duration of the action in milliseconds.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Whether the action succeeded (default true).
+    #[serde(default = "default_true")]
+    pub success: bool,
+    /// Exit code (for command executions).
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    /// HTTP method (for web access).
+    #[serde(default)]
+    pub http_method: Option<String>,
+    /// HTTP status code (for web access).
+    #[serde(default)]
+    pub http_status: Option<u16>,
+    /// File operation type (for file access).
+    #[serde(default)]
+    pub file_operation: Option<String>,
+    /// Additional metadata.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Parse a string into an [`AgentActionType`].
+fn parse_action_type(s: &str) -> Option<AgentActionType> {
+    match s {
+        "tool_call" => Some(AgentActionType::ToolCall),
+        "skill_invocation" => Some(AgentActionType::SkillInvocation),
+        "command_execution" => Some(AgentActionType::CommandExecution),
+        "web_access" => Some(AgentActionType::WebAccess),
+        "file_access" => Some(AgentActionType::FileAccess),
+        _ => None,
+    }
+}
+
+/// `POST /api/v1/traces/:trace_id/actions` — report a client-side agent action.
+///
+/// Appends an action to the first span of the given trace. If the trace has
+/// no spans, returns 404.
+pub async fn report_action(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(trace_id): Path<Uuid>,
+    Json(body): Json<ReportActionRequest>,
+) -> Response {
+    let tenant_id = resolve_tenant(&headers);
+
+    let action_type = match parse_action_type(&body.action_type) {
+        Some(t) => t,
+        None => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                &format!("Invalid action_type: '{}'. Expected one of: tool_call, skill_invocation, command_execution, web_access, file_access", body.action_type),
+            )
+        }
+    };
+
+    // Load the trace
+    let trace = match state.storage.traces.get_trace(tenant_id, trace_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return api_error(StatusCode::NOT_FOUND, "Trace not found"),
+        Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    if trace.spans.is_empty() {
+        return api_error(StatusCode::NOT_FOUND, "Trace has no spans");
+    }
+
+    // Build the action
+    let mut action = AgentAction::new(action_type, body.name);
+    if let Some(args) = body.arguments {
+        action = action.with_arguments(args);
+    }
+    if let Some(result) = body.result {
+        action = action.with_result(result);
+    }
+    if let Some(ms) = body.duration_ms {
+        action = action.with_duration_ms(ms);
+    }
+    if !body.success {
+        action = action.with_failure();
+    }
+    if let Some(code) = body.exit_code {
+        action = action.with_exit_code(code);
+    }
+    if let Some(ref method) = body.http_method {
+        let status = body.http_status.unwrap_or(0);
+        action = action.with_http(method.clone(), status);
+    }
+    if let Some(ref op) = body.file_operation {
+        action = action.with_file_operation(op.clone());
+    }
+    for (k, v) in body.metadata {
+        action = action.with_metadata(k, v);
+    }
+
+    // Append the action to the first span and re-store it
+    let mut span = trace.spans[0].clone();
+    span.add_agent_action(action.clone());
+
+    match state.storage.traces.store_span(&span).await {
+        Ok(()) => Json(serde_json::json!({
+            "status": "ok",
+            "action_id": action.id.to_string(),
+            "trace_id": trace_id.to_string(),
+        }))
+        .into_response(),
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// Response type for the actions summary endpoint.
+#[derive(Debug, Serialize)]
+pub struct ActionsSummary {
+    /// Total number of spans scanned.
+    pub total_spans: u64,
+    /// Number of spans with tool calls.
+    pub spans_with_tool_calls: u64,
+    /// Number of spans with web access.
+    pub spans_with_web_access: u64,
+    /// Number of spans with command executions.
+    pub spans_with_commands: u64,
+    /// Total action count by type.
+    pub action_counts: HashMap<String, u64>,
+    /// Top action names by frequency.
+    pub top_actions: Vec<ActionFrequency>,
+}
+
+/// Action name with its frequency count.
+#[derive(Debug, Serialize)]
+pub struct ActionFrequency {
+    /// Action name.
+    pub name: String,
+    /// Action type.
+    pub action_type: String,
+    /// Number of times this action was observed.
+    pub count: u64,
+}
+
+/// `GET /api/v1/actions/summary` — aggregate view of agent actions.
+pub async fn actions_summary(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<ListSpansParams>,
+) -> Response {
+    let tenant_id = resolve_tenant(&headers);
+    let mut query = TraceQuery::new(tenant_id);
+    query.model_name = params.model;
+    query.operation_name = params.operation_name;
+
+    let spans = match state.storage.traces.query_spans(&query).await {
+        Ok(s) => s,
+        Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    let total_spans = spans.len() as u64;
+    let mut spans_with_tool_calls = 0u64;
+    let mut spans_with_web_access = 0u64;
+    let mut spans_with_commands = 0u64;
+    let mut action_counts: HashMap<String, u64> = HashMap::new();
+    let mut name_freq: HashMap<(String, String), u64> = HashMap::new();
+
+    for span in &spans {
+        if span.has_tool_calls() {
+            spans_with_tool_calls += 1;
+        }
+        if span.has_web_access() {
+            spans_with_web_access += 1;
+        }
+        if span.has_commands() {
+            spans_with_commands += 1;
+        }
+        for action in &span.agent_actions {
+            let type_key = action.action_type.to_string();
+            *action_counts.entry(type_key.clone()).or_default() += 1;
+            *name_freq
+                .entry((action.name.clone(), type_key))
+                .or_default() += 1;
+        }
+    }
+
+    // Build top actions (sorted by frequency, top 20)
+    let mut top_actions: Vec<ActionFrequency> = name_freq
+        .into_iter()
+        .map(|((name, action_type), count)| ActionFrequency {
+            name,
+            action_type,
+            count,
+        })
+        .collect();
+    top_actions.sort_by(|a, b| b.count.cmp(&a.count));
+    top_actions.truncate(20);
+
+    Json(ActionsSummary {
+        total_spans,
+        spans_with_tool_calls,
+        spans_with_web_access,
+        spans_with_commands,
+        action_counts,
+        top_actions,
+    })
+    .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -440,6 +667,11 @@ mod tests {
             .route("/api/v1/stats", get(get_stats))
             .route("/api/v1/security/findings", get(list_security_findings))
             .route("/api/v1/costs/current", get(get_current_costs))
+            .route(
+                "/api/v1/traces/:trace_id/actions",
+                axum::routing::post(report_action),
+            )
+            .route("/api/v1/actions/summary", get(actions_summary))
             .with_state(state)
     }
 
@@ -1241,5 +1473,208 @@ mod tests {
         let windows = body["windows"].as_array().unwrap();
         assert!((windows[0]["current_spend_usd"].as_f64().unwrap() - 25.0).abs() < 1e-6);
         assert!((windows[0]["utilization_pct"].as_f64().unwrap() - 25.0).abs() < 1e-6);
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /api/v1/traces/:trace_id/actions
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_report_action_success() {
+        let state = test_state().await;
+        let (tid, hdr) = tenant_header();
+        let trace = make_trace(tid, "gpt-4", LLMProvider::OpenAI);
+        let trace_id = trace.trace_id;
+
+        state.storage.traces.store_trace(&trace).await.unwrap();
+
+        let app = api_router(state);
+        let body = serde_json::json!({
+            "action_type": "tool_call",
+            "name": "get_weather",
+            "arguments": "{\"location\": \"London\"}",
+            "result": "{\"temp\": 15}",
+            "duration_ms": 200,
+            "success": true,
+        });
+
+        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+            .header("x-llmtrace-tenant-id", &hdr)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        assert_eq!(body["status"], "ok");
+        assert!(body["action_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_report_action_invalid_type() {
+        let state = test_state().await;
+        let (tid, hdr) = tenant_header();
+        let trace = make_trace(tid, "gpt-4", LLMProvider::OpenAI);
+        let trace_id = trace.trace_id;
+
+        state.storage.traces.store_trace(&trace).await.unwrap();
+
+        let app = api_router(state);
+        let body = serde_json::json!({
+            "action_type": "invalid_type",
+            "name": "test",
+        });
+
+        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+            .header("x-llmtrace-tenant-id", &hdr)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_report_action_trace_not_found() {
+        let state = test_state().await;
+        let (_, hdr) = tenant_header();
+
+        let app = api_router(state);
+        let body = serde_json::json!({
+            "action_type": "tool_call",
+            "name": "test",
+        });
+
+        let req = Request::post(&format!("/api/v1/traces/{}/actions", Uuid::new_v4()))
+            .header("x-llmtrace-tenant-id", &hdr)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_report_action_persists() {
+        let state = test_state().await;
+        let (tid, hdr) = tenant_header();
+        let trace = make_trace(tid, "gpt-4", LLMProvider::OpenAI);
+        let trace_id = trace.trace_id;
+        let span_id = trace.spans[0].span_id;
+
+        state.storage.traces.store_trace(&trace).await.unwrap();
+
+        // Report an action
+        let app = api_router(Arc::clone(&state));
+        let body = serde_json::json!({
+            "action_type": "command_execution",
+            "name": "ls",
+            "arguments": "-la",
+            "duration_ms": 50,
+            "success": true,
+            "exit_code": 0,
+        });
+
+        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+            .header("x-llmtrace-tenant-id", &hdr)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify the action was stored
+        let span = state
+            .storage
+            .traces
+            .get_span(tid, span_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(span.agent_actions.len(), 1);
+        assert_eq!(span.agent_actions[0].name, "ls");
+        assert_eq!(
+            span.agent_actions[0].action_type,
+            llmtrace_core::AgentActionType::CommandExecution
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // GET /api/v1/actions/summary
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_actions_summary_empty() {
+        let state = test_state().await;
+        let (_, hdr) = tenant_header();
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/actions/summary")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        assert_eq!(body["total_spans"], 0);
+        assert_eq!(body["spans_with_tool_calls"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_actions_summary_with_actions() {
+        let state = test_state().await;
+        let (tid, hdr) = tenant_header();
+
+        // Create a trace with agent actions
+        let trace_id = Uuid::new_v4();
+        let mut span = TraceSpan::new(
+            trace_id,
+            tid,
+            "chat_completion".to_string(),
+            LLMProvider::OpenAI,
+            "gpt-4".to_string(),
+            "test".to_string(),
+        );
+        span.add_agent_action(llmtrace_core::AgentAction::new(
+            llmtrace_core::AgentActionType::ToolCall,
+            "get_weather".to_string(),
+        ));
+        span.add_agent_action(llmtrace_core::AgentAction::new(
+            llmtrace_core::AgentActionType::WebAccess,
+            "https://api.example.com".to_string(),
+        ));
+
+        let trace = TraceEvent {
+            trace_id,
+            tenant_id: tid,
+            spans: vec![span],
+            created_at: Utc::now(),
+        };
+        state.storage.traces.store_trace(&trace).await.unwrap();
+
+        let app = api_router(state);
+        let req = Request::get("/api/v1/actions/summary")
+            .header("x-llmtrace-tenant-id", &hdr)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        assert_eq!(body["total_spans"], 1);
+        assert_eq!(body["spans_with_tool_calls"], 1);
+        assert_eq!(body["spans_with_web_access"], 1);
+        assert_eq!(body["spans_with_commands"], 0);
+        assert_eq!(body["action_counts"]["tool_call"], 1);
+        assert_eq!(body["action_counts"]["web_access"], 1);
+        assert!(!body["top_actions"].as_array().unwrap().is_empty());
     }
 }

@@ -297,6 +297,15 @@ fn build_router(state: Arc<AppState>) -> Router {
             "/api/v1/costs/current",
             get(llmtrace_proxy::api::get_current_costs),
         )
+        // Agent action reporting and summary
+        .route(
+            "/api/v1/traces/:trace_id/actions",
+            post(llmtrace_proxy::api::report_action),
+        )
+        .route(
+            "/api/v1/actions/summary",
+            get(llmtrace_proxy::api::actions_summary),
+        )
         // Tenant Management API
         .route(
             "/api/v1/tenants",

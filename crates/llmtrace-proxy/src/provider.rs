@@ -9,7 +9,7 @@
 //! and response text extraction.
 
 use axum::http::HeaderMap;
-use llmtrace_core::LLMProvider;
+use llmtrace_core::{AgentAction, AgentActionType, LLMProvider};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -268,6 +268,131 @@ fn parse_ollama_response(v: &Value) -> ParsedResponse {
             completion_tokens: eval_count,
             total_tokens: total,
         },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tool call extraction from LLM responses
+// ---------------------------------------------------------------------------
+
+/// Extract agent actions (tool calls) from a non-streaming LLM response body.
+///
+/// Parses provider-specific tool call formats:
+/// - **OpenAI**: `choices[].message.tool_calls[]` and legacy `function_call`
+/// - **Anthropic**: `content[]` blocks with `type: "tool_use"`
+///
+/// Returns an empty vec if no tool calls are found or parsing fails.
+pub fn extract_tool_calls(provider: &LLMProvider, body: &[u8]) -> Vec<AgentAction> {
+    let Ok(parsed) = serde_json::from_slice::<Value>(body) else {
+        return Vec::new();
+    };
+
+    match provider {
+        LLMProvider::Anthropic => extract_anthropic_tool_calls(&parsed),
+        _ => extract_openai_tool_calls(&parsed),
+    }
+}
+
+/// Extract tool calls from an OpenAI-compatible response.
+///
+/// Handles both the modern `tool_calls` format and the legacy `function_call` format.
+fn extract_openai_tool_calls(v: &Value) -> Vec<AgentAction> {
+    let mut actions = Vec::new();
+
+    if let Some(choices) = v["choices"].as_array() {
+        for choice in choices {
+            let message = &choice["message"];
+
+            // Modern: tool_calls array
+            if let Some(tool_calls) = message["tool_calls"].as_array() {
+                for tc in tool_calls {
+                    let name = tc["function"]["name"]
+                        .as_str()
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let arguments = tc["function"]["arguments"]
+                        .as_str()
+                        .map(|s| truncate_string(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES));
+                    let mut action = AgentAction::new(AgentActionType::ToolCall, name);
+                    action.arguments = arguments;
+                    if let Some(id) = tc["id"].as_str() {
+                        action
+                            .metadata
+                            .insert("tool_call_id".to_string(), id.to_string());
+                    }
+                    if let Some(tc_type) = tc["type"].as_str() {
+                        action
+                            .metadata
+                            .insert("tool_type".to_string(), tc_type.to_string());
+                    }
+                    actions.push(action);
+                }
+            }
+
+            // Legacy: function_call object
+            if message["function_call"].is_object() {
+                let fc = &message["function_call"];
+                let name = fc["name"].as_str().unwrap_or("unknown").to_string();
+                let arguments = fc["arguments"]
+                    .as_str()
+                    .map(|s| truncate_string(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES));
+                let mut action = AgentAction::new(AgentActionType::ToolCall, name);
+                action.arguments = arguments;
+                action
+                    .metadata
+                    .insert("legacy_function_call".to_string(), "true".to_string());
+                actions.push(action);
+            }
+        }
+    }
+
+    actions
+}
+
+/// Extract tool calls from an Anthropic response.
+///
+/// Anthropic uses `content[]` blocks with `type: "tool_use"`.
+fn extract_anthropic_tool_calls(v: &Value) -> Vec<AgentAction> {
+    let mut actions = Vec::new();
+
+    if let Some(content) = v["content"].as_array() {
+        for block in content {
+            if block["type"].as_str() == Some("tool_use") {
+                let name = block["name"].as_str().unwrap_or("unknown").to_string();
+                let arguments = if block["input"].is_object() {
+                    Some(truncate_string(
+                        &block["input"].to_string(),
+                        llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES,
+                    ))
+                } else {
+                    None
+                };
+                let mut action = AgentAction::new(AgentActionType::ToolCall, name);
+                action.arguments = arguments;
+                if let Some(id) = block["id"].as_str() {
+                    action
+                        .metadata
+                        .insert("tool_use_id".to_string(), id.to_string());
+                }
+                actions.push(action);
+            }
+        }
+    }
+
+    actions
+}
+
+/// Truncate a string to the given byte limit, respecting UTF-8 boundaries.
+fn truncate_string(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        s.to_string()
+    } else {
+        // Find a valid UTF-8 boundary
+        let mut end = max_bytes;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
     }
 }
 
@@ -747,5 +872,184 @@ mod tests {
             parse_provider_name("azureopenai"),
             Some(LLMProvider::AzureOpenAI)
         );
+    }
+
+    // ---- Tool call extraction: OpenAI ---------------------------------------
+
+    #[test]
+    fn test_extract_openai_tool_calls() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "call_abc123",
+                            "type": "function",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": "{\"location\": \"London\"}"
+                            }
+                        },
+                        {
+                            "id": "call_def456",
+                            "type": "function",
+                            "function": {
+                                "name": "get_time",
+                                "arguments": "{\"timezone\": \"UTC\"}"
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::OpenAI, &bytes);
+
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "get_weather");
+        assert_eq!(actions[0].action_type, AgentActionType::ToolCall);
+        assert_eq!(
+            actions[0].arguments,
+            Some("{\"location\": \"London\"}".to_string())
+        );
+        assert_eq!(
+            actions[0].metadata.get("tool_call_id"),
+            Some(&"call_abc123".to_string())
+        );
+        assert_eq!(actions[1].name, "get_time");
+    }
+
+    #[test]
+    fn test_extract_openai_legacy_function_call() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "function_call": {
+                        "name": "calculate",
+                        "arguments": "{\"expr\": \"2+2\"}"
+                    }
+                }
+            }]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::OpenAI, &bytes);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "calculate");
+        assert_eq!(
+            actions[0].metadata.get("legacy_function_call"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_openai_no_tool_calls() {
+        let body = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello!"
+                }
+            }]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::OpenAI, &bytes);
+        assert!(actions.is_empty());
+    }
+
+    // ---- Tool call extraction: Anthropic ------------------------------------
+
+    #[test]
+    fn test_extract_anthropic_tool_use() {
+        let body = serde_json::json!({
+            "id": "msg_abc",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me check the weather."},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_xyz",
+                    "name": "get_weather",
+                    "input": {"location": "Paris", "unit": "celsius"}
+                }
+            ]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::Anthropic, &bytes);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "get_weather");
+        assert_eq!(actions[0].action_type, AgentActionType::ToolCall);
+        assert!(actions[0].arguments.as_ref().unwrap().contains("Paris"));
+        assert_eq!(
+            actions[0].metadata.get("tool_use_id"),
+            Some(&"toolu_xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_anthropic_no_tool_use() {
+        let body = serde_json::json!({
+            "content": [{"type": "text", "text": "Just text here."}]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::Anthropic, &bytes);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_extract_anthropic_multiple_tool_uses() {
+        let body = serde_json::json!({
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "search", "input": {"q": "rust"}},
+                {"type": "text", "text": "interim"},
+                {"type": "tool_use", "id": "t2", "name": "read_file", "input": {"path": "/tmp"}}
+            ]
+        });
+        let bytes = serde_json::to_vec(&body).unwrap();
+        let actions = extract_tool_calls(&LLMProvider::Anthropic, &bytes);
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "search");
+        assert_eq!(actions[1].name, "read_file");
+    }
+
+    // ---- Tool call extraction: edge cases -----------------------------------
+
+    #[test]
+    fn test_extract_tool_calls_invalid_json() {
+        let actions = extract_tool_calls(&LLMProvider::OpenAI, b"not json");
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_extract_tool_calls_empty_body() {
+        let actions = extract_tool_calls(&LLMProvider::OpenAI, b"");
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn test_truncate_string_within_limit() {
+        assert_eq!(truncate_string("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_string_exceeds_limit() {
+        let result = truncate_string("hello world", 5);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_truncate_string_respects_utf8() {
+        // "héllo" — 'é' is 2 bytes in UTF-8, so total is 6 bytes
+        let s = "héllo";
+        let result = truncate_string(s, 3);
+        // Truncating at byte 3 would be in the middle of 'l',
+        // so should include "hé" (3 bytes)
+        assert_eq!(result, "hé");
     }
 }

@@ -222,6 +222,9 @@ pub struct TraceSpan {
     pub tags: HashMap<String, String>,
     /// Events that occurred during this span (e.g., streaming chunks, analysis results).
     pub events: Vec<SpanEvent>,
+    /// Agent actions captured during this span (tool calls, commands, web access, etc.).
+    #[serde(default)]
+    pub agent_actions: Vec<AgentAction>,
 }
 
 impl TraceSpan {
@@ -258,6 +261,7 @@ impl TraceSpan {
             security_findings: Vec::new(),
             tags: HashMap::new(),
             events: Vec::new(),
+            agent_actions: Vec::new(),
         }
     }
 
@@ -306,6 +310,62 @@ impl TraceSpan {
         self.events.push(event);
     }
 
+    /// Add an agent action to this span.
+    pub fn add_agent_action(&mut self, action: AgentAction) {
+        self.agent_actions.push(action);
+    }
+
+    /// Return all tool call actions in this span.
+    #[must_use]
+    pub fn tool_calls(&self) -> Vec<&AgentAction> {
+        self.agent_actions
+            .iter()
+            .filter(|a| a.action_type == AgentActionType::ToolCall)
+            .collect()
+    }
+
+    /// Return all web access actions in this span.
+    #[must_use]
+    pub fn web_accesses(&self) -> Vec<&AgentAction> {
+        self.agent_actions
+            .iter()
+            .filter(|a| a.action_type == AgentActionType::WebAccess)
+            .collect()
+    }
+
+    /// Return all command execution actions in this span.
+    #[must_use]
+    pub fn commands(&self) -> Vec<&AgentAction> {
+        self.agent_actions
+            .iter()
+            .filter(|a| a.action_type == AgentActionType::CommandExecution)
+            .collect()
+    }
+
+    /// Check if this span has any tool call actions.
+    #[must_use]
+    pub fn has_tool_calls(&self) -> bool {
+        self.agent_actions
+            .iter()
+            .any(|a| a.action_type == AgentActionType::ToolCall)
+    }
+
+    /// Check if this span has any web access actions.
+    #[must_use]
+    pub fn has_web_access(&self) -> bool {
+        self.agent_actions
+            .iter()
+            .any(|a| a.action_type == AgentActionType::WebAccess)
+    }
+
+    /// Check if this span has any command execution actions.
+    #[must_use]
+    pub fn has_commands(&self) -> bool {
+        self.agent_actions
+            .iter()
+            .any(|a| a.action_type == AgentActionType::CommandExecution)
+    }
+
     /// Get the duration of this span.
     pub fn duration(&self) -> Option<Duration> {
         self.end_time.map(|end_time| {
@@ -325,6 +385,159 @@ impl TraceSpan {
     /// Check if the span failed.
     pub fn is_failed(&self) -> bool {
         self.error_message.is_some()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agent action types
+// ---------------------------------------------------------------------------
+
+/// Maximum size in bytes for captured action results (stdout, response bodies, etc.).
+pub const AGENT_ACTION_RESULT_MAX_BYTES: usize = 4096;
+
+/// Type of agent action observed during an LLM interaction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentActionType {
+    /// LLM tool/function call (e.g. OpenAI `tool_calls`, Anthropic `tool_use`).
+    ToolCall,
+    /// Agent skill or plugin invocation.
+    SkillInvocation,
+    /// Shell command or subprocess execution.
+    CommandExecution,
+    /// HTTP request, curl, fetch, or browser action.
+    WebAccess,
+    /// File read, write, or delete operation.
+    FileAccess,
+}
+
+impl std::fmt::Display for AgentActionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToolCall => write!(f, "tool_call"),
+            Self::SkillInvocation => write!(f, "skill_invocation"),
+            Self::CommandExecution => write!(f, "command_execution"),
+            Self::WebAccess => write!(f, "web_access"),
+            Self::FileAccess => write!(f, "file_access"),
+        }
+    }
+}
+
+/// A single agent action captured during or after an LLM interaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentAction {
+    /// Unique identifier for this action.
+    pub id: Uuid,
+    /// Type of action.
+    pub action_type: AgentActionType,
+    /// Name of the tool, skill, command, URL, or file path.
+    pub name: String,
+    /// Arguments or parameters (JSON-encoded for tool calls, raw string otherwise).
+    #[serde(default)]
+    pub arguments: Option<String>,
+    /// Result or output of the action (truncated to [`AGENT_ACTION_RESULT_MAX_BYTES`]).
+    #[serde(default)]
+    pub result: Option<String>,
+    /// Duration of the action in milliseconds.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    /// Whether the action succeeded.
+    #[serde(default = "default_true")]
+    pub success: bool,
+    /// Exit code (for command executions).
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    /// HTTP method (for web access).
+    #[serde(default)]
+    pub http_method: Option<String>,
+    /// HTTP status code (for web access).
+    #[serde(default)]
+    pub http_status: Option<u16>,
+    /// File operation type: "read", "write", "delete" (for file access).
+    #[serde(default)]
+    pub file_operation: Option<String>,
+    /// When the action occurred.
+    pub timestamp: DateTime<Utc>,
+    /// Additional metadata.
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl AgentAction {
+    /// Create a new agent action.
+    pub fn new(action_type: AgentActionType, name: String) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            action_type,
+            name,
+            arguments: None,
+            result: None,
+            duration_ms: None,
+            success: true,
+            exit_code: None,
+            http_method: None,
+            http_status: None,
+            file_operation: None,
+            timestamp: Utc::now(),
+            metadata: HashMap::new(),
+        }
+    }
+
+    /// Set the arguments for this action.
+    pub fn with_arguments(mut self, arguments: String) -> Self {
+        self.arguments = Some(arguments);
+        self
+    }
+
+    /// Set the result, truncating to [`AGENT_ACTION_RESULT_MAX_BYTES`].
+    pub fn with_result(mut self, result: String) -> Self {
+        if result.len() > AGENT_ACTION_RESULT_MAX_BYTES {
+            self.result = Some(result[..AGENT_ACTION_RESULT_MAX_BYTES].to_string());
+        } else {
+            self.result = Some(result);
+        }
+        self
+    }
+
+    /// Set the duration in milliseconds.
+    pub fn with_duration_ms(mut self, ms: u64) -> Self {
+        self.duration_ms = Some(ms);
+        self
+    }
+
+    /// Mark the action as failed.
+    pub fn with_failure(mut self) -> Self {
+        self.success = false;
+        self
+    }
+
+    /// Set the exit code (for command executions).
+    pub fn with_exit_code(mut self, code: i32) -> Self {
+        self.exit_code = Some(code);
+        self
+    }
+
+    /// Set HTTP method and status (for web access).
+    pub fn with_http(mut self, method: String, status: u16) -> Self {
+        self.http_method = Some(method);
+        self.http_status = Some(status);
+        self
+    }
+
+    /// Set the file operation type (for file access).
+    pub fn with_file_operation(mut self, op: String) -> Self {
+        self.file_operation = Some(op);
+        self
+    }
+
+    /// Add metadata to this action.
+    pub fn with_metadata(mut self, key: String, value: String) -> Self {
+        self.metadata.insert(key, value);
+        self
     }
 }
 
@@ -1983,5 +2196,230 @@ mod tests {
         let config = ProxyConfig::default();
         assert!(!config.cost_caps.enabled);
         assert!(config.cost_caps.default_budget_caps.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // Agent action types
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_agent_action_type_display() {
+        assert_eq!(AgentActionType::ToolCall.to_string(), "tool_call");
+        assert_eq!(
+            AgentActionType::SkillInvocation.to_string(),
+            "skill_invocation"
+        );
+        assert_eq!(
+            AgentActionType::CommandExecution.to_string(),
+            "command_execution"
+        );
+        assert_eq!(AgentActionType::WebAccess.to_string(), "web_access");
+        assert_eq!(AgentActionType::FileAccess.to_string(), "file_access");
+    }
+
+    #[test]
+    fn test_agent_action_type_serialization() {
+        let types = vec![
+            AgentActionType::ToolCall,
+            AgentActionType::SkillInvocation,
+            AgentActionType::CommandExecution,
+            AgentActionType::WebAccess,
+            AgentActionType::FileAccess,
+        ];
+        for action_type in types {
+            let json = serde_json::to_string(&action_type).unwrap();
+            let deser: AgentActionType = serde_json::from_str(&json).unwrap();
+            assert_eq!(action_type, deser);
+        }
+    }
+
+    #[test]
+    fn test_agent_action_creation() {
+        let action = AgentAction::new(AgentActionType::ToolCall, "get_weather".to_string());
+        assert_eq!(action.action_type, AgentActionType::ToolCall);
+        assert_eq!(action.name, "get_weather");
+        assert!(action.success);
+        assert!(action.arguments.is_none());
+        assert!(action.result.is_none());
+    }
+
+    #[test]
+    fn test_agent_action_builder() {
+        let action = AgentAction::new(AgentActionType::CommandExecution, "ls -la".to_string())
+            .with_arguments("-la /tmp".to_string())
+            .with_result("file1\nfile2".to_string())
+            .with_duration_ms(150)
+            .with_exit_code(0)
+            .with_metadata("cwd".to_string(), "/home".to_string());
+
+        assert_eq!(action.action_type, AgentActionType::CommandExecution);
+        assert_eq!(action.arguments, Some("-la /tmp".to_string()));
+        assert_eq!(action.result, Some("file1\nfile2".to_string()));
+        assert_eq!(action.duration_ms, Some(150));
+        assert_eq!(action.exit_code, Some(0));
+        assert!(action.success);
+        assert_eq!(action.metadata.get("cwd"), Some(&"/home".to_string()));
+    }
+
+    #[test]
+    fn test_agent_action_web_access() {
+        let action = AgentAction::new(
+            AgentActionType::WebAccess,
+            "https://api.example.com".to_string(),
+        )
+        .with_http("GET".to_string(), 200)
+        .with_duration_ms(500);
+
+        assert_eq!(action.http_method, Some("GET".to_string()));
+        assert_eq!(action.http_status, Some(200));
+    }
+
+    #[test]
+    fn test_agent_action_file_access() {
+        let action = AgentAction::new(AgentActionType::FileAccess, "/etc/passwd".to_string())
+            .with_file_operation("read".to_string());
+
+        assert_eq!(action.file_operation, Some("read".to_string()));
+    }
+
+    #[test]
+    fn test_agent_action_failure() {
+        let action = AgentAction::new(AgentActionType::CommandExecution, "rm -rf /".to_string())
+            .with_failure()
+            .with_exit_code(1);
+
+        assert!(!action.success);
+        assert_eq!(action.exit_code, Some(1));
+    }
+
+    #[test]
+    fn test_agent_action_result_truncation() {
+        let long_result = "x".repeat(AGENT_ACTION_RESULT_MAX_BYTES + 100);
+        let action = AgentAction::new(AgentActionType::ToolCall, "big_output".to_string())
+            .with_result(long_result);
+
+        assert_eq!(
+            action.result.as_ref().unwrap().len(),
+            AGENT_ACTION_RESULT_MAX_BYTES
+        );
+    }
+
+    #[test]
+    fn test_agent_action_serialization() {
+        let action = AgentAction::new(AgentActionType::ToolCall, "get_weather".to_string())
+            .with_arguments(r#"{"location": "London"}"#.to_string())
+            .with_result(r#"{"temp": 15}"#.to_string())
+            .with_duration_ms(200);
+
+        let json = serde_json::to_string(&action).unwrap();
+        let deser: AgentAction = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deser.action_type, AgentActionType::ToolCall);
+        assert_eq!(deser.name, "get_weather");
+        assert_eq!(deser.arguments, action.arguments);
+        assert_eq!(deser.result, action.result);
+        assert_eq!(deser.duration_ms, Some(200));
+        assert!(deser.success);
+    }
+
+    #[test]
+    fn test_trace_span_agent_actions() {
+        let mut span = TraceSpan::new(
+            Uuid::new_v4(),
+            TenantId::new(),
+            "chat_completion".to_string(),
+            LLMProvider::OpenAI,
+            "gpt-4".to_string(),
+            "test".to_string(),
+        );
+
+        assert!(span.agent_actions.is_empty());
+        assert!(!span.has_tool_calls());
+        assert!(!span.has_web_access());
+        assert!(!span.has_commands());
+
+        span.add_agent_action(AgentAction::new(
+            AgentActionType::ToolCall,
+            "search".to_string(),
+        ));
+        span.add_agent_action(AgentAction::new(
+            AgentActionType::WebAccess,
+            "https://example.com".to_string(),
+        ));
+        span.add_agent_action(AgentAction::new(
+            AgentActionType::CommandExecution,
+            "ls".to_string(),
+        ));
+        span.add_agent_action(AgentAction::new(
+            AgentActionType::FileAccess,
+            "/tmp/file.txt".to_string(),
+        ));
+
+        assert_eq!(span.agent_actions.len(), 4);
+        assert!(span.has_tool_calls());
+        assert!(span.has_web_access());
+        assert!(span.has_commands());
+        assert_eq!(span.tool_calls().len(), 1);
+        assert_eq!(span.web_accesses().len(), 1);
+        assert_eq!(span.commands().len(), 1);
+    }
+
+    #[test]
+    fn test_trace_span_with_agent_actions_serialization() {
+        let mut span = TraceSpan::new(
+            Uuid::new_v4(),
+            TenantId::new(),
+            "chat_completion".to_string(),
+            LLMProvider::OpenAI,
+            "gpt-4".to_string(),
+            "test prompt".to_string(),
+        );
+        span.add_agent_action(
+            AgentAction::new(AgentActionType::ToolCall, "calculate".to_string())
+                .with_arguments(r#"{"expr": "2+2"}"#.to_string())
+                .with_result("4".to_string()),
+        );
+
+        let json = serde_json::to_string(&span).unwrap();
+        let deser: TraceSpan = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deser.agent_actions.len(), 1);
+        assert_eq!(deser.agent_actions[0].name, "calculate");
+        assert_eq!(
+            deser.agent_actions[0].action_type,
+            AgentActionType::ToolCall
+        );
+    }
+
+    #[test]
+    fn test_trace_span_deserialize_without_agent_actions() {
+        // Ensure backward compatibility: old spans without agent_actions field deserialize OK
+        let json = r#"{
+            "trace_id": "00000000-0000-0000-0000-000000000001",
+            "span_id": "00000000-0000-0000-0000-000000000002",
+            "parent_span_id": null,
+            "tenant_id": "00000000-0000-0000-0000-000000000003",
+            "operation_name": "test",
+            "start_time": "2024-01-01T00:00:00Z",
+            "end_time": null,
+            "provider": "OpenAI",
+            "model_name": "gpt-4",
+            "prompt": "hello",
+            "response": null,
+            "prompt_tokens": null,
+            "completion_tokens": null,
+            "total_tokens": null,
+            "time_to_first_token_ms": null,
+            "duration_ms": null,
+            "status_code": null,
+            "error_message": null,
+            "estimated_cost_usd": null,
+            "security_score": null,
+            "security_findings": [],
+            "tags": {},
+            "events": []
+        }"#;
+        let span: TraceSpan = serde_json::from_str(json).unwrap();
+        assert!(span.agent_actions.is_empty());
     }
 }

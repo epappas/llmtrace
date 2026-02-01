@@ -214,6 +214,17 @@ impl TraceRepository for InMemoryTraceRepository {
     }
 
     async fn get_span(&self, tenant_id: TenantId, span_id: Uuid) -> Result<Option<TraceSpan>> {
+        // Check standalone spans first — they may contain updated versions
+        // of spans originally stored as part of a trace.
+        let standalone = self.standalone_spans.read().await;
+        if let Some(span) = standalone
+            .iter()
+            .find(|s| s.tenant_id == tenant_id && s.span_id == span_id)
+        {
+            return Ok(Some(span.clone()));
+        }
+        drop(standalone);
+
         let traces = self.traces.read().await;
         for trace in traces.iter() {
             if trace.tenant_id != tenant_id {
@@ -223,14 +234,8 @@ impl TraceRepository for InMemoryTraceRepository {
                 return Ok(Some(span.clone()));
             }
         }
-        drop(traces);
 
-        let standalone = self.standalone_spans.read().await;
-        let span = standalone
-            .iter()
-            .find(|s| s.tenant_id == tenant_id && s.span_id == span_id)
-            .cloned();
-        Ok(span)
+        Ok(None)
     }
 
     async fn delete_traces_before(

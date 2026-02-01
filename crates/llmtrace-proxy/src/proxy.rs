@@ -15,8 +15,8 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::StreamExt;
 use llmtrace_core::{
-    AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding, Storage,
-    TenantId, TraceEvent, TraceSpan,
+    AgentAction, AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding,
+    Storage, TenantId, TraceEvent, TraceSpan,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -408,6 +408,13 @@ pub async fn proxy_handler(
                 )
             };
 
+        // Auto-extract tool calls from the response
+        let auto_actions = if is_streaming {
+            Vec::new() // TODO: SSE tool call parsing deferred to future loop
+        } else {
+            provider::extract_tool_calls(&provider_bg, &raw_collected)
+        };
+
         let captured = CapturedInteraction {
             trace_id,
             tenant_id,
@@ -422,6 +429,7 @@ pub async fn proxy_handler(
             prompt_tokens,
             completion_tokens,
             total_tokens,
+            agent_actions: auto_actions,
         };
 
         // --- Async spend recording for cost caps ---
@@ -499,6 +507,8 @@ struct CapturedInteraction {
     completion_tokens: Option<u32>,
     /// Total tokens (from provider usage data, if reported).
     total_tokens: Option<u32>,
+    /// Agent actions auto-parsed from the LLM response (tool calls).
+    agent_actions: Vec<AgentAction>,
 }
 
 /// Run security analysis and return findings.
@@ -603,6 +613,21 @@ async fn run_trace_capture(
     let end_time = Utc::now();
     let duration = end_time.signed_duration_since(captured.start_time);
     span.duration_ms = Some(duration.num_milliseconds().max(0) as u64);
+
+    // Attach auto-parsed agent actions to the span
+    for action in &captured.agent_actions {
+        span.add_agent_action(action.clone());
+    }
+
+    // Analyze agent actions for security issues
+    if !captured.agent_actions.is_empty() {
+        if let Ok(analyzer) = llmtrace_security::RegexSecurityAnalyzer::new() {
+            let action_findings = analyzer.analyze_agent_actions(&captured.agent_actions);
+            for finding in action_findings {
+                span.add_security_finding(finding);
+            }
+        }
+    }
 
     // Attach security findings to the span
     for finding in security_findings {
