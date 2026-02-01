@@ -333,6 +333,9 @@ pub struct ProxyConfig {
     pub listen_addr: String,
     /// Upstream URL for the LLM provider
     pub upstream_url: String,
+    /// SQLite database URL for trace storage (e.g. "sqlite:///tmp/llmtrace.db" or "sqlite::memory:")
+    #[serde(default = "default_database_url")]
+    pub database_url: String,
     /// Request timeout in milliseconds
     pub timeout_ms: u64,
     /// Connection timeout in milliseconds
@@ -365,11 +368,17 @@ pub struct ProxyConfig {
     pub health_check: HealthCheckConfig,
 }
 
+/// Default database URL used when none is specified in config.
+fn default_database_url() -> String {
+    "sqlite:llmtrace.db".to_string()
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             listen_addr: "0.0.0.0:8080".to_string(),
             upstream_url: "https://api.openai.com".to_string(),
+            database_url: default_database_url(),
             timeout_ms: 30000,
             connection_timeout_ms: 5000,
             max_connections: 1000,
@@ -1010,6 +1019,7 @@ mod tests {
         let config = ProxyConfig {
             listen_addr: "127.0.0.1:9090".to_string(),
             upstream_url: "https://api.anthropic.com".to_string(),
+            database_url: "sqlite:test.db".to_string(),
             timeout_ms: 60000,
             connection_timeout_ms: 10000,
             max_connections: 2000,

@@ -8,6 +8,7 @@
 mod circuit_breaker;
 mod config;
 mod proxy;
+mod streaming;
 
 use crate::circuit_breaker::CircuitBreaker;
 use crate::proxy::{health_handler, proxy_handler, AppState};
@@ -15,7 +16,7 @@ use axum::routing::{any, get};
 use axum::Router;
 use llmtrace_core::ProxyConfig;
 use llmtrace_security::RegexSecurityAnalyzer;
-use llmtrace_storage::InMemoryStorage;
+use llmtrace_storage::SqliteStorage;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -37,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     let listen_addr = config.listen_addr.clone();
 
     // Build shared application state
-    let state = build_app_state(config)?;
+    let state = build_app_state(config).await?;
 
     // Build the axum router
     let app = build_router(state);
@@ -75,7 +76,7 @@ fn load_proxy_config() -> anyhow::Result<ProxyConfig> {
 }
 
 /// Build the shared [`AppState`] from the proxy configuration.
-fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
+async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(
             config.connection_timeout_ms,
@@ -83,7 +84,12 @@ fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .timeout(std::time::Duration::from_millis(config.timeout_ms))
         .build()?;
 
-    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn llmtrace_core::StorageBackend>;
+    info!(database_url = %config.database_url, "Initializing SQLite storage");
+    let storage = Arc::new(
+        SqliteStorage::new(&config.database_url)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize SQLite storage: {}", e))?,
+    ) as Arc<dyn llmtrace_core::StorageBackend>;
 
     let security = Arc::new(
         RegexSecurityAnalyzer::new()
@@ -118,16 +124,19 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    /// Build a test router with default config.
-    fn test_app() -> Router {
-        let config = ProxyConfig::default();
-        let state = build_app_state(config).unwrap();
+    /// Build a test router with default config (in-memory SQLite).
+    async fn test_app() -> Router {
+        let config = ProxyConfig {
+            database_url: "sqlite::memory:".to_string(),
+            ..ProxyConfig::default()
+        };
+        let state = build_app_state(config).await.unwrap();
         build_router(state)
     }
 
     #[tokio::test]
     async fn test_health_endpoint() {
-        let app = test_app();
+        let app = test_app().await;
         let req = Request::builder()
             .uri("/health")
             .body(Body::empty())
@@ -152,9 +161,10 @@ mod tests {
             upstream_url: "http://127.0.0.1:1".to_string(), // nothing listening
             connection_timeout_ms: 100,
             timeout_ms: 500,
+            database_url: "sqlite::memory:".to_string(),
             ..ProxyConfig::default()
         };
-        let state = build_app_state(config).unwrap();
+        let state = build_app_state(config).await.unwrap();
         let app = build_router(state);
 
         let body = serde_json::json!({
@@ -176,8 +186,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_app_state_succeeds() {
-        let config = ProxyConfig::default();
-        let state = build_app_state(config);
+        let config = ProxyConfig {
+            database_url: "sqlite::memory:".to_string(),
+            ..ProxyConfig::default()
+        };
+        let state = build_app_state(config).await;
         assert!(state.is_ok());
     }
 }
