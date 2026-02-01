@@ -48,6 +48,8 @@ pub struct AppState {
     pub alert_engine: Option<crate::alerts::AlertEngine>,
     /// Cost cap tracker (`None` if cost caps are disabled).
     pub cost_tracker: Option<crate::cost_caps::CostTracker>,
+    /// Anomaly detector (`None` if anomaly detection is disabled).
+    pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
     /// In-memory store for compliance reports.
     pub report_store: crate::compliance::ReportStore,
 }
@@ -450,7 +452,45 @@ pub async fn proxy_handler(
         }
 
         // --- Security analysis first, so findings can be persisted with the trace ---
-        let security_findings = run_security_analysis(&state_bg, &captured).await;
+        let mut security_findings = run_security_analysis(&state_bg, &captured).await;
+
+        // --- Anomaly detection (async, non-blocking) ---
+        if let Some(ref detector) = state_bg.anomaly_detector {
+            let anomaly_findings = detector
+                .record_and_check(
+                    captured.tenant_id,
+                    state_bg.cost_estimator.estimate_cost(
+                        &captured.provider,
+                        &captured.model_name,
+                        captured.prompt_tokens,
+                        captured.completion_tokens,
+                    ),
+                    captured.total_tokens,
+                    captured
+                        .start_time
+                        .signed_duration_since(captured.start_time)
+                        .num_milliseconds()
+                        .max(0)
+                        .try_into()
+                        .ok()
+                        .or_else(|| {
+                            Utc::now()
+                                .signed_duration_since(captured.start_time)
+                                .num_milliseconds()
+                                .try_into()
+                                .ok()
+                        }),
+                )
+                .await;
+            if !anomaly_findings.is_empty() {
+                info!(
+                    trace_id = %captured.trace_id,
+                    count = anomaly_findings.len(),
+                    "Anomaly findings detected"
+                );
+                security_findings.extend(anomaly_findings);
+            }
+        }
 
         // --- Alert engine: fire-and-forget webhook notification ---
         if let Some(ref engine) = state_bg.alert_engine {

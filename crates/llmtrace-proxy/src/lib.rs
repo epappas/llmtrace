@@ -4,6 +4,7 @@
 //! and other crates can programmatically construct a proxy router.
 
 pub mod alerts;
+pub mod anomaly;
 pub mod api;
 pub mod auth;
 pub mod circuit_breaker;
@@ -20,6 +21,7 @@ pub mod tenant_api;
 
 // Re-export key types for convenience
 pub use alerts::AlertEngine;
+pub use anomaly::AnomalyDetector;
 pub use circuit_breaker::CircuitBreaker;
 pub use cost::CostEstimator;
 pub use cost_caps::CostTracker;

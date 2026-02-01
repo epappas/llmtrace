@@ -259,6 +259,10 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
     let alert_engine = AlertEngine::from_config(&config.alerts, client.clone());
     let cost_tracker = CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+    let anomaly_detector = llmtrace_proxy::anomaly::AnomalyDetector::new(
+        &config.anomaly_detection,
+        Arc::clone(&storage.cache),
+    );
 
     if alert_engine.is_some() {
         info!(
@@ -269,6 +273,9 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     }
     if cost_tracker.is_some() {
         info!("Cost cap enforcement enabled");
+    }
+    if anomaly_detector.is_some() {
+        info!("Anomaly detection enabled");
     }
 
     let report_store = llmtrace_proxy::compliance::new_report_store();
@@ -283,6 +290,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         cost_estimator,
         alert_engine,
         cost_tracker,
+        anomaly_detector,
         report_store,
     }))
 }

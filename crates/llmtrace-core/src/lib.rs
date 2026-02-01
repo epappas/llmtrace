@@ -844,6 +844,9 @@ pub struct ProxyConfig {
     /// gRPC ingestion gateway configuration.
     #[serde(default)]
     pub grpc: GrpcConfig,
+    /// Anomaly detection configuration.
+    #[serde(default)]
+    pub anomaly_detection: AnomalyDetectionConfig,
 }
 
 impl Default for ProxyConfig {
@@ -875,6 +878,7 @@ impl Default for ProxyConfig {
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
+            anomaly_detection: AnomalyDetectionConfig::default(),
         }
     }
 }
@@ -1134,6 +1138,103 @@ pub struct CostCapConfig {
     /// Per-agent overrides.
     #[serde(default)]
     pub agents: Vec<AgentCostCap>,
+}
+
+// ---------------------------------------------------------------------------
+// Anomaly detection types
+// ---------------------------------------------------------------------------
+
+/// Type of anomaly detected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnomalyType {
+    /// Abnormally high cost for a single request.
+    CostSpike,
+    /// Abnormally high token usage for a single request.
+    TokenSpike,
+    /// Abnormally high request velocity (requests per minute).
+    VelocitySpike,
+    /// Abnormally high response latency.
+    LatencySpike,
+}
+
+impl std::fmt::Display for AnomalyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CostSpike => write!(f, "cost_spike"),
+            Self::TokenSpike => write!(f, "token_spike"),
+            Self::VelocitySpike => write!(f, "velocity_spike"),
+            Self::LatencySpike => write!(f, "latency_spike"),
+        }
+    }
+}
+
+/// Anomaly detection configuration.
+///
+/// When enabled, the proxy tracks per-tenant moving averages and detects
+/// statistical anomalies using a sliding window and sigma thresholds.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// anomaly_detection:
+///   enabled: true
+///   window_size: 100
+///   sigma_threshold: 3.0
+///   check_cost: true
+///   check_tokens: true
+///   check_velocity: true
+///   check_latency: true
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnomalyDetectionConfig {
+    /// Enable anomaly detection.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Number of recent observations in the sliding window.
+    #[serde(default = "default_anomaly_window_size")]
+    pub window_size: usize,
+    /// Sigma multiplier for anomaly threshold (default: 3.0).
+    #[serde(default = "default_anomaly_sigma_threshold")]
+    pub sigma_threshold: f64,
+    /// Check for cost anomalies.
+    #[serde(default = "default_true_flag")]
+    pub check_cost: bool,
+    /// Check for token usage anomalies.
+    #[serde(default = "default_true_flag")]
+    pub check_tokens: bool,
+    /// Check for request velocity anomalies.
+    #[serde(default = "default_true_flag")]
+    pub check_velocity: bool,
+    /// Check for latency anomalies.
+    #[serde(default = "default_true_flag")]
+    pub check_latency: bool,
+}
+
+fn default_anomaly_window_size() -> usize {
+    100
+}
+
+fn default_anomaly_sigma_threshold() -> f64 {
+    3.0
+}
+
+fn default_true_flag() -> bool {
+    true
+}
+
+impl Default for AnomalyDetectionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            window_size: default_anomaly_window_size(),
+            sigma_threshold: default_anomaly_sigma_threshold(),
+            check_cost: true,
+            check_tokens: true,
+            check_velocity: true,
+            check_latency: true,
+        }
+    }
 }
 
 /// Security analysis configuration for ML-based prompt injection detection.
@@ -2095,6 +2196,7 @@ mod tests {
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
+            anomaly_detection: AnomalyDetectionConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
