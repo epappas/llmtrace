@@ -1,160 +1,200 @@
 # LLMTrace
 
-A security-aware LLM observability platform built in Rust.
+**Security-aware observability for LLM applications.**
 
-## Overview
+LLMTrace is a transparent proxy that sits between your application and any OpenAI-compatible LLM API. It captures every interaction as structured traces, runs real-time security analysis (prompt injection detection, PII scanning), and stores everything in SQLite for inspection — with zero code changes to your application.
 
-LLMTrace provides comprehensive observability and security monitoring for Large Language Model (LLM) applications. It captures traces of LLM interactions, analyzes them for security vulnerabilities like prompt injection attacks, and provides real-time monitoring capabilities.
+## Key Features
 
-## Features
-
-- **Transparent Proxy**: Intercept LLM API calls without code changes
-- **Security Analysis**: Real-time detection of prompt injection, PII leakage, and anomalies
-- **Multi-Tenant**: Built-in tenant isolation for enterprise deployments
-- **High Performance**: Rust-based implementation optimized for high throughput
-- **Multiple Integrations**: Support for OpenAI, Anthropic, vLLM, SGLang, TGI, Ollama, and more
-- **Python SDK**: Easy integration for Python applications
-- **Compliance Ready**: SOC2, GDPR, and HIPAA compliance features
-
-## Architecture
-
-LLMTrace consists of several Rust crates:
-
-- **`llmtrace-core`**: Core types, traits, and errors
-- **`llmtrace-proxy`**: Transparent HTTP proxy server
-- **`llmtrace-sdk`**: Embeddable SDK for Rust applications
-- **`llmtrace-storage`**: Storage abstraction with SQLite backend
-- **`llmtrace-security`**: Security analysis engines
-- **`llmtrace-python`**: Python bindings via PyO3
+- **Transparent Proxy** — Drop-in HTTP proxy for any OpenAI-compatible API (`/v1/chat/completions`, `/v1/completions`). Supports both streaming (SSE) and non-streaming responses.
+- **Prompt Injection Detection** — Regex-based detection of system prompt overrides, role injection, encoding attacks (base64), jailbreak patterns, and delimiter injection.
+- **PII Scanning** — Automatic detection of email addresses, phone numbers, SSNs, and credit card numbers in both requests and responses.
+- **Data Leakage Detection** — Detects system prompt leaks and credential exposure in LLM responses.
+- **Streaming Metrics** — Tracks time-to-first-token (TTFT), completion token counts, and total latency for streaming responses.
+- **Multi-Tenant** — Tenant isolation via API key derivation or custom `X-LLMTrace-Tenant-ID` header.
+- **Circuit Breaker** — Degrades gracefully to pure pass-through when storage or security analysis fails.
+- **Python SDK** — Native Python bindings via PyO3 for direct SDK integration.
 
 ## Quick Start
 
-### Using the Transparent Proxy
+### 1. Build
 
-1. Build the proxy server:
-   ```bash
-   cargo build --release --bin llmtrace-proxy
-   ```
-
-2. Run the proxy:
-   ```bash
-   ./target/release/llmtrace-proxy
-   ```
-
-3. Point your LLM client to the proxy instead of the original endpoint.
-
-### Using the Rust SDK
-
-```rust
-use llmtrace_sdk::{LLMTracer, SDKConfig};
-use llmtrace_core::{TenantId, LLMProvider};
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = SDKConfig {
-        tenant_id: TenantId::new(),
-        ..Default::default()
-    };
-    
-    let tracer = LLMTracer::new(config);
-    
-    // Your LLM calls here...
-    
-    tracer.flush().await?;
-    Ok(())
-}
+```bash
+cargo build --release
 ```
 
-### Using the Python SDK
+### 2. Configure
+
+Copy the example config and adjust for your environment:
+
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml: set upstream_url to your LLM endpoint
+```
+
+### 3. Run
+
+```bash
+# Start the proxy
+./target/release/llmtrace-proxy --config config.yaml
+
+# Or with defaults (upstream: https://api.openai.com, listen: 0.0.0.0:8080)
+./target/release/llmtrace-proxy
+```
+
+### 4. Use
+
+Point your LLM client at the proxy instead of the real endpoint:
+
+```bash
+# Non-streaming
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello!"}]}'
+
+# Streaming
+curl -N http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello!"}],"stream":true}'
+```
+
+### 5. Inspect Traces
+
+```bash
+sqlite3 llmtrace.db "SELECT trace_id, model_name, security_score, duration_ms FROM spans ORDER BY start_time DESC LIMIT 10;"
+```
+
+## Python SDK
+
+Install the native module (requires [maturin](https://github.com/PyO3/maturin)):
+
+```bash
+cd crates/llmtrace-python
+maturin develop
+```
+
+Usage:
 
 ```python
-import llmtrace_python as llm
+import llmtrace_python as llmtrace
 
 # Create a tracer
-tracer = llm.create_tracer()
+tracer = llmtrace.configure({"enable_security": True})
 
-# Your LLM calls here...
+# Start a span
+span = tracer.start_span("chat_completion", "openai", "gpt-4")
+span.set_prompt("What is 2+2?")
+span.set_response("4")
+span.set_token_counts(prompt_tokens=5, completion_tokens=1)
 
-# Flush traces
-await tracer.flush()
+# Serialize
+print(span.to_json())
+
+# Instrument an existing client
+import openai
+client = openai.OpenAI()
+instrumented = llmtrace.instrument(client, tracer=tracer)
 ```
 
-## Security Features
+See [`examples/python_sdk.py`](examples/python_sdk.py) for a full walkthrough.
 
-- **Prompt Injection Detection**: Regex-based detection of common injection patterns
-- **PII Detection**: Automatic detection of emails, phone numbers, SSNs, credit cards
-- **Anomaly Detection**: Statistical analysis of usage patterns
-- **Risk Scoring**: 0-100 risk scores for each interaction
+## Architecture
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Your App   │────▸│  LLMTrace Proxy  │────▸│  LLM Provider    │
+│  (client)   │◂────│  (transparent)   │◂────│  (OpenAI, etc.)  │
+└─────────────┘     └────────┬─────────┘     └──────────────────┘
+                             │
+                    ┌────────┴─────────┐
+                    │  Background Tasks │
+                    │  (async, non-    │
+                    │   blocking)       │
+                    ├──────────────────┤
+                    │ Security Analysis│──▸ Findings
+                    │ Trace Capture    │──▸ SQLite
+                    └──────────────────┘
+```
+
+### Crate Structure
+
+| Crate | Type | Description |
+|-------|------|-------------|
+| `llmtrace-core` | lib | Core types, traits, errors — shared by all crates |
+| `llmtrace-proxy` | bin+lib | Transparent HTTP proxy server with axum |
+| `llmtrace-storage` | lib | Storage abstraction: SQLite + in-memory backends |
+| `llmtrace-security` | lib | Regex-based security analysis engine |
+| `llmtrace-sdk` | lib | Embeddable Rust SDK for direct integration |
+| `llmtrace-python` | cdylib | Python bindings via PyO3 |
+
+For detailed architecture, see [`docs/architecture/`](docs/architecture/).
+
+## Configuration Reference
+
+### Config File (`config.yaml`)
+
+See [`config.example.yaml`](config.example.yaml) for a fully commented example.
+
+### CLI Flags
+
+```
+llmtrace-proxy [OPTIONS] [COMMAND]
+
+Options:
+  -c, --config <PATH>       Path to YAML config file [env: LLMTRACE_CONFIG]
+      --log-level <LEVEL>   Override log level [env: LLMTRACE_LOG_LEVEL]
+      --log-format <FMT>    Override log format [env: LLMTRACE_LOG_FORMAT]
+  -h, --help                Print help
+  -V, --version             Print version
+
+Commands:
+  validate    Validate config file and print resolved settings
+```
+
+### Environment Variables
+
+| Variable | Overrides | Example |
+|----------|-----------|---------|
+| `LLMTRACE_CONFIG` | Config file path | `/etc/llmtrace/config.yaml` |
+| `LLMTRACE_LISTEN_ADDR` | `listen_addr` | `0.0.0.0:9090` |
+| `LLMTRACE_UPSTREAM_URL` | `upstream_url` | `http://localhost:11434` |
+| `LLMTRACE_STORAGE_PROFILE` | `storage.profile` | `memory` |
+| `LLMTRACE_STORAGE_DATABASE_PATH` | `storage.database_path` | `/var/lib/llmtrace/traces.db` |
+| `LLMTRACE_LOG_LEVEL` | `logging.level` | `debug` |
+| `LLMTRACE_LOG_FORMAT` | `logging.format` | `json` |
+| `RUST_LOG` | Fine-grained tracing filter | `llmtrace_proxy=debug,info` |
+
+**Precedence** (highest wins): CLI flags → env vars → config file → defaults.
+
+## Examples
+
+See the [`examples/`](examples/) directory:
+
+- **[`basic_proxy.sh`](examples/basic_proxy.sh)** — Start the proxy, send requests, query traces
+- **[`security_test.sh`](examples/security_test.sh)** — Prompt injection detection demo with 8 attack patterns
+- **[`python_sdk.py`](examples/python_sdk.py)** — Python SDK walkthrough
 
 ## Development
-
-### Prerequisites
-
-- Rust 1.70+ (recommend using rustup)
-- SQLite (for storage backend)
-
-### Building
 
 ```bash
 # Build all crates
 cargo build --workspace
 
-# Run tests
+# Run all tests (unit + integration)
 cargo test --workspace
 
-# Check formatting
-cargo fmt --check
+# Format check
+cargo fmt --all --check
 
-# Run clippy
+# Lint
 cargo clippy --workspace -- -D warnings
+
+# Release build
+cargo build --release
 ```
-
-### Project Structure
-
-```
-llmtrace/
-├── crates/
-│   ├── llmtrace-core/      # Core types and traits
-│   ├── llmtrace-proxy/     # Proxy server binary
-│   ├── llmtrace-sdk/       # Rust SDK
-│   ├── llmtrace-storage/   # Storage backends
-│   ├── llmtrace-security/  # Security analysis
-│   └── llmtrace-python/    # Python bindings
-└── docs/                    # Documentation
-```
-
-## Configuration
-
-The proxy server uses YAML configuration:
-
-```yaml
-listen_addr: "0.0.0.0:8080"
-upstream_url: "https://api.openai.com"
-timeout_ms: 30000
-enable_security_analysis: true
-enable_trace_storage: true
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting: `cargo test && cargo fmt && cargo clippy`
-5. Submit a pull request
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Status
-
-**Early Development** - This project is under active development. APIs may change frequently.
-
-Current implementation status:
-- [x] Basic workspace and crate structure
-- [ ] Core types and traits (in progress)
-- [ ] Proxy server implementation (planned)
-- [ ] Security analysis engines (planned)
-- [ ] Storage backends (planned)
-- [ ] Python bindings (planned)
+[MIT](LICENSE)

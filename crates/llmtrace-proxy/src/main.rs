@@ -5,17 +5,13 @@
 //! and `/v1/completions` endpoints, streaming SSE passthrough, async trace
 //! capture, async security analysis, and circuit-breaker degradation.
 
-mod circuit_breaker;
-mod config;
-mod proxy;
-mod streaming;
-
-use crate::circuit_breaker::CircuitBreaker;
-use crate::proxy::{health_handler, proxy_handler, AppState};
 use axum::routing::{any, get};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
+use llmtrace_proxy::circuit_breaker::CircuitBreaker;
+use llmtrace_proxy::config;
+use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;

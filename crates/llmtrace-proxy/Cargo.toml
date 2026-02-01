@@ -7,6 +7,10 @@ authors.workspace = true
 repository.workspace = true
 description = "Transparent proxy server for LLM API calls"
 
+[lib]
+name = "llmtrace_proxy"
+path = "src/lib.rs"
+
 [[bin]]
 name = "llmtrace-proxy"
 path = "src/main.rs"
