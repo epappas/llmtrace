@@ -67,6 +67,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         cost_estimator,
         alert_engine: None,
         cost_tracker: None,
+        report_store: llmtrace_proxy::compliance::new_report_store(),
     });
 
     let app = Router::new()

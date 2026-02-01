@@ -261,6 +261,8 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         info!("Cost cap enforcement enabled");
     }
 
+    let report_store = llmtrace_proxy::compliance::new_report_store();
+
     Ok(Arc::new(AppState {
         config,
         client,
@@ -271,6 +273,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         cost_estimator,
         alert_engine,
         cost_tracker,
+        report_store,
     }))
 }
 
@@ -328,6 +331,15 @@ fn build_router(state: Arc<AppState>) -> Router {
             get(llmtrace_proxy::tenant_api::get_tenant)
                 .put(llmtrace_proxy::tenant_api::update_tenant)
                 .delete(llmtrace_proxy::tenant_api::delete_tenant),
+        )
+        // Compliance reporting
+        .route(
+            "/api/v1/reports/generate",
+            post(llmtrace_proxy::compliance::generate_report),
+        )
+        .route(
+            "/api/v1/reports/:id",
+            get(llmtrace_proxy::compliance::get_report),
         )
         // OpenTelemetry OTLP/HTTP trace ingestion
         .route(

@@ -48,6 +48,8 @@ pub struct AppState {
     pub alert_engine: Option<crate::alerts::AlertEngine>,
     /// Cost cap tracker (`None` if cost caps are disabled).
     pub cost_tracker: Option<crate::cost_caps::CostTracker>,
+    /// In-memory store for compliance reports.
+    pub report_store: crate::compliance::ReportStore,
 }
 
 impl AppState {

@@ -873,6 +873,7 @@ mod tests {
             cost_estimator,
             alert_engine: None,
             cost_tracker: None,
+            report_store: crate::compliance::new_report_store(),
         })
     }
 
@@ -908,6 +909,7 @@ mod tests {
             cost_estimator,
             alert_engine: None,
             cost_tracker: None,
+            report_store: crate::compliance::new_report_store(),
         })
     }
 
