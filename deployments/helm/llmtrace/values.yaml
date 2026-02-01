@@ -1,0 +1,286 @@
+# ============================================================================
+# LLMTrace Helm Chart — Default Values
+# ============================================================================
+# Override per-environment with: helm install -f values-production.yaml ...
+# ============================================================================
+
+# -- Global settings shared across all sub-charts
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# ============================================================================
+# Proxy
+# ============================================================================
+proxy:
+  # -- Number of proxy replicas (overridden by HPA when enabled)
+  replicaCount: 1
+
+  image:
+    repository: llmtrace-proxy
+    pullPolicy: IfNotPresent
+    # -- Overrides the image tag; defaults to Chart.appVersion
+    tag: ""
+
+  # -- Upstream LLM provider URL
+  upstreamUrl: "https://api.openai.com"
+
+  # -- Listen address inside the container
+  listenAddr: "0.0.0.0:8080"
+
+  # -- Storage profile: "lite", "memory", or "production"
+  storageProfile: "production"
+
+  # -- Enable security analysis
+  enableSecurityAnalysis: true
+
+  # -- Enable trace storage
+  enableTraceStorage: true
+
+  # -- Enable streaming SSE passthrough
+  enableStreaming: true
+
+  # -- Request timeout (ms)
+  timeoutMs: 30000
+
+  # -- Connection timeout (ms)
+  connectionTimeoutMs: 5000
+
+  # -- Max concurrent connections
+  maxConnections: 1000
+
+  # -- Max request body size (bytes, default 50 MB)
+  maxRequestSizeBytes: 52428800
+
+  # -- gRPC ingestion gateway
+  grpc:
+    enabled: false
+    listenAddr: "0.0.0.0:50051"
+
+  # -- Rate limiting
+  rateLimiting:
+    enabled: true
+    requestsPerSecond: 100
+    burstSize: 200
+    windowSeconds: 60
+
+  # -- Circuit breaker
+  circuitBreaker:
+    enabled: true
+    failureThreshold: 10
+    recoveryTimeoutMs: 30000
+    halfOpenMaxCalls: 3
+
+  # -- Logging
+  logging:
+    level: "info"
+    format: "json"
+
+  # -- Alert engine
+  alerts:
+    enabled: false
+    webhookUrl: ""
+    minSeverity: "High"
+    minSecurityScore: 70
+    cooldownSeconds: 300
+
+  # -- Cost caps
+  costCaps:
+    enabled: false
+
+  # -- Additional environment variables for the proxy container
+  extraEnv: []
+  #   - name: RUST_LOG
+  #     value: "llmtrace_proxy=debug,info"
+
+  # -- Resource requests and limits
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  # -- Pod-level security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  # -- Container-level security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  # -- Liveness probe
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # -- Readiness probe
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # -- Node selector
+  nodeSelector: {}
+
+  # -- Tolerations
+  tolerations: []
+
+  # -- Affinity rules
+  affinity: {}
+
+  # -- Pod annotations
+  podAnnotations: {}
+
+  # -- Pod labels
+  podLabels: {}
+
+# ============================================================================
+# Service
+# ============================================================================
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  # -- gRPC port (enabled only when proxy.grpc.enabled)
+  grpcPort: 50051
+  annotations: {}
+
+# ============================================================================
+# Ingress
+# ============================================================================
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: llmtrace.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #   - secretName: llmtrace-tls
+  #     hosts:
+  #       - llmtrace.local
+
+# ============================================================================
+# Horizontal Pod Autoscaler
+# ============================================================================
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # -- Custom metrics (optional)
+  # metrics:
+  #   - type: Pods
+  #     pods:
+  #       metric:
+  #         name: http_requests_per_second
+  #       target:
+  #         type: AverageValue
+  #         averageValue: "500"
+
+# ============================================================================
+# ServiceAccount
+# ============================================================================
+serviceAccount:
+  create: true
+  annotations: {}
+  # -- Name override; defaults to release fullname
+  name: ""
+
+# ============================================================================
+# Pod Disruption Budget
+# ============================================================================
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# ============================================================================
+# Secrets — credentials for backing services
+# ============================================================================
+secrets:
+  # -- If true, the chart creates a Secret from the values below.
+  # Set to false and provide existingSecret to use a pre-existing Secret.
+  create: true
+  # -- Name of an existing Secret to use instead
+  existingSecret: ""
+
+  # -- ClickHouse credentials
+  clickhouseUrl: "http://llmtrace-clickhouse:8123"
+  clickhouseDatabase: "llmtrace"
+
+  # -- PostgreSQL credentials
+  postgresUrl: "postgres://llmtrace:llmtrace@llmtrace-postgresql:5432/llmtrace"
+
+  # -- Redis credentials
+  redisUrl: "redis://llmtrace-redis-master:6379"
+
+# ============================================================================
+# NetworkPolicy
+# ============================================================================
+networkPolicy:
+  enabled: false
+
+# ============================================================================
+# ClickHouse sub-chart
+# ============================================================================
+clickhouse:
+  enabled: true
+  shards: 1
+  replicaCount: 1
+  auth:
+    username: default
+    password: ""
+  persistence:
+    enabled: true
+    size: 10Gi
+
+# ============================================================================
+# PostgreSQL sub-chart
+# ============================================================================
+postgresql:
+  enabled: true
+  auth:
+    username: llmtrace
+    password: llmtrace
+    database: llmtrace
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# ============================================================================
+# Redis sub-chart
+# ============================================================================
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi

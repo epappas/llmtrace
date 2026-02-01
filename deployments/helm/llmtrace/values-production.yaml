@@ -1,0 +1,183 @@
+# ============================================================================
+# LLMTrace Helm Chart — Production Overrides
+# ============================================================================
+# Usage:
+#   helm install llmtrace ./deployments/helm/llmtrace \
+#     -f ./deployments/helm/llmtrace/values-production.yaml \
+#     --namespace llmtrace --create-namespace
+# ============================================================================
+
+# ============================================================================
+# Proxy — production sizing
+# ============================================================================
+proxy:
+  replicaCount: 3
+
+  storageProfile: "production"
+  enableSecurityAnalysis: true
+  enableTraceStorage: true
+  enableStreaming: true
+
+  grpc:
+    enabled: true
+    listenAddr: "0.0.0.0:50051"
+
+  rateLimiting:
+    enabled: true
+    requestsPerSecond: 500
+    burstSize: 1000
+    windowSeconds: 60
+
+  circuitBreaker:
+    enabled: true
+    failureThreshold: 5
+    recoveryTimeoutMs: 15000
+    halfOpenMaxCalls: 3
+
+  logging:
+    level: "info"
+    format: "json"
+
+  alerts:
+    enabled: true
+    # Set via --set or external secret:
+    # webhookUrl: "https://hooks.slack.com/services/..."
+    webhookUrl: ""
+    minSeverity: "High"
+    minSecurityScore: 70
+    cooldownSeconds: 300
+
+  costCaps:
+    enabled: true
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - llmtrace
+            topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# Ingress — production with TLS
+# ============================================================================
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+  hosts:
+    - host: llmtrace.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: llmtrace-tls
+      hosts:
+        - llmtrace.example.com
+
+# ============================================================================
+# HPA — auto-scale proxy pods
+# ============================================================================
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ============================================================================
+# PDB — ensure availability during rollouts
+# ============================================================================
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ============================================================================
+# Secrets — override via --set or external secrets manager
+# ============================================================================
+secrets:
+  create: true
+  clickhouseUrl: "http://llmtrace-clickhouse:8123"
+  clickhouseDatabase: "llmtrace"
+  postgresUrl: "postgres://llmtrace:CHANGE_ME@llmtrace-postgresql:5432/llmtrace"
+  redisUrl: "redis://llmtrace-redis-master:6379"
+
+# ============================================================================
+# ClickHouse — production sizing
+# ============================================================================
+clickhouse:
+  enabled: true
+  shards: 1
+  replicaCount: 1
+  auth:
+    username: default
+    password: ""
+  persistence:
+    enabled: true
+    size: 100Gi
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+
+# ============================================================================
+# PostgreSQL — production sizing
+# ============================================================================
+postgresql:
+  enabled: true
+  auth:
+    username: llmtrace
+    # Set via --set postgresql.auth.password=... or external secret
+    password: "CHANGE_ME"
+    database: llmtrace
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+# ============================================================================
+# Redis — production sizing
+# ============================================================================
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi

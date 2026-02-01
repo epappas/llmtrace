@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmtrace.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmtrace.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+    {{- if .Values.proxy.grpc.enabled }}
+    - port: {{ .Values.service.grpcPort }}
+      targetPort: 50051
+      protocol: TCP
+      name: grpc
+    {{- end }}
+  selector:
+    {{- include "llmtrace.selectorLabels" . | nindent 4 }}

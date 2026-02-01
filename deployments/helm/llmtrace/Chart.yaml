@@ -1,0 +1,35 @@
+apiVersion: v2
+name: llmtrace
+description: >-
+  LLMTrace — Transparent LLM observability proxy with security analysis,
+  cost tracking, and trace storage. Deploys the proxy alongside ClickHouse
+  (analytical traces), PostgreSQL (metadata), and Redis (cache).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - llm
+  - observability
+  - proxy
+  - security
+  - tracing
+home: https://github.com/evansosenko/llmtrace
+sources:
+  - https://github.com/evansosenko/llmtrace
+maintainers:
+  - name: llmtrace
+    url: https://github.com/evansosenko/llmtrace
+
+dependencies:
+  - name: clickhouse
+    version: "6.*"
+    repository: https://charts.bitnami.com/bitnami
+    condition: clickhouse.enabled
+  - name: postgresql
+    version: "16.*"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "20.*"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

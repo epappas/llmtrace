@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmtrace.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmtrace.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmtrace.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow HTTP traffic from any pod in the namespace
+    - ports:
+        - port: 8080
+          protocol: TCP
+      {{- if .Values.proxy.grpc.enabled }}
+        - port: 50051
+          protocol: TCP
+      {{- end }}
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow traffic to ClickHouse
+    - ports:
+        - port: 8123
+          protocol: TCP
+        - port: 9000
+          protocol: TCP
+    # Allow traffic to PostgreSQL
+    - ports:
+        - port: 5432
+          protocol: TCP
+    # Allow traffic to Redis
+    - ports:
+        - port: 6379
+          protocol: TCP
+    # Allow traffic to upstream LLM providers (HTTPS)
+    - ports:
+        - port: 443
+          protocol: TCP
+{{- end }}
