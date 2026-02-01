@@ -8,10 +8,8 @@ Runnable examples demonstrating LLMTrace proxy usage, Python SDK integration, an
 # Build the proxy binary
 cargo build --release
 
-# For Python examples: install the native module
-cd crates/llmtrace-python
-maturin develop
-cd ../..
+# For Python examples: just use uv (no manual install needed)
+# uv run examples/python_sdk.py
 ```
 
 ## Examples
@@ -58,8 +56,10 @@ Sends eight different attack patterns (plus one benign control) through the prox
 
 Demonstrates the Python SDK: creating tracers, starting spans, recording prompts/responses, error handling, client instrumentation, and streaming TTFT tracking.
 
+The script uses [uv inline script metadata](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies) so dependencies are resolved automatically — no manual `maturin develop` or `pip install` needed.
+
 ```bash
-python examples/python_sdk.py
+uv run examples/python_sdk.py
 ```
 
 **What it demonstrates:**

@@ -1,4 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "llmtrace-python",
+# ]
+# [tool.uv.sources]
+# llmtrace-python = { path = "../crates/llmtrace-python" }
+# ///
 """
 LLMTrace Python SDK — Usage Example
 ====================================
@@ -6,12 +14,8 @@ LLMTrace Python SDK — Usage Example
 Demonstrates how to use the LLMTrace Python SDK to trace LLM calls,
 create spans, attach security metadata, and inspect results.
 
-Prerequisites:
-    cd crates/llmtrace-python
-    maturin develop          # installs the native module into venv
-
 Usage:
-    python examples/python_sdk.py
+    uv run examples/python_sdk.py
 """
 
 import json
