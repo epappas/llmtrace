@@ -1,0 +1,62 @@
+# docker-compose.yml — LLMTrace local development services
+#
+# Start all production-profile backends:
+#   docker compose up -d
+#
+# Then run the proxy with the production storage profile:
+#   LLMTRACE_STORAGE_PROFILE=production cargo run --bin llmtrace-proxy
+#
+# Run ignored integration tests against these services:
+#   LLMTRACE_CLICKHOUSE_URL=http://localhost:8123 \
+#   LLMTRACE_POSTGRES_URL=postgres://llmtrace:llmtrace@localhost:5432/llmtrace \
+#   LLMTRACE_REDIS_URL=redis://127.0.0.1:6379 \
+#   cargo test --workspace -- --ignored
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native TCP interface
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: llmtrace
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: llmtrace
+      POSTGRES_PASSWORD: llmtrace
+      POSTGRES_DB: llmtrace
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U llmtrace"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  clickhouse_data:
+  postgres_data:
+  redis_data:

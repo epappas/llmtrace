@@ -213,6 +213,7 @@ fn row_to_span(row: SpanRow) -> Result<TraceSpan> {
 ///
 /// ```no_run
 /// # async fn example() -> llmtrace_core::Result<()> {
+/// use llmtrace_core::TraceRepository;
 /// let repo = llmtrace_storage::ClickHouseTraceRepository::new(
 ///     "http://localhost:8123",
 ///     "llmtrace",

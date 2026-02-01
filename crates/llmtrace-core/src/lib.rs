@@ -560,12 +560,24 @@ impl Default for ProxyConfig {
 /// Storage configuration section within [`ProxyConfig`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Storage profile: `"lite"` (SQLite) or `"memory"` (in-memory).
+    /// Storage profile: `"lite"` (SQLite), `"memory"` (in-memory), or `"production"` (ClickHouse + PostgreSQL + Redis).
     #[serde(default = "default_storage_profile")]
     pub profile: String,
     /// Database file path (used by the `"lite"` profile).
     #[serde(default = "default_database_path")]
     pub database_path: String,
+    /// ClickHouse HTTP URL (used by the `"production"` profile).
+    #[serde(default)]
+    pub clickhouse_url: Option<String>,
+    /// ClickHouse database name (used by the `"production"` profile).
+    #[serde(default)]
+    pub clickhouse_database: Option<String>,
+    /// PostgreSQL connection URL (used by the `"production"` profile).
+    #[serde(default)]
+    pub postgres_url: Option<String>,
+    /// Redis connection URL (used by the `"production"` profile).
+    #[serde(default)]
+    pub redis_url: Option<String>,
 }
 
 fn default_storage_profile() -> String {
@@ -581,6 +593,10 @@ impl Default for StorageConfig {
         Self {
             profile: default_storage_profile(),
             database_path: default_database_path(),
+            clickhouse_url: None,
+            clickhouse_database: None,
+            postgres_url: None,
+            redis_url: None,
         }
     }
 }
@@ -1277,6 +1293,10 @@ mod tests {
         let config = StorageConfig::default();
         assert_eq!(config.profile, "lite");
         assert_eq!(config.database_path, "llmtrace.db");
+        assert!(config.clickhouse_url.is_none());
+        assert!(config.clickhouse_database.is_none());
+        assert!(config.postgres_url.is_none());
+        assert!(config.redis_url.is_none());
     }
 
     #[test]
@@ -1463,6 +1483,10 @@ mod tests {
             storage: StorageConfig {
                 profile: "lite".to_string(),
                 database_path: "test.db".to_string(),
+                clickhouse_url: None,
+                clickhouse_database: None,
+                postgres_url: None,
+                redis_url: None,
             },
             timeout_ms: 60000,
             connection_timeout_ms: 10000,

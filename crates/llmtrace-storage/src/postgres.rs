@@ -71,6 +71,7 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
 ///
 /// ```no_run
 /// # async fn example() -> llmtrace_core::Result<()> {
+/// use llmtrace_core::MetadataRepository;
 /// let repo = llmtrace_storage::PostgresMetadataRepository::new(
 ///     "postgres://user:pass@localhost/llmtrace",
 /// ).await?;

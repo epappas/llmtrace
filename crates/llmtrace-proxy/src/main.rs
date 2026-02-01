@@ -199,12 +199,33 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .timeout(std::time::Duration::from_millis(config.timeout_ms))
         .build()?;
 
-    let profile = match config.storage.profile.as_str() {
-        "memory" => StorageProfile::Memory,
-        _ => StorageProfile::Lite {
-            database_path: config.storage.database_path.clone(),
-        },
-    };
+    let profile =
+        match config.storage.profile.as_str() {
+            "memory" => StorageProfile::Memory,
+            "production" => StorageProfile::Production {
+                clickhouse_url: config
+                    .storage
+                    .clickhouse_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:8123".to_string()),
+                clickhouse_database: config
+                    .storage
+                    .clickhouse_database
+                    .clone()
+                    .unwrap_or_else(|| "llmtrace".to_string()),
+                postgres_url: config.storage.postgres_url.clone().unwrap_or_else(|| {
+                    "postgres://llmtrace:llmtrace@localhost/llmtrace".to_string()
+                }),
+                redis_url: config
+                    .storage
+                    .redis_url
+                    .clone()
+                    .unwrap_or_else(|| "redis://127.0.0.1:6379".to_string()),
+            },
+            _ => StorageProfile::Lite {
+                database_path: config.storage.database_path.clone(),
+            },
+        };
 
     info!(
         profile = %config.storage.profile,
@@ -297,6 +318,7 @@ mod tests {
             storage: StorageConfig {
                 profile: "memory".to_string(),
                 database_path: String::new(),
+                ..StorageConfig::default()
             },
             ..ProxyConfig::default()
         }
@@ -338,6 +360,7 @@ mod tests {
             storage: StorageConfig {
                 profile: "memory".to_string(),
                 database_path: String::new(),
+                ..StorageConfig::default()
             },
             ..ProxyConfig::default()
         };

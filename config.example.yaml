@@ -16,6 +16,10 @@
 #   LLMTRACE_UPSTREAM_URL          — override upstream_url
 #   LLMTRACE_STORAGE_PROFILE       — override storage.profile
 #   LLMTRACE_STORAGE_DATABASE_PATH — override storage.database_path
+#   LLMTRACE_CLICKHOUSE_URL        — override storage.clickhouse_url
+#   LLMTRACE_CLICKHOUSE_DATABASE   — override storage.clickhouse_database
+#   LLMTRACE_POSTGRES_URL          — override storage.postgres_url
+#   LLMTRACE_REDIS_URL             — override storage.redis_url
 #   LLMTRACE_LOG_LEVEL             — override logging.level
 #   LLMTRACE_LOG_FORMAT            — override logging.format
 #   RUST_LOG                       — fine-grained tracing filter (e.g. "llmtrace_proxy=debug,info")
@@ -36,10 +40,21 @@ upstream_url: "https://api.openai.com"
 # ---------------------------------------------------------------------------
 
 storage:
-  # Profile: "lite" (SQLite, zero infrastructure) or "memory" (in-memory, lost on restart).
+  # Profile: "lite" (SQLite, zero infrastructure), "memory" (in-memory, lost on restart),
+  # or "production" (ClickHouse + PostgreSQL + Redis — see docker-compose.yml).
   profile: "lite"
   # Database file path (used by the "lite" profile).
   database_path: "llmtrace.db"
+
+  # --- Production profile settings (only used when profile = "production") ---
+  # ClickHouse HTTP URL for trace/span analytical storage.
+  # clickhouse_url: "http://localhost:8123"
+  # ClickHouse database name (created automatically on startup).
+  # clickhouse_database: "llmtrace"
+  # PostgreSQL connection URL for metadata (tenants, configs, audit events).
+  # postgres_url: "postgres://llmtrace:llmtrace@localhost:5432/llmtrace"
+  # Redis connection URL for hot-query cache and sessions.
+  # redis_url: "redis://127.0.0.1:6379"
 
 # ---------------------------------------------------------------------------
 # Logging

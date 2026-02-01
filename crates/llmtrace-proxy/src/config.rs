@@ -26,6 +26,10 @@ pub fn load_config(path: &Path) -> anyhow::Result<ProxyConfig> {
 /// - `LLMTRACE_UPSTREAM_URL` → `upstream_url`
 /// - `LLMTRACE_STORAGE_PROFILE` → `storage.profile`
 /// - `LLMTRACE_STORAGE_DATABASE_PATH` → `storage.database_path`
+/// - `LLMTRACE_CLICKHOUSE_URL` → `storage.clickhouse_url`
+/// - `LLMTRACE_CLICKHOUSE_DATABASE` → `storage.clickhouse_database`
+/// - `LLMTRACE_POSTGRES_URL` → `storage.postgres_url`
+/// - `LLMTRACE_REDIS_URL` → `storage.redis_url`
 pub fn apply_env_overrides(config: &mut ProxyConfig) {
     if let Ok(val) = std::env::var("LLMTRACE_LISTEN_ADDR") {
         config.listen_addr = val;
@@ -38,6 +42,18 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
     }
     if let Ok(val) = std::env::var("LLMTRACE_STORAGE_DATABASE_PATH") {
         config.storage.database_path = val;
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_CLICKHOUSE_URL") {
+        config.storage.clickhouse_url = Some(val);
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_CLICKHOUSE_DATABASE") {
+        config.storage.clickhouse_database = Some(val);
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_POSTGRES_URL") {
+        config.storage.postgres_url = Some(val);
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_REDIS_URL") {
+        config.storage.redis_url = Some(val);
     }
 }
 
@@ -60,9 +76,9 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
     }
 
     match config.storage.profile.as_str() {
-        "lite" | "memory" => {}
+        "lite" | "memory" | "production" => {}
         other => errors.push(format!(
-            "storage.profile must be 'lite' or 'memory', got '{other}'"
+            "storage.profile must be 'lite', 'memory', or 'production', got '{other}'"
         )),
     }
 
@@ -291,6 +307,7 @@ health_check:
             storage: llmtrace_core::StorageConfig {
                 profile: "postgres".to_string(),
                 database_path: String::new(),
+                ..llmtrace_core::StorageConfig::default()
             },
             ..ProxyConfig::default()
         };

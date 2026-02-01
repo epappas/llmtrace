@@ -326,6 +326,7 @@ mod tests {
             storage: StorageConfig {
                 profile: "memory".to_string(),
                 database_path: String::new(),
+                ..StorageConfig::default()
             },
             ..ProxyConfig::default()
         };

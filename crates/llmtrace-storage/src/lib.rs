@@ -16,6 +16,9 @@ mod clickhouse;
 #[cfg(feature = "postgres")]
 mod postgres;
 
+#[cfg(feature = "redis_backend")]
+mod redis_cache;
+
 pub use cache::InMemoryCacheLayer;
 pub use memory::{InMemoryMetadataRepository, InMemoryTraceRepository};
 pub use sqlite::{SqliteMetadataRepository, SqliteTraceRepository};
@@ -25,6 +28,9 @@ pub use self::clickhouse::ClickHouseTraceRepository;
 
 #[cfg(feature = "postgres")]
 pub use self::postgres::PostgresMetadataRepository;
+
+#[cfg(feature = "redis_backend")]
+pub use self::redis_cache::RedisCacheLayer;
 
 use llmtrace_core::{Result, Storage};
 use std::sync::Arc;
@@ -41,6 +47,22 @@ pub enum StorageProfile {
     },
     /// In-memory only — for tests.
     Memory,
+    /// Production: ClickHouse (traces) + PostgreSQL (metadata) + Redis (cache).
+    #[cfg(all(
+        feature = "clickhouse",
+        feature = "postgres",
+        feature = "redis_backend"
+    ))]
+    Production {
+        /// ClickHouse HTTP URL (e.g. `http://localhost:8123`).
+        clickhouse_url: String,
+        /// ClickHouse database name.
+        clickhouse_database: String,
+        /// PostgreSQL connection URL.
+        postgres_url: String,
+        /// Redis connection URL.
+        redis_url: String,
+    },
 }
 
 impl StorageProfile {
@@ -65,6 +87,28 @@ impl StorageProfile {
                 metadata: Arc::new(InMemoryMetadataRepository::new()),
                 cache: Arc::new(InMemoryCacheLayer::new()),
             }),
+            #[cfg(all(
+                feature = "clickhouse",
+                feature = "postgres",
+                feature = "redis_backend"
+            ))]
+            StorageProfile::Production {
+                clickhouse_url,
+                clickhouse_database,
+                postgres_url,
+                redis_url,
+            } => {
+                let traces = Arc::new(
+                    ClickHouseTraceRepository::new(&clickhouse_url, &clickhouse_database).await?,
+                );
+                let metadata = Arc::new(PostgresMetadataRepository::new(&postgres_url).await?);
+                let cache = Arc::new(RedisCacheLayer::new(&redis_url).await?);
+                Ok(Storage {
+                    traces,
+                    metadata,
+                    cache,
+                })
+            }
         }
     }
 }
@@ -175,5 +219,81 @@ mod tests {
         assert!(storage.traces.health_check().await.is_ok());
         assert!(storage.metadata.health_check().await.is_ok());
         assert!(storage.cache.health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires running ClickHouse, PostgreSQL, and Redis instances"]
+    #[cfg(all(
+        feature = "clickhouse",
+        feature = "postgres",
+        feature = "redis_backend"
+    ))]
+    async fn test_storage_profile_production() {
+        use std::env;
+
+        let clickhouse_url =
+            env::var("LLMTRACE_CLICKHOUSE_URL").expect("LLMTRACE_CLICKHOUSE_URL must be set");
+        let postgres_url =
+            env::var("LLMTRACE_POSTGRES_URL").expect("LLMTRACE_POSTGRES_URL must be set");
+        let redis_url = env::var("LLMTRACE_REDIS_URL").expect("LLMTRACE_REDIS_URL must be set");
+
+        let db_name = format!("llmtrace_prod_test_{}", Uuid::new_v4().simple());
+
+        let storage = StorageProfile::Production {
+            clickhouse_url,
+            clickhouse_database: db_name,
+            postgres_url,
+            redis_url,
+        }
+        .build()
+        .await
+        .unwrap();
+
+        // Health checks
+        storage.traces.health_check().await.unwrap();
+        storage.metadata.health_check().await.unwrap();
+        storage.cache.health_check().await.unwrap();
+
+        // Trace storage roundtrip
+        let tenant = TenantId::new();
+        storage
+            .traces
+            .store_trace(&make_trace(tenant))
+            .await
+            .unwrap();
+        let traces = storage
+            .traces
+            .query_traces(&TraceQuery::new(tenant))
+            .await
+            .unwrap();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].spans.len(), 1);
+
+        // Metadata roundtrip
+        let t = Tenant {
+            id: tenant,
+            name: "ProdTest".to_string(),
+            plan: "enterprise".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+        };
+        storage.metadata.create_tenant(&t).await.unwrap();
+        let retrieved = storage.metadata.get_tenant(tenant).await.unwrap().unwrap();
+        assert_eq!(retrieved.name, "ProdTest");
+
+        // Cache roundtrip
+        storage
+            .cache
+            .set("prod:test:k", b"v", Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.cache.get("prod:test:k").await.unwrap(),
+            Some(b"v".to_vec())
+        );
+
+        // Cache invalidation
+        storage.cache.invalidate("prod:test:k").await.unwrap();
+        assert!(storage.cache.get("prod:test:k").await.unwrap().is_none());
     }
 }

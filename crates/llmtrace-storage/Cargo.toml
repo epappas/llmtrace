@@ -11,6 +11,7 @@ description = "Storage abstraction layer with SQLite backend and repository patt
 default = []
 clickhouse = ["dep:clickhouse"]
 postgres = ["sqlx/postgres"]
+redis_backend = ["dep:redis"]
 
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
@@ -24,6 +25,7 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono"
 dashmap = "6"
 bytes = "1"
 clickhouse = { version = "0.14", features = ["uuid", "chrono"], optional = true }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

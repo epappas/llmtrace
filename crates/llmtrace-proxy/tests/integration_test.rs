@@ -33,6 +33,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         storage: StorageConfig {
             profile: "memory".to_string(),
             database_path: String::new(),
+            ..StorageConfig::default()
         },
         connection_timeout_ms: 2000,
         timeout_ms: 5000,
