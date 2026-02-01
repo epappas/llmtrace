@@ -72,8 +72,11 @@ pub struct AppState {
     pub cost_tracker: Option<crate::cost_caps::CostTracker>,
     /// Anomaly detector (`None` if anomaly detection is disabled).
     pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
-    /// In-memory store for compliance reports.
+    /// In-memory store for compliance reports (legacy — reports are now also
+    /// persisted to MetadataRepository).
     pub report_store: crate::compliance::ReportStore,
+    /// Per-tenant rate limiter (`None` if rate limiting is disabled).
+    pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
     /// Shutdown coordinator for graceful shutdown and task tracking.
@@ -218,6 +221,28 @@ pub async fn proxy_handler(
         tokio::spawn(async move {
             crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &api_key_prefix).await;
         });
+    }
+
+    // --- Per-tenant rate limiting ---
+    if let Some(ref limiter) = state.rate_limiter {
+        match limiter.check(tenant_id).await {
+            crate::rate_limit::RateLimitResult::Exceeded {
+                retry_after_secs,
+                limit,
+                tenant_id: tid,
+            } => {
+                warn!(
+                    %trace_id,
+                    %tid,
+                    limit,
+                    retry_after_secs,
+                    "Rate limit exceeded"
+                );
+                state.metrics.active_connections.dec();
+                return rate_limit_response(tid, limit, retry_after_secs);
+            }
+            crate::rate_limit::RateLimitResult::Allowed => {}
+        }
     }
 
     debug!(
@@ -937,6 +962,27 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+/// Build a 429 Too Many Requests response for rate limit violations.
+fn rate_limit_response(tenant_id: TenantId, limit: u32, retry_after_secs: u64) -> Response<Body> {
+    let body = serde_json::json!({
+        "error": {
+            "message": format!("Rate limit exceeded for tenant {tenant_id}"),
+            "type": "rate_limit_exceeded",
+            "tenant_id": tenant_id.0.to_string(),
+            "limit_requests_per_second": limit,
+            "retry_after_secs": retry_after_secs,
+        }
+    });
+    let mut builder = Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("content-type", "application/json")
+        .header("retry-after", retry_after_secs.to_string());
+    // Add standard rate limit headers
+    builder = builder.header("x-ratelimit-limit", limit.to_string());
+    builder = builder.header("x-ratelimit-remaining", "0");
+    builder.body(Body::from(body.to_string())).unwrap()
+}
 
 /// Build a 429 Too Many Requests response for cost cap rejections.
 fn cap_rejected_response(message: &str, retry_after_secs: u64) -> Response<Body> {

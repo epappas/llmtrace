@@ -46,6 +46,11 @@ pub fn sqlite_migrations() -> Vec<Migration> {
             description: "add_agent_actions".to_string(),
             sql: include_str!("../migrations/sqlite/003_add_agent_actions.sql"),
         },
+        Migration {
+            version: 4,
+            description: "compliance_reports".to_string(),
+            sql: include_str!("../migrations/sqlite/004_compliance_reports.sql"),
+        },
     ]
 }
 

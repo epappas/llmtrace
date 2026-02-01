@@ -295,6 +295,7 @@ pub struct InMemoryMetadataRepository {
     configs: RwLock<Vec<TenantConfig>>,
     audit_events: RwLock<Vec<AuditEvent>>,
     api_keys: RwLock<Vec<ApiKeyRecord>>,
+    reports: RwLock<Vec<llmtrace_core::ComplianceReportRecord>>,
 }
 
 impl InMemoryMetadataRepository {
@@ -305,6 +306,7 @@ impl InMemoryMetadataRepository {
             configs: RwLock::new(Vec::new()),
             audit_events: RwLock::new(Vec::new()),
             api_keys: RwLock::new(Vec::new()),
+            reports: RwLock::new(Vec::new()),
         }
     }
 }
@@ -457,6 +459,49 @@ impl MetadataRepository for InMemoryMetadataRepository {
         } else {
             Ok(false)
         }
+    }
+
+    async fn store_report(&self, report: &llmtrace_core::ComplianceReportRecord) -> Result<()> {
+        let mut reports = self.reports.write().await;
+        reports.retain(|r| r.id != report.id);
+        reports.push(report.clone());
+        Ok(())
+    }
+
+    async fn get_report(
+        &self,
+        report_id: Uuid,
+    ) -> Result<Option<llmtrace_core::ComplianceReportRecord>> {
+        let reports = self.reports.read().await;
+        Ok(reports.iter().find(|r| r.id == report_id).cloned())
+    }
+
+    async fn list_reports(
+        &self,
+        query: &llmtrace_core::ReportQuery,
+    ) -> Result<Vec<llmtrace_core::ComplianceReportRecord>> {
+        let reports = self.reports.read().await;
+        let mut results: Vec<_> = reports
+            .iter()
+            .filter(|r| r.tenant_id == query.tenant_id)
+            .cloned()
+            .collect();
+
+        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+        if let Some(offset) = query.offset {
+            let offset = offset as usize;
+            if offset < results.len() {
+                results = results.split_off(offset);
+            } else {
+                results.clear();
+            }
+        }
+        if let Some(limit) = query.limit {
+            results.truncate(limit as usize);
+        }
+
+        Ok(results)
     }
 
     async fn health_check(&self) -> Result<()> {

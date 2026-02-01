@@ -429,6 +429,121 @@ impl MetadataRepository for PostgresMetadataRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    async fn store_report(&self, report: &llmtrace_core::ComplianceReportRecord) -> Result<()> {
+        let content_json = report
+            .content
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| LLMTraceError::Storage(format!("serialize report content: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO compliance_reports
+             (id, tenant_id, report_type, status, period_start, period_end, created_at, completed_at, content, error)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             ON CONFLICT(id) DO UPDATE SET
+                status = EXCLUDED.status,
+                completed_at = EXCLUDED.completed_at,
+                content = EXCLUDED.content,
+                error = EXCLUDED.error",
+        )
+        .bind(report.id)
+        .bind(report.tenant_id.0)
+        .bind(&report.report_type)
+        .bind(&report.status)
+        .bind(report.period_start)
+        .bind(report.period_end)
+        .bind(report.created_at)
+        .bind(report.completed_at)
+        .bind(content_json.as_deref())
+        .bind(report.error.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to store compliance report: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn get_report(
+        &self,
+        report_id: Uuid,
+    ) -> Result<Option<llmtrace_core::ComplianceReportRecord>> {
+        use sqlx::Row;
+        let row = sqlx::query("SELECT * FROM compliance_reports WHERE id = $1")
+            .bind(report_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get report: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let content_str: Option<String> = row.get("content");
+        let content = content_str
+            .map(|s| serde_json::from_str(&s))
+            .transpose()
+            .map_err(|e| LLMTraceError::Storage(format!("Invalid report content JSON: {e}")))?;
+
+        Ok(Some(llmtrace_core::ComplianceReportRecord {
+            id: row.get("id"),
+            tenant_id: llmtrace_core::TenantId(row.get("tenant_id")),
+            report_type: row.get("report_type"),
+            status: row.get("status"),
+            period_start: row.get("period_start"),
+            period_end: row.get("period_end"),
+            created_at: row.get("created_at"),
+            completed_at: row.get("completed_at"),
+            content,
+            error: row.get("error"),
+        }))
+    }
+
+    async fn list_reports(
+        &self,
+        query: &llmtrace_core::ReportQuery,
+    ) -> Result<Vec<llmtrace_core::ComplianceReportRecord>> {
+        use sqlx::Row;
+        let limit = query.limit.unwrap_or(50) as i64;
+        let offset = query.offset.unwrap_or(0) as i64;
+
+        let rows = sqlx::query(
+            "SELECT * FROM compliance_reports WHERE tenant_id = $1
+             ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        )
+        .bind(query.tenant_id.0)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to list reports: {e}")))?;
+
+        rows.iter()
+            .map(|row| {
+                let content_str: Option<String> = row.get("content");
+                let content = content_str
+                    .map(|s| serde_json::from_str(&s))
+                    .transpose()
+                    .map_err(|e| {
+                        LLMTraceError::Storage(format!("Invalid report content JSON: {e}"))
+                    })?;
+
+                Ok(llmtrace_core::ComplianceReportRecord {
+                    id: row.get("id"),
+                    tenant_id: llmtrace_core::TenantId(row.get("tenant_id")),
+                    report_type: row.get("report_type"),
+                    status: row.get("status"),
+                    period_start: row.get("period_start"),
+                    period_end: row.get("period_end"),
+                    created_at: row.get("created_at"),
+                    completed_at: row.get("completed_at"),
+                    content,
+                    error: row.get("error"),
+                })
+            })
+            .collect()
+    }
+
     async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)

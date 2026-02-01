@@ -126,6 +126,11 @@ rate_limiting:
   requests_per_second: 100
   burst_size: 200
   window_seconds: 60
+  # Per-tenant overrides — keyed by tenant UUID
+  tenant_overrides:
+    # "tenant-uuid-here":
+    #   requests_per_second: 500
+    #   burst_size: 1000
 
 # ---------------------------------------------------------------------------
 # Circuit breaker — degrades to pure pass-through on repeated failures

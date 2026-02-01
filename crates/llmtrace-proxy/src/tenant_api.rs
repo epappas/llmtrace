@@ -383,6 +383,7 @@ mod tests {
             cost_tracker: None,
             anomaly_detector: None,
             report_store: crate::compliance::new_report_store(),
+            rate_limiter: None,
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),

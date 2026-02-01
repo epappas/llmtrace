@@ -726,6 +726,68 @@ pub struct AuditEvent {
     pub timestamp: DateTime<Utc>,
 }
 
+/// A stored compliance report record for persistence.
+///
+/// Contains all data needed to persist and retrieve a compliance report
+/// from the metadata repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceReportRecord {
+    /// Unique report identifier.
+    pub id: Uuid,
+    /// Tenant that requested the report.
+    pub tenant_id: TenantId,
+    /// Type of compliance report (e.g. "soc2", "gdpr", "hipaa").
+    pub report_type: String,
+    /// Current status: "pending", "completed", or "failed".
+    pub status: String,
+    /// Start of the reporting period.
+    pub period_start: DateTime<Utc>,
+    /// End of the reporting period.
+    pub period_end: DateTime<Utc>,
+    /// When the report was requested.
+    pub created_at: DateTime<Utc>,
+    /// When the report generation completed (if finished).
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Report content as JSON (populated when status is "completed").
+    pub content: Option<serde_json::Value>,
+    /// Error message (populated when status is "failed").
+    pub error: Option<String>,
+}
+
+/// Query parameters for listing compliance reports.
+#[derive(Debug, Clone)]
+pub struct ReportQuery {
+    /// Tenant to query reports for.
+    pub tenant_id: TenantId,
+    /// Maximum number of results.
+    pub limit: Option<u32>,
+    /// Number of results to skip (for pagination).
+    pub offset: Option<u32>,
+}
+
+impl ReportQuery {
+    /// Create a new report query for a tenant.
+    pub fn new(tenant_id: TenantId) -> Self {
+        Self {
+            tenant_id,
+            limit: None,
+            offset: None,
+        }
+    }
+
+    /// Set the result limit.
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Set the offset for pagination.
+    pub fn with_offset(mut self, offset: u32) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+}
+
 /// Query parameters for filtering audit events.
 #[derive(Debug, Clone)]
 pub struct AuditQuery {
@@ -950,17 +1012,29 @@ impl Default for StorageConfig {
     }
 }
 
+/// Per-tenant rate limit override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenantRateLimitOverride {
+    /// Requests per second for this tenant.
+    pub requests_per_second: u32,
+    /// Burst size for this tenant.
+    pub burst_size: u32,
+}
+
 /// Rate limiting configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
     /// Enable rate limiting.
     pub enabled: bool,
-    /// Requests per second limit.
+    /// Default requests per second limit.
     pub requests_per_second: u32,
-    /// Burst size.
+    /// Default burst size.
     pub burst_size: u32,
     /// Rate limiting window in seconds.
     pub window_seconds: u32,
+    /// Per-tenant overrides keyed by tenant UUID string.
+    #[serde(default)]
+    pub tenant_overrides: HashMap<String, TenantRateLimitOverride>,
 }
 
 impl Default for RateLimitConfig {
@@ -970,6 +1044,7 @@ impl Default for RateLimitConfig {
             requests_per_second: 100,
             burst_size: 200,
             window_seconds: 60,
+            tenant_overrides: HashMap::new(),
         }
     }
 }
@@ -1901,6 +1976,17 @@ pub trait MetadataRepository: Send + Sync {
 
     /// Revoke an API key by setting its `revoked_at` timestamp.
     async fn revoke_api_key(&self, key_id: Uuid) -> Result<bool>;
+
+    // -- Compliance report persistence ---------------------------------------
+
+    /// Store a compliance report (insert or update).
+    async fn store_report(&self, report: &ComplianceReportRecord) -> Result<()>;
+
+    /// Get a compliance report by ID.
+    async fn get_report(&self, report_id: Uuid) -> Result<Option<ComplianceReportRecord>>;
+
+    /// List compliance reports for a tenant with pagination.
+    async fn list_reports(&self, query: &ReportQuery) -> Result<Vec<ComplianceReportRecord>>;
 
     /// Health check for the metadata repository.
     async fn health_check(&self) -> Result<()>;

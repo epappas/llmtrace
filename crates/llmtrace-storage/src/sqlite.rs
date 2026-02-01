@@ -169,6 +169,35 @@ fn span_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TraceSpan> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Row ↔ ComplianceReportRecord conversion
+// ---------------------------------------------------------------------------
+
+/// Reconstruct a [`ComplianceReportRecord`] from a SQLite row.
+fn report_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<llmtrace_core::ComplianceReportRecord> {
+    let content: Option<serde_json::Value> = row
+        .get::<Option<String>, _>("content")
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .map_err(|e| LLMTraceError::Storage(format!("Invalid report content JSON: {e}")))?;
+
+    Ok(llmtrace_core::ComplianceReportRecord {
+        id: parse_uuid(&row.get::<String, _>("id"))?,
+        tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
+        report_type: row.get("report_type"),
+        status: row.get("status"),
+        period_start: parse_datetime(&row.get::<String, _>("period_start"))?,
+        period_end: parse_datetime(&row.get::<String, _>("period_end"))?,
+        created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+        completed_at: row
+            .get::<Option<String>, _>("completed_at")
+            .map(|s| parse_datetime(&s))
+            .transpose()?,
+        content,
+        error: row.get("error"),
+    })
+}
+
 // ===========================================================================
 // SqliteTraceRepository
 // ===========================================================================
@@ -1013,6 +1042,78 @@ impl MetadataRepository for SqliteMetadataRepository {
                 .map_err(|e| LLMTraceError::Storage(format!("Failed to revoke API key: {e}")))?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn store_report(&self, report: &llmtrace_core::ComplianceReportRecord) -> Result<()> {
+        let content_json = report
+            .content
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| LLMTraceError::Storage(format!("serialize report content: {e}")))?;
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO compliance_reports
+             (id, tenant_id, report_type, status, period_start, period_end, created_at, completed_at, content, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .bind(report.id.to_string())
+        .bind(report.tenant_id.0.to_string())
+        .bind(&report.report_type)
+        .bind(&report.status)
+        .bind(report.period_start.to_rfc3339())
+        .bind(report.period_end.to_rfc3339())
+        .bind(report.created_at.to_rfc3339())
+        .bind(report.completed_at.map(|t| t.to_rfc3339()))
+        .bind(content_json.as_deref())
+        .bind(report.error.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to store compliance report: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn get_report(
+        &self,
+        report_id: Uuid,
+    ) -> Result<Option<llmtrace_core::ComplianceReportRecord>> {
+        let row = sqlx::query("SELECT * FROM compliance_reports WHERE id = ?1")
+            .bind(report_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get report: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(report_from_row(&row)?))
+    }
+
+    async fn list_reports(
+        &self,
+        query: &llmtrace_core::ReportQuery,
+    ) -> Result<Vec<llmtrace_core::ComplianceReportRecord>> {
+        let mut qb =
+            QueryBuilder::<Sqlite>::new("SELECT * FROM compliance_reports WHERE tenant_id = ");
+        qb.push_bind(query.tenant_id.0.to_string());
+        qb.push(" ORDER BY created_at DESC");
+
+        if let Some(limit) = query.limit {
+            qb.push(" LIMIT ");
+            qb.push_bind(limit as i64);
+        }
+        if let Some(offset) = query.offset {
+            qb.push(" OFFSET ");
+            qb.push_bind(offset as i64);
+        }
+
+        let rows = qb.build().fetch_all(&self.pool).await.map_err(|e| {
+            LLMTraceError::Storage(format!("Failed to list compliance reports: {e}"))
+        })?;
+
+        rows.iter().map(report_from_row).collect()
     }
 
     async fn health_check(&self) -> Result<()> {

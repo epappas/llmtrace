@@ -4,7 +4,7 @@
 //! configurable time period and produces structured JSON reports.
 //! Reports are stored in-memory and retrievable by ID.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Extension;
@@ -174,12 +174,24 @@ pub struct ComplianceReport {
 }
 
 /// In-memory store for generated reports, keyed by report ID.
+///
+/// Kept for backward compatibility with tests that construct `AppState`
+/// directly; the primary persistence layer is now [`MetadataRepository`].
 pub type ReportStore = Arc<RwLock<HashMap<Uuid, ComplianceReport>>>;
 
 /// Create a new empty report store.
 #[must_use]
 pub fn new_report_store() -> ReportStore {
     Arc::new(RwLock::new(HashMap::new()))
+}
+
+/// Query parameters for `GET /api/v1/reports`.
+#[derive(Debug, Deserialize)]
+pub struct ListReportsParams {
+    /// Maximum number of results (default 50, max 1000).
+    pub limit: Option<u32>,
+    /// Number of results to skip (default 0).
+    pub offset: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -284,10 +296,29 @@ pub async fn generate_report(
         error: None,
     };
 
-    // Insert the pending report
+    // Insert the pending report into in-memory store (legacy)
     {
         let mut store = state.report_store.write().await;
         store.insert(report_id, report);
+    }
+
+    // Also persist the pending report to MetadataRepository
+    {
+        let record = llmtrace_core::ComplianceReportRecord {
+            id: report_id,
+            tenant_id,
+            report_type: body.report_type.to_string(),
+            status: "pending".to_string(),
+            period_start: body.period_start,
+            period_end: body.period_end,
+            created_at: Utc::now(),
+            completed_at: None,
+            content: None,
+            error: None,
+        };
+        if let Err(e) = state.storage.metadata.store_report(&record).await {
+            tracing::warn!(%report_id, "Failed to persist pending report to storage: {e}");
+        }
     }
 
     // Spawn async generation
@@ -309,20 +340,57 @@ pub async fn generate_report(
         )
         .await;
 
-        let mut store = store.write().await;
-        if let Some(r) = store.get_mut(&report_id) {
-            match result {
-                Ok(content) => {
-                    r.status = ReportStatus::Completed;
-                    r.completed_at = Some(Utc::now());
-                    r.content = Some(content);
-                }
-                Err(msg) => {
-                    r.status = ReportStatus::Failed;
-                    r.completed_at = Some(Utc::now());
-                    r.error = Some(msg);
+        // Update in-memory store (legacy)
+        {
+            let mut store = store.write().await;
+            if let Some(r) = store.get_mut(&report_id) {
+                match &result {
+                    Ok(content) => {
+                        r.status = ReportStatus::Completed;
+                        r.completed_at = Some(Utc::now());
+                        r.content = Some(content.clone());
+                    }
+                    Err(msg) => {
+                        r.status = ReportStatus::Failed;
+                        r.completed_at = Some(Utc::now());
+                        r.error = Some(msg.clone());
+                    }
                 }
             }
+        }
+
+        // Persist completed/failed report to MetadataRepository
+        let record = match result {
+            Ok(content) => {
+                let content_json = serde_json::to_value(&content).ok();
+                llmtrace_core::ComplianceReportRecord {
+                    id: report_id,
+                    tenant_id,
+                    report_type: report_type.to_string(),
+                    status: "completed".to_string(),
+                    period_start,
+                    period_end,
+                    created_at: Utc::now(),
+                    completed_at: Some(Utc::now()),
+                    content: content_json,
+                    error: None,
+                }
+            }
+            Err(msg) => llmtrace_core::ComplianceReportRecord {
+                id: report_id,
+                tenant_id,
+                report_type: report_type.to_string(),
+                status: "failed".to_string(),
+                period_start,
+                period_end,
+                created_at: Utc::now(),
+                completed_at: Some(Utc::now()),
+                content: None,
+                error: Some(msg),
+            },
+        };
+        if let Err(e) = metadata.store_report(&record).await {
+            tracing::warn!(%report_id, "Failed to persist completed report to storage: {e}");
         }
     });
 
@@ -338,7 +406,8 @@ pub async fn generate_report(
 
 /// `GET /api/v1/reports/:id` — retrieve a compliance report by ID.
 ///
-/// Returns the full report object including content when completed.
+/// First checks the in-memory store (for recently-generated reports still
+/// in-flight), then falls back to the persistent MetadataRepository.
 pub async fn get_report(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -348,16 +417,66 @@ pub async fn get_report(
         return err;
     }
 
-    let store = state.report_store.read().await;
-    match store.get(&report_id) {
-        Some(report) => {
-            // Enforce tenant isolation
+    // Check in-memory store first (covers in-flight / recently completed)
+    {
+        let store = state.report_store.read().await;
+        if let Some(report) = store.get(&report_id) {
             if report.tenant_id != auth.tenant_id {
                 return api_error(StatusCode::NOT_FOUND, "Report not found");
             }
-            Json(report.clone()).into_response()
+            return Json(report.clone()).into_response();
         }
-        None => api_error(StatusCode::NOT_FOUND, "Report not found"),
+    }
+
+    // Fall back to persistent storage
+    match state.storage.metadata.get_report(report_id).await {
+        Ok(Some(record)) => {
+            if record.tenant_id != auth.tenant_id {
+                return api_error(StatusCode::NOT_FOUND, "Report not found");
+            }
+            Json(record).into_response()
+        }
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "Report not found"),
+        Err(e) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to retrieve report: {e}"),
+        ),
+    }
+}
+
+/// `GET /api/v1/reports` — list compliance reports with pagination.
+///
+/// Reads from the persistent MetadataRepository for a complete list of
+/// reports that survive proxy restarts.
+pub async fn list_reports(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Query(params): Query<ListReportsParams>,
+) -> Response {
+    if let Some(err) = require_role_viewer(&auth) {
+        return err;
+    }
+
+    let limit = params.limit.unwrap_or(50).min(1000);
+    let offset = params.offset.unwrap_or(0);
+
+    let query = llmtrace_core::ReportQuery::new(auth.tenant_id)
+        .with_limit(limit)
+        .with_offset(offset);
+
+    match state.storage.metadata.list_reports(&query).await {
+        Ok(reports) => {
+            let body = serde_json::json!({
+                "data": reports,
+                "limit": limit,
+                "offset": offset,
+            });
+            Json(body).into_response()
+        }
+        Err(e) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to list reports: {e}"),
+        ),
     }
 }
 
@@ -639,6 +758,7 @@ mod tests {
             cost_tracker: None,
             anomaly_detector: None,
             report_store: new_report_store(),
+            rate_limiter: None,
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),

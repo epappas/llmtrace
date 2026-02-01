@@ -354,6 +354,22 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let metrics = llmtrace_proxy::metrics::Metrics::new();
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // Per-tenant rate limiter
+    let rate_limiter = if config.rate_limiting.enabled {
+        info!(
+            rps = config.rate_limiting.requests_per_second,
+            burst = config.rate_limiting.burst_size,
+            overrides = config.rate_limiting.tenant_overrides.len(),
+            "Per-tenant rate limiting enabled"
+        );
+        Some(llmtrace_proxy::RateLimiter::new(
+            &config.rate_limiting,
+            Arc::clone(&storage.cache),
+        ))
+    } else {
+        None
+    };
+
     Ok(Arc::new(AppState {
         config,
         client,
@@ -366,6 +382,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         cost_tracker,
         anomaly_detector,
         report_store,
+        rate_limiter,
         ml_status,
         shutdown,
         metrics,
@@ -556,6 +573,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/reports/generate",
             post(llmtrace_proxy::compliance::generate_report),
+        )
+        .route(
+            "/api/v1/reports",
+            get(llmtrace_proxy::compliance::list_reports),
         )
         .route(
             "/api/v1/reports/:id",
