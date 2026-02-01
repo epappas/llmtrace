@@ -1,0 +1,79 @@
+# ============================================================================
+# LLMTrace — Local Development Stack
+# ============================================================================
+#
+# Quick start:
+#   1. cp .env.example .env        # adjust if needed
+#   2. docker compose up -d        # start infra services
+#   3. docker compose logs -f      # watch for healthy status
+#   4. cargo run --bin llmtrace-proxy -- --config config.yaml
+#
+# Run integration tests against these services:
+#   source .env && cargo test --workspace -- --ignored
+#
+# Tear down:
+#   docker compose down            # stop services (data persists in volumes)
+#   docker compose down -v         # stop + delete all data
+# ============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # ClickHouse — Trace/span analytical storage (production TraceRepository)
+  # --------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports:
+      - "${CLICKHOUSE_PORT:-8123}:8123"     # HTTP interface
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"  # Native TCP
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-llmtrace}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # PostgreSQL — Metadata storage (tenants, configs, audit trail)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llmtrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llmtrace}
+      POSTGRES_DB: ${POSTGRES_DB:-llmtrace}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmtrace}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # --------------------------------------------------------------------------
+  # Redis — Cache layer (hot queries, cost cap tracking, sessions)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+  postgres_data:
+  redis_data:

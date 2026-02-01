@@ -1,57 +1,47 @@
-# Rust
-/target/
-**/*.rs.bk
-*.pdb
-
-# Cargo
-Cargo.lock
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Environment files
-.env
-.env.local
-.env.development
-.env.production
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Log files
-*.log
-
-# Python bindings
-llmtrace-python/target/
-*.so
-*.pyd
-*.egg-info/
-__pycache__/
-*.pyc
-.venv/
-.pytest_cache/
 
 # Build artifacts
-/dist/
-/build/
-
-# Local configuration
-config.local.yaml
-config.dev.yaml
-
-# Test artifacts
-/test-results/
-/coverage/
-
+# Cargo
+# Database files
 # Documentation build
+# Environment files
+# IDE files
+# Local configuration
+# Log files
+# OS files
+# Python bindings
+# Rust
+# Test artifacts
+**/*.rs.bk
+*.db
+*.egg-info/
+*.log
+*.pdb
+*.pyc
+*.pyd
+*.so
+*.sqlite
+*.sqlite3
+*.swo
+*.swp
+.DS_Store
+.env
+.env.development
+.env.local
+.env.production
+.idea/
+.pytest_cache/
+.venv/
+.vscode/
+/build/
+/coverage/
+/dist/
+/docs/_build/.env
 /docs/book/
-/docs/_build/
+/target/
+/test-results/
+Cargo.lock
+Thumbs.db
+__pycache__/
+config.dev.yaml
+config.local.yaml
+llmtrace-python/target/
