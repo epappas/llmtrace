@@ -1,5 +1,8 @@
 # LLMTrace
 
+[![CI](https://github.com/epappas/llmtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/epappas/llmtrace/actions/workflows/security.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/security.yml)
+
 **Security-aware observability for LLM applications.**
 
 LLMTrace is a transparent proxy that sits between your application and any OpenAI-compatible LLM API. It captures every interaction as structured traces, runs real-time security analysis (prompt injection detection, PII scanning), and stores everything in SQLite for inspection — with zero code changes to your application.
