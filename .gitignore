@@ -39,7 +39,6 @@
 /docs/book/
 /target/
 /test-results/
-Cargo.lock
 Thumbs.db
 __pycache__/
 config.dev.yaml

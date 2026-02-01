@@ -95,7 +95,7 @@ jobs:
             ${{ runner.os }}-cargo-integration-
 
       - name: Start infrastructure services
-        run: docker compose up -d --wait clickhouse postgres redis
+        run: docker compose up -d --wait --wait-timeout 120 clickhouse postgres redis
         env:
           CLICKHOUSE_PORT: "8123"
           CLICKHOUSE_NATIVE_PORT: "9000"
@@ -107,8 +107,19 @@ jobs:
 
       - name: Verify service health
         run: |
-          echo "Checking ClickHouse..."
-          docker compose exec -T clickhouse wget --spider -q http://localhost:8123/ping
+          for i in $(seq 1 30); do
+            echo "Attempt $i/30: Checking ClickHouse..."
+            if docker compose exec -T clickhouse wget --spider -q http://localhost:8123/ping 2>/dev/null; then
+              echo "ClickHouse is ready."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ClickHouse failed to become healthy after 30 attempts."
+              docker compose logs clickhouse
+              exit 1
+            fi
+            sleep 3
+          done
           echo "Checking PostgreSQL..."
           docker compose exec -T postgres pg_isready -U llmtrace
           echo "Checking Redis..."
