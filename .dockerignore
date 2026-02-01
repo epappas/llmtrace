@@ -1,0 +1,10 @@
+target/
+.git/
+.env
+*.md
+!README.md
+docs/
+tests/
+examples/
+.github/
+*.jsonl
