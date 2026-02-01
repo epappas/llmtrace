@@ -95,7 +95,7 @@ jobs:
             ${{ runner.os }}-cargo-integration-
 
       - name: Start infrastructure services
-        run: docker compose up -d --wait --wait-timeout 120 clickhouse postgres redis
+        run: docker compose up -d clickhouse postgres redis
         env:
           CLICKHOUSE_PORT: "8123"
           CLICKHOUSE_NATIVE_PORT: "9000"
@@ -105,26 +105,48 @@ jobs:
           POSTGRES_DB: llmtrace
           REDIS_PORT: "6379"
 
-      - name: Verify service health
+      - name: Wait for services to be ready
         run: |
-          for i in $(seq 1 30); do
-            echo "Attempt $i/30: Checking ClickHouse..."
-            if docker compose exec -T clickhouse wget --spider -q http://localhost:8123/ping 2>/dev/null; then
-              echo "ClickHouse is ready."
+          echo "Waiting for ClickHouse..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8123/ping >/dev/null 2>&1; then
+              echo "ClickHouse ready after ${i}s"
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "ClickHouse failed to become healthy after 30 attempts."
+            if [ "$i" -eq 60 ]; then
+              echo "ClickHouse failed after 60 attempts"
               docker compose logs clickhouse
               exit 1
             fi
-            sleep 3
+            sleep 2
           done
-          echo "Checking PostgreSQL..."
-          docker compose exec -T postgres pg_isready -U llmtrace
-          echo "Checking Redis..."
-          docker compose exec -T redis redis-cli ping
-          echo "All services healthy."
+          echo "Waiting for PostgreSQL..."
+          for i in $(seq 1 30); do
+            if docker compose exec -T postgres pg_isready -U llmtrace >/dev/null 2>&1; then
+              echo "PostgreSQL ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "PostgreSQL failed after 30 attempts"
+              docker compose logs postgres
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Waiting for Redis..."
+          for i in $(seq 1 30); do
+            if docker compose exec -T redis redis-cli ping >/dev/null 2>&1; then
+              echo "Redis ready after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Redis failed after 30 attempts"
+              docker compose logs redis
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "All services ready."
 
       - name: Run integration tests
         env:
