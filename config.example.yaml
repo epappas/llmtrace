@@ -271,6 +271,31 @@ streaming_analysis:
   # Number of completion tokens between each incremental analysis check.
   # Lower values detect threats faster but add marginal CPU overhead per chunk.
   token_interval: 50
+  # Enable output-side analysis during SSE streaming (PII, secrets, toxicity
+  # on response content in real-time). Requires output_safety.enabled = true.
+  output_enabled: false
+  # If a critical output safety finding is detected mid-stream, inject a
+  # warning into the SSE stream and terminate. Use with caution — this will
+  # cut off the LLM response mid-generation.
+  early_stop_on_critical: false
+
+# ---------------------------------------------------------------------------
+# Output safety — toxicity detection and response content analysis (R6)
+# ---------------------------------------------------------------------------
+
+output_safety:
+  # Enable output safety analysis on LLM responses. When enabled, the proxy
+  # analyses response content for toxicity, PII leakage, and secret exposure.
+  enabled: false
+  # Enable toxicity detection on response content. Uses a BERT-based classifier
+  # (unitary/toxic-bert) or falls back to keyword-based detection.
+  toxicity_enabled: false
+  # Confidence threshold for toxicity detection (0.0–1.0). Categories scoring
+  # above this threshold are reported as findings.
+  toxicity_threshold: 0.7
+  # Block (replace) the entire response if critical toxicity is detected
+  # (severe_toxic, threat, or score >= 0.9). Use with caution.
+  block_on_critical: false
 
 # ---------------------------------------------------------------------------
 # ML-based security analysis

@@ -9,8 +9,13 @@
 //! This module is only available when the `ml` feature is enabled.
 
 use async_trait::async_trait;
-use llmtrace_core::{AnalysisContext, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity};
+use candle_core::Device;
+use llmtrace_core::{
+    AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
+};
 
+use crate::feature_extraction::extract_heuristic_features;
+use crate::fusion_classifier::FusionClassifier;
 use crate::ml_detector::MLSecurityAnalyzer;
 use crate::ner_detector::{NerConfig, NerDetector};
 use crate::RegexSecurityAnalyzer;
@@ -46,6 +51,12 @@ pub struct EnsembleSecurityAnalyzer {
     regex: RegexSecurityAnalyzer,
     ml: MLSecurityAnalyzer,
     ner: Option<NerDetector>,
+    /// Feature-level fusion classifier (ADR-013).
+    /// When `Some`, the ensemble uses feature-level fusion instead of
+    /// score-level combination.
+    fusion_classifier: Option<FusionClassifier>,
+    /// ML confidence threshold for the fusion path.
+    fusion_threshold: f64,
 }
 
 impl EnsembleSecurityAnalyzer {
@@ -65,6 +76,8 @@ impl EnsembleSecurityAnalyzer {
             regex,
             ml,
             ner: None,
+            fusion_classifier: None,
+            fusion_threshold: ml_config.threshold,
         })
     }
 
@@ -86,7 +99,90 @@ impl EnsembleSecurityAnalyzer {
             Some(cfg) => NerDetector::new(cfg).await?,
             None => None,
         };
-        Ok(Self { regex, ml, ner })
+        Ok(Self {
+            regex,
+            ml,
+            ner,
+            fusion_classifier: None,
+            fusion_threshold: ml_config.threshold,
+        })
+    }
+
+    /// Create a new ensemble analyzer with feature-level fusion (ADR-013).
+    ///
+    /// When `fusion_enabled` is `true` and the ML model loads successfully,
+    /// the ensemble uses a fusion classifier that concatenates DeBERTa
+    /// embeddings with heuristic features instead of combining scores
+    /// after independent classification.
+    ///
+    /// If `fusion_model_path` is `Some`, loads trained fusion weights from
+    /// disk. Otherwise initialises with random weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the regex analyzer fails to initialise.
+    pub async fn with_fusion(
+        ml_config: &super::MLSecurityConfig,
+        ner_config: Option<&NerConfig>,
+        fusion_enabled: bool,
+        fusion_model_path: Option<&str>,
+    ) -> Result<Self> {
+        let regex = RegexSecurityAnalyzer::new()?;
+        let ml = MLSecurityAnalyzer::with_fusion(ml_config, fusion_enabled).await?;
+        let ner = match ner_config {
+            Some(cfg) => NerDetector::new(cfg).await?,
+            None => None,
+        };
+
+        let fusion_classifier = if fusion_enabled && ml.is_fusion_enabled() {
+            let device = Device::Cpu;
+            let classifier = match fusion_model_path {
+                Some(path) => match FusionClassifier::load(path, &device) {
+                    Ok(c) => {
+                        tracing::info!(path = path, "Loaded trained fusion classifier weights");
+                        c
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to load fusion weights, using random initialisation"
+                        );
+                        FusionClassifier::new_random(&device).map_err(|e| {
+                            LLMTraceError::Security(format!(
+                                "Failed to create random fusion classifier: {e}"
+                            ))
+                        })?
+                    }
+                },
+                None => {
+                    tracing::info!(
+                        "No fusion model path specified, using random weight initialisation"
+                    );
+                    FusionClassifier::new_random(&device).map_err(|e| {
+                        LLMTraceError::Security(format!(
+                            "Failed to create random fusion classifier: {e}"
+                        ))
+                    })?
+                }
+            };
+            Some(classifier)
+        } else {
+            if fusion_enabled {
+                tracing::warn!(
+                    "Fusion was requested but ML embedding model is not available; \
+                     falling back to score-level ensemble"
+                );
+            }
+            None
+        };
+
+        Ok(Self {
+            regex,
+            ml,
+            ner,
+            fusion_classifier,
+            fusion_threshold: ml_config.threshold,
+        })
     }
 
     /// Create an ensemble using only the regex analyzer (no ML).
@@ -99,6 +195,8 @@ impl EnsembleSecurityAnalyzer {
             regex: RegexSecurityAnalyzer::default(),
             ml: MLSecurityAnalyzer::new_fallback_only(0.8),
             ner: None,
+            fusion_classifier: None,
+            fusion_threshold: 0.8,
         }
     }
 
@@ -113,11 +211,112 @@ impl EnsembleSecurityAnalyzer {
     pub fn is_ner_active(&self) -> bool {
         self.ner.is_some()
     }
+
+    /// Returns `true` if feature-level fusion is active (ADR-013).
+    #[must_use]
+    pub fn is_fusion_active(&self) -> bool {
+        self.fusion_classifier.is_some()
+    }
+
+    /// Feature-level fusion analysis path (ADR-013).
+    ///
+    /// 1. Extract DeBERTa CLS embedding from the ML model.
+    /// 2. Build heuristic feature vector from regex findings + raw text.
+    /// 3. Concatenate and feed through the fusion classifier.
+    /// 4. Return fused injection finding (if above threshold) plus non-injection
+    ///    regex findings (PII, leakage, etc.).
+    fn analyze_with_fusion(
+        &self,
+        text: &str,
+        regex_findings: &[SecurityFinding],
+        location: &str,
+    ) -> Result<Vec<SecurityFinding>> {
+        let fusion = self
+            .fusion_classifier
+            .as_ref()
+            .expect("analyze_with_fusion called without fusion classifier");
+
+        // Extract embedding from ML model
+        let loaded = self.ml.loaded_model().ok_or_else(|| {
+            LLMTraceError::Security("ML model not loaded for fusion embedding".to_string())
+        })?;
+
+        let embedding = loaded.extract_embedding(text)?.ok_or_else(|| {
+            LLMTraceError::Security("Embedding model not available for fusion".to_string())
+        })?;
+
+        // Build heuristic feature vector
+        let heuristic_features = extract_heuristic_features(regex_findings, text);
+
+        // Run fusion classifier
+        let (injection_score, _safe_score) = fusion.predict(&embedding, &heuristic_features)?;
+
+        // Collect non-injection findings from regex (PII, leakage, etc.)
+        let mut findings: Vec<SecurityFinding> = regex_findings
+            .iter()
+            .filter(|f| !is_injection_finding(f))
+            .cloned()
+            .collect();
+
+        // Add fusion injection finding if above threshold
+        if injection_score >= self.fusion_threshold {
+            let severity = if injection_score >= 0.95 {
+                SecuritySeverity::Critical
+            } else if injection_score >= 0.85 {
+                SecuritySeverity::High
+            } else {
+                SecuritySeverity::Medium
+            };
+
+            let regex_injection_count = regex_findings
+                .iter()
+                .filter(|f| is_injection_finding(f))
+                .count();
+
+            findings.push(
+                SecurityFinding::new(
+                    severity,
+                    "fusion_prompt_injection".to_string(),
+                    format!(
+                        "Fusion classifier detected potential prompt injection \
+                         (score: {injection_score:.3}, regex patterns: {regex_injection_count})"
+                    ),
+                    injection_score,
+                )
+                .with_metadata(
+                    "detection_method".to_string(),
+                    "feature_level_fusion".to_string(),
+                )
+                .with_metadata("fusion_score".to_string(), format!("{injection_score:.4}"))
+                .with_metadata(
+                    "regex_injection_count".to_string(),
+                    regex_injection_count.to_string(),
+                )
+                .with_metadata(
+                    "heuristic_features".to_string(),
+                    format!("{heuristic_features:?}"),
+                ),
+            );
+        }
+
+        // Tag locations
+        for finding in &mut findings {
+            if finding.location.is_none() {
+                finding.location = Some(location.to_string());
+            }
+        }
+
+        Ok(findings)
+    }
 }
 
 #[async_trait]
 impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
     /// Analyze a request prompt with regex, ML, and optionally NER analyzers.
+    ///
+    /// When fusion is active, extracts DeBERTa embeddings and heuristic features,
+    /// feeds them through the fusion classifier, and returns a single fused finding
+    /// alongside any non-injection findings from the regex analyzer.
     async fn analyze_request(
         &self,
         prompt: &str,
@@ -125,7 +324,11 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
     ) -> Result<Vec<SecurityFinding>> {
         let regex_findings = self.regex.analyze_request(prompt, context).await?;
 
-        let mut combined = if self.ml.is_model_loaded() {
+        let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
+            // Feature-level fusion path (ADR-013)
+            self.analyze_with_fusion(prompt, &regex_findings, "request.prompt")?
+        } else if self.ml.is_model_loaded() {
+            // Score-level combination path (existing)
             let ml_findings = self.ml.analyze_request(prompt, context).await?;
             combine_findings(regex_findings, ml_findings)
         } else {
@@ -154,7 +357,11 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
     ) -> Result<Vec<SecurityFinding>> {
         let regex_findings = self.regex.analyze_response(response, context).await?;
 
-        let mut combined = if self.ml.is_model_loaded() {
+        let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
+            // Feature-level fusion path (ADR-013)
+            self.analyze_with_fusion(response, &regex_findings, "response.content")?
+        } else if self.ml.is_model_loaded() {
+            // Score-level combination path (existing)
             let ml_findings = self.ml.analyze_response(response, context).await?;
             combine_findings(regex_findings, ml_findings)
         } else {
@@ -187,6 +394,9 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         let mut types = self.regex.supported_finding_types();
         if self.ml.is_model_loaded() {
             types.push("ml_prompt_injection".to_string());
+        }
+        if self.fusion_classifier.is_some() {
+            types.push("fusion_prompt_injection".to_string());
         }
         if self.ner.is_some() {
             // NER produces pii_detected findings (same type as regex PII)

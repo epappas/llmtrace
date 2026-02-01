@@ -915,6 +915,9 @@ pub struct ProxyConfig {
     /// PII detection and redaction configuration.
     #[serde(default)]
     pub pii: PiiConfig,
+    /// Output safety configuration (toxicity detection, output analysis).
+    #[serde(default)]
+    pub output_safety: OutputSafetyConfig,
     /// Graceful shutdown configuration.
     #[serde(default)]
     pub shutdown: ShutdownConfig,
@@ -952,6 +955,7 @@ impl Default for ProxyConfig {
             anomaly_detection: AnomalyDetectionConfig::default(),
             streaming_analysis: StreamingAnalysisConfig::default(),
             pii: PiiConfig::default(),
+            output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
         }
     }
@@ -1365,6 +1369,12 @@ pub struct StreamingAnalysisConfig {
     /// Number of tokens between each incremental analysis check.
     #[serde(default = "default_streaming_token_interval")]
     pub token_interval: u32,
+    /// Enable output-side analysis during SSE streaming (PII, secrets, toxicity on response content).
+    #[serde(default)]
+    pub output_enabled: bool,
+    /// If a critical finding is detected mid-stream, inject a warning and stop.
+    #[serde(default)]
+    pub early_stop_on_critical: bool,
 }
 
 fn default_streaming_token_interval() -> u32 {
@@ -1376,6 +1386,58 @@ impl Default for StreamingAnalysisConfig {
         Self {
             enabled: false,
             token_interval: default_streaming_token_interval(),
+            output_enabled: false,
+            early_stop_on_critical: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Output safety configuration
+// ---------------------------------------------------------------------------
+
+/// Output safety configuration for response content analysis.
+///
+/// When enabled, the proxy analyses LLM response content for toxicity,
+/// PII leakage, and secret exposure. This is a post-processing step that
+/// runs after the upstream response is received.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// output_safety:
+///   enabled: true
+///   toxicity_enabled: true
+///   toxicity_threshold: 0.7
+///   block_on_critical: false
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputSafetyConfig {
+    /// Enable output safety analysis on LLM responses.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Enable toxicity detection on response content.
+    #[serde(default)]
+    pub toxicity_enabled: bool,
+    /// Confidence threshold for toxicity detection (0.0–1.0).
+    #[serde(default = "default_toxicity_threshold")]
+    pub toxicity_threshold: f32,
+    /// Block (replace) the response if critical toxicity is detected.
+    #[serde(default)]
+    pub block_on_critical: bool,
+}
+
+fn default_toxicity_threshold() -> f32 {
+    0.7
+}
+
+impl Default for OutputSafetyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            toxicity_enabled: false,
+            toxicity_threshold: default_toxicity_threshold(),
+            block_on_critical: false,
         }
     }
 }
@@ -1503,6 +1565,19 @@ pub struct SecurityAnalysisConfig {
     /// HuggingFace model ID for NER-based PII detection.
     #[serde(default = "default_ner_model")]
     pub ner_model: String,
+    /// Enable feature-level fusion classifier (ADR-013).
+    ///
+    /// When `true`, the ensemble concatenates DeBERTa embeddings with heuristic
+    /// feature vectors and feeds them through a learned fusion classifier instead
+    /// of combining scores after independent classification.
+    #[serde(default)]
+    pub fusion_enabled: bool,
+    /// Optional file path for trained fusion classifier weights.
+    ///
+    /// When `None`, the fusion classifier is initialised with random weights
+    /// (suitable for architecture validation; not for production inference).
+    #[serde(default)]
+    pub fusion_model_path: Option<String>,
 }
 
 fn default_ml_model() -> String {
@@ -1540,6 +1615,8 @@ impl Default for SecurityAnalysisConfig {
             ml_download_timeout_seconds: default_ml_download_timeout_seconds(),
             ner_enabled: false,
             ner_model: default_ner_model(),
+            fusion_enabled: false,
+            fusion_model_path: None,
         }
     }
 }
@@ -2525,6 +2602,8 @@ mod tests {
                 ml_download_timeout_seconds: 300,
                 ner_enabled: false,
                 ner_model: default_ner_model(),
+                fusion_enabled: false,
+                fusion_model_path: None,
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -2534,6 +2613,7 @@ mod tests {
             pii: PiiConfig {
                 action: PiiAction::AlertAndRedact,
             },
+            output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
         };
 
@@ -2977,6 +3057,8 @@ mod tests {
         assert_eq!(config.security_analysis.ml_download_timeout_seconds, 300);
         assert!(!config.security_analysis.ner_enabled);
         assert_eq!(config.security_analysis.ner_model, "dslim/bert-base-NER");
+        assert!(!config.security_analysis.fusion_enabled);
+        assert!(config.security_analysis.fusion_model_path.is_none());
     }
 
     #[test]
@@ -2993,6 +3075,8 @@ mod tests {
         assert_eq!(config.ml_download_timeout_seconds, 300);
         assert!(!config.ner_enabled);
         assert_eq!(config.ner_model, "dslim/bert-base-NER");
+        assert!(!config.fusion_enabled);
+        assert!(config.fusion_model_path.is_none());
     }
 
     #[test]
@@ -3006,6 +3090,8 @@ mod tests {
             ml_download_timeout_seconds: 600,
             ner_enabled: true,
             ner_model: "dslim/bert-base-NER".to_string(),
+            fusion_enabled: false,
+            fusion_model_path: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

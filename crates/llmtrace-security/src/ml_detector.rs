@@ -18,7 +18,8 @@ use candle_core::{DType, Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use candle_transformers::models::debertav2::{
-    Config as DebertaConfig, DebertaV2SeqClassificationModel,
+    Config as DebertaConfig, DebertaV2ContextPooler, DebertaV2Model,
+    DebertaV2SeqClassificationModel,
 };
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
@@ -104,6 +105,51 @@ impl ClassificationModel {
     }
 }
 
+/// Model used for extracting the CLS embedding vector (before the classifier head).
+///
+/// This mirrors the base model architecture without the final classification
+/// layer, enabling extraction of the 768-dim (or pooler-hidden-size) embedding.
+pub(crate) enum EmbeddingModel {
+    /// BERT base model — forward returns hidden states, CLS at position 0.
+    Bert(Box<BertModel>),
+    /// DeBERTa v2 base model + context pooler — forward returns encoder output,
+    /// pooler extracts the CLS token with a dense + activation layer.
+    DebertaV2 {
+        model: Box<DebertaV2Model>,
+        pooler: Box<DebertaV2ContextPooler>,
+    },
+}
+
+impl EmbeddingModel {
+    /// Extract the pooled CLS embedding from the input.
+    ///
+    /// Returns a 1-D tensor of shape `[hidden_size]` (typically 768).
+    fn extract_embedding(
+        &self,
+        input_ids: &Tensor,
+        token_type_ids: &Tensor,
+        attention_mask: &Tensor,
+    ) -> candle_core::Result<Tensor> {
+        match self {
+            Self::Bert(model) => {
+                let hidden = model.forward(input_ids, token_type_ids, Some(attention_mask))?;
+                // CLS token is at position 0 → shape [1, hidden_size] → squeeze to [hidden_size]
+                hidden.i((.., 0))?.squeeze(0)
+            }
+            Self::DebertaV2 { model, pooler } => {
+                let encoder_output = model.forward(
+                    input_ids,
+                    Some(token_type_ids.clone()),
+                    Some(attention_mask.clone()),
+                )?;
+                // Pooler takes CLS token (position 0), applies dense + activation
+                let pooled = pooler.forward(&encoder_output)?;
+                pooled.squeeze(0)
+            }
+        }
+    }
+}
+
 /// Successfully loaded ML model with tokenizer and label mapping.
 pub(crate) struct LoadedModel {
     tokenizer: Tokenizer,
@@ -111,9 +157,50 @@ pub(crate) struct LoadedModel {
     device: Device,
     id2label: HashMap<usize, String>,
     injection_label_index: usize,
+    /// Optional embedding model for feature-level fusion (ADR-013).
+    /// Loaded only when `fusion_enabled` is `true`.
+    pub(crate) embedding_model: Option<EmbeddingModel>,
 }
 
 impl LoadedModel {
+    /// Extract the CLS embedding vector from text.
+    ///
+    /// Returns a 1-D tensor of shape `[hidden_size]` (typically 768).
+    /// Returns `None` if the embedding model was not loaded (fusion disabled).
+    pub(crate) fn extract_embedding(&self, text: &str) -> Result<Option<Tensor>> {
+        let emb_model = match &self.embedding_model {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        let encoding = self
+            .tokenizer
+            .encode(text, true)
+            .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
+
+        let ids = encoding.get_ids();
+        let type_ids = encoding.get_type_ids();
+        let mask = encoding.get_attention_mask();
+
+        let input_ids = Tensor::new(ids, &self.device)
+            .and_then(|t| t.unsqueeze(0))
+            .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+        let token_type_ids = Tensor::new(type_ids, &self.device)
+            .and_then(|t| t.unsqueeze(0))
+            .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+        let attention_mask = Tensor::new(mask, &self.device)
+            .and_then(|t| t.unsqueeze(0))
+            .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+        let embedding = emb_model
+            .extract_embedding(&input_ids, &token_type_ids, &attention_mask)
+            .map_err(|e| LLMTraceError::Security(format!("Embedding extraction failed: {e}")))?;
+
+        Ok(Some(embedding))
+    }
+
     /// Classify text and return `(injection_score, predicted_label)`.
     fn classify(&self, text: &str) -> Result<(f64, String)> {
         let encoding = self
@@ -202,6 +289,8 @@ pub struct MLSecurityAnalyzer {
     fallback: RegexSecurityAnalyzer,
     threshold: f64,
     stats_tracker: InferenceStatsTracker,
+    /// Whether feature-level fusion is enabled (ADR-013).
+    fusion_enabled: bool,
 }
 
 impl MLSecurityAnalyzer {
@@ -217,12 +306,22 @@ impl MLSecurityAnalyzer {
     ///
     /// Returns an error only if the regex fallback itself fails to initialize.
     pub async fn new(config: &MLSecurityConfig) -> Result<Self> {
+        Self::with_fusion(config, false).await
+    }
+
+    /// Create a new ML security analyzer with optional fusion embedding support.
+    ///
+    /// When `fusion_enabled` is `true`, the base model is loaded alongside the
+    /// classification model to enable CLS embedding extraction for feature-level
+    /// fusion (ADR-013).
+    pub async fn with_fusion(config: &MLSecurityConfig, fusion_enabled: bool) -> Result<Self> {
         let fallback = RegexSecurityAnalyzer::new()?;
 
-        match Self::load_model(config).await {
+        match Self::load_model(config, fusion_enabled).await {
             Ok(loaded) => {
                 tracing::info!(
                     model_id = %config.model_id,
+                    fusion_enabled = fusion_enabled,
                     "ML security model loaded successfully"
                 );
                 Ok(Self {
@@ -230,6 +329,7 @@ impl MLSecurityAnalyzer {
                     fallback,
                     threshold: config.threshold,
                     stats_tracker: InferenceStatsTracker::default(),
+                    fusion_enabled,
                 })
             }
             Err(e) => {
@@ -243,6 +343,7 @@ impl MLSecurityAnalyzer {
                     fallback,
                     threshold: config.threshold,
                     stats_tracker: InferenceStatsTracker::default(),
+                    fusion_enabled: false,
                 })
             }
         }
@@ -258,6 +359,7 @@ impl MLSecurityAnalyzer {
             fallback: RegexSecurityAnalyzer::default(),
             threshold,
             stats_tracker: InferenceStatsTracker::default(),
+            fusion_enabled: false,
         }
     }
 
@@ -282,10 +384,28 @@ impl MLSecurityAnalyzer {
         self.stats_tracker.stats()
     }
 
+    /// Returns `true` if feature-level fusion embedding extraction is active.
+    #[must_use]
+    pub fn is_fusion_enabled(&self) -> bool {
+        self.fusion_enabled
+            && self
+                .model
+                .as_ref()
+                .is_some_and(|m| m.embedding_model.is_some())
+    }
+
+    /// Access the loaded model for embedding extraction (used by ensemble fusion).
+    pub(crate) fn loaded_model(&self) -> Option<&LoadedModel> {
+        self.model.as_ref()
+    }
+
     // -- Model loading ------------------------------------------------------
 
     /// Download and load a model from HuggingFace Hub.
-    async fn load_model(config: &MLSecurityConfig) -> Result<LoadedModel> {
+    ///
+    /// When `fusion_enabled` is `true`, a separate base model is loaded
+    /// alongside the classification model for embedding extraction.
+    async fn load_model(config: &MLSecurityConfig, fusion_enabled: bool) -> Result<LoadedModel> {
         use hf_hub::api::tokio::{Api, ApiBuilder};
 
         let api = match &config.cache_dir {
@@ -333,7 +453,27 @@ impl MLSecurityAnalyzer {
         };
 
         // Build model based on architecture
-        let (classification_model, id2label_map) = Self::build_model(model_type, &config_json, vb)?;
+        let (classification_model, id2label_map) =
+            Self::build_model(model_type, &config_json, vb.clone())?;
+
+        // Optionally build the embedding model for feature-level fusion
+        let embedding_model = if fusion_enabled {
+            match Self::build_embedding_model(model_type, &config_json, vb) {
+                Ok(emb) => {
+                    tracing::info!("Fusion embedding model loaded successfully");
+                    Some(emb)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to load embedding model for fusion, fusion will be disabled"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Determine injection label index
         let injection_label_index = id2label_map
@@ -353,6 +493,7 @@ impl MLSecurityAnalyzer {
             device,
             id2label: id2label_map,
             injection_label_index,
+            embedding_model,
         })
     }
 
@@ -412,6 +553,52 @@ impl MLSecurityAnalyzer {
             },
             id2label,
         ))
+    }
+
+    /// Build the embedding model (base model without classifier head) for
+    /// feature-level fusion (ADR-013).
+    fn build_embedding_model(
+        model_type: &str,
+        config_json: &serde_json::Value,
+        vb: VarBuilder,
+    ) -> Result<EmbeddingModel> {
+        match model_type {
+            "deberta-v2" => {
+                let config: DebertaConfig =
+                    serde_json::from_value(config_json.clone()).map_err(|e| {
+                        LLMTraceError::Security(format!(
+                            "Invalid DeBERTa config for embedding model: {e}"
+                        ))
+                    })?;
+
+                let model = DebertaV2Model::load(vb.pp("deberta"), &config).map_err(|e| {
+                    LLMTraceError::Security(format!("Failed to load DeBERTa embedding model: {e}"))
+                })?;
+
+                let pooler = DebertaV2ContextPooler::load(vb, &config).map_err(|e| {
+                    LLMTraceError::Security(format!("Failed to load DeBERTa context pooler: {e}"))
+                })?;
+
+                Ok(EmbeddingModel::DebertaV2 {
+                    model: Box::new(model),
+                    pooler: Box::new(pooler),
+                })
+            }
+            _ => {
+                let config: BertConfig =
+                    serde_json::from_value(config_json.clone()).map_err(|e| {
+                        LLMTraceError::Security(format!(
+                            "Invalid BERT config for embedding model: {e}"
+                        ))
+                    })?;
+
+                let model = BertModel::load(vb.pp("bert"), &config).map_err(|e| {
+                    LLMTraceError::Security(format!("Failed to load BERT embedding model: {e}"))
+                })?;
+
+                Ok(EmbeddingModel::Bert(Box::new(model)))
+            }
+        }
     }
 }
 

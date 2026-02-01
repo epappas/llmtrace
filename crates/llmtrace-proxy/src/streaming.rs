@@ -13,7 +13,9 @@
 //! tagged with `"detection": "streaming"` metadata so downstream consumers
 //! can distinguish them from the full post-stream analysis.
 
-use llmtrace_core::{SecurityFinding, StreamingAnalysisConfig};
+use llmtrace_core::{
+    OutputSafetyConfig, SecurityFinding, SecuritySeverity, StreamingAnalysisConfig,
+};
 use llmtrace_security::RegexSecurityAnalyzer;
 use serde::Deserialize;
 
@@ -316,6 +318,196 @@ impl StreamingSecurityMonitor {
 }
 
 // ---------------------------------------------------------------------------
+// Streaming output monitor — response-side real-time analysis (R7)
+// ---------------------------------------------------------------------------
+
+/// Incremental output safety monitor that checks LLM **response** content
+/// during SSE streaming.
+///
+/// Extends the existing [`StreamingSecurityMonitor`] concept to the output
+/// side: accumulates response tokens and periodically runs PII detection,
+/// secret scanning, and (optionally) toxicity detection on the accumulated
+/// text.
+///
+/// # Early Stopping
+///
+/// When `early_stop_on_critical` is enabled and a critical finding is
+/// detected, [`should_early_stop`](StreamingOutputMonitor::should_early_stop)
+/// returns `true`, allowing the proxy to inject a warning into the SSE
+/// stream and terminate.
+pub struct StreamingOutputMonitor {
+    /// Regex analyzer for PII and secret detection.
+    analyzer: RegexSecurityAnalyzer,
+    /// Toxicity detector (keyword fallback when ML is not loaded).
+    #[cfg(feature = "ml")]
+    toxicity_detector: Option<llmtrace_security::ToxicityDetector>,
+    /// Byte offset into the accumulated content that was already checked.
+    last_checked_offset: usize,
+    /// Token count at last analysis.
+    last_analyzed_token_count: u32,
+    /// Token interval between checks.
+    token_interval: u32,
+    /// Whether the monitor is active.
+    enabled: bool,
+    /// Whether to signal early stop on critical findings.
+    early_stop_on_critical: bool,
+    /// Whether early stop has been triggered.
+    early_stop_triggered: bool,
+    /// Toxicity threshold for output checks.
+    #[cfg(feature = "ml")]
+    toxicity_threshold: f32,
+    /// All findings produced so far.
+    findings: Vec<SecurityFinding>,
+}
+
+impl StreamingOutputMonitor {
+    /// Create a new streaming output monitor.
+    ///
+    /// Returns `None` if output streaming analysis is disabled.
+    pub fn new(
+        streaming_config: &StreamingAnalysisConfig,
+        output_config: &OutputSafetyConfig,
+    ) -> Option<Self> {
+        if !streaming_config.output_enabled || !output_config.enabled {
+            return None;
+        }
+
+        let analyzer = RegexSecurityAnalyzer::new().ok()?;
+
+        #[cfg(feature = "ml")]
+        let toxicity_detector = if output_config.toxicity_enabled {
+            Some(llmtrace_security::ToxicityDetector::new_fallback(
+                output_config.toxicity_threshold,
+            ))
+        } else {
+            None
+        };
+
+        Some(Self {
+            analyzer,
+            #[cfg(feature = "ml")]
+            toxicity_detector,
+            last_checked_offset: 0,
+            last_analyzed_token_count: 0,
+            token_interval: streaming_config.token_interval.max(1),
+            enabled: true,
+            early_stop_on_critical: streaming_config.early_stop_on_critical,
+            early_stop_triggered: false,
+            #[cfg(feature = "ml")]
+            toxicity_threshold: output_config.toxicity_threshold,
+            findings: Vec::new(),
+        })
+    }
+
+    /// Check whether an incremental output analysis should run.
+    pub fn should_analyze(&self, current_token_count: u32) -> bool {
+        if !self.enabled || self.early_stop_triggered {
+            return false;
+        }
+        current_token_count >= self.last_analyzed_token_count + self.token_interval
+    }
+
+    /// Run incremental output analysis on the new delta.
+    ///
+    /// Returns any new findings. Also checks for critical findings that
+    /// should trigger early stopping.
+    pub fn analyze_incremental(
+        &mut self,
+        accumulated_content: &str,
+        current_token_count: u32,
+    ) -> Vec<SecurityFinding> {
+        if !self.enabled
+            || self.early_stop_triggered
+            || accumulated_content.len() <= self.last_checked_offset
+        {
+            return Vec::new();
+        }
+
+        let delta = &accumulated_content[self.last_checked_offset..];
+
+        // PII detection on delta
+        let mut new_findings = self.analyzer.detect_pii_patterns(delta);
+
+        // Secret / data leakage detection on delta
+        new_findings.extend(self.analyzer.detect_leakage_patterns(delta));
+
+        // Toxicity detection on delta (if enabled)
+        #[cfg(feature = "ml")]
+        if let Some(ref detector) = self.toxicity_detector {
+            let toxicity_findings = detector.detect_toxicity(delta, self.toxicity_threshold);
+            let security_findings =
+                llmtrace_security::ToxicityDetector::findings_to_security_findings(
+                    &toxicity_findings,
+                );
+            new_findings.extend(security_findings);
+        }
+
+        // Tag findings
+        for finding in &mut new_findings {
+            finding
+                .metadata
+                .insert("detection".to_string(), "streaming_output".to_string());
+            finding
+                .metadata
+                .insert("analysis_type".to_string(), "output_safety".to_string());
+            if finding.location.is_none() {
+                finding.location = Some("response.content.streaming_output".to_string());
+            }
+        }
+
+        // Check for critical findings that should trigger early stop
+        if self.early_stop_on_critical {
+            let has_critical = new_findings.iter().any(|f| {
+                f.severity == SecuritySeverity::Critical
+                    || (f.finding_type == "output_toxicity"
+                        && f.metadata
+                            .get("toxicity_category")
+                            .map(|c| c == "severe_toxic" || c == "threat")
+                            .unwrap_or(false))
+            });
+            if has_critical {
+                self.early_stop_triggered = true;
+            }
+        }
+
+        // Update bookkeeping
+        self.last_checked_offset = accumulated_content.len();
+        self.last_analyzed_token_count = current_token_count;
+        self.findings.extend(new_findings.clone());
+
+        new_findings
+    }
+
+    /// Returns `true` if a critical finding was detected and early stop is configured.
+    pub fn should_early_stop(&self) -> bool {
+        self.early_stop_triggered
+    }
+
+    /// Generate an SSE warning event to inject into the stream when early stopping.
+    pub fn early_stop_sse_event() -> String {
+        let warning = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "content": "\n\n[LLMTrace: Response terminated — critical safety issue detected in output]"
+                },
+                "finish_reason": "content_filter"
+            }]
+        });
+        format!("data: {}\n\ndata: [DONE]\n\n", warning)
+    }
+
+    /// Drain and return all findings accumulated during the stream.
+    pub fn take_findings(&mut self) -> Vec<SecurityFinding> {
+        std::mem::take(&mut self.findings)
+    }
+
+    /// Return a reference to all findings accumulated so far.
+    pub fn findings(&self) -> &[SecurityFinding] {
+        &self.findings
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -473,6 +665,8 @@ mod tests {
         StreamingAnalysisConfig {
             enabled: true,
             token_interval,
+            output_enabled: false,
+            early_stop_on_critical: false,
         }
     }
 
@@ -481,6 +675,8 @@ mod tests {
         let config = StreamingAnalysisConfig {
             enabled: false,
             token_interval: 50,
+            output_enabled: false,
+            early_stop_on_critical: false,
         };
         assert!(StreamingSecurityMonitor::new(&config).is_none());
     }
@@ -706,6 +902,8 @@ mod tests {
         let config = StreamingAnalysisConfig {
             enabled: true,
             token_interval: 0,
+            output_enabled: false,
+            early_stop_on_critical: false,
         };
         let monitor = StreamingSecurityMonitor::new(&config).unwrap();
         // Should analyze at token 1 (interval=1)
@@ -740,5 +938,196 @@ mod tests {
             .iter()
             .any(|f| f.finding_type == "prompt_injection"));
         assert!(findings.iter().any(|f| f.finding_type == "pii_detected"));
+    }
+
+    // ---------------------------------------------------------------
+    // StreamingOutputMonitor tests (R7)
+    // ---------------------------------------------------------------
+
+    fn output_enabled_streaming_config(token_interval: u32) -> StreamingAnalysisConfig {
+        StreamingAnalysisConfig {
+            enabled: true,
+            token_interval,
+            output_enabled: true,
+            early_stop_on_critical: false,
+        }
+    }
+
+    fn output_enabled_safety_config() -> OutputSafetyConfig {
+        OutputSafetyConfig {
+            enabled: true,
+            toxicity_enabled: true,
+            toxicity_threshold: 0.5,
+            block_on_critical: false,
+        }
+    }
+
+    #[test]
+    fn test_output_monitor_disabled_returns_none() {
+        let streaming = StreamingAnalysisConfig {
+            enabled: true,
+            token_interval: 50,
+            output_enabled: false,
+            early_stop_on_critical: false,
+        };
+        let output = OutputSafetyConfig::default();
+        assert!(StreamingOutputMonitor::new(&streaming, &output).is_none());
+    }
+
+    #[test]
+    fn test_output_monitor_enabled_returns_some() {
+        let streaming = output_enabled_streaming_config(5);
+        let output = output_enabled_safety_config();
+        assert!(StreamingOutputMonitor::new(&streaming, &output).is_some());
+    }
+
+    #[test]
+    fn test_output_monitor_detects_pii_mid_stream() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+        let mut acc = StreamingAccumulator::new();
+
+        let line = sse_content_line("The email is alice@example.com here");
+        acc.process_chunk(line.as_bytes());
+
+        let findings = monitor.analyze_incremental(&acc.content, acc.completion_token_count);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "pii_detected"),
+            "Should detect PII in output stream"
+        );
+    }
+
+    #[test]
+    fn test_output_monitor_detects_secrets_mid_stream() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+        let mut acc = StreamingAccumulator::new();
+
+        let line = sse_content_line("Your key is AKIAIOSFODNN7EXAMPLE");
+        acc.process_chunk(line.as_bytes());
+
+        let findings = monitor.analyze_incremental(&acc.content, acc.completion_token_count);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "secret_leakage"),
+            "Should detect secret in output stream"
+        );
+    }
+
+    #[test]
+    fn test_output_monitor_findings_tagged_correctly() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        let findings = monitor.analyze_incremental("Contact alice@example.com for details", 1);
+        for f in &findings {
+            assert_eq!(
+                f.metadata.get("detection"),
+                Some(&"streaming_output".to_string()),
+            );
+            assert_eq!(
+                f.metadata.get("analysis_type"),
+                Some(&"output_safety".to_string()),
+            );
+        }
+    }
+
+    #[test]
+    fn test_output_monitor_early_stop_on_critical() {
+        let streaming = StreamingAnalysisConfig {
+            enabled: true,
+            token_interval: 1,
+            output_enabled: true,
+            early_stop_on_critical: true,
+        };
+        let output = OutputSafetyConfig {
+            enabled: true,
+            toxicity_enabled: false,
+            toxicity_threshold: 0.5,
+            block_on_critical: false,
+        };
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        // Inject content with a critical secret (SSH key)
+        let content = "Here is the key: -----BEGIN RSA PRIVATE KEY-----\nMIIEpA...";
+        let findings = monitor.analyze_incremental(content, 5);
+
+        assert!(!findings.is_empty(), "Should detect critical secret");
+        assert!(
+            monitor.should_early_stop(),
+            "Should trigger early stop on critical secret finding"
+        );
+    }
+
+    #[test]
+    fn test_output_monitor_no_early_stop_when_disabled() {
+        let streaming = StreamingAnalysisConfig {
+            enabled: true,
+            token_interval: 1,
+            output_enabled: true,
+            early_stop_on_critical: false,
+        };
+        let output = OutputSafetyConfig {
+            enabled: true,
+            toxicity_enabled: false,
+            toxicity_threshold: 0.5,
+            block_on_critical: false,
+        };
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        let content = "Here is the key: -----BEGIN RSA PRIVATE KEY-----\nMIIEpA...";
+        let _findings = monitor.analyze_incremental(content, 5);
+
+        assert!(
+            !monitor.should_early_stop(),
+            "Should NOT trigger early stop when disabled"
+        );
+    }
+
+    #[test]
+    fn test_output_monitor_early_stop_sse_event() {
+        let event = StreamingOutputMonitor::early_stop_sse_event();
+        assert!(event.starts_with("data: "));
+        assert!(event.contains("[DONE]"));
+        assert!(event.contains("content_filter"));
+    }
+
+    #[test]
+    fn test_output_monitor_take_findings_drains() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        let _ = monitor.analyze_incremental("Email: alice@example.com", 1);
+        let taken = monitor.take_findings();
+        assert!(!taken.is_empty());
+        assert!(monitor.findings().is_empty());
+    }
+
+    #[test]
+    fn test_output_monitor_benign_content_no_findings() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        let findings = monitor.analyze_incremental("The weather is nice and sunny today.", 3);
+        assert!(findings.is_empty());
+    }
+
+    #[cfg(feature = "ml")]
+    #[test]
+    fn test_output_monitor_detects_toxicity_mid_stream() {
+        let streaming = output_enabled_streaming_config(1);
+        let output = output_enabled_safety_config();
+        let mut monitor = StreamingOutputMonitor::new(&streaming, &output).unwrap();
+
+        let findings = monitor.analyze_incremental("I will kill you, you worthless moron", 5);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "output_toxicity"),
+            "Should detect toxicity in output stream; findings: {:?}",
+            findings.iter().map(|f| &f.finding_type).collect::<Vec<_>>()
+        );
     }
 }

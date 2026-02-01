@@ -29,20 +29,36 @@ pub mod pii_validation;
 #[cfg(feature = "ml")]
 pub mod ensemble;
 #[cfg(feature = "ml")]
+pub mod feature_extraction;
+#[cfg(feature = "ml")]
+pub mod fusion_classifier;
+#[cfg(feature = "ml")]
 pub mod inference_stats;
 #[cfg(feature = "ml")]
 pub mod ml_detector;
 #[cfg(feature = "ml")]
 pub mod ner_detector;
+#[cfg(feature = "ml")]
+pub mod output_analyzer;
+#[cfg(feature = "ml")]
+pub mod toxicity_detector;
 
 #[cfg(feature = "ml")]
 pub use ensemble::EnsembleSecurityAnalyzer;
+#[cfg(feature = "ml")]
+pub use feature_extraction::{extract_heuristic_features, HEURISTIC_FEATURE_DIM};
+#[cfg(feature = "ml")]
+pub use fusion_classifier::FusionClassifier;
 #[cfg(feature = "ml")]
 pub use inference_stats::{InferenceStats, InferenceStatsTracker};
 #[cfg(feature = "ml")]
 pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
 #[cfg(feature = "ml")]
 pub use ner_detector::{NerConfig, NerDetector};
+#[cfg(feature = "ml")]
+pub use output_analyzer::{OutputAnalysisResult, OutputAnalyzer};
+#[cfg(feature = "ml")]
+pub use toxicity_detector::ToxicityDetector;
 
 // ---------------------------------------------------------------------------
 // Internal pattern types

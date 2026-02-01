@@ -7,7 +7,7 @@
 use crate::circuit_breaker::CircuitBreaker;
 use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
-use crate::streaming::{StreamingAccumulator, StreamingSecurityMonitor};
+use crate::streaming::{StreamingAccumulator, StreamingOutputMonitor, StreamingSecurityMonitor};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, Request, Response, StatusCode};
@@ -433,6 +433,15 @@ pub async fn proxy_handler(
         } else {
             None
         };
+        // Initialise the streaming output monitor for response-side analysis (R7).
+        let mut output_monitor = if is_streaming {
+            StreamingOutputMonitor::new(
+                &state_bg.config.streaming_analysis,
+                &state_bg.config.output_safety,
+            )
+        } else {
+            None
+        };
         let mut raw_collected = Vec::new();
         let mut ttft_ms: Option<u64> = None;
 
@@ -464,6 +473,36 @@ pub async fn proxy_handler(
                                         engine.check_and_alert(trace_id, tenant_id, &new_findings);
                                     }
                                 }
+                            }
+                        }
+
+                        // --- Real-time streaming OUTPUT analysis (R7) ---
+                        if let Some(ref mut out_mon) = output_monitor {
+                            if out_mon.should_analyze(acc.completion_token_count) {
+                                let new_findings = out_mon
+                                    .analyze_incremental(&acc.content, acc.completion_token_count);
+                                if !new_findings.is_empty() {
+                                    info!(
+                                        %trace_id,
+                                        count = new_findings.len(),
+                                        tokens = acc.completion_token_count,
+                                        "Streaming output safety findings detected mid-stream"
+                                    );
+                                    if let Some(ref engine) = state_bg.alert_engine {
+                                        engine.check_and_alert(trace_id, tenant_id, &new_findings);
+                                    }
+                                }
+                            }
+
+                            // Early stop: inject warning and terminate stream
+                            if out_mon.should_early_stop() {
+                                warn!(
+                                    %trace_id,
+                                    "Critical output safety issue detected — early stopping stream"
+                                );
+                                let warning = StreamingOutputMonitor::early_stop_sse_event();
+                                let _ = body_sender.send(Ok(Bytes::from(warning))).await;
+                                break;
                             }
                         }
                     }
@@ -500,11 +539,32 @@ pub async fn proxy_handler(
             }
         }
 
+        // Run one final streaming OUTPUT analysis flush.
+        if let (Some(ref acc), Some(ref mut out_mon)) = (&sse_accumulator, &mut output_monitor) {
+            let final_findings =
+                out_mon.analyze_incremental(&acc.content, acc.completion_token_count);
+            if !final_findings.is_empty() {
+                info!(
+                    %trace_id,
+                    count = final_findings.len(),
+                    "Streaming output safety findings in final flush"
+                );
+                if let Some(ref engine) = state_bg.alert_engine {
+                    engine.check_and_alert(trace_id, tenant_id, &final_findings);
+                }
+            }
+        }
+
         // Collect streaming security findings for attachment to the trace span.
-        let streaming_findings: Vec<SecurityFinding> = streaming_monitor
+        let mut streaming_findings: Vec<SecurityFinding> = streaming_monitor
             .as_mut()
             .map(|m| m.take_findings())
             .unwrap_or_default();
+
+        // Merge in streaming output findings.
+        if let Some(ref mut out_mon) = output_monitor {
+            streaming_findings.extend(out_mon.take_findings());
+        }
 
         // Build the captured interaction with streaming metrics if applicable
         let (response_text, prompt_tokens, completion_tokens, total_tokens) =
@@ -744,7 +804,7 @@ async fn run_security_analysis(
         parameters: std::collections::HashMap::new(),
     };
 
-    match state
+    let mut all_findings = match state
         .security
         .analyze_interaction(&captured.prompt_text, &captured.response_text, &context)
         .await
@@ -775,7 +835,25 @@ async fn run_security_analysis(
             error!(trace_id = %captured.trace_id, "Security analysis failed: {}", e);
             Vec::new()
         }
+    };
+
+    // --- Output safety analysis (R6) ---
+    if state.config.output_safety.enabled && !captured.response_text.is_empty() {
+        let output_analyzer =
+            llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);
+        let result = output_analyzer.analyze_output(&captured.response_text);
+        if !result.findings.is_empty() {
+            info!(
+                trace_id = %captured.trace_id,
+                finding_count = result.findings.len(),
+                has_critical = result.has_critical_toxicity,
+                "Output safety findings detected"
+            );
+            all_findings.extend(result.findings);
+        }
     }
+
+    all_findings
 }
 
 /// Store a trace event enriched with security findings.
