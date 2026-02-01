@@ -262,11 +262,11 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         Arc::clone(&storage.cache),
     );
 
-    if alert_engine.is_some() {
+    if let Some(ref engine) = alert_engine {
         info!(
-            webhook_url = %config.alerts.webhook_url,
-            min_severity = %config.alerts.min_severity,
-            "Alert engine enabled"
+            channels = engine.channel_count(),
+            "Alert engine enabled with {} channel(s)",
+            engine.channel_count(),
         );
     }
     if cost_tracker.is_some() {

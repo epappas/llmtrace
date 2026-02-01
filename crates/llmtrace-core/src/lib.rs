@@ -1492,26 +1492,87 @@ impl Default for GrpcConfig {
 
 /// Alert engine configuration for webhook notifications.
 ///
-/// When enabled, the alert engine sends HTTP POST requests to a webhook URL
-/// whenever security findings exceed the configured severity and confidence
-/// thresholds. A per-finding-type cooldown prevents alert spam.
+/// Supports both a legacy single-webhook mode (via `webhook_url`) and a
+/// multi-channel mode (via `channels`). When `channels` is non-empty it
+/// takes precedence; otherwise the legacy `webhook_url` is wrapped in a
+/// single `WebhookChannelConfig` for backward compatibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertConfig {
     /// Enable the alert engine.
     #[serde(default)]
     pub enabled: bool,
-    /// Webhook URL to POST alert payloads to.
+    /// **Legacy** — Webhook URL to POST alert payloads to.
+    /// Ignored when `channels` is non-empty.
     #[serde(default)]
     pub webhook_url: String,
-    /// Minimum severity level to trigger an alert (e.g., `"High"`, `"Critical"`).
+    /// **Legacy** — Minimum severity level (e.g. `"High"`).
+    /// Used as the global default when `channels` is empty.
     #[serde(default = "default_alert_min_severity")]
     pub min_severity: String,
-    /// Minimum confidence-based score (0–100) to trigger an alert.
+    /// **Legacy** — Minimum confidence-based score (0–100).
     #[serde(default = "default_alert_min_security_score")]
     pub min_security_score: u8,
     /// Cooldown in seconds between repeated alerts for the same finding type.
     #[serde(default = "default_alert_cooldown_seconds")]
     pub cooldown_seconds: u64,
+    /// Multi-channel alert destinations.
+    /// When non-empty, each channel has its own type, URL, and min_severity.
+    #[serde(default)]
+    pub channels: Vec<AlertChannelConfig>,
+    /// Optional escalation configuration.
+    #[serde(default)]
+    pub escalation: Option<AlertEscalationConfig>,
+}
+
+/// Configuration for a single alert channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertChannelConfig {
+    /// Channel type: `"webhook"`, `"slack"`, `"pagerduty"`, or `"email"`.
+    #[serde(rename = "type")]
+    pub channel_type: String,
+    /// Webhook / Slack incoming-webhook URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Alias accepted for `url` (convenience for webhook channels).
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// PagerDuty Events API v2 routing key.
+    #[serde(default)]
+    pub routing_key: Option<String>,
+    /// Minimum severity to send to this channel (default: `"High"`).
+    #[serde(default = "default_alert_min_severity")]
+    pub min_severity: String,
+    /// Minimum confidence-based score (0–100) to send to this channel.
+    #[serde(default = "default_alert_min_security_score")]
+    pub min_security_score: u8,
+}
+
+impl AlertChannelConfig {
+    /// Resolve the effective URL (prefers `url`, falls back to `webhook_url`).
+    pub fn effective_url(&self) -> Option<&str> {
+        self.url
+            .as_deref()
+            .or(self.webhook_url.as_deref())
+            .filter(|s| !s.is_empty())
+    }
+}
+
+/// Optional alert escalation configuration.
+///
+/// If no acknowledgement is received within `escalate_after_seconds`, the
+/// alert is re-sent at the next higher severity channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertEscalationConfig {
+    /// Enable escalation.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Seconds to wait before escalating an unacknowledged alert.
+    #[serde(default = "default_escalation_seconds")]
+    pub escalate_after_seconds: u64,
+}
+
+fn default_escalation_seconds() -> u64 {
+    600
 }
 
 fn default_alert_min_severity() -> String {
@@ -1534,6 +1595,8 @@ impl Default for AlertConfig {
             min_severity: default_alert_min_severity(),
             min_security_score: default_alert_min_security_score(),
             cooldown_seconds: default_alert_cooldown_seconds(),
+            channels: Vec::new(),
+            escalation: None,
         }
     }
 }
@@ -2475,6 +2538,8 @@ mod tests {
         assert_eq!(config.min_severity, "High");
         assert_eq!(config.min_security_score, 70);
         assert_eq!(config.cooldown_seconds, 300);
+        assert!(config.channels.is_empty());
+        assert!(config.escalation.is_none());
     }
 
     #[test]
@@ -2485,6 +2550,8 @@ mod tests {
             min_severity: "Critical".to_string(),
             min_security_score: 90,
             cooldown_seconds: 600,
+            channels: Vec::new(),
+            escalation: None,
         };
         let serialized = serde_json::to_string(&config).unwrap();
         let deserialized: AlertConfig = serde_json::from_str(&serialized).unwrap();
@@ -2504,6 +2571,58 @@ mod tests {
         assert_eq!(config.min_severity, "High");
         assert_eq!(config.min_security_score, 70);
         assert_eq!(config.cooldown_seconds, 300);
+        assert!(config.channels.is_empty());
+    }
+
+    #[test]
+    fn test_alert_config_multi_channel() {
+        let json = r#"{
+            "enabled": true,
+            "cooldown_seconds": 120,
+            "channels": [
+                {"type": "slack", "url": "https://hooks.slack.com/services/T/B/x", "min_severity": "Medium"},
+                {"type": "pagerduty", "routing_key": "abc123", "min_severity": "Critical"},
+                {"type": "webhook", "url": "https://example.com/hook", "min_severity": "High"}
+            ]
+        }"#;
+        let config: AlertConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.channels.len(), 3);
+        assert_eq!(config.channels[0].channel_type, "slack");
+        assert_eq!(config.channels[0].min_severity, "Medium");
+        assert_eq!(config.channels[1].channel_type, "pagerduty");
+        assert_eq!(config.channels[1].routing_key.as_deref(), Some("abc123"));
+        assert_eq!(config.channels[2].channel_type, "webhook");
+    }
+
+    #[test]
+    fn test_alert_channel_config_effective_url() {
+        // Prefers `url` over `webhook_url`
+        let cfg = AlertChannelConfig {
+            channel_type: "webhook".to_string(),
+            url: Some("https://primary.com".to_string()),
+            webhook_url: Some("https://fallback.com".to_string()),
+            routing_key: None,
+            min_severity: "High".to_string(),
+            min_security_score: 70,
+        };
+        assert_eq!(cfg.effective_url(), Some("https://primary.com"));
+
+        // Falls back to `webhook_url`
+        let cfg2 = AlertChannelConfig {
+            url: None,
+            webhook_url: Some("https://fallback.com".to_string()),
+            ..cfg.clone()
+        };
+        assert_eq!(cfg2.effective_url(), Some("https://fallback.com"));
+
+        // Empty strings treated as None
+        let cfg3 = AlertChannelConfig {
+            url: Some(String::new()),
+            webhook_url: None,
+            ..cfg
+        };
+        assert!(cfg3.effective_url().is_none());
     }
 
     #[test]
@@ -2512,6 +2631,7 @@ mod tests {
         assert!(!config.alerts.enabled);
         assert!(config.alerts.webhook_url.is_empty());
         assert_eq!(config.alerts.min_severity, "High");
+        assert!(config.alerts.channels.is_empty());
     }
 
     #[test]

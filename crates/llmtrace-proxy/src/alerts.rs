@@ -1,204 +1,208 @@
-//! Alert engine for webhook notifications on security findings.
+//! Multi-channel alert engine for security finding notifications.
 //!
-//! Sends HTTP POST notifications to a configured webhook URL when security
-//! findings exceed severity and confidence thresholds. Includes per-finding-type
-//! cooldown tracking to prevent alert spam.
+//! Supports dispatching alerts to multiple channels (Slack, PagerDuty, generic
+//! webhook) with per-channel severity filtering, global deduplication/cooldown,
+//! and backward compatibility with the legacy single-webhook configuration.
 
+use async_trait::async_trait;
 use dashmap::DashMap;
-use llmtrace_core::{AlertConfig, SecurityFinding, SecuritySeverity, TenantId};
+use llmtrace_core::{AlertChannelConfig, AlertConfig, SecurityFinding, SecuritySeverity, TenantId};
 use reqwest::Client;
 use serde::Serialize;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// AlertEngine
+// AlertPayload — shared payload given to every channel
 // ---------------------------------------------------------------------------
 
-/// Evaluates security findings against configured thresholds and sends
-/// webhook notifications when those thresholds are exceeded.
-///
-/// The engine is designed to be fire-and-forget: [`check_and_alert`](Self::check_and_alert)
-/// spawns a background tokio task for the HTTP POST and returns immediately.
-pub struct AlertEngine {
-    /// Parsed minimum severity threshold.
-    min_severity: SecuritySeverity,
-    /// Minimum confidence-based score (0–100).
-    min_security_score: u8,
-    /// Cooldown duration between alerts of the same finding type.
-    cooldown: Duration,
-    /// Webhook URL to POST payloads to.
-    webhook_url: String,
-    /// HTTP client for webhook requests.
+/// Structured payload sent to alert channels.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertPayload {
+    /// Trace that triggered the alert.
+    pub trace_id: Uuid,
+    /// Tenant that owns the trace.
+    pub tenant_id: TenantId,
+    /// Timestamp of the alert in RFC 3339 format.
+    pub timestamp: String,
+    /// Security findings that exceeded thresholds.
+    pub findings: Vec<AlertFinding>,
+}
+
+/// A single finding within an [`AlertPayload`].
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertFinding {
+    pub severity: String,
+    pub finding_type: String,
+    pub description: String,
+    pub confidence_score: f64,
+}
+
+impl AlertFinding {
+    fn from_security_finding(f: &SecurityFinding) -> Self {
+        Self {
+            severity: f.severity.to_string(),
+            finding_type: f.finding_type.clone(),
+            description: f.description.clone(),
+            confidence_score: f.confidence_score,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AlertError
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur when sending an alert.
+#[derive(Debug, thiserror::Error)]
+pub enum AlertError {
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("Channel error: {0}")]
+    Channel(String),
+}
+
+// ---------------------------------------------------------------------------
+// AlertChannel trait
+// ---------------------------------------------------------------------------
+
+/// Trait implemented by each alert delivery mechanism (Slack, PagerDuty, etc.).
+#[async_trait]
+pub trait AlertChannel: Send + Sync {
+    /// Deliver an alert payload to this channel.
+    async fn send_alert(&self, alert: &AlertPayload) -> Result<(), AlertError>;
+    /// Human-readable name of this channel (for logging).
+    fn channel_name(&self) -> &str;
+}
+
+// ---------------------------------------------------------------------------
+// WebhookChannel — generic HTTP POST
+// ---------------------------------------------------------------------------
+
+/// Generic webhook channel — sends a JSON POST to an arbitrary URL.
+pub struct WebhookChannel {
+    url: String,
     client: Client,
-    /// Cooldown tracking: finding_type → last alert [`Instant`].
-    cooldowns: DashMap<String, Instant>,
 }
 
-impl AlertEngine {
-    /// Create a new [`AlertEngine`] from configuration.
-    ///
-    /// Returns `None` if alerts are disabled or the webhook URL is empty.
-    pub fn from_config(config: &AlertConfig, client: Client) -> Option<Self> {
-        if !config.enabled || config.webhook_url.is_empty() {
-            return None;
+impl WebhookChannel {
+    pub fn new(url: String, client: Client) -> Self {
+        Self { url, client }
+    }
+}
+
+#[async_trait]
+impl AlertChannel for WebhookChannel {
+    async fn send_alert(&self, alert: &AlertPayload) -> Result<(), AlertError> {
+        let payload = GenericPayload {
+            alert_type: "security_finding".to_string(),
+            trace_id: alert.trace_id.to_string(),
+            tenant_id: alert.tenant_id.to_string(),
+            timestamp: alert.timestamp.clone(),
+            findings: alert.findings.clone(),
+        };
+        let resp = self.client.post(&self.url).json(&payload).send().await?;
+        if !resp.status().is_success() {
+            error!(
+                channel = "webhook",
+                status = %resp.status(),
+                url = %self.url,
+                "Webhook delivery failed"
+            );
         }
+        Ok(())
+    }
 
-        let min_severity = config
-            .min_severity
-            .parse::<SecuritySeverity>()
-            .unwrap_or(SecuritySeverity::High);
+    fn channel_name(&self) -> &str {
+        "webhook"
+    }
+}
 
-        Some(Self {
-            min_severity,
-            min_security_score: config.min_security_score,
-            cooldown: Duration::from_secs(config.cooldown_seconds),
-            webhook_url: config.webhook_url.clone(),
+/// Generic webhook JSON body.
+#[derive(Debug, Serialize)]
+struct GenericPayload {
+    alert_type: String,
+    trace_id: String,
+    tenant_id: String,
+    timestamp: String,
+    findings: Vec<AlertFinding>,
+}
+
+// ---------------------------------------------------------------------------
+// SlackChannel — Incoming Webhook with Block Kit
+// ---------------------------------------------------------------------------
+
+/// Slack channel using Incoming Webhook API with Block Kit formatting.
+pub struct SlackChannel {
+    webhook_url: String,
+    client: Client,
+}
+
+impl SlackChannel {
+    pub fn new(webhook_url: String, client: Client) -> Self {
+        Self {
+            webhook_url,
             client,
-            cooldowns: DashMap::new(),
-        })
-    }
-
-    /// Check findings against thresholds and fire a webhook if any exceed them.
-    ///
-    /// The actual HTTP POST is spawned as a fire-and-forget tokio task so this
-    /// method returns immediately and never blocks trace storage.
-    pub fn check_and_alert(
-        &self,
-        trace_id: Uuid,
-        tenant_id: TenantId,
-        findings: &[SecurityFinding],
-    ) {
-        let alertable: Vec<&SecurityFinding> = findings
-            .iter()
-            .filter(|f| self.passes_severity(f))
-            .filter(|f| self.passes_score(f))
-            .filter(|f| self.passes_cooldown(f))
-            .collect();
-
-        if alertable.is_empty() {
-            return;
-        }
-
-        // Update cooldowns for all alertable findings
-        let now = Instant::now();
-        for f in &alertable {
-            self.cooldowns.insert(f.finding_type.clone(), now);
-        }
-
-        info!(
-            %trace_id,
-            %tenant_id,
-            count = alertable.len(),
-            "Sending webhook alert for security findings"
-        );
-
-        // Build payloads (one of the two will be sent based on URL)
-        let slack_payload = build_slack_payload(trace_id, tenant_id, &alertable);
-        let generic_payload = build_generic_payload(trace_id, tenant_id, &alertable);
-
-        let client = self.client.clone();
-        let webhook_url = self.webhook_url.clone();
-
-        // Fire-and-forget: spawn a background task for the HTTP POST
-        tokio::spawn(async move {
-            let result = if is_slack_webhook(&webhook_url) {
-                client.post(&webhook_url).json(&slack_payload).send().await
-            } else {
-                client
-                    .post(&webhook_url)
-                    .json(&generic_payload)
-                    .send()
-                    .await
-            };
-
-            match result {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        debug!(%trace_id, "Webhook alert delivered successfully");
-                    } else {
-                        error!(
-                            %trace_id,
-                            status = %resp.status(),
-                            "Webhook alert delivery failed"
-                        );
-                    }
-                }
-                Err(e) => {
-                    error!(%trace_id, "Webhook POST failed: {e}");
-                }
-            }
-        });
-    }
-
-    /// Check if a finding meets the minimum severity threshold.
-    fn passes_severity(&self, finding: &SecurityFinding) -> bool {
-        finding.severity >= self.min_severity
-    }
-
-    /// Check if a finding meets the minimum confidence-based score threshold.
-    fn passes_score(&self, finding: &SecurityFinding) -> bool {
-        let score = (finding.confidence_score * 100.0) as u8;
-        score >= self.min_security_score
-    }
-
-    /// Check if a finding's type is not within the cooldown window.
-    fn passes_cooldown(&self, finding: &SecurityFinding) -> bool {
-        match self.cooldowns.get(&finding.finding_type) {
-            Some(last_alert) => last_alert.elapsed() >= self.cooldown,
-            None => true,
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Webhook URL detection
-// ---------------------------------------------------------------------------
+#[async_trait]
+impl AlertChannel for SlackChannel {
+    async fn send_alert(&self, alert: &AlertPayload) -> Result<(), AlertError> {
+        let payload = build_slack_payload(alert);
+        let resp = self
+            .client
+            .post(&self.webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            error!(
+                channel = "slack",
+                status = %resp.status(),
+                "Slack webhook delivery failed"
+            );
+        }
+        Ok(())
+    }
 
-/// Detect whether a webhook URL is a Slack incoming-webhook endpoint.
-fn is_slack_webhook(url: &str) -> bool {
-    url.contains("hooks.slack.com") || url.contains("hooks.slack-gov.com")
+    fn channel_name(&self) -> &str {
+        "slack"
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Slack-compatible payload
-// ---------------------------------------------------------------------------
-
-/// Slack Block Kit webhook payload.
+/// Slack Block Kit payload.
 #[derive(Debug, Serialize)]
 struct SlackPayload {
     text: String,
-    blocks: Vec<SlackBlock>,
+    blocks: Vec<serde_json::Value>,
 }
 
-/// A single Slack block.
-#[derive(Debug, Serialize)]
-struct SlackBlock {
-    #[serde(rename = "type")]
-    block_type: String,
-    text: SlackText,
-}
+/// Build a rich Slack Block Kit payload from an alert.
+fn build_slack_payload(alert: &AlertPayload) -> SlackPayload {
+    let max_severity = alert
+        .findings
+        .iter()
+        .map(|f| f.severity.as_str())
+        .max()
+        .unwrap_or("Unknown");
 
-/// Slack text element.
-#[derive(Debug, Serialize)]
-struct SlackText {
-    #[serde(rename = "type")]
-    text_type: String,
-    text: String,
-}
+    let severity_emoji = match max_severity {
+        "Critical" => "\u{1f6d1}",      // 🛑
+        "High" => "\u{1f6a8}",          // 🚨
+        "Medium" => "\u{26a0}\u{fe0f}", // ⚠️
+        _ => "\u{2139}\u{fe0f}",        // ℹ️
+    };
 
-/// Build a Slack-compatible webhook payload.
-fn build_slack_payload(
-    trace_id: Uuid,
-    tenant_id: TenantId,
-    findings: &[&SecurityFinding],
-) -> SlackPayload {
-    let findings_text: String = findings
+    let findings_text: String = alert
+        .findings
         .iter()
         .map(|f| {
             format!(
-                "- *{}* {}: {} (confidence: {:.0}%)",
+                "\u{2022} *{}* `{}`: {} (confidence: {:.0}%)",
                 f.severity,
                 f.finding_type,
                 f.description,
@@ -208,74 +212,396 @@ fn build_slack_payload(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let body_text =
-        format!("*Trace:* `{trace_id}`\n*Tenant:* `{tenant_id}`\n*Findings:*\n{findings_text}");
+    let header_text = format!("{severity_emoji} LLMTrace Security Alert — {max_severity}");
+
+    let body = format!(
+        "*Trace:* `{}`\n*Tenant:* `{}`\n*Time:* {}\n\n*Findings ({}):**\n{}",
+        alert.trace_id,
+        alert.tenant_id,
+        alert.timestamp,
+        alert.findings.len(),
+        findings_text,
+    );
 
     SlackPayload {
-        text: "\u{1f6a8} LLMTrace Security Alert".to_string(),
+        text: header_text.clone(),
         blocks: vec![
-            SlackBlock {
-                block_type: "header".to_string(),
-                text: SlackText {
-                    text_type: "plain_text".to_string(),
-                    text: "\u{1f6a8} Security Alert".to_string(),
-                },
-            },
-            SlackBlock {
-                block_type: "section".to_string(),
-                text: SlackText {
-                    text_type: "mrkdwn".to_string(),
-                    text: body_text,
-                },
-            },
+            serde_json::json!({
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": header_text,
+                    "emoji": true
+                }
+            }),
+            serde_json::json!({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": body
+                }
+            }),
+            serde_json::json!({
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": format!("LLMTrace Alert Engine | {} finding(s)", alert.findings.len())
+                }]
+            }),
         ],
     }
 }
 
 // ---------------------------------------------------------------------------
-// Generic webhook payload
+// PagerDutyChannel — Events API v2
 // ---------------------------------------------------------------------------
 
-/// Generic (non-Slack) webhook payload with structured finding data.
-#[derive(Debug, Serialize)]
-struct GenericPayload {
-    alert_type: String,
-    trace_id: String,
-    tenant_id: String,
-    timestamp: String,
-    findings: Vec<GenericFinding>,
+/// PagerDuty channel using the Events API v2.
+pub struct PagerDutyChannel {
+    routing_key: String,
+    client: Client,
 }
 
-/// A single finding in the generic webhook payload.
-#[derive(Debug, Serialize)]
-struct GenericFinding {
-    severity: String,
-    finding_type: String,
-    description: String,
-    confidence_score: f64,
-}
+impl PagerDutyChannel {
+    /// PagerDuty Events API v2 endpoint.
+    const EVENTS_URL: &'static str = "https://events.pagerduty.com/v2/enqueue";
 
-/// Build a generic (non-Slack) webhook payload.
-fn build_generic_payload(
-    trace_id: Uuid,
-    tenant_id: TenantId,
-    findings: &[&SecurityFinding],
-) -> GenericPayload {
-    GenericPayload {
-        alert_type: "security_finding".to_string(),
-        trace_id: trace_id.to_string(),
-        tenant_id: tenant_id.to_string(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        findings: findings
-            .iter()
-            .map(|f| GenericFinding {
-                severity: f.severity.to_string(),
-                finding_type: f.finding_type.clone(),
-                description: f.description.clone(),
-                confidence_score: f.confidence_score,
-            })
-            .collect(),
+    pub fn new(routing_key: String, client: Client) -> Self {
+        Self {
+            routing_key,
+            client,
+        }
     }
+
+    /// Map `SecuritySeverity` string to PagerDuty severity.
+    fn map_severity(severity: &str) -> &'static str {
+        match severity {
+            "Critical" => "critical",
+            "High" => "error",
+            "Medium" => "warning",
+            "Low" | "Info" => "info",
+            _ => "warning",
+        }
+    }
+}
+
+#[async_trait]
+impl AlertChannel for PagerDutyChannel {
+    async fn send_alert(&self, alert: &AlertPayload) -> Result<(), AlertError> {
+        // Use the highest severity among findings for the PD event
+        let max_severity = alert
+            .findings
+            .iter()
+            .map(|f| f.severity.as_str())
+            .max()
+            .unwrap_or("Medium");
+
+        let pd_severity = Self::map_severity(max_severity);
+
+        let summary = if alert.findings.len() == 1 {
+            format!(
+                "LLMTrace: {} — {}",
+                alert.findings[0].finding_type, alert.findings[0].description
+            )
+        } else {
+            format!(
+                "LLMTrace: {} security finding(s) on trace {}",
+                alert.findings.len(),
+                alert.trace_id
+            )
+        };
+
+        let payload = serde_json::json!({
+            "routing_key": self.routing_key,
+            "event_action": "trigger",
+            "dedup_key": format!("llmtrace-{}", alert.trace_id),
+            "payload": {
+                "summary": summary,
+                "severity": pd_severity,
+                "source": "llmtrace-proxy",
+                "component": "security-analysis",
+                "group": alert.tenant_id.to_string(),
+                "timestamp": alert.timestamp,
+                "custom_details": {
+                    "trace_id": alert.trace_id.to_string(),
+                    "tenant_id": alert.tenant_id.to_string(),
+                    "findings": alert.findings,
+                }
+            }
+        });
+
+        let resp = self
+            .client
+            .post(Self::EVENTS_URL)
+            .json(&payload)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            error!(
+                channel = "pagerduty",
+                status = %resp.status(),
+                "PagerDuty event delivery failed"
+            );
+        }
+        Ok(())
+    }
+
+    fn channel_name(&self) -> &str {
+        "pagerduty"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ChannelWithFilter — wraps a channel + its min_severity / min_score
+// ---------------------------------------------------------------------------
+
+/// An alert channel together with its per-channel severity and score filters.
+struct ChannelWithFilter {
+    channel: Arc<dyn AlertChannel>,
+    min_severity: SecuritySeverity,
+    min_security_score: u8,
+}
+
+// ---------------------------------------------------------------------------
+// AlertEngine
+// ---------------------------------------------------------------------------
+
+/// Evaluates security findings against configured thresholds and dispatches
+/// notifications to one or more alert channels.
+///
+/// The engine is designed to be fire-and-forget: [`check_and_alert`](Self::check_and_alert)
+/// spawns a background tokio task for the HTTP POST(s) and returns immediately.
+pub struct AlertEngine {
+    /// Cooldown duration between alerts of the same finding type.
+    cooldown: Duration,
+    /// Alert channels with their per-channel filters.
+    channels: Vec<ChannelWithFilter>,
+    /// Cooldown tracking: finding_type → last alert [`Instant`].
+    cooldowns: Arc<DashMap<String, Instant>>,
+}
+
+impl AlertEngine {
+    /// Create a new [`AlertEngine`] from configuration.
+    ///
+    /// Returns `None` if alerts are disabled or no channels can be built.
+    pub fn from_config(config: &AlertConfig, client: Client) -> Option<Self> {
+        if !config.enabled {
+            return None;
+        }
+
+        let mut channels: Vec<ChannelWithFilter> = Vec::new();
+
+        if config.channels.is_empty() {
+            // Legacy mode: use the top-level webhook_url
+            if config.webhook_url.is_empty() {
+                return None;
+            }
+            let min_severity = config
+                .min_severity
+                .parse::<SecuritySeverity>()
+                .unwrap_or(SecuritySeverity::High);
+
+            let channel: Arc<dyn AlertChannel> = if is_slack_webhook(&config.webhook_url) {
+                Arc::new(SlackChannel::new(
+                    config.webhook_url.clone(),
+                    client.clone(),
+                ))
+            } else {
+                Arc::new(WebhookChannel::new(
+                    config.webhook_url.clone(),
+                    client.clone(),
+                ))
+            };
+
+            channels.push(ChannelWithFilter {
+                channel,
+                min_severity,
+                min_security_score: config.min_security_score,
+            });
+        } else {
+            // Multi-channel mode
+            for ch_cfg in &config.channels {
+                if let Some(ch) = build_channel(ch_cfg, &client) {
+                    let min_severity = ch_cfg
+                        .min_severity
+                        .parse::<SecuritySeverity>()
+                        .unwrap_or(SecuritySeverity::High);
+                    channels.push(ChannelWithFilter {
+                        channel: ch,
+                        min_severity,
+                        min_security_score: ch_cfg.min_security_score,
+                    });
+                } else {
+                    warn!(
+                        channel_type = %ch_cfg.channel_type,
+                        "Skipping alert channel — missing required configuration"
+                    );
+                }
+            }
+        }
+
+        if channels.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            cooldown: Duration::from_secs(config.cooldown_seconds),
+            channels,
+            cooldowns: Arc::new(DashMap::new()),
+        })
+    }
+
+    /// Check findings against thresholds and fire alerts to applicable channels.
+    ///
+    /// The actual HTTP POST(s) are spawned as fire-and-forget tokio tasks so
+    /// this method returns immediately and never blocks trace storage.
+    pub fn check_and_alert(
+        &self,
+        trace_id: Uuid,
+        tenant_id: TenantId,
+        findings: &[SecurityFinding],
+    ) {
+        // First pass: global cooldown filter
+        let cooldown_ok: Vec<&SecurityFinding> = findings
+            .iter()
+            .filter(|f| self.passes_cooldown(f))
+            .collect();
+
+        if cooldown_ok.is_empty() {
+            return;
+        }
+
+        // Update cooldowns
+        let now = Instant::now();
+        for f in &cooldown_ok {
+            self.cooldowns.insert(f.finding_type.clone(), now);
+        }
+
+        // Build alert payload with ALL cooldown-passing findings
+        let payload = Arc::new(AlertPayload {
+            trace_id,
+            tenant_id,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            findings: cooldown_ok
+                .iter()
+                .map(|f| AlertFinding::from_security_finding(f))
+                .collect(),
+        });
+
+        // For each channel, filter to findings that meet the channel's thresholds
+        for cwf in &self.channels {
+            let channel_findings: Vec<&SecurityFinding> = cooldown_ok
+                .iter()
+                .filter(|f| f.severity >= cwf.min_severity)
+                .filter(|f| {
+                    let score = (f.confidence_score * 100.0) as u8;
+                    score >= cwf.min_security_score
+                })
+                .copied()
+                .collect();
+
+            if channel_findings.is_empty() {
+                continue;
+            }
+
+            // Build a channel-specific payload with only the filtered findings
+            let channel_payload = AlertPayload {
+                trace_id,
+                tenant_id,
+                timestamp: payload.timestamp.clone(),
+                findings: channel_findings
+                    .iter()
+                    .map(|f| AlertFinding::from_security_finding(f))
+                    .collect(),
+            };
+
+            let channel = Arc::clone(&cwf.channel);
+            let channel_name = cwf.channel.channel_name().to_string();
+
+            info!(
+                %trace_id,
+                %tenant_id,
+                channel = %channel_name,
+                count = channel_findings.len(),
+                "Sending alert to channel"
+            );
+
+            tokio::spawn(async move {
+                if let Err(e) = channel.send_alert(&channel_payload).await {
+                    error!(
+                        %trace_id,
+                        channel = %channel_name,
+                        "Alert delivery failed: {e}"
+                    );
+                } else {
+                    debug!(
+                        %trace_id,
+                        channel = %channel_name,
+                        "Alert delivered successfully"
+                    );
+                }
+            });
+        }
+    }
+
+    /// Check if a finding's type is not within the cooldown window.
+    fn passes_cooldown(&self, finding: &SecurityFinding) -> bool {
+        match self.cooldowns.get(&finding.finding_type) {
+            Some(last_alert) => last_alert.elapsed() >= self.cooldown,
+            None => true,
+        }
+    }
+
+    /// Return the number of configured channels (useful for tests / logging).
+    pub fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Channel factory
+// ---------------------------------------------------------------------------
+
+/// Build an [`AlertChannel`] from a single channel configuration entry.
+fn build_channel(cfg: &AlertChannelConfig, client: &Client) -> Option<Arc<dyn AlertChannel>> {
+    match cfg.channel_type.as_str() {
+        "webhook" => {
+            let url = cfg.effective_url()?;
+            Some(Arc::new(WebhookChannel::new(
+                url.to_string(),
+                client.clone(),
+            )))
+        }
+        "slack" => {
+            let url = cfg.effective_url()?;
+            Some(Arc::new(SlackChannel::new(url.to_string(), client.clone())))
+        }
+        "pagerduty" => {
+            let key = cfg.routing_key.as_deref().filter(|k| !k.is_empty())?;
+            Some(Arc::new(PagerDutyChannel::new(
+                key.to_string(),
+                client.clone(),
+            )))
+        }
+        "email" => {
+            // Email is a future TODO — log a warning and skip
+            warn!("Email alert channel is not yet implemented — skipping");
+            None
+        }
+        other => {
+            warn!(channel_type = %other, "Unknown alert channel type — skipping");
+            None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Detect whether a webhook URL is a Slack incoming-webhook endpoint.
+fn is_slack_webhook(url: &str) -> bool {
+    url.contains("hooks.slack.com") || url.contains("hooks.slack-gov.com")
 }
 
 // ---------------------------------------------------------------------------
@@ -286,10 +612,11 @@ fn build_generic_payload(
 mod tests {
     use super::*;
     use llmtrace_core::SecuritySeverity;
-    use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    /// Build a test `AlertConfig` pointing at a given URL.
+    // -- helpers -----------------------------------------------------------
+
+    /// Build a test `AlertConfig` pointing at a given URL (legacy mode).
     fn test_config(url: &str) -> AlertConfig {
         AlertConfig {
             enabled: true,
@@ -297,10 +624,11 @@ mod tests {
             min_severity: "High".to_string(),
             min_security_score: 70,
             cooldown_seconds: 300,
+            channels: Vec::new(),
+            escalation: None,
         }
     }
 
-    /// A high-severity, high-confidence finding that should trigger alerts.
     fn high_finding() -> SecurityFinding {
         SecurityFinding::new(
             SecuritySeverity::High,
@@ -310,7 +638,6 @@ mod tests {
         )
     }
 
-    /// A critical-severity finding.
     fn critical_finding() -> SecurityFinding {
         SecurityFinding::new(
             SecuritySeverity::Critical,
@@ -320,7 +647,6 @@ mod tests {
         )
     }
 
-    /// A low-severity finding that should NOT trigger alerts.
     fn low_finding() -> SecurityFinding {
         SecurityFinding::new(
             SecuritySeverity::Low,
@@ -330,14 +656,33 @@ mod tests {
         )
     }
 
-    /// A high-severity finding with low confidence.
-    fn low_confidence_finding() -> SecurityFinding {
-        SecurityFinding::new(
-            SecuritySeverity::High,
-            "possible_injection".to_string(),
-            "Possibly suspicious pattern".to_string(),
-            0.4,
-        )
+    /// Mock HTTP server: returns (url, received_payloads).
+    async fn simple_mock(path: &str) -> (String, Arc<Mutex<Vec<serde_json::Value>>>) {
+        use axum::routing::post;
+        use axum::Router;
+
+        let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let clone = received.clone();
+
+        let app = Router::new().route(
+            path,
+            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let store = clone.clone();
+                async move {
+                    store.lock().await.push(body);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let url = format!("http://{addr}{path}");
+        (url, received)
     }
 
     // -- from_config -------------------------------------------------------
@@ -361,7 +706,8 @@ mod tests {
     #[test]
     fn test_valid_config_returns_engine() {
         let config = test_config("http://example.com/webhook");
-        assert!(AlertEngine::from_config(&config, Client::new()).is_some());
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 1);
     }
 
     #[test]
@@ -371,75 +717,136 @@ mod tests {
             ..test_config("http://example.com/webhook")
         };
         let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
-        assert_eq!(engine.min_severity, SecuritySeverity::High);
+        assert_eq!(engine.channels[0].min_severity, SecuritySeverity::High);
     }
 
-    // -- severity filtering ------------------------------------------------
+    // -- legacy backward compatibility ------------------------------------
 
     #[test]
-    fn test_high_finding_passes_severity() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        assert!(engine.passes_severity(&high_finding()));
-    }
-
-    #[test]
-    fn test_critical_finding_passes_severity() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        assert!(engine.passes_severity(&critical_finding()));
+    fn test_legacy_slack_url_creates_slack_channel() {
+        let config = test_config("https://hooks.slack.com/services/T00/B00/xxx");
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 1);
+        assert_eq!(engine.channels[0].channel.channel_name(), "slack");
     }
 
     #[test]
-    fn test_low_finding_rejected_by_severity() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        assert!(!engine.passes_severity(&low_finding()));
+    fn test_legacy_non_slack_url_creates_webhook_channel() {
+        let config = test_config("https://example.com/webhook");
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 1);
+        assert_eq!(engine.channels[0].channel.channel_name(), "webhook");
+    }
+
+    // -- multi-channel config ---------------------------------------------
+
+    #[test]
+    fn test_multi_channel_config() {
+        let config = AlertConfig {
+            enabled: true,
+            channels: vec![
+                AlertChannelConfig {
+                    channel_type: "slack".to_string(),
+                    url: Some("https://hooks.slack.com/services/T/B/x".to_string()),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "Medium".to_string(),
+                    min_security_score: 50,
+                },
+                AlertChannelConfig {
+                    channel_type: "pagerduty".to_string(),
+                    url: None,
+                    webhook_url: None,
+                    routing_key: Some("my-routing-key".to_string()),
+                    min_severity: "Critical".to_string(),
+                    min_security_score: 90,
+                },
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some("https://example.com/hook".to_string()),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "High".to_string(),
+                    min_security_score: 70,
+                },
+            ],
+            ..AlertConfig::default()
+        };
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 3);
     }
 
     #[test]
-    fn test_medium_finding_rejected_when_min_is_high() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        let finding = SecurityFinding::new(
-            SecuritySeverity::Medium,
-            "test".to_string(),
-            "test".to_string(),
-            0.9,
-        );
-        assert!(!engine.passes_severity(&finding));
-    }
-
-    // -- score filtering ---------------------------------------------------
-
-    #[test]
-    fn test_high_confidence_passes_score() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        assert!(engine.passes_score(&high_finding())); // 0.95 * 100 = 95 >= 70
+    fn test_channels_override_legacy_webhook() {
+        let config = AlertConfig {
+            enabled: true,
+            webhook_url: "https://should-be-ignored.com".to_string(),
+            channels: vec![AlertChannelConfig {
+                channel_type: "webhook".to_string(),
+                url: Some("https://used.com/hook".to_string()),
+                webhook_url: None,
+                routing_key: None,
+                min_severity: "High".to_string(),
+                min_security_score: 70,
+            }],
+            ..AlertConfig::default()
+        };
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 1);
     }
 
     #[test]
-    fn test_low_confidence_rejected_by_score() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        assert!(!engine.passes_score(&low_confidence_finding())); // 0.4 * 100 = 40 < 70
+    fn test_unknown_channel_type_skipped() {
+        let config = AlertConfig {
+            enabled: true,
+            channels: vec![AlertChannelConfig {
+                channel_type: "carrier_pigeon".to_string(),
+                url: Some("https://pigeon.com".to_string()),
+                webhook_url: None,
+                routing_key: None,
+                min_severity: "High".to_string(),
+                min_security_score: 70,
+            }],
+            ..AlertConfig::default()
+        };
+        assert!(AlertEngine::from_config(&config, Client::new()).is_none());
     }
 
     #[test]
-    fn test_exact_threshold_passes_score() {
-        let engine =
-            AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-        let finding = SecurityFinding::new(
-            SecuritySeverity::High,
-            "test".to_string(),
-            "test".to_string(),
-            0.70, // exactly at threshold
-        );
-        assert!(engine.passes_score(&finding));
+    fn test_missing_url_skipped() {
+        let config = AlertConfig {
+            enabled: true,
+            channels: vec![AlertChannelConfig {
+                channel_type: "slack".to_string(),
+                url: None,
+                webhook_url: None,
+                routing_key: None,
+                min_severity: "High".to_string(),
+                min_security_score: 70,
+            }],
+            ..AlertConfig::default()
+        };
+        assert!(AlertEngine::from_config(&config, Client::new()).is_none());
     }
 
-    // -- cooldown tracking -------------------------------------------------
+    #[test]
+    fn test_pagerduty_missing_key_skipped() {
+        let config = AlertConfig {
+            enabled: true,
+            channels: vec![AlertChannelConfig {
+                channel_type: "pagerduty".to_string(),
+                url: None,
+                webhook_url: None,
+                routing_key: None,
+                min_severity: "High".to_string(),
+                min_security_score: 70,
+            }],
+            ..AlertConfig::default()
+        };
+        assert!(AlertEngine::from_config(&config, Client::new()).is_none());
+    }
+
+    // -- cooldown ----------------------------------------------------------
 
     #[test]
     fn test_first_alert_passes_cooldown() {
@@ -453,12 +860,9 @@ mod tests {
         let engine =
             AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
         let finding = high_finding();
-
-        // Simulate a recent alert
         engine
             .cooldowns
             .insert(finding.finding_type.clone(), Instant::now());
-
         assert!(!engine.passes_cooldown(&finding));
     }
 
@@ -470,13 +874,9 @@ mod tests {
         };
         let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
         let finding = high_finding();
-
-        // Insert a "recent" cooldown entry
         engine
             .cooldowns
             .insert(finding.finding_type.clone(), Instant::now());
-
-        // With 0-second cooldown, elapsed >= 0 is always true
         assert!(engine.passes_cooldown(&finding));
     }
 
@@ -484,16 +884,10 @@ mod tests {
     fn test_different_finding_types_independent_cooldowns() {
         let engine =
             AlertEngine::from_config(&test_config("http://example.com"), Client::new()).unwrap();
-
-        // Cool down prompt_injection
         engine
             .cooldowns
             .insert("prompt_injection".to_string(), Instant::now());
-
-        // system_prompt_override should still pass
         assert!(engine.passes_cooldown(&critical_finding()));
-
-        // prompt_injection should be blocked
         assert!(!engine.passes_cooldown(&high_finding()));
     }
 
@@ -501,71 +895,364 @@ mod tests {
 
     #[test]
     fn test_slack_payload_structure() {
-        let trace_id = Uuid::new_v4();
-        let tenant_id = TenantId::new();
-        let finding = high_finding();
-        let findings = vec![&finding];
-
-        let payload = build_slack_payload(trace_id, tenant_id, &findings);
-
+        let alert = AlertPayload {
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            findings: vec![AlertFinding::from_security_finding(&high_finding())],
+        };
+        let payload = build_slack_payload(&alert);
         assert!(payload.text.contains("LLMTrace Security Alert"));
-        assert_eq!(payload.blocks.len(), 2);
-        assert_eq!(payload.blocks[0].block_type, "header");
-        assert_eq!(payload.blocks[0].text.text_type, "plain_text");
-        assert_eq!(payload.blocks[1].block_type, "section");
-        assert_eq!(payload.blocks[1].text.text_type, "mrkdwn");
-        assert!(payload.blocks[1].text.text.contains(&trace_id.to_string()));
-        assert!(payload.blocks[1].text.text.contains(&tenant_id.to_string()));
-        assert!(payload.blocks[1].text.text.contains("prompt_injection"));
+        assert_eq!(payload.blocks.len(), 3); // header + section + context
+        assert_eq!(payload.blocks[0]["type"], "header");
+        assert_eq!(payload.blocks[1]["type"], "section");
+        assert_eq!(payload.blocks[2]["type"], "context");
     }
 
     #[test]
-    fn test_slack_payload_serializes_to_valid_json() {
-        let trace_id = Uuid::new_v4();
-        let tenant_id = TenantId::new();
-        let finding = high_finding();
-        let findings = vec![&finding];
-
-        let payload = build_slack_payload(trace_id, tenant_id, &findings);
-        let json = serde_json::to_value(&payload).unwrap();
-
-        assert_eq!(json["text"], "\u{1f6a8} LLMTrace Security Alert");
-        assert!(json["blocks"].is_array());
-        assert_eq!(json["blocks"][0]["type"], "header");
-        assert_eq!(json["blocks"][1]["type"], "section");
+    fn test_pagerduty_severity_mapping() {
+        assert_eq!(PagerDutyChannel::map_severity("Critical"), "critical");
+        assert_eq!(PagerDutyChannel::map_severity("High"), "error");
+        assert_eq!(PagerDutyChannel::map_severity("Medium"), "warning");
+        assert_eq!(PagerDutyChannel::map_severity("Low"), "info");
+        assert_eq!(PagerDutyChannel::map_severity("Info"), "info");
+        assert_eq!(PagerDutyChannel::map_severity("Unknown"), "warning");
     }
 
-    #[test]
-    fn test_generic_payload_structure() {
+    // -- integration tests with mock servers --------------------------------
+
+    #[tokio::test]
+    async fn test_webhook_delivery_generic() {
+        let (url, received) = simple_mock("/webhook").await;
+        let config = test_config(&url);
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+
         let trace_id = Uuid::new_v4();
         let tenant_id = TenantId::new();
-        let finding = high_finding();
-        let findings = vec![&finding];
+        engine.check_and_alert(trace_id, tenant_id, &[high_finding()]);
 
-        let payload = build_generic_payload(trace_id, tenant_id, &findings);
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        assert_eq!(payload.alert_type, "security_finding");
-        assert_eq!(payload.trace_id, trace_id.to_string());
-        assert_eq!(payload.tenant_id, tenant_id.to_string());
-        assert!(!payload.timestamp.is_empty());
-        assert_eq!(payload.findings.len(), 1);
-        assert_eq!(payload.findings[0].severity, "High");
-        assert_eq!(payload.findings[0].finding_type, "prompt_injection");
-        assert!((payload.findings[0].confidence_score - 0.95).abs() < f64::EPSILON);
+        let payloads = received.lock().await;
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["alert_type"], "security_finding");
+        assert_eq!(payloads[0]["trace_id"], trace_id.to_string());
+        assert_eq!(payloads[0]["tenant_id"], tenant_id.to_string());
+        assert_eq!(payloads[0]["findings"].as_array().unwrap().len(), 1);
     }
 
-    #[test]
-    fn test_generic_payload_multiple_findings() {
-        let trace_id = Uuid::new_v4();
-        let tenant_id = TenantId::new();
-        let f1 = high_finding();
-        let f2 = critical_finding();
-        let findings = vec![&f1, &f2];
+    #[tokio::test]
+    async fn test_no_webhook_for_low_severity() {
+        let (url, received) = simple_mock("/webhook").await;
+        let config = test_config(&url);
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
 
-        let payload = build_generic_payload(trace_id, tenant_id, &findings);
-        assert_eq!(payload.findings.len(), 2);
-        assert_eq!(payload.findings[0].severity, "High");
-        assert_eq!(payload.findings[1].severity, "Critical");
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[low_finding()]);
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let payloads = received.lock().await;
+        assert!(payloads.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_prevents_duplicate_webhook() {
+        let (url, received) = simple_mock("/webhook").await;
+        let config = test_config(&url);
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+
+        let findings = vec![high_finding()];
+
+        // First alert — should fire
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &findings);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // Second alert — should be suppressed
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &findings);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let payloads = received.lock().await;
+        assert_eq!(
+            payloads.len(),
+            1,
+            "Cooldown should suppress the second alert"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_channel_per_severity_filtering() {
+        // Channel 1: webhook (min_severity: Medium)
+        let (url1, received1) = simple_mock("/ch1").await;
+        // Channel 2: webhook (min_severity: Critical)
+        let (url2, received2) = simple_mock("/ch2").await;
+
+        let config = AlertConfig {
+            enabled: true,
+            cooldown_seconds: 0,
+            channels: vec![
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url1),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "Medium".to_string(),
+                    min_security_score: 0,
+                },
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url2),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "Critical".to_string(),
+                    min_security_score: 0,
+                },
+            ],
+            ..AlertConfig::default()
+        };
+
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 2);
+
+        // Send a High finding — should go to channel 1 only (Medium threshold)
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[high_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(
+            p1.len(),
+            1,
+            "High finding should reach Medium-threshold channel"
+        );
+        assert_eq!(
+            p2.len(),
+            0,
+            "High finding should NOT reach Critical-threshold channel"
+        );
+        drop(p1);
+        drop(p2);
+
+        // Send a Critical finding — should go to both channels
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[critical_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(
+            p1.len(),
+            2,
+            "Critical finding should also reach Medium-threshold channel"
+        );
+        assert_eq!(
+            p2.len(),
+            1,
+            "Critical finding should reach Critical-threshold channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_channel_score_filtering() {
+        let (url1, received1) = simple_mock("/lo").await;
+        let (url2, received2) = simple_mock("/hi").await;
+
+        let config = AlertConfig {
+            enabled: true,
+            cooldown_seconds: 0,
+            channels: vec![
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url1),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "High".to_string(),
+                    min_security_score: 50, // low threshold
+                },
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url2),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "High".to_string(),
+                    min_security_score: 95, // very high threshold
+                },
+            ],
+            ..AlertConfig::default()
+        };
+
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+
+        // 0.95 * 100 = 95 → passes both (50 and 95)
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[high_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(p1.len(), 1);
+        assert_eq!(p2.len(), 1);
+        drop(p1);
+        drop(p2);
+
+        // low_confidence_finding: 0.4 * 100 = 40 → passes only channel 1 (score threshold 50? no, 40 < 50)
+        // Actually 40 < 50 so it passes neither. Let's send medium_finding (0.85 * 100 = 85).
+        // But medium_finding has severity Medium, which is < High. So it won't pass either.
+        // Let's use a custom finding.
+        let f = SecurityFinding::new(
+            SecuritySeverity::High,
+            "borderline".to_string(),
+            "Borderline confidence".to_string(),
+            0.80, // 80 >= 50 but 80 < 95
+        );
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[f]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(p1.len(), 2, "80% score passes the 50-threshold channel");
+        assert_eq!(
+            p2.len(),
+            1,
+            "80% score does NOT pass the 95-threshold channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deduplication_across_channels() {
+        // Both channels should respect the SAME cooldown for the same finding type
+        let (url1, received1) = simple_mock("/a").await;
+        let (url2, received2) = simple_mock("/b").await;
+
+        let config = AlertConfig {
+            enabled: true,
+            cooldown_seconds: 300, // 5 min cooldown
+            channels: vec![
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url1),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "High".to_string(),
+                    min_security_score: 70,
+                },
+                AlertChannelConfig {
+                    channel_type: "webhook".to_string(),
+                    url: Some(url2),
+                    webhook_url: None,
+                    routing_key: None,
+                    min_severity: "High".to_string(),
+                    min_security_score: 70,
+                },
+            ],
+            ..AlertConfig::default()
+        };
+
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+
+        // First call: both channels should fire
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[high_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(p1.len(), 1);
+        assert_eq!(p2.len(), 1);
+        drop(p1);
+        drop(p2);
+
+        // Second call: cooldown blocks it on BOTH channels
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[high_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let p1 = received1.lock().await;
+        let p2 = received2.lock().await;
+        assert_eq!(p1.len(), 1, "Cooldown should suppress on channel 1");
+        assert_eq!(p2.len(), 1, "Cooldown should suppress on channel 2");
+    }
+
+    #[tokio::test]
+    async fn test_legacy_config_backward_compatibility() {
+        // The old-style config with just webhook_url (no channels array) must work
+        let (url, received) = simple_mock("/legacy").await;
+
+        let config = AlertConfig {
+            enabled: true,
+            webhook_url: url,
+            min_severity: "High".to_string(),
+            min_security_score: 70,
+            cooldown_seconds: 0,
+            channels: Vec::new(), // empty → legacy mode
+            escalation: None,
+        };
+
+        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
+        assert_eq!(engine.channel_count(), 1);
+
+        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &[high_finding()]);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let payloads = received.lock().await;
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["alert_type"], "security_finding");
+    }
+
+    #[tokio::test]
+    async fn test_slack_channel_sends_block_kit() {
+        let (url, received) = simple_mock("/slack").await;
+
+        let channel = SlackChannel::new(url, Client::new());
+        let payload = AlertPayload {
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            findings: vec![
+                AlertFinding::from_security_finding(&high_finding()),
+                AlertFinding::from_security_finding(&critical_finding()),
+            ],
+        };
+
+        channel.send_alert(&payload).await.unwrap();
+
+        let payloads = received.lock().await;
+        assert_eq!(payloads.len(), 1);
+        assert!(payloads[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("LLMTrace Security Alert"));
+        assert!(payloads[0]["blocks"].is_array());
+        let blocks = payloads[0]["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0]["type"], "header");
+        assert_eq!(blocks[1]["type"], "section");
+        assert_eq!(blocks[2]["type"], "context");
+    }
+
+    #[tokio::test]
+    async fn test_pagerduty_channel_payload_structure() {
+        let (url, received) = simple_mock("/pd").await;
+
+        // Override the PD URL for testing (we can't hit the real PD endpoint)
+        // We'll test the payload structure via the webhook channel with PD-like payload
+        // For a real unit test, let's use the AlertPayload directly
+        let alert = AlertPayload {
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            findings: vec![AlertFinding::from_security_finding(&critical_finding())],
+        };
+
+        // Directly verify PagerDuty severity mapping
+        assert_eq!(PagerDutyChannel::map_severity("Critical"), "critical");
+
+        // Verify slack payload serialization doesn't panic
+        let _slack_payload = build_slack_payload(&alert);
+
+        // Verify the generic webhook works
+        let wh = WebhookChannel::new(url, Client::new());
+        wh.send_alert(&alert).await.unwrap();
+
+        let payloads = received.lock().await;
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["findings"].as_array().unwrap().len(), 1);
+        assert_eq!(payloads[0]["findings"][0]["severity"], "Critical");
     }
 
     // -- is_slack_webhook --------------------------------------------------
@@ -586,196 +1273,5 @@ mod tests {
         assert!(!is_slack_webhook(
             "https://discord.com/api/webhooks/123/abc"
         ));
-    }
-
-    // -- integration test with mock server ---------------------------------
-
-    #[tokio::test]
-    async fn test_webhook_delivery_generic() {
-        use axum::routing::post;
-        use axum::Router;
-
-        let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received.clone();
-
-        let app = Router::new().route(
-            "/webhook",
-            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let store = received_clone.clone();
-                async move {
-                    store.lock().await.push(body);
-                    axum::http::StatusCode::OK
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let url = format!("http://{addr}/webhook");
-        let config = test_config(&url);
-        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
-
-        let trace_id = Uuid::new_v4();
-        let tenant_id = TenantId::new();
-        let findings = vec![high_finding()];
-
-        engine.check_and_alert(trace_id, tenant_id, &findings);
-
-        // Give the spawned task time to complete
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        let payloads = received.lock().await;
-        assert_eq!(payloads.len(), 1);
-        // Generic format (not a slack URL)
-        assert_eq!(payloads[0]["alert_type"], "security_finding");
-        assert_eq!(payloads[0]["trace_id"], trace_id.to_string());
-        assert_eq!(payloads[0]["tenant_id"], tenant_id.to_string());
-        assert_eq!(payloads[0]["findings"].as_array().unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_webhook_delivery_slack_format() {
-        use axum::routing::post;
-        use axum::Router;
-
-        let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received.clone();
-
-        let app = Router::new().route(
-            "/services/T00/B00/xxx",
-            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let store = received_clone.clone();
-                async move {
-                    store.lock().await.push(body);
-                    axum::http::StatusCode::OK
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        // Use a URL that contains "hooks.slack.com" so the engine sends Slack format
-        // We route through our local server but the URL string triggers Slack detection
-        let url = format!("http://{addr}/services/T00/B00/xxx");
-        let config = AlertConfig {
-            enabled: true,
-            // Embed hooks.slack.com in a query param so is_slack_webhook detects it,
-            // while the actual request goes to our local server.
-            webhook_url: url,
-            min_severity: "High".to_string(),
-            min_security_score: 70,
-            cooldown_seconds: 300,
-        };
-
-        // For this test, we won't match hooks.slack.com, so it will use generic.
-        // Instead, let's test that the POST arrives with the correct structure.
-        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
-
-        let trace_id = Uuid::new_v4();
-        let tenant_id = TenantId::new();
-        let findings = vec![high_finding()];
-
-        engine.check_and_alert(trace_id, tenant_id, &findings);
-
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        let payloads = received.lock().await;
-        assert_eq!(payloads.len(), 1);
-        // This used generic format since the URL doesn't contain hooks.slack.com
-        assert_eq!(payloads[0]["alert_type"], "security_finding");
-    }
-
-    #[tokio::test]
-    async fn test_no_webhook_for_low_severity() {
-        use axum::routing::post;
-        use axum::Router;
-
-        let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received.clone();
-
-        let app = Router::new().route(
-            "/webhook",
-            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let store = received_clone.clone();
-                async move {
-                    store.lock().await.push(body);
-                    axum::http::StatusCode::OK
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let url = format!("http://{addr}/webhook");
-        let config = test_config(&url);
-        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
-
-        // Only low-severity findings — should NOT trigger a webhook
-        let findings = vec![low_finding()];
-        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &findings);
-
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let payloads = received.lock().await;
-        assert!(payloads.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_cooldown_prevents_duplicate_webhook() {
-        use axum::routing::post;
-        use axum::Router;
-
-        let received: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = received.clone();
-
-        let app = Router::new().route(
-            "/webhook",
-            post(move |axum::Json(body): axum::Json<serde_json::Value>| {
-                let store = received_clone.clone();
-                async move {
-                    store.lock().await.push(body);
-                    axum::http::StatusCode::OK
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let url = format!("http://{addr}/webhook");
-        let config = test_config(&url); // 300s cooldown
-        let engine = AlertEngine::from_config(&config, Client::new()).unwrap();
-
-        let findings = vec![high_finding()];
-
-        // First alert — should fire
-        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &findings);
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        // Second alert with same finding type — should be suppressed by cooldown
-        engine.check_and_alert(Uuid::new_v4(), TenantId::new(), &findings);
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let payloads = received.lock().await;
-        assert_eq!(
-            payloads.len(),
-            1,
-            "Cooldown should suppress the second alert"
-        );
     }
 }

@@ -141,17 +141,41 @@ circuit_breaker:
 
 alerts:
   # Enable the alert engine. When enabled, security findings that exceed the
-  # configured thresholds will trigger an HTTP POST to the webhook URL.
+  # configured thresholds will trigger notifications to the configured channels.
   enabled: false
-  # Webhook URL to POST alert payloads to (Slack incoming webhooks, generic, etc.).
-  # Slack-format payloads are sent automatically when the URL contains hooks.slack.com.
-  webhook_url: ""
-  # Minimum severity level to trigger an alert: Info, Low, Medium, High, Critical.
-  min_severity: "High"
-  # Minimum confidence-based score (0-100) to trigger an alert.
-  min_security_score: 70
-  # Cooldown in seconds between repeated alerts for the same finding type.
+
+  # ---------- Legacy mode (backward compatible) ----------
+  # If no `channels` are defined, these top-level fields are used:
+  # webhook_url: "https://hooks.slack.com/services/T00/B00/xxx"
+  # min_severity: "High"
+  # min_security_score: 70
+
+  # ---------- Multi-channel mode ----------
+  # When `channels` is defined, each channel has its own type, URL, and severity filter.
+  # Supported types: webhook, slack, pagerduty (email: coming soon)
+  channels: []
+  #   - type: slack
+  #     url: "https://hooks.slack.com/services/T00/B00/xxx"
+  #     min_severity: "Medium"          # Slack gets Medium and above
+  #     min_security_score: 50
+  #
+  #   - type: pagerduty
+  #     routing_key: "your-pagerduty-routing-key"
+  #     min_severity: "Critical"        # PagerDuty only for Critical
+  #     min_security_score: 90
+  #
+  #   - type: webhook
+  #     url: "https://your-server.com/alerts"
+  #     min_severity: "High"
+  #     min_security_score: 70
+
+  # Global cooldown in seconds between repeated alerts for the same finding type.
   cooldown_seconds: 300
+
+  # Optional: alert escalation (re-send at higher severity if unacknowledged).
+  # escalation:
+  #   enabled: false
+  #   escalate_after_seconds: 600
 
 # ---------------------------------------------------------------------------
 # Cost caps — per-agent budget & token enforcement
