@@ -13,12 +13,18 @@ mod sqlite;
 #[cfg(feature = "clickhouse")]
 mod clickhouse;
 
+#[cfg(feature = "postgres")]
+mod postgres;
+
 pub use cache::InMemoryCacheLayer;
 pub use memory::{InMemoryMetadataRepository, InMemoryTraceRepository};
 pub use sqlite::{SqliteMetadataRepository, SqliteTraceRepository};
 
 #[cfg(feature = "clickhouse")]
 pub use self::clickhouse::ClickHouseTraceRepository;
+
+#[cfg(feature = "postgres")]
+pub use self::postgres::PostgresMetadataRepository;
 
 use llmtrace_core::{Result, Storage};
 use std::sync::Arc;

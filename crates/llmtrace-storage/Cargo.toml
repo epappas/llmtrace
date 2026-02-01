@@ -10,6 +10,7 @@ description = "Storage abstraction layer with SQLite backend and repository patt
 [features]
 default = []
 clickhouse = ["dep:clickhouse"]
+postgres = ["sqlx/postgres"]
 
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
