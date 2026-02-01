@@ -10,9 +10,15 @@ mod cache;
 mod memory;
 mod sqlite;
 
+#[cfg(feature = "clickhouse")]
+mod clickhouse;
+
 pub use cache::InMemoryCacheLayer;
 pub use memory::{InMemoryMetadataRepository, InMemoryTraceRepository};
 pub use sqlite::{SqliteMetadataRepository, SqliteTraceRepository};
+
+#[cfg(feature = "clickhouse")]
+pub use self::clickhouse::ClickHouseTraceRepository;
 
 use llmtrace_core::{Result, Storage};
 use std::sync::Arc;

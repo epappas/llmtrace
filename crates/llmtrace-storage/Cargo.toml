@@ -7,6 +7,10 @@ authors.workspace = true
 repository.workspace = true
 description = "Storage abstraction layer with SQLite backend and repository pattern"
 
+[features]
+default = []
+clickhouse = ["dep:clickhouse"]
+
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
 tokio.workspace = true
@@ -18,6 +22,7 @@ uuid.workspace = true
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"] }
 dashmap = "6"
 bytes = "1"
+clickhouse = { version = "0.14", features = ["uuid", "chrono"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
