@@ -289,7 +289,7 @@ The current `StorageBackend` trait handles only traces. Refactor into focused re
   - `instrument(client)` function — wraps an OpenAI client to add tracing
   - `configure(config_dict)` — configure from Python
 - Add a `pyproject.toml` for maturin build
-- Add basic Python tests in `tests/test_python.py`
+- Add basic Python tests in `crates/llmtrace-python/tests/test_python.py`
 - Commit and push
 
 **Acceptance**: `maturin develop` succeeds, Python import works, basic test passes.
@@ -862,7 +862,7 @@ Implemented in commit `dcf100d`. ClickHouseTraceRepository with MergeTree engine
 
 **Tasks**:
 
-1. **Create `bindings/node/`** using `napi-rs`
+1. **Create `crates/llmtrace-nodejs/`** using `napi-rs`
 2. **Expose**: `LLMSecTracer` class, `instrument()` function, action reporting
 3. **TypeScript types**: generated `.d.ts` files
 4. **npm package**: `package.json`, build scripts, publish-ready
