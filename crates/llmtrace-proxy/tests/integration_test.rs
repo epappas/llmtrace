@@ -64,6 +64,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         storage_breaker,
         security_breaker,
         cost_estimator,
+        alert_engine: None,
     });
 
     let app = Router::new()

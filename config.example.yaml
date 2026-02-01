@@ -121,6 +121,24 @@ circuit_breaker:
   half_open_max_calls: 3
 
 # ---------------------------------------------------------------------------
+# Alert engine — webhook notifications for security findings
+# ---------------------------------------------------------------------------
+
+alerts:
+  # Enable the alert engine. When enabled, security findings that exceed the
+  # configured thresholds will trigger an HTTP POST to the webhook URL.
+  enabled: false
+  # Webhook URL to POST alert payloads to (Slack incoming webhooks, generic, etc.).
+  # Slack-format payloads are sent automatically when the URL contains hooks.slack.com.
+  webhook_url: ""
+  # Minimum severity level to trigger an alert: Info, Low, Medium, High, Critical.
+  min_severity: "High"
+  # Minimum confidence-based score (0-100) to trigger an alert.
+  min_security_score: 70
+  # Cooldown in seconds between repeated alerts for the same finding type.
+  cooldown_seconds: 300
+
+# ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
 

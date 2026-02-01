@@ -9,6 +9,7 @@ use axum::routing::{any, get};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
+use llmtrace_proxy::alerts::AlertEngine;
 use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
@@ -223,6 +224,15 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
+    let alert_engine = AlertEngine::from_config(&config.alerts, client.clone());
+
+    if alert_engine.is_some() {
+        info!(
+            webhook_url = %config.alerts.webhook_url,
+            min_severity = %config.alerts.min_severity,
+            "Alert engine enabled"
+        );
+    }
 
     Ok(Arc::new(AppState {
         config,
@@ -232,6 +242,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         storage_breaker,
         security_breaker,
         cost_estimator,
+        alert_engine,
     }))
 }
 

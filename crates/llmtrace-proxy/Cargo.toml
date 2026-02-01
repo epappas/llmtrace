@@ -33,6 +33,7 @@ axum = "0.7"
 hyper = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde_yaml = "0.9"
+dashmap = "6"
 bytes = "1"
 http = "1"
 http-body-util = "0.1"

@@ -346,6 +346,7 @@ mod tests {
             storage_breaker,
             security_breaker,
             cost_estimator,
+            alert_engine: None,
         })
     }
 

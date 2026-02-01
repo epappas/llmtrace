@@ -44,6 +44,8 @@ pub struct AppState {
     pub security_breaker: Arc<CircuitBreaker>,
     /// Cost estimator for computing per-request cost in USD.
     pub cost_estimator: CostEstimator,
+    /// Alert engine for webhook notifications (`None` if alerts are disabled).
+    pub alert_engine: Option<crate::alerts::AlertEngine>,
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +330,11 @@ pub async fn proxy_handler(
 
         // --- Security analysis first, so findings can be persisted with the trace ---
         let security_findings = run_security_analysis(&state_bg, &captured).await;
+
+        // --- Alert engine: fire-and-forget webhook notification ---
+        if let Some(ref engine) = state_bg.alert_engine {
+            engine.check_and_alert(captured.trace_id, captured.tenant_id, &security_findings);
+        }
 
         // --- Trace capture with enriched security findings ---
         run_trace_capture(&state_bg, &captured, &security_findings).await;

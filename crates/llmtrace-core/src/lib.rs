@@ -57,6 +57,33 @@ pub enum SecuritySeverity {
     Critical,
 }
 
+impl std::fmt::Display for SecuritySeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Info => write!(f, "Info"),
+            Self::Low => write!(f, "Low"),
+            Self::Medium => write!(f, "Medium"),
+            Self::High => write!(f, "High"),
+            Self::Critical => write!(f, "Critical"),
+        }
+    }
+}
+
+impl std::str::FromStr for SecuritySeverity {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "Info" | "info" | "INFO" => Ok(Self::Info),
+            "Low" | "low" | "LOW" => Ok(Self::Low),
+            "Medium" | "medium" | "MEDIUM" => Ok(Self::Medium),
+            "High" | "high" | "HIGH" => Ok(Self::High),
+            "Critical" | "critical" | "CRITICAL" => Ok(Self::Critical),
+            _ => Err(format!("unknown severity: {s}")),
+        }
+    }
+}
+
 /// A security finding detected during analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityFinding {
@@ -497,6 +524,9 @@ pub struct ProxyConfig {
     /// Cost estimation configuration.
     #[serde(default)]
     pub cost_estimation: CostEstimationConfig,
+    /// Alert engine configuration for webhook notifications.
+    #[serde(default)]
+    pub alerts: AlertConfig,
 }
 
 impl Default for ProxyConfig {
@@ -522,6 +552,7 @@ impl Default for ProxyConfig {
             health_check: HealthCheckConfig::default(),
             logging: LoggingConfig::default(),
             cost_estimation: CostEstimationConfig::default(),
+            alerts: AlertConfig::default(),
         }
     }
 }
@@ -660,6 +691,54 @@ pub struct ModelPricingConfig {
     pub input_per_million: f64,
     /// Cost per 1 million output/completion tokens in USD.
     pub output_per_million: f64,
+}
+
+/// Alert engine configuration for webhook notifications.
+///
+/// When enabled, the alert engine sends HTTP POST requests to a webhook URL
+/// whenever security findings exceed the configured severity and confidence
+/// thresholds. A per-finding-type cooldown prevents alert spam.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertConfig {
+    /// Enable the alert engine.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Webhook URL to POST alert payloads to.
+    #[serde(default)]
+    pub webhook_url: String,
+    /// Minimum severity level to trigger an alert (e.g., `"High"`, `"Critical"`).
+    #[serde(default = "default_alert_min_severity")]
+    pub min_severity: String,
+    /// Minimum confidence-based score (0–100) to trigger an alert.
+    #[serde(default = "default_alert_min_security_score")]
+    pub min_security_score: u8,
+    /// Cooldown in seconds between repeated alerts for the same finding type.
+    #[serde(default = "default_alert_cooldown_seconds")]
+    pub cooldown_seconds: u64,
+}
+
+fn default_alert_min_severity() -> String {
+    "High".to_string()
+}
+
+fn default_alert_min_security_score() -> u8 {
+    70
+}
+
+fn default_alert_cooldown_seconds() -> u64 {
+    300
+}
+
+impl Default for AlertConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            webhook_url: String::new(),
+            min_severity: default_alert_min_severity(),
+            min_security_score: default_alert_min_security_score(),
+            cooldown_seconds: default_alert_cooldown_seconds(),
+        }
+    }
 }
 
 /// Logging configuration.
@@ -1408,6 +1487,7 @@ mod tests {
                 enabled: true,
                 custom_models,
             },
+            alerts: AlertConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -1542,5 +1622,86 @@ mod tests {
         assert_eq!(query.start_time, Some(start));
         assert_eq!(query.end_time, Some(end));
         assert_eq!(query.limit, Some(50));
+    }
+
+    #[test]
+    fn test_alert_config_default() {
+        let config = AlertConfig::default();
+        assert!(!config.enabled);
+        assert!(config.webhook_url.is_empty());
+        assert_eq!(config.min_severity, "High");
+        assert_eq!(config.min_security_score, 70);
+        assert_eq!(config.cooldown_seconds, 300);
+    }
+
+    #[test]
+    fn test_alert_config_serialization() {
+        let config = AlertConfig {
+            enabled: true,
+            webhook_url: "https://hooks.slack.com/services/T00/B00/xxx".to_string(),
+            min_severity: "Critical".to_string(),
+            min_security_score: 90,
+            cooldown_seconds: 600,
+        };
+        let serialized = serde_json::to_string(&config).unwrap();
+        let deserialized: AlertConfig = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(config.enabled, deserialized.enabled);
+        assert_eq!(config.webhook_url, deserialized.webhook_url);
+        assert_eq!(config.min_severity, deserialized.min_severity);
+        assert_eq!(config.min_security_score, deserialized.min_security_score);
+        assert_eq!(config.cooldown_seconds, deserialized.cooldown_seconds);
+    }
+
+    #[test]
+    fn test_alert_config_deserializes_with_defaults() {
+        let json = r#"{"enabled": true, "webhook_url": "http://example.com"}"#;
+        let config: AlertConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.webhook_url, "http://example.com");
+        assert_eq!(config.min_severity, "High");
+        assert_eq!(config.min_security_score, 70);
+        assert_eq!(config.cooldown_seconds, 300);
+    }
+
+    #[test]
+    fn test_proxy_config_default_includes_alerts() {
+        let config = ProxyConfig::default();
+        assert!(!config.alerts.enabled);
+        assert!(config.alerts.webhook_url.is_empty());
+        assert_eq!(config.alerts.min_severity, "High");
+    }
+
+    #[test]
+    fn test_security_severity_display() {
+        assert_eq!(SecuritySeverity::Info.to_string(), "Info");
+        assert_eq!(SecuritySeverity::Low.to_string(), "Low");
+        assert_eq!(SecuritySeverity::Medium.to_string(), "Medium");
+        assert_eq!(SecuritySeverity::High.to_string(), "High");
+        assert_eq!(SecuritySeverity::Critical.to_string(), "Critical");
+    }
+
+    #[test]
+    fn test_security_severity_from_str() {
+        assert_eq!(
+            "Info".parse::<SecuritySeverity>().unwrap(),
+            SecuritySeverity::Info
+        );
+        assert_eq!(
+            "low".parse::<SecuritySeverity>().unwrap(),
+            SecuritySeverity::Low
+        );
+        assert_eq!(
+            "MEDIUM".parse::<SecuritySeverity>().unwrap(),
+            SecuritySeverity::Medium
+        );
+        assert_eq!(
+            "High".parse::<SecuritySeverity>().unwrap(),
+            SecuritySeverity::High
+        );
+        assert_eq!(
+            "critical".parse::<SecuritySeverity>().unwrap(),
+            SecuritySeverity::Critical
+        );
+        assert!("unknown".parse::<SecuritySeverity>().is_err());
     }
 }
