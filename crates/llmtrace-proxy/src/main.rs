@@ -5,7 +5,7 @@
 //! and `/v1/completions` endpoints, streaming SSE passthrough, async trace
 //! capture, async security analysis, and circuit-breaker degradation.
 
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
@@ -265,6 +265,18 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/security/findings",
             get(llmtrace_proxy::api::list_security_findings),
+        )
+        // Tenant Management API
+        .route(
+            "/api/v1/tenants",
+            post(llmtrace_proxy::tenant_api::create_tenant)
+                .get(llmtrace_proxy::tenant_api::list_tenants),
+        )
+        .route(
+            "/api/v1/tenants/:id",
+            get(llmtrace_proxy::tenant_api::get_tenant)
+                .put(llmtrace_proxy::tenant_api::update_tenant)
+                .delete(llmtrace_proxy::tenant_api::delete_tenant),
         )
         // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))

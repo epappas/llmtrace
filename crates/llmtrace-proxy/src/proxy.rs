@@ -48,6 +48,13 @@ pub struct AppState {
     pub alert_engine: Option<crate::alerts::AlertEngine>,
 }
 
+impl AppState {
+    /// Convenience accessor for the metadata repository.
+    pub fn metadata(&self) -> &dyn llmtrace_core::MetadataRepository {
+        self.storage.metadata.as_ref()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Request body types (OpenAI-compatible subset)
 // ---------------------------------------------------------------------------
@@ -146,6 +153,21 @@ pub async fn proxy_handler(
     let tenant_id = resolve_tenant(&headers);
     let _api_key = extract_api_key(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
+
+    // Auto-create tenant on first request (best-effort, non-blocking).
+    {
+        let state_ac = Arc::clone(&state);
+        let api_key_prefix = _api_key
+            .as_deref()
+            .map(|k| {
+                let prefix_len = k.len().min(8);
+                format!("key-{}", &k[..prefix_len])
+            })
+            .unwrap_or_else(|| format!("auto-{}", tenant_id.0));
+        tokio::spawn(async move {
+            crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &api_key_prefix).await;
+        });
+    }
 
     debug!(
         %trace_id,

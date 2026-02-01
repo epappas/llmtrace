@@ -11,6 +11,7 @@ pub mod cost;
 pub mod provider;
 pub mod proxy;
 pub mod streaming;
+pub mod tenant_api;
 
 // Re-export key types for convenience
 pub use alerts::AlertEngine;
