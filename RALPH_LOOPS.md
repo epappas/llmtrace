@@ -317,3 +317,126 @@ The current `StorageBackend` trait handles only traces. Refactor into focused re
 - Commit and push
 
 **Acceptance**: Full test suite passes, README is clear, repo is clean.
+
+---
+
+# Phase 2: Production Readiness
+
+## Loop 9: REST Query API
+
+**Goal**: Add HTTP API endpoints for querying traces, spans, and security findings — so users don't need direct SQLite access.
+
+**Tasks**:
+- Add new routes to the proxy's axum router:
+  - `GET /api/v1/traces` — list traces with filters (tenant, time range, provider, model, limit, offset)
+  - `GET /api/v1/traces/:trace_id` — get a single trace with all spans
+  - `GET /api/v1/spans` — list spans with filters (security_score range, operation_name, model)
+  - `GET /api/v1/spans/:span_id` — get a single span
+  - `GET /api/v1/stats` — storage stats for a tenant
+  - `GET /api/v1/security/findings` — list spans with security findings (security_score > 0)
+- Tenant identification via `Authorization: Bearer` header or `X-LLMTrace-Tenant-ID` header (reuse existing `resolve_tenant` logic)
+- JSON responses with proper pagination (limit, offset, total count)
+- Query parameters map to `TraceQuery` fields
+- Add tests for each endpoint
+- Commit and push
+
+**Acceptance**: All API endpoints return correct filtered data, pagination works, tests pass.
+
+---
+
+## Loop 10: LLM Provider Auto-Detection
+
+**Goal**: Automatically detect the LLM provider from the request instead of hardcoding `LLMProvider::OpenAI`.
+
+**Tasks**:
+- Detect provider from:
+  1. Request URL path patterns (`/v1/chat/completions` → OpenAI-compatible, `/api/generate` → Ollama, `/v1/messages` → Anthropic)
+  2. Request headers (e.g., `x-api-key` + Anthropic URL patterns)
+  3. Upstream URL hostname (api.openai.com → OpenAI, api.anthropic.com → Anthropic, etc.)
+  4. Custom header `X-LLMTrace-Provider` for explicit override
+- Extract response metadata per provider (different response formats for usage/tokens)
+- Parse Anthropic-style responses (`content[0].text`, `usage.input_tokens`/`output_tokens`)
+- Parse Ollama-style responses (`response`, `eval_count`/`prompt_eval_count`)
+- Store the detected provider on the span
+- Add tests with mock responses for each provider format
+- Commit and push
+
+**Acceptance**: Provider is correctly detected and stored for OpenAI, Anthropic, Ollama, and vLLM requests.
+
+---
+
+## Loop 11: Cost Estimation Engine
+
+**Goal**: Estimate costs per request based on model and token counts.
+
+**Tasks**:
+- Create a cost estimation module in `llmtrace-core` or `llmtrace-proxy`:
+  - Pricing table for common models (GPT-4, GPT-4o, GPT-3.5, Claude 3.5 Sonnet/Haiku/Opus, Llama, Qwen — input/output per 1M tokens)
+  - `estimate_cost(provider, model, prompt_tokens, completion_tokens) -> Option<f64>`
+  - Support custom pricing via config (override or add models)
+  - Return `None` for unknown models (don't guess)
+- Wire into trace capture: set `estimated_cost_usd` on spans
+- Add `total_cost` aggregation to the stats endpoint
+- Add a config section for custom model pricing
+- Add tests
+- Commit and push
+
+**Acceptance**: Known models get cost estimates stored on spans, custom pricing works via config.
+
+---
+
+## Loop 12: Alert Engine — Webhook Notifications
+
+**Goal**: Send webhook notifications when security findings exceed thresholds.
+
+**Tasks**:
+- Add alert configuration to `ProxyConfig`:
+  ```yaml
+  alerts:
+    enabled: true
+    webhook_url: "https://hooks.slack.com/..."
+    min_severity: "High"          # Only alert on High or Critical
+    min_security_score: 70
+    cooldown_seconds: 300         # Don't re-alert same pattern within 5 min
+  ```
+- Implement `AlertEngine` in the proxy:
+  - After security analysis, check if findings exceed thresholds
+  - If so, POST a JSON payload to the webhook URL with trace details, findings, and timestamp
+  - Respect cooldown to prevent alert spam
+  - Fire-and-forget (async, don't block trace storage)
+- Webhook payload format (Slack-compatible):
+  ```json
+  {
+    "text": "🚨 Security Alert: prompt_injection detected",
+    "blocks": [...]
+  }
+  ```
+- Add tests with a mock webhook server
+- Commit and push
+
+**Acceptance**: Webhook fires on high-severity findings, cooldown works, doesn't block the proxy.
+
+---
+
+## Loop 13: Tenant Management API
+
+**Goal**: CRUD API for managing tenants and their configurations.
+
+**Tasks**:
+- Add tenant management routes:
+  - `POST /api/v1/tenants` — create tenant (name, plan)
+  - `GET /api/v1/tenants` — list tenants
+  - `GET /api/v1/tenants/:id` — get tenant details + stats
+  - `PUT /api/v1/tenants/:id` — update tenant config
+  - `DELETE /api/v1/tenants/:id` — soft-delete tenant
+- Tenant config includes:
+  - Security analysis toggle
+  - Custom alert thresholds
+  - Rate limits
+  - Retention policy
+- Auto-create tenant on first request if not exists (upsert on proxy flow)
+- Audit events logged for all tenant operations
+- Add tests
+- Commit and push
+
+**Acceptance**: Tenant CRUD works, auto-creation on first proxy request, audit trail recorded.
