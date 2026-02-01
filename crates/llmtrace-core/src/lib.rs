@@ -850,6 +850,9 @@ pub struct ProxyConfig {
     /// Streaming security analysis configuration.
     #[serde(default)]
     pub streaming_analysis: StreamingAnalysisConfig,
+    /// PII detection and redaction configuration.
+    #[serde(default)]
+    pub pii: PiiConfig,
 }
 
 impl Default for ProxyConfig {
@@ -883,6 +886,7 @@ impl Default for ProxyConfig {
             grpc: GrpcConfig::default(),
             anomaly_detection: AnomalyDetectionConfig::default(),
             streaming_analysis: StreamingAnalysisConfig::default(),
+            pii: PiiConfig::default(),
         }
     }
 }
@@ -1276,6 +1280,50 @@ impl Default for StreamingAnalysisConfig {
             token_interval: default_streaming_token_interval(),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// PII detection & redaction types
+// ---------------------------------------------------------------------------
+
+/// Action to take when PII is detected in request or response content.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PiiAction {
+    /// Generate security findings but do not modify text (default).
+    #[default]
+    AlertOnly,
+    /// Generate security findings *and* replace PII with `[PII:TYPE]` tags.
+    AlertAndRedact,
+    /// Replace PII silently without generating security findings.
+    RedactSilent,
+}
+
+impl std::fmt::Display for PiiAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlertOnly => write!(f, "alert_only"),
+            Self::AlertAndRedact => write!(f, "alert_and_redact"),
+            Self::RedactSilent => write!(f, "redact_silent"),
+        }
+    }
+}
+
+/// PII detection and redaction configuration.
+///
+/// Controls how the security analyzer handles detected PII patterns.
+///
+/// # Example (YAML)
+///
+/// ```yaml
+/// pii:
+///   action: "alert_only"   # "alert_only" | "alert_and_redact" | "redact_silent"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PiiConfig {
+    /// Action to take when PII is detected.
+    #[serde(default)]
+    pub action: PiiAction,
 }
 
 /// Security analysis configuration for ML-based prompt injection detection.
@@ -2239,6 +2287,9 @@ mod tests {
             grpc: GrpcConfig::default(),
             anomaly_detection: AnomalyDetectionConfig::default(),
             streaming_analysis: StreamingAnalysisConfig::default(),
+            pii: PiiConfig {
+                action: PiiAction::AlertAndRedact,
+            },
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -2255,6 +2306,7 @@ mod tests {
         );
         assert_eq!(config.logging.level, deserialized.logging.level);
         assert_eq!(config.logging.format, deserialized.logging.format);
+        assert_eq!(deserialized.pii.action, PiiAction::AlertAndRedact);
         assert!(deserialized.cost_estimation.enabled);
         let custom = deserialized
             .cost_estimation
@@ -2956,5 +3008,59 @@ mod tests {
         let config = ProxyConfig::default();
         assert!(!config.auth.enabled);
         assert!(config.auth.admin_key.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // PII types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_pii_action_default() {
+        assert_eq!(PiiAction::default(), PiiAction::AlertOnly);
+    }
+
+    #[test]
+    fn test_pii_action_display() {
+        assert_eq!(PiiAction::AlertOnly.to_string(), "alert_only");
+        assert_eq!(PiiAction::AlertAndRedact.to_string(), "alert_and_redact");
+        assert_eq!(PiiAction::RedactSilent.to_string(), "redact_silent");
+    }
+
+    #[test]
+    fn test_pii_action_serialization() {
+        let action = PiiAction::AlertAndRedact;
+        let json = serde_json::to_string(&action).unwrap();
+        assert_eq!(json, r#""alert_and_redact""#);
+        let deser: PiiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser, PiiAction::AlertAndRedact);
+    }
+
+    #[test]
+    fn test_pii_config_default() {
+        let config = PiiConfig::default();
+        assert_eq!(config.action, PiiAction::AlertOnly);
+    }
+
+    #[test]
+    fn test_pii_config_serialization() {
+        let config = PiiConfig {
+            action: PiiAction::RedactSilent,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deser: PiiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deser.action, PiiAction::RedactSilent);
+    }
+
+    #[test]
+    fn test_pii_config_deserializes_with_defaults() {
+        let json = r#"{}"#;
+        let config: PiiConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.action, PiiAction::AlertOnly);
+    }
+
+    #[test]
+    fn test_proxy_config_default_includes_pii() {
+        let config = ProxyConfig::default();
+        assert_eq!(config.pii.action, PiiAction::AlertOnly);
     }
 }
