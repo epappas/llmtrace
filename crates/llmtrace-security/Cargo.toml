@@ -16,7 +16,6 @@ ml = [
     "dep:tokenizers",
     "dep:hf-hub",
     "dep:tracing",
-    "dep:serde_json",
     "dep:tokio",
 ]
 
@@ -30,6 +29,7 @@ rand = "0.8"
 regex = "1.10"
 base64 = "0.22"
 unicode-normalization = "0.1"
+serde_json = "1.0"
 
 # ML dependencies (opt-in via `ml` feature)
 candle-core = { version = "0.9", optional = true }
@@ -38,7 +38,7 @@ candle-transformers = { version = "0.9", optional = true }
 tokenizers = { version = "0.22", optional = true }
 hf-hub = { version = "0.4", optional = true, default-features = false, features = ["tokio", "rustls-tls"] }
 tracing = { version = "0.1", optional = true }
-serde_json = { version = "1.0", optional = true }
+# serde_json is a required dependency (used by tool_firewall FormatConstraint)
 tokio = { version = "1", optional = true, features = ["rt"] }
 
 [dev-dependencies]
