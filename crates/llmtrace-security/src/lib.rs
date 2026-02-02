@@ -37,8 +37,6 @@ pub mod feature_extraction;
 #[cfg(feature = "ml")]
 pub mod fusion_classifier;
 #[cfg(feature = "ml")]
-pub mod thresholds;
-#[cfg(feature = "ml")]
 pub mod hallucination_detector;
 #[cfg(feature = "ml")]
 pub mod inference_stats;
@@ -48,6 +46,8 @@ pub mod ml_detector;
 pub mod ner_detector;
 #[cfg(feature = "ml")]
 pub mod output_analyzer;
+#[cfg(feature = "ml")]
+pub mod thresholds;
 #[cfg(feature = "ml")]
 pub mod toxicity_detector;
 

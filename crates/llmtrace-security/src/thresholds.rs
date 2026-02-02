@@ -178,7 +178,10 @@ impl ResolvedThresholds {
     #[must_use]
     pub fn threshold_for_finding_type(&self, finding_type: &str) -> Option<f64> {
         match finding_type {
-            "prompt_injection" | "role_injection" | "encoding_attack" | "ml_prompt_injection"
+            "prompt_injection"
+            | "role_injection"
+            | "encoding_attack"
+            | "ml_prompt_injection"
             | "fusion_prompt_injection" => Some(self.injection),
             "jailbreak" => Some(self.jailbreak),
             "pii_detected" => Some(self.pii),
@@ -278,11 +281,7 @@ impl FalsePositiveTracker {
     /// Remove entries older than `window_duration`.
     fn prune(&mut self) {
         let cutoff = Instant::now() - self.window_duration;
-        while self
-            .window
-            .front()
-            .is_some_and(|(ts, _)| *ts < cutoff)
-        {
+        while self.window.front().is_some_and(|(ts, _)| *ts < cutoff) {
             self.window.pop_front();
         }
     }
@@ -350,10 +349,8 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("injection".to_string(), 0.42);
         overrides.insert("pii".to_string(), 0.99);
-        let t = ResolvedThresholds::from_operating_point(
-            &OperatingPoint::Balanced,
-            Some(&overrides),
-        );
+        let t =
+            ResolvedThresholds::from_operating_point(&OperatingPoint::Balanced, Some(&overrides));
         assert!((t.injection - 0.42).abs() < f64::EPSILON);
         assert!((t.pii - 0.99).abs() < f64::EPSILON);
         // Non-overridden values stay at Balanced defaults
@@ -365,10 +362,8 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert("injection".to_string(), 1.5);
         overrides.insert("pii".to_string(), -0.3);
-        let t = ResolvedThresholds::from_operating_point(
-            &OperatingPoint::Balanced,
-            Some(&overrides),
-        );
+        let t =
+            ResolvedThresholds::from_operating_point(&OperatingPoint::Balanced, Some(&overrides));
         assert!((t.injection - 1.0).abs() < f64::EPSILON);
         assert!(t.pii.abs() < f64::EPSILON);
     }
@@ -377,10 +372,8 @@ mod tests {
     fn test_unknown_override_ignored() {
         let mut overrides = HashMap::new();
         overrides.insert("nonexistent".to_string(), 0.5);
-        let t = ResolvedThresholds::from_operating_point(
-            &OperatingPoint::Balanced,
-            Some(&overrides),
-        );
+        let t =
+            ResolvedThresholds::from_operating_point(&OperatingPoint::Balanced, Some(&overrides));
         assert!((t.injection - 0.75).abs() < f64::EPSILON);
     }
 

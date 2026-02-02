@@ -459,7 +459,7 @@ fn build_vuln_patterns() -> Vec<VulnPattern> {
         ),
         (
             // yaml.load() without SafeLoader
-            r"(?i)yaml\.load\s*\([^)]*\)\s*(?!.*(?:SafeLoader|safe_load))",
+            r"(?i)yaml\.load\s*\([^)]*\)",
             VulnerabilityType::InsecureDeserialization,
             SecuritySeverity::High,
             "yaml.load() without SafeLoader — can execute arbitrary code",
@@ -528,7 +528,7 @@ fn build_vuln_patterns() -> Vec<VulnPattern> {
         ),
         (
             // Math.random() for security
-            r"(?i)Math\.random\s*\(\s*\).*(?:token|key|secret|password|nonce|salt|iv)",
+            r"(?i)(?:(?:token|key|secret|password|nonce|salt|iv).*Math\.random|Math\.random\s*\(\s*\).*(?:token|key|secret|password|nonce|salt|iv))",
             VulnerabilityType::InsecureCrypto,
             SecuritySeverity::Medium,
             "Math.random() used for security-sensitive value — not cryptographically secure",
