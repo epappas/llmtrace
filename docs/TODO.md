@@ -57,8 +57,8 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| AS-008 | Tool registry with security classification (category, risk score, permissions) | Medium | ⬜ |
-| AS-015 | Action-type rate limiting | Low | ⬜ |
+| AS-008 | Tool registry with security classification (category, risk score, permissions) | Medium | ✅ `eae4ca3` |
+| AS-015 | Action-type rate limiting | Low | ✅ `eae4ca3` |
 
 ### Loop 6 — Context Window Flooding Detection
 > DoS prevention (OWASP LLM10)
