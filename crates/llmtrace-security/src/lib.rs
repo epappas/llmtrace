@@ -61,11 +61,17 @@ pub mod hallucination_detector;
 #[cfg(feature = "ml")]
 pub mod inference_stats;
 #[cfg(feature = "ml")]
+pub mod injecguard;
+#[cfg(feature = "ml")]
 pub mod ml_detector;
+#[cfg(feature = "ml")]
+pub mod multi_model_ensemble;
 #[cfg(feature = "ml")]
 pub mod ner_detector;
 #[cfg(feature = "ml")]
 pub mod output_analyzer;
+#[cfg(feature = "ml")]
+pub mod prompt_guard;
 #[cfg(feature = "ml")]
 pub mod thresholds;
 #[cfg(feature = "ml")]
@@ -87,11 +93,21 @@ pub use hallucination_detector::{HallucinationDetector, HallucinationResult};
 #[cfg(feature = "ml")]
 pub use inference_stats::{InferenceStats, InferenceStatsTracker};
 #[cfg(feature = "ml")]
+pub use injecguard::{InjecGuardAnalyzer, InjecGuardConfig};
+#[cfg(feature = "ml")]
 pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
+#[cfg(feature = "ml")]
+pub use multi_model_ensemble::{
+    ModelParticipant, MultiModelEnsemble, MultiModelEnsembleBuilder, VotingStrategy,
+};
 #[cfg(feature = "ml")]
 pub use ner_detector::{NerConfig, NerDetector};
 #[cfg(feature = "ml")]
 pub use output_analyzer::{OutputAnalysisResult, OutputAnalyzer};
+#[cfg(feature = "ml")]
+pub use prompt_guard::{
+    PromptGuardAnalyzer, PromptGuardConfig, PromptGuardResult, PromptGuardVariant,
+};
 #[cfg(feature = "ml")]
 pub use thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
 #[cfg(feature = "ml")]

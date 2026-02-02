@@ -43,9 +43,10 @@ use crate::RegexSecurityAnalyzer;
 // ---------------------------------------------------------------------------
 
 /// Prompt Guard 2 model variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PromptGuardVariant {
     /// 86M parameter full-size model.
+    #[default]
     Full86M,
     /// 22M parameter distilled model.
     Distilled22M,
@@ -59,12 +60,6 @@ impl PromptGuardVariant {
             Self::Full86M => "meta-llama/Prompt-Guard-86M",
             Self::Distilled22M => "meta-llama/Prompt-Guard-2-22M",
         }
-    }
-}
-
-impl Default for PromptGuardVariant {
-    fn default() -> Self {
-        Self::Full86M
     }
 }
 
@@ -142,8 +137,7 @@ impl ClassificationBackend {
     ) -> candle_core::Result<Tensor> {
         match self {
             Self::Bert { model, classifier } => {
-                let hidden =
-                    model.forward(input_ids, token_type_ids, Some(attention_mask))?;
+                let hidden = model.forward(input_ids, token_type_ids, Some(attention_mask))?;
                 let cls_output = hidden.i((.., 0))?;
                 candle_nn::Module::forward(classifier, &cls_output)
             }
@@ -424,10 +418,8 @@ impl PromptGuardAnalyzer {
 
         let (backend, id2label) = match model_type {
             "deberta-v2" => {
-                let deberta_config: DebertaConfig =
-                    serde_json::from_value(config_json.clone()).map_err(|e| {
-                        LLMTraceError::Security(format!("Invalid DeBERTa config: {e}"))
-                    })?;
+                let deberta_config: DebertaConfig = serde_json::from_value(config_json.clone())
+                    .map_err(|e| LLMTraceError::Security(format!("Invalid DeBERTa config: {e}")))?;
                 let id2label = extract_id2label(&config_json);
                 let model = DebertaV2SeqClassificationModel::load(vb, &deberta_config, None)
                     .map_err(|e| {
@@ -436,10 +428,8 @@ impl PromptGuardAnalyzer {
                 (ClassificationBackend::DebertaV2(Box::new(model)), id2label)
             }
             _ => {
-                let bert_config: BertConfig =
-                    serde_json::from_value(config_json.clone()).map_err(|e| {
-                        LLMTraceError::Security(format!("Invalid BERT config: {e}"))
-                    })?;
+                let bert_config: BertConfig = serde_json::from_value(config_json.clone())
+                    .map_err(|e| LLMTraceError::Security(format!("Invalid BERT config: {e}")))?;
                 let num_labels = config_json
                     .get("num_labels")
                     .and_then(|v| v.as_u64())
@@ -540,10 +530,7 @@ impl PromptGuardAnalyzer {
                     result.injection_score,
                 )
                 .with_metadata("ml_model".to_string(), "prompt_guard_2".to_string())
-                .with_metadata(
-                    "variant".to_string(),
-                    format!("{:?}", self.variant),
-                )
+                .with_metadata("variant".to_string(), format!("{:?}", self.variant))
                 .with_metadata(
                     "injection_score".to_string(),
                     format!("{:.4}", result.injection_score),
@@ -556,7 +543,10 @@ impl PromptGuardAnalyzer {
                     "benign_score".to_string(),
                     format!("{:.4}", result.benign_score),
                 )
-                .with_metadata("predicted_label".to_string(), result.predicted_label.clone())
+                .with_metadata(
+                    "predicted_label".to_string(),
+                    result.predicted_label.clone(),
+                )
                 .with_metadata("location".to_string(), location.to_string()),
             );
         }
@@ -583,10 +573,7 @@ impl PromptGuardAnalyzer {
                     result.jailbreak_score,
                 )
                 .with_metadata("ml_model".to_string(), "prompt_guard_2".to_string())
-                .with_metadata(
-                    "variant".to_string(),
-                    format!("{:?}", self.variant),
-                )
+                .with_metadata("variant".to_string(), format!("{:?}", self.variant))
                 .with_metadata(
                     "injection_score".to_string(),
                     format!("{:.4}", result.injection_score),
@@ -599,7 +586,10 @@ impl PromptGuardAnalyzer {
                     "benign_score".to_string(),
                     format!("{:.4}", result.benign_score),
                 )
-                .with_metadata("predicted_label".to_string(), result.predicted_label.clone())
+                .with_metadata(
+                    "predicted_label".to_string(),
+                    result.predicted_label.clone(),
+                )
                 .with_metadata("location".to_string(), location.to_string()),
             );
         }
@@ -720,10 +710,7 @@ mod tests {
     #[test]
     fn test_config_effective_model_id_default() {
         let config = PromptGuardConfig::default();
-        assert_eq!(
-            config.effective_model_id(),
-            "meta-llama/Prompt-Guard-86M"
-        );
+        assert_eq!(config.effective_model_id(), "meta-llama/Prompt-Guard-86M");
     }
 
     #[test]
@@ -732,10 +719,7 @@ mod tests {
             variant: PromptGuardVariant::Distilled22M,
             ..Default::default()
         };
-        assert_eq!(
-            config.effective_model_id(),
-            "meta-llama/Prompt-Guard-2-22M"
-        );
+        assert_eq!(config.effective_model_id(), "meta-llama/Prompt-Guard-2-22M");
     }
 
     #[test]

@@ -95,8 +95,7 @@ impl ClassificationBackend {
     ) -> candle_core::Result<Tensor> {
         match self {
             Self::Bert { model, classifier } => {
-                let hidden =
-                    model.forward(input_ids, token_type_ids, Some(attention_mask))?;
+                let hidden = model.forward(input_ids, token_type_ids, Some(attention_mask))?;
                 let cls_output = hidden.i((.., 0))?;
                 candle_nn::Module::forward(classifier, &cls_output)
             }
@@ -328,10 +327,8 @@ impl InjecGuardAnalyzer {
 
         let (backend, id2label) = match model_type {
             "deberta-v2" => {
-                let deberta_config: DebertaConfig =
-                    serde_json::from_value(config_json.clone()).map_err(|e| {
-                        LLMTraceError::Security(format!("Invalid DeBERTa config: {e}"))
-                    })?;
+                let deberta_config: DebertaConfig = serde_json::from_value(config_json.clone())
+                    .map_err(|e| LLMTraceError::Security(format!("Invalid DeBERTa config: {e}")))?;
                 let id2label = extract_id2label(&config_json);
                 let model = DebertaV2SeqClassificationModel::load(vb, &deberta_config, None)
                     .map_err(|e| {
@@ -340,10 +337,8 @@ impl InjecGuardAnalyzer {
                 (ClassificationBackend::DebertaV2(Box::new(model)), id2label)
             }
             _ => {
-                let bert_config: BertConfig =
-                    serde_json::from_value(config_json.clone()).map_err(|e| {
-                        LLMTraceError::Security(format!("Invalid BERT config: {e}"))
-                    })?;
+                let bert_config: BertConfig = serde_json::from_value(config_json.clone())
+                    .map_err(|e| LLMTraceError::Security(format!("Invalid BERT config: {e}")))?;
                 let num_labels = config_json
                     .get("num_labels")
                     .and_then(|v| v.as_u64())
@@ -411,22 +406,20 @@ impl InjecGuardAnalyzer {
                 SecuritySeverity::Medium
             };
 
-            Ok(vec![
-                SecurityFinding::new(
-                    severity,
-                    "injecguard_injection".to_string(),
-                    format!(
-                        "InjecGuard detected potential prompt injection \
+            Ok(vec![SecurityFinding::new(
+                severity,
+                "injecguard_injection".to_string(),
+                format!(
+                    "InjecGuard detected potential prompt injection \
                          (label: {label}, score: {score:.3})"
-                    ),
-                    score,
-                )
-                .with_metadata("ml_model".to_string(), "injecguard".to_string())
-                .with_metadata("ml_label".to_string(), label)
-                .with_metadata("ml_score".to_string(), format!("{score:.4}"))
-                .with_metadata("ml_threshold".to_string(), format!("{:.2}", self.threshold))
-                .with_metadata("location".to_string(), location.to_string()),
-            ])
+                ),
+                score,
+            )
+            .with_metadata("ml_model".to_string(), "injecguard".to_string())
+            .with_metadata("ml_label".to_string(), label)
+            .with_metadata("ml_score".to_string(), format!("{score:.4}"))
+            .with_metadata("ml_threshold".to_string(), format!("{:.2}", self.threshold))
+            .with_metadata("location".to_string(), location.to_string())])
         } else {
             Ok(Vec::new())
         }
