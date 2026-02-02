@@ -19,6 +19,8 @@
 //! | SOTA: ProtectAI v2             | 63.81%  | N/A     | 48.60%  | N/A     |  13.80% |  51.40% |
 //! ```
 
+pub mod notinject;
+
 use crate::datasets::{BenchmarkSample, Label};
 use crate::metrics::{BenchmarkMetrics, ConfusionMatrix};
 use llmtrace_core::{AnalysisContext, SecurityAnalyzer, TenantId};

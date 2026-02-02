@@ -26,6 +26,7 @@ pub mod runners;
 /// Re-export commonly used types for benchmark implementations.
 pub mod prelude {
     pub use crate::datasets::{BenchmarkSample, DatasetLoader, Label};
-    pub use crate::metrics::{BenchmarkMetrics, ConfusionMatrix};
+    pub use crate::metrics::{BenchmarkMetrics, ConfusionMatrix, ThreeDimensionalMetrics};
+    pub use crate::runners::notinject;
     pub use crate::runners::{BenchmarkResult, BenchmarkRunner};
 }

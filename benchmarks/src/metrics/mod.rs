@@ -11,6 +11,7 @@
 //! - **Utility Retention** — Task completion rate under defense (Indirect Injection Firewalls)
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Confusion matrix for binary classification.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -299,8 +300,7 @@ pub fn over_defense_accuracy(
     let total = predictions.len();
     let correct = predictions.iter().filter(|(pred, _)| !pred).count();
 
-    let mut by_difficulty: std::collections::HashMap<u8, (usize, usize)> =
-        std::collections::HashMap::new();
+    let mut by_difficulty: HashMap<u8, (usize, usize)> = HashMap::new();
     for (pred, diff) in predictions {
         let entry = by_difficulty.entry(*diff).or_insert((0, 0));
         entry.0 += 1; // total
@@ -309,7 +309,7 @@ pub fn over_defense_accuracy(
         }
     }
 
-    let difficulty_accuracy: std::collections::HashMap<u8, f64> = by_difficulty
+    let difficulty_accuracy: HashMap<u8, f64> = by_difficulty
         .iter()
         .map(|(diff, (tot, cor))| (*diff, *cor as f64 / *tot as f64))
         .collect();
@@ -339,7 +339,7 @@ pub struct OverDefenseMetrics {
     /// Samples incorrectly flagged as malicious (false positives).
     pub falsely_flagged: usize,
     /// Accuracy broken down by difficulty level (1, 2, 3 trigger words).
-    pub accuracy_by_difficulty: std::collections::HashMap<u8, f64>,
+    pub accuracy_by_difficulty: HashMap<u8, f64>,
 }
 
 impl OverDefenseMetrics {
@@ -367,6 +367,179 @@ impl OverDefenseMetrics {
         println!("  PromptGuard:  0.88%");
         println!("  ProtectAI v2: 56.64%");
         println!("  InjecGuard:   87.32% (target)");
+    }
+}
+
+/// Three-dimensional evaluation metrics following InjecGuard (Li & Liu, ACL 2025).
+///
+/// Evaluates detection systems across three orthogonal dimensions:
+/// 1. **Benign accuracy** — correct classification of clean inputs (no trigger words)
+/// 2. **Malicious accuracy** — correct detection of actual attacks (true positive rate)
+/// 3. **Over-defense accuracy** — correct handling of benign inputs WITH trigger words
+///
+/// The average of these three dimensions provides a balanced score that penalises
+/// both missed attacks AND false positives from over-sensitive detection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreeDimensionalMetrics {
+    /// Standard benign accuracy (no trigger words).
+    pub benign_accuracy: f64,
+    /// Malicious detection rate (true positive rate).
+    pub malicious_accuracy: f64,
+    /// Over-defense accuracy (benign samples WITH trigger words correctly classified as benign).
+    pub over_defense_accuracy: f64,
+    /// Combined average of all three.
+    pub average_accuracy: f64,
+    /// Per-difficulty over-defense breakdown.
+    pub over_defense_by_difficulty: HashMap<u8, f64>,
+}
+
+impl ThreeDimensionalMetrics {
+    /// Compute three-dimensional metrics from evaluation results.
+    ///
+    /// # Arguments
+    ///
+    /// * `benign_results` — `(predicted_malicious,)` for clean benign samples (no trigger words)
+    /// * `malicious_results` — `(predicted_malicious,)` for actual attack samples
+    /// * `over_defense_results` — `(predicted_malicious, difficulty_level)` for NotInject-style samples
+    pub fn compute(
+        benign_results: &[bool],
+        malicious_results: &[bool],
+        over_defense_results: &[(bool, u8)],
+    ) -> Self {
+        // Benign accuracy: fraction of clean benign samples correctly classified as benign
+        let benign_accuracy = if benign_results.is_empty() {
+            0.0
+        } else {
+            let correct = benign_results.iter().filter(|&&pred| !pred).count();
+            correct as f64 / benign_results.len() as f64
+        };
+
+        // Malicious accuracy: fraction of attack samples correctly flagged as malicious
+        let malicious_accuracy = if malicious_results.is_empty() {
+            0.0
+        } else {
+            let correct = malicious_results.iter().filter(|&&pred| pred).count();
+            correct as f64 / malicious_results.len() as f64
+        };
+
+        // Over-defense accuracy: fraction of trigger-word benign samples correctly passed
+        let od_metrics = over_defense_accuracy_internal(over_defense_results);
+
+        let average_accuracy =
+            (benign_accuracy + malicious_accuracy + od_metrics.overall_accuracy) / 3.0;
+
+        Self {
+            benign_accuracy,
+            malicious_accuracy,
+            over_defense_accuracy: od_metrics.overall_accuracy,
+            average_accuracy,
+            over_defense_by_difficulty: od_metrics.accuracy_by_difficulty,
+        }
+    }
+
+    /// Print a summary table of the three-dimensional metrics.
+    pub fn print_summary(&self, model_name: &str) {
+        println!("\n=== Three-Dimensional Evaluation: {} ===", model_name);
+        println!(
+            "Benign Accuracy:       {:6.2}%",
+            self.benign_accuracy * 100.0
+        );
+        println!(
+            "Malicious Accuracy:    {:6.2}%",
+            self.malicious_accuracy * 100.0
+        );
+        println!(
+            "Over-Defense Accuracy:  {:6.2}%",
+            self.over_defense_accuracy * 100.0
+        );
+        println!(
+            "Average Accuracy:      {:6.2}%",
+            self.average_accuracy * 100.0
+        );
+        println!("\nPer-Difficulty Over-Defense:");
+        for diff in 1..=3u8 {
+            if let Some(acc) = self.over_defense_by_difficulty.get(&diff) {
+                println!(
+                    "  Difficulty {} ({} trigger word{}): {:6.2}%",
+                    diff,
+                    diff,
+                    if diff == 1 { "" } else { "s" },
+                    acc * 100.0
+                );
+            }
+        }
+    }
+
+    /// Format as a Markdown table row for paper inclusion.
+    pub fn to_table_row(&self, model_name: &str) -> String {
+        format!(
+            "| {:<25} | {:>6.2}% | {:>6.2}% | {:>6.2}% | {:>6.2}% |",
+            model_name,
+            self.benign_accuracy * 100.0,
+            self.malicious_accuracy * 100.0,
+            self.over_defense_accuracy * 100.0,
+            self.average_accuracy * 100.0,
+        )
+    }
+
+    /// Format the Markdown table header.
+    pub fn table_header() -> String {
+        format!(
+            "| {:<25} | {:>8} | {:>14} | {:>17} | {:>8} |",
+            "Model", "Benign", "Malicious Acc", "Over-Defense Acc", "Average"
+        )
+    }
+
+    /// Format the Markdown table separator.
+    pub fn table_separator() -> String {
+        format!(
+            "|{:-<27}|{:->10}|{:->16}|{:->19}|{:->10}|",
+            "", "", "", "", ""
+        )
+    }
+
+    /// Format as a LaTeX table row for paper inclusion.
+    pub fn to_latex_row(&self, model_name: &str) -> String {
+        format!(
+            "{} & {:.2} & {:.2} & {:.2} & {:.2} \\\\",
+            model_name,
+            self.benign_accuracy * 100.0,
+            self.malicious_accuracy * 100.0,
+            self.over_defense_accuracy * 100.0,
+            self.average_accuracy * 100.0,
+        )
+    }
+}
+
+/// Internal helper to compute over-defense accuracy without module path issues.
+fn over_defense_accuracy_internal(predictions: &[(bool, u8)]) -> OverDefenseMetrics {
+    let total = predictions.len();
+    let correct = predictions.iter().filter(|(pred, _)| !pred).count();
+
+    let mut by_difficulty: HashMap<u8, (usize, usize)> = HashMap::new();
+    for (pred, diff) in predictions {
+        let entry = by_difficulty.entry(*diff).or_insert((0, 0));
+        entry.0 += 1;
+        if !pred {
+            entry.1 += 1;
+        }
+    }
+
+    let difficulty_accuracy: HashMap<u8, f64> = by_difficulty
+        .iter()
+        .map(|(diff, (tot, cor))| (*diff, *cor as f64 / *tot as f64))
+        .collect();
+
+    OverDefenseMetrics {
+        overall_accuracy: if total > 0 {
+            correct as f64 / total as f64
+        } else {
+            0.0
+        },
+        total_samples: total,
+        correctly_passed: correct,
+        falsely_flagged: total - correct,
+        accuracy_by_difficulty: difficulty_accuracy,
     }
 }
 
@@ -481,5 +654,61 @@ mod tests {
         let row = metrics.to_table_row("LLMTrace Regex");
         assert!(row.contains("LLMTrace Regex"));
         assert!(row.contains('%'));
+    }
+
+    #[test]
+    fn test_three_dimensional_metrics_perfect() {
+        let benign = vec![false, false, false, false, false];
+        let malicious = vec![true, true, true, true, true];
+        let over_defense = vec![(false, 1), (false, 1), (false, 2), (false, 3)];
+        let m = ThreeDimensionalMetrics::compute(&benign, &malicious, &over_defense);
+        assert!((m.benign_accuracy - 1.0).abs() < f64::EPSILON);
+        assert!((m.malicious_accuracy - 1.0).abs() < f64::EPSILON);
+        assert!((m.over_defense_accuracy - 1.0).abs() < f64::EPSILON);
+        assert!((m.average_accuracy - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_three_dimensional_metrics_mixed() {
+        // 8/10 benign correct
+        let benign = vec![
+            false, false, false, false, false, false, false, false, true, true,
+        ];
+        // 9/10 malicious correct
+        let malicious = vec![true, true, true, true, true, true, true, true, true, false];
+        // 3/5 over-defense correct
+        let over_defense = vec![(false, 1), (false, 1), (true, 2), (false, 3), (true, 3)];
+        let m = ThreeDimensionalMetrics::compute(&benign, &malicious, &over_defense);
+        assert!((m.benign_accuracy - 0.8).abs() < 0.001);
+        assert!((m.malicious_accuracy - 0.9).abs() < 0.001);
+        assert!((m.over_defense_accuracy - 0.6).abs() < 0.001);
+        let expected_avg = (0.8 + 0.9 + 0.6) / 3.0;
+        assert!((m.average_accuracy - expected_avg).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_three_dimensional_metrics_latex() {
+        let benign = vec![false; 100];
+        let malicious = vec![true; 90];
+        let mut malicious_with_misses = malicious.clone();
+        malicious_with_misses.extend(vec![false; 10]);
+        let over_defense = vec![(false, 1); 80];
+        let mut od_with_flags = over_defense.clone();
+        od_with_flags.extend(vec![(true, 2); 20]);
+        let m = ThreeDimensionalMetrics::compute(&benign, &malicious_with_misses, &od_with_flags);
+        let latex = m.to_latex_row("LLMTrace Regex");
+        assert!(latex.contains("LLMTrace Regex"));
+        assert!(latex.contains('&'));
+        assert!(latex.ends_with("\\\\"));
+    }
+
+    #[test]
+    fn test_three_dimensional_table_header() {
+        let header = ThreeDimensionalMetrics::table_header();
+        assert!(header.contains("Model"));
+        assert!(header.contains("Benign"));
+        assert!(header.contains("Malicious"));
+        assert!(header.contains("Over-Defense"));
+        assert!(header.contains("Average"));
     }
 }
