@@ -1,16 +1,27 @@
 //! Unicode normalisation layer for security analysis.
 //!
 //! This module provides text normalisation as a preprocessing step before all
-//! security analysis. It applies NFKC normalisation, strips zero-width and
-//! invisible Unicode characters, and maps common homoglyphs to their ASCII
-//! equivalents.
+//! security analysis.  It applies a multi-stage pipeline to defeat Unicode-based
+//! evasion techniques:
+//!
+//! 1. **NFKC normalisation** — compatibility decomposition + canonical composition
+//! 2. **Diacritics stripping** — removes combining marks to defeat accent evasion
+//!    (IS-031)
+//! 3. **Invisible character stripping** — removes zero-width, tag, and control
+//!    characters (IS-022)
+//! 4. **Homoglyph mapping** — maps Cyrillic, Greek, upside-down, and Braille
+//!    characters to ASCII equivalents (IS-021, IS-015)
+//! 5. **Emoji stripping** — removes emoji to defeat emoji-smuggling attacks
+//!    (IS-020)
 //!
 //! # Why?
 //!
 //! Attackers can bypass regex-based detection by using visually identical but
 //! distinct Unicode code points — for example, Cyrillic `а` (U+0430) instead
-//! of Latin `a` (U+0061), or embedding zero-width characters inside keywords.
-//! Normalising text before analysis neutralises these evasion techniques.
+//! of Latin `a` (U+0061), embedding zero-width characters inside keywords,
+//! using upside-down letters, encoding text in Braille, adding diacritics, or
+//! interspersing emoji characters.  Normalising text before analysis neutralises
+//! these evasion techniques.
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -39,10 +50,12 @@ const ZERO_WIDTH_CHARS: &[char] = &[
 
 /// Normalise text for security analysis.
 ///
-/// This function:
-/// 1. Applies Unicode NFKC normalisation (compatibility decomposition + canonical composition)
-/// 2. Strips zero-width and invisible characters
-/// 3. Maps common homoglyphs (e.g., Cyrillic letters that look like Latin) to ASCII
+/// This function applies a multi-stage normalisation pipeline:
+/// 1. NFKC normalisation (compatibility decomposition + canonical composition)
+/// 2. Diacritics stripping via NFD decomposition and combining mark removal
+/// 3. Zero-width, invisible, and Unicode tag character stripping
+/// 4. Homoglyph mapping (Cyrillic, Greek, upside-down text, Braille → ASCII)
+/// 5. Emoji stripping
 ///
 /// # Examples
 ///
@@ -57,30 +70,133 @@ const ZERO_WIDTH_CHARS: &[char] = &[
 ///
 /// // Homoglyph mapping: Cyrillic "а" → Latin "a"
 /// assert_eq!(normalise_text("\u{0430}"), "a");
+///
+/// // Diacritics stripping: "café" → "cafe"
+/// assert_eq!(normalise_text("caf\u{00E9}"), "cafe");
+///
+/// // Emoji stripping: "he😀llo" → "hello"
+/// assert_eq!(normalise_text("he\u{1F600}llo"), "hello");
 /// ```
 pub fn normalise_text(input: &str) -> String {
     // Step 1: NFKC normalisation
     let nfkc: String = input.nfkc().collect();
 
-    // Step 2: Strip zero-width and invisible characters
-    let stripped: String = nfkc
+    // Step 2: Strip diacritics (NFD decomposition + combining mark removal)
+    let without_diacritics = strip_diacritics(&nfkc);
+
+    // Step 3: Strip zero-width, invisible, and tag characters
+    let stripped: String = without_diacritics
         .chars()
-        .filter(|c| !ZERO_WIDTH_CHARS.contains(c))
+        .filter(|c| !ZERO_WIDTH_CHARS.contains(c) && !is_tag_character(*c))
         .collect();
 
-    // Step 3: Map homoglyphs to ASCII equivalents
+    // Step 4: Map homoglyphs to ASCII equivalents
     let mapped: String = stripped.chars().map(map_homoglyph).collect();
 
-    mapped
+    // Step 5: Strip emoji characters
+    strip_emoji(&mapped)
+}
+
+/// Strip emoji characters from text.
+///
+/// Removes characters in standard Unicode emoji ranges including emoticons,
+/// pictographs, transport symbols, dingbats, variation selectors, and skin
+/// tone modifiers.  Emoji are removed entirely (not replaced with spaces) to
+/// prevent attackers from using them as word separators to bypass detection.
+///
+/// # Examples
+///
+/// ```
+/// use llmtrace_security::normalise::strip_emoji;
+///
+/// assert_eq!(strip_emoji("hello 🌍 world"), "hello  world");
+/// assert_eq!(strip_emoji("ig🔥no📌re"), "ignore");
+/// ```
+pub fn strip_emoji(input: &str) -> String {
+    input.chars().filter(|c| !is_emoji(*c)).collect()
+}
+
+/// Strip diacritics (combining marks) from text.
+///
+/// Applies NFD (canonical decomposition) to separate base characters from
+/// combining marks, then removes all combining marks.  This converts accented
+/// characters to their base forms (e.g., "é" → "e", "ñ" → "n").
+///
+/// # Examples
+///
+/// ```
+/// use llmtrace_security::normalise::strip_diacritics;
+///
+/// assert_eq!(strip_diacritics("café"), "cafe");
+/// assert_eq!(strip_diacritics("résumé"), "resume");
+/// assert_eq!(strip_diacritics("naïve"), "naive");
+/// ```
+pub fn strip_diacritics(input: &str) -> String {
+    input.nfd().filter(|c| !is_combining_mark(*c)).collect()
+}
+
+/// Returns `true` if the character is an emoji.
+///
+/// Covers standard Unicode emoji ranges: emoticons, miscellaneous symbols,
+/// transport/map symbols, alchemical symbols, geometric shapes extended,
+/// supplemental arrows, dingbats, variation selectors, and skin tone modifiers.
+fn is_emoji(c: char) -> bool {
+    let cp = c as u32;
+    matches!(
+        cp,
+        0x1F600..=0x1F64F   // Emoticons
+        | 0x1F300..=0x1F5FF // Misc Symbols and Pictographs
+        | 0x1F680..=0x1F6FF // Transport and Map Symbols
+        | 0x1F700..=0x1F77F // Alchemical Symbols
+        | 0x1F780..=0x1F7FF // Geometric Shapes Extended
+        | 0x1F800..=0x1F8FF // Supplemental Arrows-C
+        | 0x1F900..=0x1F9FF // Supplemental Symbols and Pictographs
+        | 0x1FA00..=0x1FA6F // Chess Symbols
+        | 0x1FA70..=0x1FAFF // Symbols and Pictographs Extended-A
+        | 0x2600..=0x26FF   // Miscellaneous Symbols
+        | 0x2700..=0x27BF   // Dingbats
+        | 0xFE00..=0xFE0F // Variation Selectors
+                          // Skin tone modifiers (U+1F3FB–U+1F3FF) are covered by
+                          // Misc Symbols and Pictographs (U+1F300–U+1F5FF) above.
+    )
+}
+
+/// Returns `true` if the character is a Unicode combining mark.
+///
+/// Covers the principal combining diacritical mark blocks used to add accents
+/// and other modifications to base characters.
+fn is_combining_mark(c: char) -> bool {
+    let cp = c as u32;
+    matches!(
+        cp,
+        0x0300..=0x036F   // Combining Diacritical Marks
+        | 0x0483..=0x0489 // Combining Cyrillic
+        | 0x1AB0..=0x1AFF // Combining Diacritical Marks Extended
+        | 0x1DC0..=0x1DFF // Combining Diacritical Marks Supplement
+        | 0x20D0..=0x20FF // Combining Diacritical Marks for Symbols
+        | 0xFE20..=0xFE2F // Combining Half Marks
+    )
+}
+
+/// Returns `true` if the character is a Unicode tag character.
+///
+/// Tag characters (U+E0001–U+E007F) duplicate ASCII but are invisible.  They
+/// were designed for language tagging but can be exploited to smuggle hidden
+/// text through LLM pipelines.
+fn is_tag_character(c: char) -> bool {
+    let cp = c as u32;
+    (0xE0001..=0xE007F).contains(&cp)
 }
 
 /// Map a single character to its ASCII equivalent if it is a known homoglyph.
 ///
 /// Covers the most common Cyrillic-to-Latin confusables, Greek confusables,
-/// and a few other visually identical characters used in homoglyph attacks.
+/// upside-down (flipped) Latin letters, and Braille Grade 1 letter patterns.
 fn map_homoglyph(c: char) -> char {
     match c {
+        // =================================================================
         // Cyrillic → Latin (lowercase)
+        // =================================================================
         '\u{0430}' => 'a', // Cyrillic а
         '\u{0435}' => 'e', // Cyrillic е
         '\u{043E}' => 'o', // Cyrillic о
@@ -92,7 +208,9 @@ fn map_homoglyph(c: char) -> char {
         '\u{0458}' => 'j', // Cyrillic ј
         '\u{04BB}' => 'h', // Cyrillic һ
 
+        // =================================================================
         // Cyrillic → Latin (uppercase)
+        // =================================================================
         '\u{0410}' => 'A', // Cyrillic А
         '\u{0412}' => 'B', // Cyrillic В
         '\u{0415}' => 'E', // Cyrillic Е
@@ -105,7 +223,9 @@ fn map_homoglyph(c: char) -> char {
         '\u{0422}' => 'T', // Cyrillic Т
         '\u{0425}' => 'X', // Cyrillic Х
 
+        // =================================================================
         // Greek → Latin
+        // =================================================================
         '\u{03BF}' => 'o', // Greek omicron ο
         '\u{03B1}' => 'a', // Greek alpha α (after NFKC, still distinct)
         '\u{0391}' => 'A', // Greek Alpha Α
@@ -115,6 +235,7 @@ fn map_homoglyph(c: char) -> char {
         '\u{0397}' => 'H', // Greek Eta Η
         '\u{0399}' => 'I', // Greek Iota Ι
         '\u{039A}' => 'K', // Greek Kappa Κ
+        '\u{039B}' => 'V', // Greek Lambda Λ (upside-down V)
         '\u{039C}' => 'M', // Greek Mu Μ
         '\u{039D}' => 'N', // Greek Nu Ν
         '\u{039F}' => 'O', // Greek Omicron Ο
@@ -122,6 +243,77 @@ fn map_homoglyph(c: char) -> char {
         '\u{03A4}' => 'T', // Greek Tau Τ
         '\u{03A5}' => 'Y', // Greek Upsilon Υ
         '\u{03A7}' => 'X', // Greek Chi Χ
+
+        // =================================================================
+        // Upside-down / flipped Latin (lowercase)  — IS-021
+        // =================================================================
+        '\u{0250}' => 'a', // ɐ  (turned a)
+        '\u{0254}' => 'c', // ɔ  (open o / turned c)
+        '\u{01DD}' => 'e', // ǝ  (turned e)
+        '\u{025F}' => 'f', // ɟ  (dotless j with stroke / turned f)
+        '\u{0183}' => 'g', // ƃ  (b with topbar / turned g)
+        '\u{0265}' => 'h', // ɥ  (turned h)
+        '\u{0131}' => 'i', // ı  (dotless i)
+        '\u{027E}' => 'j', // ɾ  (r with fishhook / turned j)
+        '\u{029E}' => 'k', // ʞ  (turned k)
+        '\u{026F}' => 'm', // ɯ  (turned m)
+        '\u{0279}' => 'r', // ɹ  (turned r)
+        '\u{0287}' => 't', // ʇ  (turned t)
+        '\u{028C}' => 'v', // ʌ  (turned v / caret)
+        '\u{028D}' => 'w', // ʍ  (turned w)
+        '\u{028E}' => 'y', // ʎ  (turned y)
+
+        // =================================================================
+        // Upside-down / flipped Latin (uppercase)  — IS-021
+        //
+        // NOTE: Characters handled by NFKC are omitted to avoid dead arms:
+        //   Ⅎ (U+2132) → F,  ⅁ (U+2141) → G,  ⅄ (U+2144) → Y
+        //   ſ (U+017F) → s   (NFKC; task specifies J but NFKC wins)
+        // =================================================================
+        '\u{2200}' => 'A', // ∀  (for-all / turned A)
+        '\u{15FA}' => 'B', // ᗺ  (Canadian Syllabics Carrier SI / turned B)
+        '\u{0186}' => 'C', // Ɔ  (open O / turned C)
+        '\u{15E1}' => 'D', // ᗡ  (Canadian Syllabics Carrier THE / turned D)
+        '\u{018E}' => 'E', // Ǝ  (reversed E)
+        '\u{02E5}' => 'L', // ˥  (modifier letter extra-high tone bar / turned L)
+        '\u{0500}' => 'P', // Ԁ  (Cyrillic Komi De / turned P)
+        '\u{1D1A}' => 'R', // ᴚ  (Latin letter small capital turned R)
+        '\u{22A5}' => 'T', // ⊥  (up tack / turned T)
+        '\u{2229}' => 'U', // ∩  (intersection / turned U)
+
+        // =================================================================
+        // Braille Grade 1 → ASCII  — IS-015
+        //
+        // Standard Braille encoding where each dot pattern maps to a letter.
+        // U+2800 (blank) maps to space.
+        // =================================================================
+        '\u{2800}' => ' ', // ⠀  (blank)
+        '\u{2801}' => 'a', // ⠁  (dot 1)
+        '\u{2803}' => 'b', // ⠃  (dots 1-2)
+        '\u{2809}' => 'c', // ⠉  (dots 1-4)
+        '\u{2819}' => 'd', // ⠙  (dots 1-4-5)
+        '\u{2811}' => 'e', // ⠑  (dots 1-5)
+        '\u{280B}' => 'f', // ⠋  (dots 1-2-4)
+        '\u{281B}' => 'g', // ⠛  (dots 1-2-4-5)
+        '\u{2813}' => 'h', // ⠓  (dots 1-2-5)
+        '\u{280A}' => 'i', // ⠊  (dots 2-4)
+        '\u{281A}' => 'j', // ⠚  (dots 2-4-5)
+        '\u{2805}' => 'k', // ⠅  (dots 1-3)
+        '\u{2807}' => 'l', // ⠇  (dots 1-2-3)
+        '\u{280D}' => 'm', // ⠍  (dots 1-3-4)
+        '\u{281D}' => 'n', // ⠝  (dots 1-3-4-5)
+        '\u{2815}' => 'o', // ⠕  (dots 1-3-5)
+        '\u{280F}' => 'p', // ⠏  (dots 1-2-3-4)
+        '\u{281F}' => 'q', // ⠟  (dots 1-2-3-4-5)
+        '\u{2817}' => 'r', // ⠗  (dots 1-2-3-5)
+        '\u{280E}' => 's', // ⠎  (dots 2-3-4)
+        '\u{281E}' => 't', // ⠞  (dots 2-3-4-5)
+        '\u{2825}' => 'u', // ⠥  (dots 1-3-6)
+        '\u{2827}' => 'v', // ⠧  (dots 1-2-3-6)
+        '\u{283A}' => 'w', // ⠺  (dots 2-4-5-6)
+        '\u{282D}' => 'x', // ⠭  (dots 1-3-4-6)
+        '\u{283D}' => 'y', // ⠽  (dots 1-3-4-5-6)
+        '\u{2835}' => 'z', // ⠵  (dots 1-3-5-6)
 
         _ => c,
     }
@@ -233,6 +425,40 @@ mod tests {
         );
     }
 
+    // -- Unicode tag character stripping (IS-022) --------------------------
+
+    #[test]
+    fn test_strip_tag_language_tag() {
+        // U+E0001 (LANGUAGE TAG) should be stripped
+        assert_eq!(normalise_text("hello\u{E0001}world"), "helloworld");
+    }
+
+    #[test]
+    fn test_strip_tag_characters_range() {
+        // Tag characters U+E0020–U+E007E embed invisible ASCII-equivalent text
+        let input = "safe\u{E0069}\u{E0067}\u{E006E}\u{E006F}\u{E0072}\u{E0065}text";
+        assert_eq!(normalise_text(input), "safetext");
+    }
+
+    #[test]
+    fn test_strip_tag_cancel_tag() {
+        // U+E007F (CANCEL TAG) should also be stripped
+        assert_eq!(normalise_text("a\u{E007F}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_all_tag_range() {
+        // Ensure the full tag range U+E0001–U+E007F is stripped
+        let mut input = String::from("start");
+        for cp in 0xE0001..=0xE007Fu32 {
+            if let Some(c) = char::from_u32(cp) {
+                input.push(c);
+            }
+        }
+        input.push_str("end");
+        assert_eq!(normalise_text(&input), "startend");
+    }
+
     // -- Homoglyph mapping --------------------------------------------------
 
     #[test]
@@ -293,6 +519,234 @@ mod tests {
         assert_eq!(normalise_text(text), "ABE");
     }
 
+    // -- Upside-down text mapping (IS-021) ---------------------------------
+
+    #[test]
+    fn test_upside_down_individual_chars() {
+        assert_eq!(map_homoglyph('\u{0250}'), 'a'); // ɐ
+        assert_eq!(map_homoglyph('\u{0254}'), 'c'); // ɔ
+        assert_eq!(map_homoglyph('\u{01DD}'), 'e'); // ǝ
+        assert_eq!(map_homoglyph('\u{025F}'), 'f'); // ɟ
+        assert_eq!(map_homoglyph('\u{0183}'), 'g'); // ƃ
+        assert_eq!(map_homoglyph('\u{0265}'), 'h'); // ɥ
+        assert_eq!(map_homoglyph('\u{0131}'), 'i'); // ı
+        assert_eq!(map_homoglyph('\u{027E}'), 'j'); // ɾ
+        assert_eq!(map_homoglyph('\u{029E}'), 'k'); // ʞ
+        assert_eq!(map_homoglyph('\u{026F}'), 'm'); // ɯ
+        assert_eq!(map_homoglyph('\u{0279}'), 'r'); // ɹ
+        assert_eq!(map_homoglyph('\u{0287}'), 't'); // ʇ
+        assert_eq!(map_homoglyph('\u{028C}'), 'v'); // ʌ
+        assert_eq!(map_homoglyph('\u{028D}'), 'w'); // ʍ
+        assert_eq!(map_homoglyph('\u{028E}'), 'y'); // ʎ
+    }
+
+    #[test]
+    fn test_upside_down_uppercase_chars() {
+        assert_eq!(map_homoglyph('\u{2200}'), 'A'); // ∀
+        assert_eq!(map_homoglyph('\u{15FA}'), 'B'); // ᗺ
+        assert_eq!(map_homoglyph('\u{0186}'), 'C'); // Ɔ
+        assert_eq!(map_homoglyph('\u{15E1}'), 'D'); // ᗡ
+        assert_eq!(map_homoglyph('\u{018E}'), 'E'); // Ǝ
+        assert_eq!(map_homoglyph('\u{02E5}'), 'L'); // ˥
+        assert_eq!(map_homoglyph('\u{0500}'), 'P'); // Ԁ
+        assert_eq!(map_homoglyph('\u{1D1A}'), 'R'); // ᴚ
+        assert_eq!(map_homoglyph('\u{22A5}'), 'T'); // ⊥
+        assert_eq!(map_homoglyph('\u{2229}'), 'U'); // ∩
+        assert_eq!(map_homoglyph('\u{039B}'), 'V'); // Λ
+    }
+
+    #[test]
+    fn test_upside_down_word_hello() {
+        // "ɥǝllo" → "hello" (ɥ→h, ǝ→e, l→l, l→l, o→o)
+        assert_eq!(normalise_text("\u{0265}\u{01DD}llo"), "hello");
+    }
+
+    #[test]
+    fn test_upside_down_word_attack() {
+        // "ɐʇʇɐɔʞ" → "attack" (ɐ→a, ʇ→t, ʇ→t, ɐ→a, ɔ→c, ʞ→k)
+        assert_eq!(
+            normalise_text("\u{0250}\u{0287}\u{0287}\u{0250}\u{0254}\u{029E}"),
+            "attack"
+        );
+    }
+
+    #[test]
+    fn test_upside_down_word_text() {
+        // "ʇǝxʇ" → "text" (ʇ→t, ǝ→e, x→x, ʇ→t)
+        assert_eq!(normalise_text("\u{0287}\u{01DD}x\u{0287}"), "text");
+    }
+
+    // -- Braille-to-ASCII mapping (IS-015) ---------------------------------
+
+    #[test]
+    fn test_braille_individual_letters() {
+        assert_eq!(map_homoglyph('\u{2801}'), 'a');
+        assert_eq!(map_homoglyph('\u{2803}'), 'b');
+        assert_eq!(map_homoglyph('\u{2809}'), 'c');
+        assert_eq!(map_homoglyph('\u{2819}'), 'd');
+        assert_eq!(map_homoglyph('\u{2811}'), 'e');
+        assert_eq!(map_homoglyph('\u{280B}'), 'f');
+        assert_eq!(map_homoglyph('\u{281B}'), 'g');
+        assert_eq!(map_homoglyph('\u{2813}'), 'h');
+        assert_eq!(map_homoglyph('\u{280A}'), 'i');
+        assert_eq!(map_homoglyph('\u{281A}'), 'j');
+        assert_eq!(map_homoglyph('\u{2805}'), 'k');
+        assert_eq!(map_homoglyph('\u{2807}'), 'l');
+        assert_eq!(map_homoglyph('\u{280D}'), 'm');
+        assert_eq!(map_homoglyph('\u{281D}'), 'n');
+        assert_eq!(map_homoglyph('\u{2815}'), 'o');
+        assert_eq!(map_homoglyph('\u{280F}'), 'p');
+        assert_eq!(map_homoglyph('\u{281F}'), 'q');
+        assert_eq!(map_homoglyph('\u{2817}'), 'r');
+        assert_eq!(map_homoglyph('\u{280E}'), 's');
+        assert_eq!(map_homoglyph('\u{281E}'), 't');
+        assert_eq!(map_homoglyph('\u{2825}'), 'u');
+        assert_eq!(map_homoglyph('\u{2827}'), 'v');
+        assert_eq!(map_homoglyph('\u{283A}'), 'w');
+        assert_eq!(map_homoglyph('\u{282D}'), 'x');
+        assert_eq!(map_homoglyph('\u{283D}'), 'y');
+        assert_eq!(map_homoglyph('\u{2835}'), 'z');
+    }
+
+    #[test]
+    fn test_braille_blank_to_space() {
+        assert_eq!(map_homoglyph('\u{2800}'), ' ');
+    }
+
+    #[test]
+    fn test_braille_word_hello() {
+        // ⠓⠑⠇⠇⠕ → "hello"
+        assert_eq!(
+            normalise_text("\u{2813}\u{2811}\u{2807}\u{2807}\u{2815}"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_braille_word_ignore() {
+        // ⠊⠛⠝⠕⠗⠑ → "ignore"
+        assert_eq!(
+            normalise_text("\u{280A}\u{281B}\u{281D}\u{2815}\u{2817}\u{2811}"),
+            "ignore"
+        );
+    }
+
+    #[test]
+    fn test_braille_with_spaces() {
+        // ⠊⠛⠝⠕⠗⠑⠀⠞⠓⠊⠎ → "ignore this"
+        assert_eq!(
+            normalise_text(
+                "\u{280A}\u{281B}\u{281D}\u{2815}\u{2817}\u{2811}\u{2800}\u{281E}\u{2813}\u{280A}\u{280E}"
+            ),
+            "ignore this"
+        );
+    }
+
+    // -- Diacritics stripping (IS-031) -------------------------------------
+
+    #[test]
+    fn test_diacritics_cafe() {
+        assert_eq!(normalise_text("café"), "cafe");
+    }
+
+    #[test]
+    fn test_diacritics_resume() {
+        assert_eq!(normalise_text("résumé"), "resume");
+    }
+
+    #[test]
+    fn test_diacritics_naive() {
+        assert_eq!(normalise_text("naïve"), "naive");
+    }
+
+    #[test]
+    fn test_diacritics_ignore_evasion() {
+        // "ïgnörë" → "ignore"
+        assert_eq!(normalise_text("ïgnörë"), "ignore");
+    }
+
+    #[test]
+    fn test_diacritics_multiple_accents() {
+        // Various accented Latin characters
+        assert_eq!(normalise_text("àáâãäå"), "aaaaaa");
+        assert_eq!(normalise_text("èéêë"), "eeee");
+        assert_eq!(normalise_text("ñ"), "n");
+    }
+
+    #[test]
+    fn test_strip_diacritics_standalone() {
+        assert_eq!(strip_diacritics("café"), "cafe");
+        assert_eq!(strip_diacritics("résumé"), "resume");
+        assert_eq!(strip_diacritics("naïve"), "naive");
+    }
+
+    // -- Emoji stripping (IS-020) ------------------------------------------
+
+    #[test]
+    fn test_strip_emoji_simple() {
+        assert_eq!(normalise_text("he😀llo"), "hello");
+    }
+
+    #[test]
+    fn test_strip_emoji_multiple() {
+        assert_eq!(normalise_text("ig🔥no📌re"), "ignore");
+    }
+
+    #[test]
+    fn test_strip_emoji_skin_tone() {
+        // Waving hand + skin tone modifier — both should be stripped
+        assert_eq!(normalise_text("a\u{1F44B}\u{1F3FD}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_emoji_zwj_sequence() {
+        // Family emoji ZWJ sequence: 👨‍👩‍👧‍👦
+        // ZWJ (U+200D) is already in ZERO_WIDTH_CHARS, individual emoji are stripped
+        assert_eq!(
+            normalise_text("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}b"),
+            "ab"
+        );
+    }
+
+    #[test]
+    fn test_strip_emoji_variation_selectors() {
+        // Variation selector should be stripped
+        assert_eq!(normalise_text("a\u{FE0F}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_emoji_misc_symbols() {
+        // ☀ (U+2600) — misc symbols range
+        assert_eq!(normalise_text("a\u{2600}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_emoji_dingbats() {
+        // ✂ (U+2702) — dingbats range
+        assert_eq!(normalise_text("a\u{2702}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_emoji_transport() {
+        // 🚀 (U+1F680) — transport range
+        assert_eq!(normalise_text("a\u{1F680}b"), "ab");
+    }
+
+    #[test]
+    fn test_strip_emoji_standalone_function() {
+        assert_eq!(strip_emoji("hello 🌍 world"), "hello  world");
+        assert_eq!(strip_emoji("ig🔥no📌re"), "ignore");
+        assert_eq!(strip_emoji("no emoji here"), "no emoji here");
+    }
+
+    #[test]
+    fn test_strip_emoji_preserves_text_between() {
+        assert_eq!(
+            normalise_text("Ignore 🎯 previous 🔥 instructions"),
+            "Ignore  previous  instructions"
+        );
+    }
+
     // -- Combined attacks --------------------------------------------------
 
     #[test]
@@ -318,6 +772,43 @@ mod tests {
     }
 
     #[test]
+    fn test_combined_emoji_and_diacritics() {
+        // Emoji interleaved with accented text
+        assert_eq!(normalise_text("ïg🔥nörë"), "ignore");
+    }
+
+    #[test]
+    fn test_combined_emoji_and_upside_down() {
+        // Upside-down text with emoji interleaved
+        assert_eq!(normalise_text("\u{0265}😀\u{01DD}llo"), "hello");
+    }
+
+    #[test]
+    fn test_combined_braille_and_zero_width() {
+        // Braille "hello" with zero-width chars inserted
+        assert_eq!(
+            normalise_text("\u{2813}\u{200B}\u{2811}\u{200C}\u{2807}\u{2807}\u{2815}"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn test_combined_all_evasion_techniques() {
+        // A single string mixing: diacritics + zero-width + Cyrillic homoglyph +
+        // emoji + upside-down + tag characters
+        let evasion = concat!(
+            "ï",         // i with diaeresis → i (diacritics)
+            "\u{200B}",  // zero-width space (stripped)
+            "\u{0441}",  // Cyrillic с → c (homoglyph)
+            "🔥",        // emoji (stripped)
+            "\u{0250}",  // ɐ → a (upside-down)
+            "\u{E0041}", // tag A (stripped)
+            "\u{0287}",  // ʇ → t (upside-down)
+        );
+        assert_eq!(normalise_text(evasion), "icat");
+    }
+
+    #[test]
     fn test_empty_string() {
         assert_eq!(normalise_text(""), "");
     }
@@ -329,18 +820,21 @@ mod tests {
 
     #[test]
     fn test_preserves_normal_unicode() {
-        // CJK, emoji, etc. should pass through unchanged
-        let text = "你好世界 🌍";
+        // CJK text should pass through unchanged (emoji is stripped)
+        let text = "你好世界";
         assert_eq!(normalise_text(text), text);
     }
 
     #[test]
-    fn test_preserves_accented_latin() {
-        // Accented characters that are NOT homoglyphs should be preserved
-        // (after NFKC, composed forms are used)
-        let text = "café résumé naïve";
-        let result = normalise_text(text);
-        assert!(result.contains("café"));
-        assert!(result.contains("résumé"));
+    fn test_emoji_stripped_from_cjk_text() {
+        // Emoji next to CJK: emoji stripped, CJK preserved
+        assert_eq!(normalise_text("你好世界 🌍"), "你好世界 ");
+    }
+
+    #[test]
+    fn test_diacritics_stripped_from_accented_latin() {
+        // Accented characters have diacritics removed for security analysis
+        let result = normalise_text("café résumé naïve");
+        assert_eq!(result, "cafe resume naive");
     }
 }
