@@ -2,12 +2,23 @@
 
 Each loop is a self-contained task. The spawned coding agent must:
 1. Read the relevant architecture docs for context
-2. Complete the task fully
-3. Ensure `cargo fmt --check` passes
-4. Ensure `cargo clippy -- -D warnings` passes
-5. Ensure `cargo test` passes (if tests exist)
-6. Commit with a meaningful message
-7. Push to origin/main
+2. Write down all tasks as a TODO checklist before starting any code
+3. Complete the task fully — verify each fix as complete before moving to the next
+4. Ensure `cargo fmt --check` passes
+5. Ensure `cargo clippy -- -D warnings` passes
+6. Ensure `cargo test` passes (if tests exist)
+7. Commit with a meaningful message
+8. Push to origin/main
+
+## ⚠️ MANDATORY QUALITY POLICY
+
+**ZERO TOLERANCE — enforced on every loop:**
+- **No placeholders, TODOs, mocks, stubs, or fake code.** 100% real working implementations only.
+- **DRY** — Don't Repeat Yourself. Extract shared logic.
+- **SOLID** — Single responsibility, open/closed, Liskov substitution, interface segregation, dependency inversion.
+- **KISS** — Keep It Simple, Stupid. Robust and simple beats clever and fragile.
+- **NEVER LIE** — Do not fabricate test results, skip checks, or claim something works without verifying it.
+- **Verify before claiming done** — Run the actual commands. Paste the actual output.
 
 ## Loop 0: Scaffold the Workspace
 
