@@ -25,6 +25,7 @@ use std::collections::HashMap as StdHashMap;
 
 pub use jailbreak_detector::{JailbreakConfig, JailbreakDetector, JailbreakResult};
 
+pub mod action_policy;
 pub mod canary;
 pub mod code_security;
 pub mod jailbreak_detector;
@@ -33,6 +34,10 @@ pub mod pii_validation;
 pub mod tool_firewall;
 pub mod tool_registry;
 
+pub use action_policy::{
+    ActionPolicy, ContextMinimizer, EnforcementMode, Message, PolicyDecision, PolicyEngine,
+    PolicyVerdict,
+};
 pub use canary::{CanaryConfig, CanaryDetection, CanaryToken, CanaryTokenStore};
 pub use tool_firewall::{
     FirewallAction, FirewallResult, FormatConstraint, FormatViolation, MinimizeResult,
