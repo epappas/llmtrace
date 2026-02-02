@@ -221,25 +221,40 @@ impl BenchmarkRunner {
     pub fn print_baselines(num_malicious: usize, num_benign: usize) {
         let total = num_malicious + num_benign;
         println!("\n=== Baseline Comparisons ===");
-        println!("Dataset: {} malicious + {} benign = {} total", num_malicious, num_benign, total);
+        println!(
+            "Dataset: {} malicious + {} benign = {} total",
+            num_malicious, num_benign, total
+        );
 
         // Random classifier (50% chance)
         println!("\nRandom Classifier (50%):");
         println!("  Accuracy:  50.00%");
-        println!("  Precision: {:.2}%", num_malicious as f64 / total as f64 * 100.0);
+        println!(
+            "  Precision: {:.2}%",
+            num_malicious as f64 / total as f64 * 100.0
+        );
         println!("  Recall:    50.00%");
         println!("  FPR:       50.00%");
 
         // Always-positive classifier
         println!("\nAlways-Positive (flag everything):");
-        println!("  Accuracy:  {:.2}%", num_malicious as f64 / total as f64 * 100.0);
-        println!("  Precision: {:.2}%", num_malicious as f64 / total as f64 * 100.0);
+        println!(
+            "  Accuracy:  {:.2}%",
+            num_malicious as f64 / total as f64 * 100.0
+        );
+        println!(
+            "  Precision: {:.2}%",
+            num_malicious as f64 / total as f64 * 100.0
+        );
         println!("  Recall:    100.00%");
         println!("  FPR:       100.00%");
 
         // Always-negative classifier
         println!("\nAlways-Negative (pass everything):");
-        println!("  Accuracy:  {:.2}%", num_benign as f64 / total as f64 * 100.0);
+        println!(
+            "  Accuracy:  {:.2}%",
+            num_benign as f64 / total as f64 * 100.0
+        );
         println!("  Precision: N/A (no predictions)");
         println!("  Recall:    0.00%");
         println!("  FPR:       0.00%");

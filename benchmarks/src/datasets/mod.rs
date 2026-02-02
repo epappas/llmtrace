@@ -62,10 +62,10 @@ impl DatasetLoader {
     ///
     /// Returns an error if the file cannot be read or parsed.
     pub fn load_from_file(path: &Path) -> Result<Vec<BenchmarkSample>, String> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-        let samples: Vec<BenchmarkSample> =
-            serde_json::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let samples: Vec<BenchmarkSample> = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
         Ok(samples)
     }
 
