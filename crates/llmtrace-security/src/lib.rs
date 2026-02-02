@@ -166,6 +166,31 @@ fn compile_pii_patterns(
 // RegexSecurityAnalyzer
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Context flooding detection constants (OWASP LLM10)
+// ---------------------------------------------------------------------------
+
+/// Default threshold for excessive input length (characters).
+const CONTEXT_FLOODING_LENGTH_THRESHOLD: usize = 100_000;
+
+/// Minimum word count before checking word 3-gram repetition ratio.
+const CONTEXT_FLOODING_REPETITION_MIN_WORDS: usize = 50;
+
+/// Threshold for word 3-gram repetition ratio (0.0–1.0).
+const CONTEXT_FLOODING_REPETITION_THRESHOLD: f64 = 0.60;
+
+/// Minimum text length (characters) before checking Shannon entropy.
+const CONTEXT_FLOODING_ENTROPY_MIN_LENGTH: usize = 5_000;
+
+/// Shannon entropy threshold (bits per character) below which text is flagged.
+const CONTEXT_FLOODING_ENTROPY_THRESHOLD: f64 = 2.0;
+
+/// Threshold for invisible/whitespace character ratio (0.0–1.0).
+const CONTEXT_FLOODING_INVISIBLE_THRESHOLD: f64 = 0.30;
+
+/// Threshold for how many times the same line must appear to be flagged.
+const CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD: u32 = 20;
+
 /// Regex-based security analyzer for LLM request and response content.
 ///
 /// Detects:
@@ -895,6 +920,181 @@ impl RegexSecurityAnalyzer {
         findings
     }
 
+    /// Detect context window flooding attacks (OWASP LLM10: Unbounded Consumption).
+    ///
+    /// Context window flooding is a Denial-of-Service technique where an attacker
+    /// fills the LLM context window with junk content to crowd out legitimate
+    /// instructions or inflate token-based costs.
+    ///
+    /// Runs five heuristic checks:
+    /// 1. **Excessive input length** — inputs exceeding 100,000 characters
+    /// 2. **High repetition ratio** — >60% repeated word 3-grams
+    /// 3. **Low Shannon entropy** — <2.0 bits/char on texts >5,000 characters
+    /// 4. **Invisible character flooding** — >30% whitespace/invisible characters
+    /// 5. **Repeated line flooding** — any single line appearing >20 times
+    ///
+    /// This is exposed publicly so that the streaming security monitor can
+    /// call it synchronously on content without the async `SecurityAnalyzer` trait.
+    pub fn detect_context_flooding(&self, text: &str) -> Vec<SecurityFinding> {
+        let mut findings = Vec::new();
+        let char_count = text.chars().count();
+
+        // 1. Excessive input length
+        if char_count >= CONTEXT_FLOODING_LENGTH_THRESHOLD {
+            let ratio = char_count as f64 / CONTEXT_FLOODING_LENGTH_THRESHOLD as f64;
+            let confidence = (0.80 + (ratio - 1.0) * 0.05).clamp(0.80, 0.99);
+            findings.push(
+                SecurityFinding::new(
+                    SecuritySeverity::High,
+                    "context_flooding".to_string(),
+                    format!(
+                        "Excessive input length: {} characters (threshold: {})",
+                        char_count, CONTEXT_FLOODING_LENGTH_THRESHOLD
+                    ),
+                    confidence,
+                )
+                .with_metadata("detection".to_string(), "excessive_length".to_string())
+                .with_metadata("char_count".to_string(), char_count.to_string())
+                .with_metadata(
+                    "threshold".to_string(),
+                    CONTEXT_FLOODING_LENGTH_THRESHOLD.to_string(),
+                ),
+            );
+        }
+
+        // 2. High word 3-gram repetition ratio
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.len() >= CONTEXT_FLOODING_REPETITION_MIN_WORDS {
+            let total_trigrams = words.len() - 2;
+            let mut trigram_counts: StdHashMap<(&str, &str, &str), u32> = StdHashMap::new();
+            for i in 0..total_trigrams {
+                let key = (words[i], words[i + 1], words[i + 2]);
+                *trigram_counts.entry(key).or_insert(0) += 1;
+            }
+            let unique_trigrams = trigram_counts.len();
+            let repetition_ratio = 1.0 - (unique_trigrams as f64 / total_trigrams as f64);
+            if repetition_ratio > CONTEXT_FLOODING_REPETITION_THRESHOLD {
+                let excess = repetition_ratio - CONTEXT_FLOODING_REPETITION_THRESHOLD;
+                let confidence = (0.60 + excess).clamp(0.60, 0.95);
+                findings.push(
+                    SecurityFinding::new(
+                        SecuritySeverity::Medium,
+                        "context_flooding".to_string(),
+                        format!(
+                            "High repetition ratio: {:.1}% of word 3-grams are repeated (threshold: {:.0}%)",
+                            repetition_ratio * 100.0,
+                            CONTEXT_FLOODING_REPETITION_THRESHOLD * 100.0
+                        ),
+                        confidence,
+                    )
+                    .with_metadata("detection".to_string(), "high_repetition".to_string())
+                    .with_metadata(
+                        "repetition_ratio".to_string(),
+                        format!("{:.4}", repetition_ratio),
+                    )
+                    .with_metadata("unique_trigrams".to_string(), unique_trigrams.to_string())
+                    .with_metadata("total_trigrams".to_string(), total_trigrams.to_string()),
+                );
+            }
+        }
+
+        // 3. Low Shannon entropy
+        if char_count >= CONTEXT_FLOODING_ENTROPY_MIN_LENGTH {
+            let entropy = shannon_entropy(text);
+            if entropy < CONTEXT_FLOODING_ENTROPY_THRESHOLD {
+                let deficit = CONTEXT_FLOODING_ENTROPY_THRESHOLD - entropy;
+                let confidence = (0.60 + deficit * 0.20).clamp(0.60, 0.95);
+                findings.push(
+                    SecurityFinding::new(
+                        SecuritySeverity::Medium,
+                        "context_flooding".to_string(),
+                        format!(
+                            "Low entropy text: {:.2} bits/char (threshold: {:.1})",
+                            entropy, CONTEXT_FLOODING_ENTROPY_THRESHOLD
+                        ),
+                        confidence,
+                    )
+                    .with_metadata("detection".to_string(), "low_entropy".to_string())
+                    .with_metadata("entropy_bits".to_string(), format!("{:.4}", entropy))
+                    .with_metadata(
+                        "threshold".to_string(),
+                        format!("{:.1}", CONTEXT_FLOODING_ENTROPY_THRESHOLD),
+                    ),
+                );
+            }
+        }
+
+        // 4. Invisible / whitespace character flooding
+        if char_count > 0 {
+            let invisible_count = text
+                .chars()
+                .filter(|c| is_invisible_or_whitespace(*c))
+                .count();
+            let invisible_ratio = invisible_count as f64 / char_count as f64;
+            if invisible_ratio > CONTEXT_FLOODING_INVISIBLE_THRESHOLD {
+                let excess = invisible_ratio - CONTEXT_FLOODING_INVISIBLE_THRESHOLD;
+                let confidence = (0.60 + excess).clamp(0.60, 0.95);
+                findings.push(
+                    SecurityFinding::new(
+                        SecuritySeverity::Medium,
+                        "context_flooding".to_string(),
+                        format!(
+                            "Invisible/whitespace character flooding: {:.1}% of characters (threshold: {:.0}%)",
+                            invisible_ratio * 100.0,
+                            CONTEXT_FLOODING_INVISIBLE_THRESHOLD * 100.0
+                        ),
+                        confidence,
+                    )
+                    .with_metadata("detection".to_string(), "invisible_flooding".to_string())
+                    .with_metadata(
+                        "invisible_ratio".to_string(),
+                        format!("{:.4}", invisible_ratio),
+                    )
+                    .with_metadata("invisible_count".to_string(), invisible_count.to_string())
+                    .with_metadata("total_chars".to_string(), char_count.to_string()),
+                );
+            }
+        }
+
+        // 5. Repeated line flooding
+        if text.contains('\n') {
+            let mut line_counts: StdHashMap<&str, u32> = StdHashMap::new();
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    *line_counts.entry(trimmed).or_insert(0) += 1;
+                }
+            }
+            if let Some((line, &count)) = line_counts.iter().max_by_key(|(_, c)| *c) {
+                if count > CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD {
+                    let excess = (count - CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD) as f64;
+                    let confidence = (0.70 + excess * 0.005).clamp(0.70, 0.95);
+                    let preview = truncate_for_finding(line);
+                    findings.push(
+                        SecurityFinding::new(
+                            SecuritySeverity::Medium,
+                            "context_flooding".to_string(),
+                            format!(
+                                "Repeated line flooding: line '{}' appears {} times (threshold: {})",
+                                preview, count, CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD
+                            ),
+                            confidence,
+                        )
+                        .with_metadata("detection".to_string(), "repeated_lines".to_string())
+                        .with_metadata("repeated_line".to_string(), preview.to_string())
+                        .with_metadata("count".to_string(), count.to_string())
+                        .with_metadata(
+                            "threshold".to_string(),
+                            CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD.to_string(),
+                        ),
+                    );
+                }
+            }
+        }
+
+        findings
+    }
+
     /// Returns `true` if decoded text contains suspicious instruction-like phrases.
     fn decoded_content_is_suspicious(decoded: &str) -> bool {
         let lower = decoded.to_lowercase();
@@ -1345,6 +1545,47 @@ fn is_placeholder_value(matched: &str) -> bool {
     false
 }
 
+/// Calculate the Shannon entropy (bits per character) of a text's character distribution.
+///
+/// Returns 0.0 for empty text. Typical values:
+/// - Random ASCII: ~6.5 bits/char
+/// - English prose: ~3.5–4.5 bits/char
+/// - Highly repetitive flooding text: <2.0 bits/char
+/// - Single repeated character: 0.0 bits/char
+fn shannon_entropy(text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let mut freq: StdHashMap<char, usize> = StdHashMap::new();
+    let mut total: usize = 0;
+    for c in text.chars() {
+        *freq.entry(c).or_insert(0) += 1;
+        total += 1;
+    }
+    let total_f = total as f64;
+    freq.values()
+        .map(|&count| {
+            let p = count as f64 / total_f;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// Returns `true` if the character is whitespace, a control character, or an
+/// invisible Unicode character (zero-width spaces, bidi controls, etc.).
+fn is_invisible_or_whitespace(c: char) -> bool {
+    c.is_whitespace()
+        || c.is_control()
+        || matches!(
+            c,
+            '\u{200B}'..='\u{200D}'
+                | '\u{FEFF}'
+                | '\u{00AD}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+        )
+}
+
 /// Truncate a string to 200 chars for use in finding descriptions.
 fn truncate_for_finding(s: &str) -> &str {
     if s.len() <= 200 {
@@ -1374,6 +1615,7 @@ impl SecurityAnalyzer for RegexSecurityAnalyzer {
         let normalised = normalise::normalise_text(prompt);
         let mut findings = self.detect_injection_patterns(&normalised);
         findings.extend(self.detect_pii_patterns(&normalised));
+        findings.extend(self.detect_context_flooding(&normalised));
 
         // Dedicated jailbreak detection (runs alongside injection detection —
         // a text can be BOTH a prompt injection AND a jailbreak attempt)
@@ -1437,6 +1679,7 @@ impl SecurityAnalyzer for RegexSecurityAnalyzer {
             "many_shot_attack".to_string(),
             "repetition_attack".to_string(),
             "secret_leakage".to_string(),
+            "context_flooding".to_string(),
         ]
     }
 
@@ -4011,5 +4254,320 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
                 .any(|f| f.metadata.get("pii_type") == Some(&"credit_card".to_string())),
             "Invalid CC should not generate a finding"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Context flooding detection (OWASP LLM10)
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn test_context_flooding_excessive_length() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text = "A".repeat(100_001);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "context_flooding"
+                && f.metadata.get("detection") == Some(&"excessive_length".to_string())),
+            "Should detect excessive input length"
+        );
+        let f = findings
+            .iter()
+            .find(|f| f.metadata.get("detection") == Some(&"excessive_length".to_string()))
+            .unwrap();
+        assert_eq!(f.severity, SecuritySeverity::High);
+    }
+
+    #[test]
+    fn test_context_flooding_normal_length_not_detected() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text: String = (0..1000).map(|i| format!("unique{} ", i)).collect();
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"excessive_length".to_string())),
+            "Normal length text should not trigger excessive length detection"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_high_repetition() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // "foo bar baz " repeated many times → very few unique word 3-grams
+        let text = "foo bar baz ".repeat(100);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "context_flooding"
+                && f.metadata.get("detection") == Some(&"high_repetition".to_string())),
+            "Should detect high word 3-gram repetition; findings: {:?}",
+            findings
+                .iter()
+                .map(|f| f.metadata.get("detection"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_normal_text_no_repetition() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text: String = (0..200).map(|i| format!("unique{} ", i)).collect();
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"high_repetition".to_string())),
+            "Varied text should not trigger repetition detection"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_low_entropy() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Single character repeated 6000 times → entropy = 0.0 bits
+        let text = "a".repeat(6000);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "context_flooding"
+                && f.metadata.get("detection") == Some(&"low_entropy".to_string())),
+            "Should detect low entropy text; findings: {:?}",
+            findings
+                .iter()
+                .map(|f| f.metadata.get("detection"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_entropy_short_text_skipped() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Low entropy but too short (<5000 chars) → should not trigger entropy check
+        let text = "a".repeat(100);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"low_entropy".to_string())),
+            "Short text should skip entropy check"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_invisible_chars() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // 40% spaces: 40 spaces + 60 normal chars
+        let text = format!("{}{}", " ".repeat(40), "x".repeat(60));
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "context_flooding"
+                && f.metadata.get("detection") == Some(&"invisible_flooding".to_string())),
+            "Should detect invisible/whitespace flooding"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_normal_whitespace_not_detected() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text = "The quick brown fox jumps over the lazy dog and runs across the field.";
+        let findings = a.detect_context_flooding(text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"invisible_flooding".to_string())),
+            "Normal whitespace should not trigger invisible flooding detection"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_repeated_lines() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text = "This is a flooding line.\n".repeat(25);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            findings.iter().any(|f| f.finding_type == "context_flooding"
+                && f.metadata.get("detection") == Some(&"repeated_lines".to_string())),
+            "Should detect repeated line flooding"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_repeated_lines_below_threshold() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text = "This is a repeated line.\n".repeat(15);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"repeated_lines".to_string())),
+            "15 repeated lines should not trigger (threshold is >20)"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_empty_text() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let findings = a.detect_context_flooding("");
+        assert!(findings.is_empty(), "Empty text should produce no findings");
+    }
+
+    #[test]
+    fn test_context_flooding_clean_text_no_findings() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let findings = a.detect_context_flooding(
+            "What is the weather like today? Please provide a detailed forecast for London.",
+        );
+        assert!(
+            findings.is_empty(),
+            "Clean normal text should produce no context flooding findings"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_context_flooding_in_analyze_request() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Use repeated lines to trigger context flooding
+        let text = "flood this context window now\n".repeat(25);
+        let findings = a.analyze_request(&text, &test_context()).await.unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.finding_type == "context_flooding"),
+            "Context flooding should be detected via analyze_request"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_metadata_fields() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let text = "This is a flooding line.\n".repeat(25);
+        let findings = a.detect_context_flooding(&text);
+        let f = findings
+            .iter()
+            .find(|f| f.metadata.get("detection") == Some(&"repeated_lines".to_string()))
+            .expect("Should have repeated_lines finding");
+        assert!(f.metadata.contains_key("count"));
+        assert!(f.metadata.contains_key("threshold"));
+        assert!(f.metadata.contains_key("repeated_line"));
+        assert!(
+            f.confidence_score >= 0.5 && f.confidence_score <= 1.0,
+            "Confidence should be in [0.5, 1.0], got {}",
+            f.confidence_score
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_in_supported_types() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let types = a.supported_finding_types();
+        assert!(
+            types.contains(&"context_flooding".to_string()),
+            "context_flooding should be in supported finding types"
+        );
+    }
+
+    #[test]
+    fn test_shannon_entropy_single_char() {
+        assert_eq!(shannon_entropy("aaaa"), 0.0);
+    }
+
+    #[test]
+    fn test_shannon_entropy_two_equal_chars() {
+        // Two chars with equal frequency → entropy = 1.0 bit
+        let entropy = shannon_entropy("abababab");
+        assert!(
+            (entropy - 1.0).abs() < 0.01,
+            "Expected ~1.0, got {}",
+            entropy
+        );
+    }
+
+    #[test]
+    fn test_shannon_entropy_english_text() {
+        let text = "The quick brown fox jumps over the lazy dog. \
+                     This sentence has varied characters and reasonable entropy for English text.";
+        let entropy = shannon_entropy(text);
+        assert!(
+            entropy > 3.0 && entropy < 5.5,
+            "English text entropy should be 3.0-5.5, got {}",
+            entropy
+        );
+    }
+
+    #[test]
+    fn test_shannon_entropy_empty() {
+        assert_eq!(shannon_entropy(""), 0.0);
+    }
+
+    #[test]
+    fn test_context_flooding_multiple_detections() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Build text that triggers multiple heuristics:
+        // - High repetition (same word 3-gram repeated)
+        // - Repeated lines (same line >20 times)
+        let text = "padding data here\n".repeat(1000);
+        let findings = a.detect_context_flooding(&text);
+        let detections: Vec<_> = findings
+            .iter()
+            .filter_map(|f| f.metadata.get("detection"))
+            .collect();
+        assert!(
+            detections.len() >= 2,
+            "Should trigger multiple detections; got: {:?}",
+            detections
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_severity_levels() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+
+        // Excessive length → High severity
+        let long_text = "A".repeat(100_001);
+        let findings = a.detect_context_flooding(&long_text);
+        let length_finding = findings
+            .iter()
+            .find(|f| f.metadata.get("detection") == Some(&"excessive_length".to_string()));
+        assert_eq!(
+            length_finding.map(|f| &f.severity),
+            Some(&SecuritySeverity::High),
+            "Excessive length should be High severity"
+        );
+
+        // Repeated lines → Medium severity
+        let lines_text = "flooding line content\n".repeat(25);
+        let findings = a.detect_context_flooding(&lines_text);
+        let lines_finding = findings
+            .iter()
+            .find(|f| f.metadata.get("detection") == Some(&"repeated_lines".to_string()));
+        assert_eq!(
+            lines_finding.map(|f| &f.severity),
+            Some(&SecuritySeverity::Medium),
+            "Repeated lines should be Medium severity"
+        );
+    }
+
+    #[test]
+    fn test_context_flooding_repetition_few_words_skipped() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Only 10 words — below the 50-word minimum for repetition check
+        let text = "spam ".repeat(10);
+        let findings = a.detect_context_flooding(&text);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.metadata.get("detection") == Some(&"high_repetition".to_string())),
+            "Too few words should skip repetition check"
+        );
+    }
+
+    #[test]
+    fn test_is_invisible_or_whitespace_basic() {
+        assert!(is_invisible_or_whitespace(' '));
+        assert!(is_invisible_or_whitespace('\t'));
+        assert!(is_invisible_or_whitespace('\n'));
+        assert!(is_invisible_or_whitespace('\u{200B}')); // zero-width space
+        assert!(is_invisible_or_whitespace('\u{FEFF}')); // BOM
+        assert!(!is_invisible_or_whitespace('a'));
+        assert!(!is_invisible_or_whitespace('1'));
+        assert!(!is_invisible_or_whitespace('Z'));
     }
 }
