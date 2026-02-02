@@ -1,0 +1,47 @@
+[package]
+name = "llmtrace-benchmarks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Comprehensive benchmark suite for LLMTrace security analysis"
+
+[dependencies]
+llmtrace-core = { path = "../crates/llmtrace-core" }
+llmtrace-security = { path = "../crates/llmtrace-security" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "injection_detection"
+harness = false
+
+[[bench]]
+name = "encoding_evasion"
+harness = false
+
+[[bench]]
+name = "over_defense"
+harness = false
+
+[[bench]]
+name = "jailbreak_detection"
+harness = false
+
+[[bench]]
+name = "code_security"
+harness = false
+
+[[bench]]
+name = "pii_detection"
+harness = false
+
+[[bench]]
+name = "throughput"
+harness = false

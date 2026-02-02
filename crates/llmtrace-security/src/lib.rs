@@ -25,6 +25,7 @@ use std::collections::HashMap as StdHashMap;
 
 pub use jailbreak_detector::{JailbreakConfig, JailbreakDetector, JailbreakResult};
 
+pub mod code_security;
 pub mod jailbreak_detector;
 pub mod normalise;
 pub mod pii_validation;
