@@ -19,29 +19,5 @@ uuid = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "injection_detection"
-harness = false
-
-[[bench]]
-name = "encoding_evasion"
-harness = false
-
-[[bench]]
 name = "over_defense"
-harness = false
-
-[[bench]]
-name = "jailbreak_detection"
-harness = false
-
-[[bench]]
-name = "code_security"
-harness = false
-
-[[bench]]
-name = "pii_detection"
-harness = false
-
-[[bench]]
-name = "throughput"
 harness = false

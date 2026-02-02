@@ -50,7 +50,7 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| SA-002 | Canary token injection and leakage detection | Low | ⬜ |
+| SA-002 | Canary token injection and leakage detection | Low | ✅ `5b43d93` |
 
 ### Loop 5 — Tool Registry & Classification
 > Foundation for agent security features
