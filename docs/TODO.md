@@ -32,10 +32,10 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-004 | NotInject-style over-defense benchmark dataset (339 samples, 3 difficulty levels) | Low | ⬜ |
-| IS-005 | Three-dimensional evaluation metrics (benign/malicious/over-defense) | Low | ⬜ |
-| EV-002 | NotInject evaluation runner | Low | ⬜ |
-| EV-010 | Paper-table output format for results | Low | ⬜ |
+| IS-004 | NotInject-style over-defense benchmark dataset (339 samples, 3 difficulty levels) | Low | ✅ `33b3f55` |
+| IS-005 | Three-dimensional evaluation metrics (benign/malicious/over-defense) | Low | ✅ `33b3f55` |
+| EV-002 | NotInject evaluation runner | Low | ✅ `33b3f55` |
+| EV-010 | Paper-table output format for results | Low | ✅ `33b3f55` |
 
 ### Loop 3 — FPR-Aware Threshold Optimisation
 > Evaluate at deployment-realistic FPR operating points
