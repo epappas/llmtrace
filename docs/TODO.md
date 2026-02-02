@@ -95,8 +95,8 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| AS-010 | Action-Selector pattern — enforce action allowlists at proxy level | Medium | ⬜ |
-| AS-012 | Context-Minimization — strip unnecessary context | Medium | ⬜ |
+| AS-010 | Action-Selector pattern — enforce action allowlists at proxy level | Medium | ✅ `89ba304` |
+| AS-012 | Context-Minimization — strip unnecessary context | Medium | ✅ `89ba304` |
 
 ### Loop 10 — Multi-Agent Defense Coordination
 > Coordinator + Guard architecture for 0% ASR
