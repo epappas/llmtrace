@@ -21,11 +21,11 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-020 | Emoji normalisation/stripping — 100% ASR, zero current defense | Low | ⬜ |
-| IS-021 | Upside-down text mapping — 100% jailbreak evasion | Low | ⬜ |
-| IS-022 | Unicode tag character stripping (U+E0001–U+E007F) | Low | ⬜ |
-| IS-031 | Diacritics-based evasion defense — accent marks | Low | ⬜ |
-| IS-015 | Braille encoding evasion defense | Low | ⬜ |
+| IS-020 | Emoji normalisation/stripping — 100% ASR, zero current defense | Low | ✅ `a62855b` |
+| IS-021 | Upside-down text mapping — 100% jailbreak evasion | Low | ✅ `a62855b` |
+| IS-022 | Unicode tag character stripping (U+E0001–U+E007F) | Low | ✅ `a62855b` |
+| IS-031 | Diacritics-based evasion defense — accent marks | Low | ✅ `a62855b` |
+| IS-015 | Braille encoding evasion defense | Low | ✅ `a62855b` |
 
 ### Loop 2 — NotInject Benchmark + 3D Evaluation
 > Establish over-defense baseline and evaluation framework

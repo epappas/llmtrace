@@ -24,6 +24,7 @@ COPY crates/llmtrace-security/Cargo.toml crates/llmtrace-security/Cargo.toml
 COPY crates/llmtrace-proxy/Cargo.toml crates/llmtrace-proxy/Cargo.toml
 COPY crates/llmtrace-sdk/Cargo.toml crates/llmtrace-sdk/Cargo.toml
 COPY crates/llmtrace-python/Cargo.toml crates/llmtrace-python/Cargo.toml
+COPY benchmarks/Cargo.toml benchmarks/Cargo.toml
 
 # Create stub lib.rs files so cargo can resolve the workspace
 RUN mkdir -p crates/llmtrace-core/src && echo "" > crates/llmtrace-core/src/lib.rs && \
@@ -31,20 +32,23 @@ RUN mkdir -p crates/llmtrace-core/src && echo "" > crates/llmtrace-core/src/lib.
     mkdir -p crates/llmtrace-security/src && echo "" > crates/llmtrace-security/src/lib.rs && \
     mkdir -p crates/llmtrace-proxy/src && echo "fn main() {}" > crates/llmtrace-proxy/src/main.rs && echo "" > crates/llmtrace-proxy/src/lib.rs && \
     mkdir -p crates/llmtrace-sdk/src && echo "" > crates/llmtrace-sdk/src/lib.rs && \
-    mkdir -p crates/llmtrace-python/src && echo "" > crates/llmtrace-python/src/lib.rs
+    mkdir -p crates/llmtrace-python/src && echo "" > crates/llmtrace-python/src/lib.rs && \
+    mkdir -p benchmarks/src && echo "" > benchmarks/src/lib.rs
 
 # Build dependencies only (cached layer)
 RUN cargo build --release --bin llmtrace-proxy 2>/dev/null || true
 
 # Copy actual source and build for real
 COPY crates/ crates/
+COPY benchmarks/ benchmarks/
 RUN touch crates/llmtrace-core/src/lib.rs \
           crates/llmtrace-storage/src/lib.rs \
           crates/llmtrace-security/src/lib.rs \
           crates/llmtrace-proxy/src/main.rs \
           crates/llmtrace-proxy/src/lib.rs \
           crates/llmtrace-sdk/src/lib.rs \
-          crates/llmtrace-python/src/lib.rs
+          crates/llmtrace-python/src/lib.rs \
+          benchmarks/src/lib.rs
 
 RUN cargo build --release --bin llmtrace-proxy
 
