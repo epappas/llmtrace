@@ -65,7 +65,7 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-017 | Context window flooding detection | Low | ⬜ |
+| IS-017 | Context window flooding detection | Low | ✅ `9997962` |
 
 ---
 
