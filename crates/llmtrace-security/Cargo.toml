@@ -26,6 +26,7 @@ serde.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+rand = "0.8"
 regex = "1.10"
 base64 = "0.22"
 unicode-normalization = "0.1"
