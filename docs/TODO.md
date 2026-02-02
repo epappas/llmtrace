@@ -86,9 +86,9 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| ML-002 | InjecGuard model integration | Medium | ✅ `74e2267` |
-| ML-003 | Meta Prompt Guard 2 integration (86M + 22M) | Medium | ✅ `74e2267` |
-| ML-006 | Multi-model ensemble voting with diverse architectures | Medium | ✅ `74e2267` |
+| ML-002 | InjecGuard model integration | Medium | ✅ `10a2369` |
+| ML-003 | Meta Prompt Guard 2 integration (86M + 22M) | Medium | ✅ `10a2369` |
+| ML-006 | Multi-model ensemble voting with diverse architectures | Medium | ✅ `10a2369` |
 
 ### Loop 9 — Action-Selector Pattern Enforcement
 > Provable security patterns at proxy level
