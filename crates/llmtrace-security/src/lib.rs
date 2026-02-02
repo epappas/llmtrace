@@ -30,8 +30,12 @@ pub mod code_security;
 pub mod jailbreak_detector;
 pub mod normalise;
 pub mod pii_validation;
+pub mod tool_registry;
 
 pub use canary::{CanaryConfig, CanaryDetection, CanaryToken, CanaryTokenStore};
+pub use tool_registry::{
+    ActionRateLimiter, RateLimitExceeded, ToolCategory, ToolDefinition, ToolRegistry,
+};
 
 #[cfg(feature = "ml")]
 pub mod ensemble;
