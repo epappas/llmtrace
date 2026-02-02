@@ -18,6 +18,7 @@ use crate::feature_extraction::extract_heuristic_features;
 use crate::fusion_classifier::FusionClassifier;
 use crate::ml_detector::MLSecurityAnalyzer;
 use crate::ner_detector::{NerConfig, NerDetector};
+use crate::thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
 use crate::RegexSecurityAnalyzer;
 
 /// Confidence boost applied when both regex and ML agree on injection detection.
@@ -55,8 +56,22 @@ pub struct EnsembleSecurityAnalyzer {
     /// When `Some`, the ensemble uses feature-level fusion instead of
     /// score-level combination.
     fusion_classifier: Option<FusionClassifier>,
-    /// ML confidence threshold for the fusion path.
+    /// ML confidence threshold for the fusion path (legacy — prefer `thresholds`).
     fusion_threshold: f64,
+    /// Per-category resolved thresholds based on the active operating point.
+    thresholds: ResolvedThresholds,
+    /// Whether over-defence suppression logic is enabled.
+    ///
+    /// When `true`, the analyzer applies heuristics to suppress findings
+    /// that are likely false positives (e.g. security research terminology).
+    over_defence_enabled: bool,
+    /// Whether to permit security research terminology without triggering.
+    ///
+    /// When `true`, terms like "prompt injection", "jailbreak", etc. used in
+    /// an educational or research context are less likely to be flagged.
+    allow_security_research: bool,
+    /// Lightweight tracker for recent detection rates.
+    fp_tracker: FalsePositiveTracker,
 }
 
 impl EnsembleSecurityAnalyzer {
@@ -78,6 +93,10 @@ impl EnsembleSecurityAnalyzer {
             ner: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
         })
     }
 
@@ -105,6 +124,10 @@ impl EnsembleSecurityAnalyzer {
             ner,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
         })
     }
 
@@ -182,6 +205,10 @@ impl EnsembleSecurityAnalyzer {
             ner,
             fusion_classifier,
             fusion_threshold: ml_config.threshold,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
         })
     }
 
@@ -197,6 +224,10 @@ impl EnsembleSecurityAnalyzer {
             ner: None,
             fusion_classifier: None,
             fusion_threshold: 0.8,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
         }
     }
 
@@ -216,6 +247,71 @@ impl EnsembleSecurityAnalyzer {
     #[must_use]
     pub fn is_fusion_active(&self) -> bool {
         self.fusion_classifier.is_some()
+    }
+
+    /// Returns `true` if over-defence suppression is enabled.
+    #[must_use]
+    pub fn is_over_defence_enabled(&self) -> bool {
+        self.over_defence_enabled
+    }
+
+    /// Returns `true` if security research terminology is permitted.
+    #[must_use]
+    pub fn is_security_research_allowed(&self) -> bool {
+        self.allow_security_research
+    }
+
+    /// Returns a reference to the current resolved thresholds.
+    #[must_use]
+    pub fn thresholds(&self) -> &ResolvedThresholds {
+        &self.thresholds
+    }
+
+    /// Returns a mutable reference to the false-positive tracker.
+    pub fn fp_tracker_mut(&mut self) -> &mut FalsePositiveTracker {
+        &mut self.fp_tracker
+    }
+
+    /// Set the operating point, re-resolving all per-category thresholds.
+    ///
+    /// This replaces the current thresholds with the defaults for the given
+    /// operating point.
+    #[must_use]
+    pub fn with_operating_point(mut self, point: OperatingPoint) -> Self {
+        self.thresholds = ResolvedThresholds::from_operating_point(&point, None);
+        self
+    }
+
+    /// Override a single per-category threshold by name.
+    ///
+    /// Recognised categories: `"injection"`, `"jailbreak"`, `"pii"`,
+    /// `"toxicity"`, `"data_leakage"`.  Unknown categories are silently
+    /// ignored.
+    #[must_use]
+    pub fn with_threshold_override(mut self, category: &str, threshold: f64) -> Self {
+        self.thresholds.apply_single_override(category, threshold);
+        self
+    }
+
+    /// Enable or disable over-defence suppression.
+    ///
+    /// When enabled, the analyzer applies heuristics to suppress findings
+    /// that are likely false positives (e.g. benign educational content
+    /// discussing security topics).
+    #[must_use]
+    pub fn with_over_defence(mut self, enabled: bool) -> Self {
+        self.over_defence_enabled = enabled;
+        self
+    }
+
+    /// Enable or disable the security research allowance flag.
+    ///
+    /// When enabled, terms like "prompt injection", "jailbreak", etc. used
+    /// in an educational or research context are less likely to be flagged.
+    #[must_use]
+    pub fn with_security_research(mut self, allowed: bool) -> Self {
+        self.allow_security_research = allowed;
+        self
     }
 
     /// Feature-level fusion analysis path (ADR-013).
@@ -258,8 +354,11 @@ impl EnsembleSecurityAnalyzer {
             .cloned()
             .collect();
 
-        // Add fusion injection finding if above threshold
-        if injection_score >= self.fusion_threshold {
+        // Add fusion injection finding if above threshold.
+        // Prefer the per-category injection threshold; fall back to the legacy
+        // fusion_threshold for backward compatibility (use whichever is higher).
+        let effective_threshold = self.thresholds.injection.max(self.fusion_threshold);
+        if injection_score >= effective_threshold {
             let severity = if injection_score >= 0.95 {
                 SecuritySeverity::Critical
             } else if injection_score >= 0.85 {
@@ -996,5 +1095,100 @@ mod tests {
             "Regex analysis too slow: {:?} per request",
             per_request
         );
+    }
+
+    // -- Builder methods & thresholds -------------------------------------
+
+    #[test]
+    fn test_regex_only_has_balanced_thresholds_by_default() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let t = ensemble.thresholds();
+        assert!((t.injection - 0.75).abs() < f64::EPSILON);
+        assert!((t.jailbreak - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_operating_point_high_precision() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only()
+            .with_operating_point(OperatingPoint::HighPrecision);
+        let t = ensemble.thresholds();
+        assert!((t.injection - 0.90).abs() < f64::EPSILON);
+        assert!((t.pii - 0.80).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_operating_point_high_recall() {
+        let ensemble =
+            EnsembleSecurityAnalyzer::regex_only().with_operating_point(OperatingPoint::HighRecall);
+        let t = ensemble.thresholds();
+        assert!((t.injection - 0.50).abs() < f64::EPSILON);
+        assert!((t.pii - 0.40).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_threshold_override() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only()
+            .with_threshold_override("injection", 0.42)
+            .with_threshold_override("pii", 0.99);
+        let t = ensemble.thresholds();
+        assert!((t.injection - 0.42).abs() < f64::EPSILON);
+        assert!((t.pii - 0.99).abs() < f64::EPSILON);
+        // Other thresholds should remain at Balanced defaults
+        assert!((t.jailbreak - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_threshold_override_unknown_category_is_noop() {
+        let ensemble =
+            EnsembleSecurityAnalyzer::regex_only().with_threshold_override("nonexistent", 0.5);
+        let t = ensemble.thresholds();
+        // Should still be Balanced defaults
+        assert!((t.injection - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_with_over_defence() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        assert!(!ensemble.is_over_defence_enabled());
+
+        let ensemble = ensemble.with_over_defence(true);
+        assert!(ensemble.is_over_defence_enabled());
+
+        let ensemble = ensemble.with_over_defence(false);
+        assert!(!ensemble.is_over_defence_enabled());
+    }
+
+    #[test]
+    fn test_with_security_research() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        assert!(!ensemble.is_security_research_allowed());
+
+        let ensemble = ensemble.with_security_research(true);
+        assert!(ensemble.is_security_research_allowed());
+    }
+
+    #[test]
+    fn test_builder_chaining() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only()
+            .with_operating_point(OperatingPoint::HighPrecision)
+            .with_threshold_override("injection", 0.95)
+            .with_over_defence(true)
+            .with_security_research(true);
+
+        assert!(ensemble.is_over_defence_enabled());
+        assert!(ensemble.is_security_research_allowed());
+        assert!((ensemble.thresholds().injection - 0.95).abs() < f64::EPSILON);
+        // Other thresholds from HighPrecision
+        assert!((ensemble.thresholds().jailbreak - 0.90).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_fp_tracker_accessible() {
+        let mut ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let tracker = ensemble.fp_tracker_mut();
+        tracker.record(true);
+        tracker.record(false);
+        assert_eq!(tracker.total_in_window(), 2);
+        assert_eq!(tracker.flagged_in_window(), 1);
     }
 }

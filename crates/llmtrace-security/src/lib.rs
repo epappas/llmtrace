@@ -37,6 +37,8 @@ pub mod feature_extraction;
 #[cfg(feature = "ml")]
 pub mod fusion_classifier;
 #[cfg(feature = "ml")]
+pub mod thresholds;
+#[cfg(feature = "ml")]
 pub mod hallucination_detector;
 #[cfg(feature = "ml")]
 pub mod inference_stats;
@@ -65,6 +67,8 @@ pub use ml_detector::{MLSecurityAnalyzer, MLSecurityConfig};
 pub use ner_detector::{NerConfig, NerDetector};
 #[cfg(feature = "ml")]
 pub use output_analyzer::{OutputAnalysisResult, OutputAnalyzer};
+#[cfg(feature = "ml")]
+pub use thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
 #[cfg(feature = "ml")]
 pub use toxicity_detector::ToxicityDetector;
 
