@@ -76,10 +76,10 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| AS-001 | Tool-Input Firewall (Minimizer) — filter sensitive info from tool args | High | ⬜ |
-| AS-002 | Tool-Output Firewall (Sanitizer) — remove malicious content from tool responses | High | ⬜ |
-| AS-003 | Tool context awareness — user task + tool description for security decisions | Medium | ⬜ |
-| AS-005 | Format constraint validation — enforce format/logic rules on tool outputs | Medium | ⬜ |
+| AS-001 | Tool-Input Firewall (Minimizer) — filter sensitive info from tool args | High | ✅ `9f22659` |
+| AS-002 | Tool-Output Firewall (Sanitizer) — remove malicious content from tool responses | High | ✅ `9f22659` |
+| AS-003 | Tool context awareness — user task + tool description for security decisions | Medium | ✅ `9f22659` |
+| AS-005 | Format constraint validation — enforce format/logic rules on tool outputs | Medium | ✅ `9f22659` |
 
 ### Loop 8 — Model Ensemble Diversification
 > Replace single-model reliance with multi-architecture ensemble
