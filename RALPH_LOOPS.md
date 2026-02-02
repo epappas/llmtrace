@@ -19,6 +19,7 @@ Each loop is a self-contained task. The spawned coding agent must:
 - **KISS** — Keep It Simple, Stupid. Robust and simple beats clever and fragile.
 - **NEVER LIE** — Do not fabricate test results, skip checks, or claim something works without verifying it.
 - **Verify before claiming done** — Run the actual commands. Paste the actual output.
+- **NO SHORTCUTS** — Do not use heuristics where proper ML is required. Do not use regex to simulate ML results. If the spec says ML, implement real ML inference. Regex fallback is ONLY acceptable as graceful runtime degradation when model weights are unavailable — never as the primary code path.
 
 ## Loop 0: Scaffold the Workspace
 

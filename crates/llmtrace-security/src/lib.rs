@@ -53,6 +53,8 @@ pub mod ensemble;
 #[cfg(feature = "ml")]
 pub mod feature_extraction;
 #[cfg(feature = "ml")]
+pub mod fpr_calibration;
+#[cfg(feature = "ml")]
 pub mod fusion_classifier;
 #[cfg(feature = "ml")]
 pub mod hallucination_detector;
@@ -73,6 +75,11 @@ pub mod toxicity_detector;
 pub use ensemble::EnsembleSecurityAnalyzer;
 #[cfg(feature = "ml")]
 pub use feature_extraction::{extract_heuristic_features, HEURISTIC_FEATURE_DIM};
+#[cfg(feature = "ml")]
+pub use fpr_calibration::{
+    BenignClass, CalibrationDataset, CalibrationReport, CalibrationResult, CalibrationSample,
+    FprTarget, ThresholdCalibrator,
+};
 #[cfg(feature = "ml")]
 pub use fusion_classifier::FusionClassifier;
 #[cfg(feature = "ml")]

@@ -15,6 +15,7 @@ use llmtrace_core::{
 };
 
 use crate::feature_extraction::extract_heuristic_features;
+use crate::fpr_calibration::{CalibrationReport, FprTarget};
 use crate::fusion_classifier::FusionClassifier;
 use crate::ml_detector::MLSecurityAnalyzer;
 use crate::ner_detector::{NerConfig, NerDetector};
@@ -311,6 +312,17 @@ impl EnsembleSecurityAnalyzer {
     #[must_use]
     pub fn with_security_research(mut self, allowed: bool) -> Self {
         self.allow_security_research = allowed;
+        self
+    }
+
+    /// Apply FPR-calibrated thresholds from a [`CalibrationReport`] (IS-006).
+    ///
+    /// Overwrites per-category thresholds with the values calibrated for the
+    /// specified FPR target. Categories not present in the report retain
+    /// their current values.
+    #[must_use]
+    pub fn with_fpr_calibration(mut self, report: &CalibrationReport, target: &FprTarget) -> Self {
+        self.thresholds = report.to_resolved_thresholds(target, &self.thresholds);
         self
     }
 
@@ -1190,5 +1202,40 @@ mod tests {
         tracker.record(false);
         assert_eq!(tracker.total_in_window(), 2);
         assert_eq!(tracker.flagged_in_window(), 1);
+    }
+
+    // -- FPR calibration integration (IS-006) -----------------------------
+
+    #[test]
+    fn test_with_fpr_calibration() {
+        use crate::fpr_calibration::{
+            CalibrationDataset, CalibrationSample, FprTarget, ThresholdCalibrator,
+        };
+
+        // Create a simple calibration dataset
+        let mut dataset = CalibrationDataset::new("injection");
+        for i in 0..1000 {
+            dataset.add(CalibrationSample::benign(i as f64 / 5000.0));
+        }
+        for i in 0..200 {
+            dataset.add(CalibrationSample::malicious(0.8 + i as f64 / 1000.0));
+        }
+
+        let calibrator = ThresholdCalibrator::new();
+        let report = calibrator.calibrate_all(&[dataset]);
+
+        let ensemble = EnsembleSecurityAnalyzer::regex_only()
+            .with_fpr_calibration(&report, &FprTarget::Moderate);
+
+        // Injection threshold should have been updated from calibration
+        let t = ensemble.thresholds();
+        // Should differ from the default Balanced threshold (0.75)
+        assert!(
+            (t.injection - 0.75).abs() > f64::EPSILON,
+            "Injection threshold should be calibrated, got {}",
+            t.injection
+        );
+        // Non-calibrated categories should remain at defaults
+        assert!((t.jailbreak - 0.75).abs() < f64::EPSILON);
     }
 }
