@@ -122,10 +122,10 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-010 | Synonym expansion for attack patterns (WordNet-style) | Medium | ⬜ |
-| IS-011 | Lemmatisation before pattern matching | Low | ⬜ |
-| IS-012 | P2SQL injection detection | Medium | ⬜ |
-| IS-018 | "Important Messages" header attack hardening | Low | ⬜ |
+| IS-010 | Synonym expansion for attack patterns (WordNet-style) | Medium | ✅ `ec6a69a` |
+| IS-011 | Lemmatisation before pattern matching | Low | ✅ `ec6a69a` |
+| IS-012 | P2SQL injection detection | Medium | ✅ `ec6a69a` |
+| IS-018 | "Important Messages" header attack hardening | Low | ✅ `ec6a69a` |
 
 ### Loop 13 — Hallucination Detection Upgrade
 > HaluGate-style token-level detection
