@@ -25,12 +25,19 @@ use std::collections::HashMap as StdHashMap;
 
 pub use jailbreak_detector::{JailbreakConfig, JailbreakDetector, JailbreakResult};
 
+pub mod action_correlator;
 pub mod action_policy;
+pub mod adversarial_defense;
 pub mod canary;
 pub mod code_security;
+pub mod fpr_monitor;
 pub mod jailbreak_detector;
+pub mod mcp_monitor;
+pub mod multi_agent;
 pub mod normalise;
 pub mod pii_validation;
+pub mod result_parser;
+pub mod session_analyzer;
 pub mod tool_firewall;
 pub mod tool_registry;
 
@@ -47,6 +54,23 @@ pub use tool_firewall::{
 pub use tool_registry::{
     ActionRateLimiter, RateLimitExceeded, ToolCategory, ToolDefinition, ToolRegistry,
 };
+
+pub use action_correlator::{
+    ActionCorrelator, CorrelationConfig, CorrelationResult, TrackedAction,
+};
+pub use adversarial_defense::{
+    AdversarialDefense, AdversarialDefenseConfig, MultiPassNormalizer, PerturbationDetector,
+};
+pub use fpr_monitor::{FprDriftAlert, FprMonitor, FprMonitorConfig};
+pub use mcp_monitor::{McpMonitor, McpMonitorConfig, McpSecurityViolation};
+pub use multi_agent::{
+    AgentId, AgentProfile, MultiAgentConfig, MultiAgentDefensePipeline, TrustLevel,
+};
+pub use result_parser::{
+    AggregatedResult, AggregationStrategy, DetectorResult, DetectorType, ResultAggregator,
+    ScanResult, ThreatCategory,
+};
+pub use session_analyzer::{SessionAnalysisResult, SessionAnalyzer, SessionAnalyzerConfig};
 
 #[cfg(feature = "ml")]
 pub mod ensemble;
