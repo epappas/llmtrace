@@ -5,6 +5,14 @@
 **Authors:** Hao Li, Xiaogeng Liu, Chaowei Xiao (University of Wisconsin-Madison)  
 **arXiv:** [2410.22770v1](https://arxiv.org/html/2410.22770v1)  
 **Published:** October 29, 2024  
+**Source PDF:** `docs/research/papers/2410.22770.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: raw prompt text, classifier logits, trigger-word feature flags, and a benign/malicious/over-defense label set for calibration.
+- Runtime characteristics: DeBERTa-class detector with low-latency inference; streaming compatible only if content is buffered or chunked.
+- Integration surface (proxy): run pre-request injection classifier and track false-positive rates on benign traffic for guard calibration.
+- Productizable vs research-only: over-defense metrics and monitoring are productizable; MOF training data generation is research-heavy.
 
 ## Paper Summary
 

@@ -4,6 +4,14 @@
 **Authors:** Qiang Yu, Xinran Cheng, Chuanyi Liu (Harbin Institute of Technology)  
 **Date:** January 2025  
 **arXiv:** 2601.04795v1  
+**Source PDF:** `docs/research/papers/2601.04795v1.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: tool outputs, tool schemas, expected output formats, and agent intent (what fields are needed).
+- Runtime characteristics: medium latency (parsing/sanitization can be LLM-assisted); streaming compatible for structured outputs if chunked.
+- Integration surface (proxy): sanitize tool responses before they are injected back into prompts; log sanitizer outputs for auditability.
+- Productizable vs research-only: structured parsing and sanitization are productizable; LLM-based parsing quality evaluation is research-heavy.
 
 ## Paper Summary
 

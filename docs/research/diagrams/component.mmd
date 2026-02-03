@@ -1,0 +1,21 @@
+C4Component
+  title LLMTrace Proxy Components
+
+  Container_Boundary(proxy, "Proxy") {
+    Component(canonicalizer, "Request Canonicalizer", "Normalize, tokenize, dedupe")
+    Component(policy_eval, "Policy Evaluator", "Rules + priorities")
+    Component(classifier, "Classifier Runner", "ML prompt injection detectors")
+    Component(judge, "LLM-Judge Runner", "Llama-Guard class")
+    Component(redactor, "Redactor", "PII + secret masking")
+    Component(tool_gate, "Tool Gate", "Schema validation + allowlist")
+    Component(resp_validator, "Response Validator", "Post-response policy checks")
+    Component(audit, "Audit Logger", "Evidence capture")
+  }
+
+  Rel(canonicalizer, classifier, "Normalized prompt")
+  Rel(canonicalizer, policy_eval, "Request metadata")
+  Rel(classifier, policy_eval, "Risk scores")
+  Rel(judge, policy_eval, "Safety verdicts")
+  Rel(policy_eval, tool_gate, "Allow/deny decisions")
+  Rel(resp_validator, redactor, "Redaction rules")
+  Rel(policy_eval, audit, "Decision trail")

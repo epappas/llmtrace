@@ -4,6 +4,14 @@
 **Paper:** "Indirect Prompt Injections: Are Firewalls All You Need?" (arXiv:2510.05244v1)  
 **Authors:** Rishika Bhagwatkar, Kevin Kasa, Abhay Puri, Gabriel Huang, Irina Rish, Graham W. Taylor, Krishnamurthy Dj Dvijotham, Alexandre Lacoste  
 **Affiliation:** ServiceNow Research, Mila, Université de Montréal, Vector Institute, University of Guelph  
+**Source PDF:** `docs/research/papers/2510.05244.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: tool schemas, tool inputs/outputs, task context, and policy rules for minimization/sanitization.
+- Runtime characteristics: synchronous filters with medium latency (depends on sanitization complexity); streaming compatible for tool output sanitization if chunked.
+- Integration surface (proxy): enforce tool input minimization before tool execution and sanitize tool outputs before they re-enter the agent context.
+- Productizable vs research-only: tool-aware minimization/sanitization is productizable; benchmark redesign and ablation studies are research-only.
 
 ---
 

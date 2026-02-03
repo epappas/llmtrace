@@ -1,0 +1,34 @@
+flowchart LR
+  subgraph External[Untrusted Zone]
+    U[User/App]
+    W[Web/Tools]
+  end
+
+  subgraph Proxy[LLMTrace Proxy - Controlled Zone]
+    N[Canonicalizer]
+    D[Detectors]
+    P[Policy Engine]
+    T[Tool Gate]
+    R[Response Validator]
+  end
+
+  subgraph Internal[Trusted Services]
+    L[LLM Provider]
+    S[Event Store]
+    UI[Telemetry/UI]
+  end
+
+  U --> N --> D --> P
+  P -->|allow| L
+  P -->|rewrite/redact| N
+  P -->|block| UI
+  L --> R --> U
+  P --> T --> W --> R
+  N --> S
+  D --> S
+  P --> S
+  R --> S
+  S --> UI
+
+  classDef trust stroke:#cc0000,stroke-width:2px
+  class External trust

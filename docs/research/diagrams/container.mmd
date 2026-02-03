@@ -1,0 +1,22 @@
+C4Container
+  title LLMTrace Container Diagram
+
+  Person(user, "User / App")
+  System_Ext(llm_provider, "LLM Provider")
+  System_Ext(tools, "Tools & Data Sources")
+
+  System_Boundary(llmtrace, "LLMTrace") {
+    Container(proxy, "Proxy", "Rust", "Request/response interception, canonicalization")
+    Container(policy, "Policy Engine", "Rust", "Policy evaluation and enforcement")
+    Container(detect, "Detector Runtime", "Rust/Python", "Heuristics, ML classifiers, LLM judges")
+    Container(store, "Event Store", "Postgres/S3", "Audit logs, traces, evidence")
+    Container(ui, "UI/Telemetry", "Web", "Dashboards, alerts, reporting")
+  }
+
+  Rel(user, proxy, "Sends requests")
+  Rel(proxy, llm_provider, "Forwards requests")
+  Rel(proxy, tools, "Executes tool calls")
+  Rel(proxy, policy, "Requests policy decisions")
+  Rel(proxy, detect, "Submits content for scoring")
+  Rel(proxy, store, "Writes events")
+  Rel(store, ui, "Read metrics and evidence")

@@ -1,10 +1,18 @@
 # Bypassing LLM Guardrails: Research Analysis
 
-**Paper:** "Bypassing Prompt Injection and Jailbreak Detection in LLM Guardrails"  
-**Authors:** William Hackett¹'², Lewis Birch¹'², Stefan Trawicki¹'², Neeraj Suri², Peter Garraghan¹'²  
-**Institution:** ¹Mindgard, ²Lancaster University  
-**arXiv:** 2504.11168v1  
-**Date:** April 2025  
+**Paper:** "Bypassing Prompt Injection and Jailbreak Detection in LLM Guardrails"
+**Authors:** William Hackett¹'², Lewis Birch¹'², Stefan Trawicki¹'², Neeraj Suri², Peter Garraghan¹'²
+**Institution:** ¹Mindgard, ²Lancaster University
+**arXiv:** 2504.11168v1
+**Date:** April 2025
+**Source PDF:** `docs/research/papers/2504.11168.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: raw prompt text, Unicode-normalized variants, detector confidence scores, and evasion transform flags.
+- Runtime characteristics: fast heuristic normalization + classifier inference; streaming compatible for normalization but robust scoring often requires full prompt.
+- Integration surface (proxy): apply normalization and evasion probes pre-request; log pre/post-normalization scores for drift detection.
+- Productizable vs research-only: Unicode normalization and evasion heuristics are productizable; full adversarial attack generation is research-heavy.
 
 ## Executive Summary
 
@@ -59,7 +67,7 @@ The research conducts an empirical analysis of adversarial approaches for evadin
 - **Emoji Smuggling**: 100% ASR on both prompt injection and jailbreaks
 - **Upside Down Text**: 100% ASR on jailbreaks
 - **Unicode Tags**: 90.15% / 81.79% ASR
-- **Numbers**: 81.18% / 94.62% ASR  
+- **Numbers**: 81.18% / 94.62% ASR
 - **Bidirectional Text**: 78.69% / 99.23% ASR
 
 #### Most Vulnerable Systems
@@ -71,7 +79,7 @@ The research conducts an empirical analysis of adversarial approaches for evadin
 
 #### AML Evasion Results
 - **TextFooler**: Most effective at 46.27% (PI) / 48.46% (JB)
-- **BERT-Attack**: 57.57% (PI) / 23.85% (JB)  
+- **BERT-Attack**: 57.57% (PI) / 23.85% (JB)
 - **BAE**: 52.56% (PI) / 29.74% (JB)
 - Success rates lower than character injection but still significant
 
@@ -111,7 +119,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 ```
 
 **Paper's findings on ProtectAI models:**
-- **v1**: 77.32% ASR (prompt injection), 51.39% ASR (jailbreaks)  
+- **v1**: 77.32% ASR (prompt injection), 51.39% ASR (jailbreaks)
 - **v2**: 20.26% ASR (prompt injection), not tested on jailbreaks
 - **Most vulnerable to**: TextFooler (95.18% ASR), BERT-Attack (67.87% ASR)
 
@@ -126,7 +134,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 3. **Upside Down Text** - 100% jailbreak evasion, not in our homoglyph map
 4. **Word Importance Transferability** - Attackers can use white-box models to improve black-box attacks
 
-### 🟡 Moderate Vulnerabilities  
+### 🟡 Moderate Vulnerabilities
 
 1. **Unicode Tag Variants** - Our zero-width stripping may miss some tag characters
 2. **Character Smuggling Variants** - Unknown coverage of all Unicode exploitation techniques
@@ -135,7 +143,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 ### 🟢 Strong Defenses
 
 1. **Homoglyph Attacks** - Comprehensive Cyrillic/Greek→Latin mapping
-2. **Zero-width Injection** - Complete stripping of demonstrated techniques  
+2. **Zero-width Injection** - Complete stripping of demonstrated techniques
 3. **Bidirectional Attacks** - Full bidi control character removal
 4. **Encoding Evasion** - Strong detection of Base64/ROT13/leetspeak/reversed text
 
@@ -216,7 +224,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
    pub fn multi_pass_normalisation(text: &str) -> Vec<String> {
        vec![
            aggressive_normalise(text),
-           conservative_normalise(text), 
+           conservative_normalise(text),
            semantic_preserving_normalise(text),
        ]
    }
@@ -237,7 +245,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 - Extend homoglyph mapping for upside down text
 - Add Unicode tag character stripping
 
-**Week 3-4: ML Hardening** 
+**Week 3-4: ML Hardening**
 - Implement ensemble voting with multiple model architectures
 - Add adaptive thresholding based on evasion risk
 
@@ -249,7 +257,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 ## Testing Strategy
 
 1. **Regression Testing**: Validate all paper's attack examples against updated defenses
-2. **Adversarial Dataset**: Create comprehensive test suite with character injection + AML variants  
+2. **Adversarial Dataset**: Create comprehensive test suite with character injection + AML variants
 3. **Red Team Exercise**: Manual testing of novel evasion combinations
 4. **Performance Monitoring**: Ensure normalisation changes don't impact processing speed
 

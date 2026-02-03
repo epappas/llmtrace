@@ -1,9 +1,9 @@
 # Benchmarks and Tools Landscape Analysis
 
-**Research Context**: Comprehensive analysis of LLM security benchmarks and defensive tools  
-**Date**: February 2026  
-**Scope**: Agent security benchmarks, prompt injection defenses, multimodal attacks, evaluation frameworks  
-**Purpose**: LLMTrace competitive positioning and evaluation roadmap  
+**Research Context**: Comprehensive analysis of LLM security benchmarks and defensive tools
+**Date**: February 2026
+**Scope**: Agent security benchmarks, prompt injection defenses, multimodal attacks, evaluation frameworks
+**Purpose**: LLMTrace competitive positioning and evaluation roadmap
 
 ---
 
@@ -13,7 +13,7 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 
 **Key Findings:**
 - Agent-specific benchmarks (AgentDojo, InjecAgent, WASP) are becoming the gold standard for evaluation
-- Over-defense mitigation (NotInject, InjecGuard) is a critical emerging concern 
+- Over-defense mitigation (NotInject, InjecGuard) is a critical emerging concern
 - LLMTrace covers foundational capabilities but lacks evaluation against modern agent benchmarks
 - Integration opportunities exist with multiple defensive tools for layered security
 
@@ -32,9 +32,9 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 
 ### 1. AgentDojo (NeurIPS 2024) — **Priority: High**
 
-**Focus**: Security evaluation framework for tool-augmented LLM agents  
-**Scope**: 97 environments testing tool misuse, prompt injection resilience, safety violations  
-**Attack Types**: Direct injection, indirect injection via tools, multi-turn attacks, privilege escalation  
+**Focus**: Security evaluation framework for tool-augmented LLM agents
+**Scope**: 97 environments testing tool misuse, prompt injection resilience, safety violations
+**Attack Types**: Direct injection, indirect injection via tools, multi-turn attacks, privilege escalation
 
 **LLMTrace Coverage**: ❌ **Not Evaluated**
 - No systematic evaluation against AgentDojo's tool-calling scenarios
@@ -48,7 +48,7 @@ evaluation:
   benchmark: "AgentDojo"
   scenarios:
     - tool_misuse: 35 environments
-    - prompt_injection: 25 environments  
+    - prompt_injection: 25 environments
     - safety_violations: 37 environments
   metrics:
     - task_utility_retention: ">80%"
@@ -58,8 +58,8 @@ evaluation:
 
 ### 2. InjecAgent — **Priority: High**
 
-**Focus**: Indirect prompt injection attacks specifically targeting LLM agents  
-**Scope**: 8 defense mechanisms, adaptive attacks, >50% bypass rate demonstrated  
+**Focus**: Indirect prompt injection attacks specifically targeting LLM agents
+**Scope**: 8 defense mechanisms, adaptive attacks, >50% bypass rate demonstrated
 **Attack Types**: Context manipulation, tool result poisoning, multi-step injection chains
 
 **LLMTrace Coverage**: ⚠️ **Partial Detection**
@@ -74,8 +74,8 @@ evaluation:
 
 ### 3. Agent Security Bench (ASB) — **Priority: Medium**
 
-**Focus**: Comprehensive benchmark for LLM agent vulnerabilities and defenses  
-**Scope**: Multi-domain security assessment including privacy, safety, robustness  
+**Focus**: Comprehensive benchmark for LLM agent vulnerabilities and defenses
+**Scope**: Multi-domain security assessment including privacy, safety, robustness
 **Attack Types**: Cross-domain attacks, privacy leakage, safety boundary violations
 
 **LLMTrace Coverage**: ❌ **Not Evaluated**
@@ -85,8 +85,8 @@ evaluation:
 
 ### 4. NotInject (InjecGuard) — **Priority: High**
 
-**Focus**: Over-defense evaluation — measuring false positives in prompt injection detection  
-**Scope**: Evaluating production-scale precision vs. recall tradeoffs  
+**Focus**: Over-defense evaluation — measuring false positives in prompt injection detection
+**Scope**: Evaluating production-scale precision vs. recall tradeoffs
 **Key Insight**: High false positive rates make defenders unusable in production
 
 **LLMTrace Coverage**: ❌ **Critical Gap**
@@ -103,8 +103,8 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### 5. WASP (Web Agent Security) — **Priority: Medium**
 
-**Focus**: Security evaluation for web-interacting agents  
-**Scope**: Browser-based attacks, DOM manipulation, cross-site injection  
+**Focus**: Security evaluation for web-interacting agents
+**Scope**: Browser-based attacks, DOM manipulation, cross-site injection
 **Attack Types**: Web-specific prompt injection, malicious webpage content, XSS variants
 
 **LLMTrace Coverage**: ❌ **Not Evaluated**
@@ -114,8 +114,8 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### 6. CyberSecEval 2 (Meta) — **Priority: Low**
 
-**Focus**: Broad cybersecurity evaluation including prompt injection, code generation safety  
-**Scope**: General-purpose security metrics across multiple domains  
+**Focus**: Broad cybersecurity evaluation including prompt injection, code generation safety
+**Scope**: General-purpose security metrics across multiple domains
 **Attack Types**: Traditional cybersecurity threats adapted for LLMs
 
 **LLMTrace Coverage**: ⚠️ **Limited Coverage**
@@ -132,7 +132,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
    - Target: >70% attack success reduction, <10% FPR
    - Focus on tool misuse scenarios
 
-2. **NotInject Assessment** 
+2. **NotInject Assessment**
    - Measure current false positive rates
    - Implement precision-optimized thresholding
    - Target: <1% FPR for production deployment
@@ -174,11 +174,11 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 ### Tier 1: High Integration Value
 
 #### 1. **InjecGuard** (Mitigating Over-defense for Free)
-**Type**: Prompt injection classifier  
-**Key Innovation**: MOF training strategy reduces bias on trigger words  
-**Performance**: 30.8% improvement over existing best model on NotInject  
+**Type**: Prompt injection classifier
+**Key Innovation**: MOF training strategy reduces bias on trigger words
+**Performance**: 30.8% improvement over existing best model on NotInject
 
-**vs LLMTrace**: 
+**vs LLMTrace**:
 - **Superior**: Better precision/recall balance than current DeBERTa approach
 - **Integration**: Direct model replacement opportunity
 - **Impact**: Addresses critical over-defense problem
@@ -192,11 +192,11 @@ security_analysis:
 ```
 
 #### 2. **LLM Guard** (Protect AI)
-**Type**: Python library with comprehensive scanners  
-**Key Features**: Input/output sanitization, PII detection, toxic content filtering  
+**Type**: Python library with comprehensive scanners
+**Key Features**: Input/output sanitization, PII detection, toxic content filtering
 **Architecture**: Modular scanner framework
 
-**vs LLMTrace**: 
+**vs LLMTrace**:
 - **Complementary**: Additional scanner types we don't implement
 - **Integration**: Plugin architecture for additional scanners
 - **Value**: Expanded detection capabilities without core changes
@@ -212,9 +212,9 @@ class LLMGuardPlugin(SecurityPlugin):
         return scan_prompt(prompt, scanners=[...])
 ```
 
-#### 3. **Meta Prompt Guard** 
-**Type**: 86M parameter prompt injection classifier  
-**Key Features**: Fast inference, good baseline performance  
+#### 3. **Meta Prompt Guard**
+**Type**: 86M parameter prompt injection classifier
+**Key Features**: Fast inference, good baseline performance
 **Use Case**: Ensemble member for improved robustness
 
 **vs LLMTrace**:
@@ -223,8 +223,8 @@ class LLMGuardPlugin(SecurityPlugin):
 - **Value**: Improved robustness against adaptive attacks
 
 #### 4. **Llama Guard 3**
-**Type**: LLM-based safety classifier  
-**Key Features**: Broad safety taxonomy, conversational context awareness  
+**Type**: LLM-based safety classifier
+**Key Features**: Broad safety taxonomy, conversational context awareness
 **Use Case**: Output safety classification
 
 **vs LLMTrace**:
@@ -235,8 +235,8 @@ class LLMGuardPlugin(SecurityPlugin):
 ### Tier 2: Moderate Integration Value
 
 #### 5. **IBM Granite Guardian**
-**Type**: Comprehensive guardrails framework  
-**Key Features**: Risk detection across RAG and agentic workflows  
+**Type**: Comprehensive guardrails framework
+**Key Features**: Risk detection across RAG and agentic workflows
 **Architecture**: Input/output guards with risk taxonomy
 
 **vs LLMTrace**:
@@ -245,8 +245,8 @@ class LLMGuardPlugin(SecurityPlugin):
 - **Value**: Enterprise-grade risk taxonomy
 
 #### 6. **NeMo Guardrails** (NVIDIA)
-**Type**: Programmable guardrails using Colang DSL  
-**Key Features**: Dialogue management, custom rail programming  
+**Type**: Programmable guardrails using Colang DSL
+**Key Features**: Dialogue management, custom rail programming
 **Architecture**: Runtime dialogue state machine
 
 **vs LLMTrace**:
@@ -257,8 +257,8 @@ class LLMGuardPlugin(SecurityPlugin):
 ### Tier 3: Competitive/Limited Value
 
 #### 7. **Lakera Guard**
-**Type**: Commercial real-time firewall  
-**Key Features**: Production-scale, low latency, commercial support  
+**Type**: Commercial real-time firewall
+**Key Features**: Production-scale, low latency, commercial support
 **Business Model**: SaaS competitor
 
 **vs LLMTrace**:
@@ -276,7 +276,7 @@ The [tldrsec repository](https://github.com/tldrsec/prompt-injection-defenses) p
    - Input/output monitoring via security analysis pipeline
    - Real-time scanning during SSE streaming
 
-2. **Prompt Engineering** ✅ 
+2. **Prompt Engineering** ✅
    - API-level segmentation (system/user role separation)
    - Input sanitization and validation
 

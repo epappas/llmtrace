@@ -1,0 +1,12 @@
+C4Context
+  title LLMTrace Context Diagram
+  Person(user, "User / App", "Calls LLM APIs")
+  System(llm_provider, "LLM Provider", "Model API")
+  System(tools, "Tools & Data Sources", "RAG, web, DB, SaaS")
+  System(llmtrace, "LLMTrace", "Security-aware observability proxy")
+  System(ui, "LLMTrace UI", "Dashboards & alerts")
+
+  Rel(user, llmtrace, "Sends prompts / receives responses")
+  Rel(llmtrace, llm_provider, "Forwards requests and responses")
+  Rel(llmtrace, tools, "Tool calls and results")
+  Rel(llmtrace, ui, "Metrics, traces, findings")

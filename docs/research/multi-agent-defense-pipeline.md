@@ -5,6 +5,14 @@
 **Date:** September 23, 2024  
 **Analysis Date:** February 1, 2026  
 **Analyst:** LLMTrace AI Research Team  
+**Source PDF:** `docs/research/papers/2509.14285v1.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: model outputs, guard-agent verdicts, policy rules, and coordination metadata (which agent approved).
+- Runtime characteristics: higher latency due to multi-pass validation; streaming compatibility limited unless guard agent can stream verdicts.
+- Integration surface (proxy): insert optional guard/validator step after model response and before user delivery; log guard verdicts for audit.
+- Productizable vs research-only: guard-agent gating and consensus logging are productizable; full multi-agent orchestration is research-heavy.
 
 ## Paper Summary
 

@@ -6,6 +6,14 @@
 **Authors:** Beat Buesser (IBM), Ana-Maria Creţu (EPFL), Edoardo Debenedetti (ETH Zurich), Daniel Dobos (Swisscom), Daniel Fabian (Google), Marc Fischer (Invariant Labs), David Froelicher (Swisscom), Kathrin Grosse (IBM), Daniel Naeff (ETH AI Center), Ezinwanne Ozoani (AppliedAI Institute for Europe), Andrew Paverd (Microsoft), Florian Tramèr (ETH Zurich), Václav Volhejn (Kyutai)  
 **Date:** June 2025 (arXiv:2506.08837v1)  
 **URL:** https://arxiv.org/html/2506.08837v1
+**Source PDF:** `docs/research/papers/2506.08837.pdf`
+
+## LLMTrace Application Notes
+
+- Required signals/features: agent action plan, tool schemas, untrusted input boundaries, and policy annotations marking trusted vs untrusted context.
+- Runtime characteristics: low-latency policy checks if pattern enforcement is static; streaming compatibility depends on where untrusted input enters.
+- Integration surface (proxy): enforce pattern-specific constraints as policy rules (e.g., block tool calls if plan/intent deviates post-untrusted input).
+- Productizable vs research-only: pattern compliance checks and policy validation are productizable; formal proofs and pattern synthesis are research-heavy.
 
 ### Key Contribution
 
