@@ -136,10 +136,10 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | IS-001 | **MOF (Mitigating Over-defense for Free) training strategy** | InjecGuard | P0 | High | ❌ Missing |
 | IS-002 | **Token-wise bias detection** — test every vocabulary token individually for false positive bias | InjecGuard | P0 | Medium | ❌ Missing |
 | IS-003 | **Adaptive debiasing data generation** — generate benign samples using combinations of biased tokens | InjecGuard | P1 | Medium | ❌ Missing |
-| IS-004 | **NotInject-style over-defense benchmark** — 339 benign samples with trigger words at 3 difficulty levels | InjecGuard, Benchmarks | P0 | Low | ❌ Missing |
-| IS-005 | **Three-dimensional evaluation** — separate benign/malicious/over-defense accuracy tracking | InjecGuard | P1 | Low | ❌ Missing |
-| IS-006 | **FPR-aware threshold optimisation** — evaluate at 0.1%, 0.5%, 1% FPR operating points | SoA Report (PromptShield) | P0 | Medium | ❌ Missing |
-| IS-007 | **Configurable operating points** — high-precision / balanced / high-recall modes | SoA Report | P1 | Low | ❌ Missing |
+| IS-004 | **NotInject-style over-defense benchmark** — 339 benign samples with trigger words at 3 difficulty levels | InjecGuard, Benchmarks | P0 | Low | ⚠️ Partial |
+| IS-005 | **Three-dimensional evaluation** — separate benign/malicious/over-defense accuracy tracking | InjecGuard | P1 | Low | ✅ Implemented |
+| IS-006 | **FPR-aware threshold optimisation** — evaluate at 0.1%, 0.5%, 1% FPR operating points | SoA Report (PromptShield) | P0 | Medium | ✅ Implemented |
+| IS-007 | **Configurable operating points** — high-precision / balanced / high-recall modes | SoA Report | P1 | Low | ✅ Implemented |
 
 **Implementation Notes:**
 - IS-001: The MOF strategy involves: (1) standard training on curated dataset, (2) token-wise bias detection — feed each vocabulary token individually and identify those predicted as "attack", (3) generate 1000 benign samples using combinations of 1-3 biased tokens via LLM, (4) retrain from scratch on combined data. InjecGuard achieved 87.32% over-defense accuracy vs ProtectAIv2's 56.64% (+54.17% improvement).
@@ -149,15 +149,15 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| IS-010 | **Synonym expansion for attack patterns** — WordNet-style synonym sets for each attack category | SoA Report (DMPI-PMHFE) | P2 | Medium | ❌ Missing |
-| IS-011 | **Lemmatisation before pattern matching** — spaCy equivalent (rust-stemmers) | SoA Report (DMPI-PMHFE) | P2 | Low | ❌ Missing |
-| IS-012 | **P2SQL injection detection** — LangChain middleware SQL injection via prompt | Protocol Exploits | P1 | Medium | ❌ Missing |
+| IS-010 | **Synonym expansion for attack patterns** — WordNet-style synonym sets for each attack category | SoA Report (DMPI-PMHFE) | P2 | Medium | ⚠️ Partial |
+| IS-011 | **Lemmatisation before pattern matching** — spaCy equivalent (rust-stemmers) | SoA Report (DMPI-PMHFE) | P2 | Low | ⚠️ Partial |
+| IS-012 | **P2SQL injection detection** — LangChain middleware SQL injection via prompt | Protocol Exploits | P1 | Medium | ⚠️ Partial |
 | IS-013 | **Long-context jailbreak detection** — attacks exploiting extended context windows | Protocol Exploits | P2 | High | ❌ Missing |
 | IS-014 | **Automated jailbreak defense** — defense against AutoDAN, GPTFuzz achieving >90% ASR | Protocol Exploits | P1 | High | ❌ Missing |
-| IS-015 | **Braille encoding evasion defense** — bypasses GPT-4o-based sanitizers | Indirect Injection Firewalls | P2 | Low | ❌ Missing |
-| IS-016 | **Multi-turn extraction detection** — gradual/multi-turn system prompt extraction across sessions | SoA Report, Design Patterns | P1 | High | ❌ Missing |
-| IS-017 | **Context window flooding detection** — DoS via oversized context (OWASP LLM10) | SoA Report | P2 | Low | ❌ Missing |
-| IS-018 | **"Important Messages" header attack detection** — high ASR attack vector | Tool Result Parsing | P1 | Low | ✅ Partial (covered by injection patterns) |
+| IS-015 | **Braille encoding evasion defense** — bypasses GPT-4o-based sanitizers | Indirect Injection Firewalls | P2 | Low | ✅ Implemented |
+| IS-016 | **Multi-turn extraction detection** — gradual/multi-turn system prompt extraction across sessions | SoA Report, Design Patterns | P1 | High | ⚠️ Partial |
+| IS-017 | **Context window flooding detection** — DoS via oversized context (OWASP LLM10) | SoA Report | P2 | Low | ✅ Implemented |
+| IS-018 | **"Important Messages" header attack detection** — high ASR attack vector | Tool Result Parsing | P1 | Low | ⚠️ Partial |
 
 **Implementation Notes:**
 - IS-010: DMPI-PMHFE uses WordNet to expand synonym sets for each of 8 attack categories. Each pattern like "ignore" expands to "reveal, disregard, forget, overlook" + WordNet synonyms. This catches paraphrased attacks that exact regex misses.
@@ -168,18 +168,18 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| IS-020 | **Emoji smuggling defense** — 100% ASR evasion, no current defense | Bypassing Guardrails | P0 | Low | ❌ Missing |
-| IS-021 | **Upside-down text defense** — 100% jailbreak evasion | Bypassing Guardrails | P1 | Low | ❌ Missing |
-| IS-022 | **Unicode tag character stripping** — \u{E0001}-\u{E007F} range | Bypassing Guardrails | P1 | Low | ❌ Missing |
+| IS-020 | **Emoji smuggling defense** — 100% ASR evasion, no current defense | Bypassing Guardrails | P0 | Low | ✅ Implemented |
+| IS-021 | **Upside-down text defense** — 100% jailbreak evasion | Bypassing Guardrails | P1 | Low | ✅ Implemented |
+| IS-022 | **Unicode tag character stripping** — \u{E0001}-\u{E007F} range | Bypassing Guardrails | P1 | Low | ✅ Implemented |
 | IS-023 | **Character smuggling variants** — comprehensive Unicode exploitation defense | Bypassing Guardrails | P1 | Medium | ⚠️ Partial |
-| IS-024 | **AML evasion resistance** — TextFooler (46-48% ASR), BERT-Attack (57% ASR), BAE (52% ASR) | Bypassing Guardrails | P1 | High | ❌ Missing |
-| IS-025 | **Ensemble diversification** — multiple model architectures to resist transferability attacks | Bypassing Guardrails | P1 | High | ❌ Missing |
+| IS-024 | **AML evasion resistance** — TextFooler (46-48% ASR), BERT-Attack (57% ASR), BAE (52% ASR) | Bypassing Guardrails | P1 | High | ⚠️ Partial |
+| IS-025 | **Ensemble diversification** — multiple model architectures to resist transferability attacks | Bypassing Guardrails | P1 | High | ⚠️ Partial |
 | IS-026 | **Adversarial training integration** — fine-tune on TextAttack-generated samples | Bypassing Guardrails | P2 | High | ❌ Missing |
 | IS-027 | **Adaptive thresholding** — lower threshold when evasion indicators detected | Bypassing Guardrails | P2 | Medium | ❌ Missing |
-| IS-028 | **Multi-pass normalisation** — aggressive + conservative + semantic-preserving passes | Bypassing Guardrails | P2 | Medium | ❌ Missing |
-| IS-029 | **Confidence calibration** — Platt scaling to reduce transferability | Bypassing Guardrails | P3 | Medium | ❌ Missing |
+| IS-028 | **Multi-pass normalisation** — aggressive + conservative + semantic-preserving passes | Bypassing Guardrails | P2 | Medium | ⚠️ Partial |
+| IS-029 | **Confidence calibration** — Platt scaling to reduce transferability | Bypassing Guardrails | P3 | Medium | ⚠️ Partial |
 | IS-030 | **Word importance transferability mitigation** — prevent white-box model rankings from improving black-box attacks | Bypassing Guardrails | P3 | High | ❌ Missing |
-| IS-031 | **Diacritics-based evasion defense** — accent marks used to evade detection | Bypassing Guardrails | P2 | Low | ⚠️ Partial (NFKC handles some) |
+| IS-031 | **Diacritics-based evasion defense** — accent marks used to evade detection | Bypassing Guardrails | P2 | Low | ✅ Implemented |
 
 **Implementation Notes:**
 - IS-020: Emoji smuggling achieved 100% ASR on both prompt injection and jailbreaks across all tested systems. Implementation: add emoji stripping/normalization as pre-processing step. Use Unicode character category detection to filter emoji code points.
@@ -190,8 +190,14 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| IS-040 | **17 data format detection** — Email, Document, Chat, JSON, Code, Markdown, HTML, URL, Base64, Table, XML, CSV, Config File, Log File, Image Link, Translation, Website | InjecGuard | P2 | Medium | ⚠️ Partial |
+| IS-040 | **17 data format detection** — Email, Document, Chat, JSON, Code, Markdown, HTML, URL, Base64, Table, XML, CSV, Config File, Log File, Image Link, Translation, Website | InjecGuard | P2 | Medium | ❌ Missing |
 | IS-041 | **Multi-language trigger detection** — Chinese, Russian, other languages | InjecGuard | P2 | High | ❌ Missing |
+
+**Audit Notes (Literature Alignment):**
+- Over-defense/MOF expectations and data-format augmentation: `docs/research/injecguard-over-defense-mitigation.md`.
+- Synonym/lemmatization expectations for IS-010/IS-011: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
+- Protocol exploit items (P2SQL, long-context, multi-turn extraction): `docs/research/prompt-injections-to-protocol-exploits.md`.
+- Adversarial evasion and transferability requirements (IS-020–IS-031): `docs/research/bypassing-llm-guardrails-evasion.md`.
 
 ---
 
@@ -203,7 +209,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 |----|---------|----------|----------|------------|--------|
 | OS-001 | **HaluGate-style token-level detection** — ModernBERT token classification identifying exactly which tokens are unsupported | SoA Report (HaluGate) | P1 | High | ❌ Missing |
 | OS-002 | **NLI explanation layer** — classify flagged spans as CONTRADICTION, NEUTRAL, or ENTAILMENT | SoA Report (HaluGate) | P2 | High | ❌ Missing |
-| OS-003 | **Sentinel pre-classifier** — ModernBERT classifier to determine if query needs fact-checking (96.4% accuracy, 12ms) | SoA Report (HaluGate) | P1 | Medium | ⚠️ Partial (heuristic sentinel exists) |
+| OS-003 | **Sentinel pre-classifier** — ModernBERT classifier to determine if query needs fact-checking (96.4% accuracy, 12ms) | SoA Report (HaluGate) | P1 | Medium | ❌ Missing |
 | OS-004 | **Tool-call result as ground truth** — use tool results visible in proxy traffic for fact-checking | SoA Report (HaluGate) | P1 | Medium | ❌ Missing |
 | OS-005 | **Semantic entropy-based detection** — multi-sample uncertainty estimation | SoA Report (Nature 2024) | P3 | High | ❌ Missing |
 | OS-006 | **Citation validation** — verify cited sources exist and support claims | SoA Report | P3 | High | ❌ Missing |
@@ -238,9 +244,15 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| OS-030 | **CodeShield-style analysis** — Meta LlamaFirewall's code security component | SoA Report (LlamaFirewall) | P1 | Large | ⚠️ Partial (basic static analysis exists) |
+| OS-030 | **CodeShield-style analysis** — Meta LlamaFirewall's code security component | SoA Report (LlamaFirewall) | P1 | Large | ⚠️ Partial |
 | OS-031 | **Semgrep rule integration** — leverage existing Semgrep rule database | SoA Report | P2 | Medium | ❌ Missing |
 | OS-032 | **Supply chain security** — detect dependency confusion, typosquatting in code | SoA Report (OWASP LLM03) | P3 | High | ❌ Missing |
+
+**Audit Notes (Literature Alignment):**
+- HaluGate-style token-level pipeline (OS-001–OS-004) and sentinel expectations: `docs/research/security-state-of-art-2026.md`.
+- Streaming Content Monitor expectations (OS-010–OS-013): `docs/research/security-state-of-art-2026.md`.
+- Content safety expectations (Llama Guard, bias, sentiment/language detection): `docs/research/security-state-of-art-2026.md`.
+- CodeShield-level analysis requirements: `docs/research/security-state-of-art-2026.md`.
 
 ---
 
@@ -250,14 +262,14 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| AS-001 | **Tool-Input Firewall (Minimizer)** — filter sensitive info from tool call arguments before execution | Indirect Injection Firewalls | P0 | High | ❌ Missing |
-| AS-002 | **Tool-Output Firewall (Sanitizer)** — remove malicious content from tool responses before returning to agent | Indirect Injection Firewalls | P0 | High | ❌ Missing |
-| AS-003 | **Tool context awareness** — use user task + tool description for security decisions | Indirect Injection Firewalls, Tool Result Parsing | P1 | Medium | ❌ Missing |
-| AS-004 | **Tool result parsing** — extract only essential data from tool results, discard excess content | Tool Result Parsing | P1 | High | ❌ Missing |
-| AS-005 | **Format constraint validation** — enforce strict format/logic rules on tool outputs | Tool Result Parsing | P1 | Medium | ❌ Missing |
-| AS-006 | **ParseData module** — LLM-based extraction of minimal required data from tool results | Tool Result Parsing | P2 | High | ❌ Missing |
-| AS-007 | **CheckTool module** — detect if tool output content triggers unexpected tool calls | Tool Result Parsing | P2 | Medium | ❌ Missing |
-| AS-008 | **Tool registry and classification** — categorise tools by security level and requirements | Indirect Injection Firewalls, Design Patterns | P1 | Medium | ❌ Missing |
+| AS-001 | **Tool-Input Firewall (Minimizer)** — filter sensitive info from tool call arguments before execution | Indirect Injection Firewalls | P0 | High | ⚠️ Partial |
+| AS-002 | **Tool-Output Firewall (Sanitizer)** — remove malicious content from tool responses before returning to agent | Indirect Injection Firewalls | P0 | High | ⚠️ Partial |
+| AS-003 | **Tool context awareness** — use user task + tool description for security decisions | Indirect Injection Firewalls, Tool Result Parsing | P1 | Medium | ⚠️ Partial |
+| AS-004 | **Tool result parsing** — extract only essential data from tool results, discard excess content | Tool Result Parsing | P1 | High | ⚠️ Partial |
+| AS-005 | **Format constraint validation** — enforce strict format/logic rules on tool outputs | Tool Result Parsing | P1 | Medium | ⚠️ Partial |
+| AS-006 | **ParseData module** — LLM-based extraction of minimal required data from tool results | Tool Result Parsing | P2 | High | ⚠️ Partial |
+| AS-007 | **CheckTool module** — detect if tool output content triggers unexpected tool calls | Tool Result Parsing | P2 | Medium | ⚠️ Partial |
+| AS-008 | **Tool registry and classification** — categorise tools by security level and requirements | Indirect Injection Firewalls, Design Patterns | P1 | Medium | ✅ Implemented |
 
 **Implementation Notes:**
 - AS-001/AS-002: The "minimize & sanitize" approach achieves **0% ASR** across all benchmarks (AgentDojo, ASB, InjecAgent, Tau-Bench) with minimal utility degradation. Sanitizer alone achieves optimal security-utility tradeoff.
@@ -268,12 +280,12 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| AS-010 | **Action-Selector pattern enforcement** — enforce action allowlists at proxy level | Design Patterns | P1 | Medium | ❌ Missing |
+| AS-010 | **Action-Selector pattern enforcement** — enforce action allowlists at proxy level | Design Patterns | P1 | Medium | ✅ Implemented |
 | AS-011 | **Plan-Then-Execute pattern detection** — detect plan deviations in request patterns | Design Patterns | P2 | High | ❌ Missing |
-| AS-012 | **Context-Minimization** — strip unnecessary context from requests to reduce attack surface | Design Patterns | P1 | Medium | ❌ Missing |
+| AS-012 | **Context-Minimization** — strip unnecessary context from requests to reduce attack surface | Design Patterns | P1 | Medium | ✅ Implemented |
 | AS-013 | **Dual LLM routing** — route trusted/untrusted data to different model endpoints | Design Patterns | P2 | High | ❌ Missing |
 | AS-014 | **Pattern compliance monitoring** — detect when agents violate declared security patterns | Design Patterns | P2 | High | ❌ Missing |
-| AS-015 | **Action-type rate limiting** — rate limit by action type, not just request volume | Design Patterns | P1 | Low | ❌ Missing |
+| AS-015 | **Action-type rate limiting** — rate limit by action type, not just request volume | Design Patterns | P1 | Low | ✅ Implemented |
 | AS-016 | **Trust-based routing** — classify data sources by trust level and route accordingly | Design Patterns | P2 | High | ❌ Missing |
 
 **Implementation Notes:**
@@ -284,13 +296,13 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| AS-020 | **Coordinator agent** — pre-input classification and threat assessment before forwarding | Multi-Agent Defense | P1 | High | ❌ Missing |
-| AS-021 | **Guard agent** — post-generation validation and output sanitization | Multi-Agent Defense | P1 | High | ❌ Missing |
+| AS-020 | **Coordinator agent** — pre-input classification and threat assessment before forwarding | Multi-Agent Defense | P1 | High | ⚠️ Partial |
+| AS-021 | **Guard agent** — post-generation validation and output sanitization | Multi-Agent Defense | P1 | High | ⚠️ Partial |
 | AS-022 | **Hierarchical coordinator pipeline** — route safe queries directly, detected threats to safe refusal | Multi-Agent Defense | P2 | High | ❌ Missing |
-| AS-023 | **Second opinion pass for borderline cases** — multi-model consensus for uncertain scores | Multi-Agent Defense | P1 | Medium | ❌ Missing |
-| AS-024 | **Policy store** — centralised security rules accessed by all agents/modules | Multi-Agent Defense, Design Patterns | P1 | Medium | ❌ Missing |
-| AS-025 | **Multi-step action correlation** — detect multi-step attack sequences across requests | Multi-Agent Defense, SoA Report | P2 | High | ❌ Missing |
-| AS-026 | **Multi-turn persistence detection** — gradual bypass attempts across conversation turns | Multi-Agent Defense, Protocol Exploits | P1 | High | ❌ Missing |
+| AS-023 | **Second opinion pass for borderline cases** — multi-model consensus for uncertain scores | Multi-Agent Defense | P1 | Medium | ⚠️ Partial |
+| AS-024 | **Policy store** — centralised security rules accessed by all agents/modules | Multi-Agent Defense, Design Patterns | P1 | Medium | ⚠️ Partial |
+| AS-025 | **Multi-step action correlation** — detect multi-step attack sequences across requests | Multi-Agent Defense, SoA Report | P2 | High | ✅ Implemented |
+| AS-026 | **Multi-turn persistence detection** — gradual bypass attempts across conversation turns | Multi-Agent Defense, Protocol Exploits | P1 | High | ✅ Implemented |
 
 **Implementation Notes:**
 - AS-020/AS-021: Multi-Agent Defense paper achieved **0% ASR** across 400 attack instances (vs 20-30% baseline). Architecture: Coordinator → [safe refusal | Domain LLM + Guard]. For LLMTrace: implement as optional multi-pass security engine within existing proxy.
@@ -300,18 +312,24 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| AS-030 | **MCP (Model Context Protocol) monitoring** — detect MCP manipulation and server-side attacks | Protocol Exploits | P0 | High | ❌ Missing |
+| AS-030 | **MCP (Model Context Protocol) monitoring** — detect MCP manipulation and server-side attacks | Protocol Exploits | P0 | High | ✅ Implemented |
 | AS-031 | **A2A (Agent-to-Agent) protocol security** — communication interception and manipulation detection | Protocol Exploits | P1 | High | ❌ Missing |
 | AS-032 | **ANP (Agent Network Protocol) security** — peer-to-peer agent collaboration vulnerabilities | Protocol Exploits | P2 | High | ❌ Missing |
 | AS-033 | **Dynamic trust management** — cryptographic provenance tracking for MCP deployments | Protocol Exploits | P2 | High | ❌ Missing |
 | AS-034 | **Inter-agent trust verification** — validate agent identity and permissions | Protocol Exploits | P2 | High | ❌ Missing |
-| AS-035 | **Toxic Agent Flow defense** — GitHub MCP server vulnerability enabling private data leakage | Protocol Exploits | P1 | Medium | ❌ Missing |
-| AS-036 | **ToolHijacker defense** — tool selection manipulation in LLM agents (96.7% ASR against GPT-4o) | SoA Report (ToolHijacker) | P1 | High | ❌ Missing |
+| AS-035 | **Toxic Agent Flow defense** — GitHub MCP server vulnerability enabling private data leakage | Protocol Exploits | P1 | Medium | ⚠️ Partial |
+| AS-036 | **ToolHijacker defense** — tool selection manipulation in LLM agents (96.7% ASR against GPT-4o) | SoA Report (ToolHijacker) | P1 | High | ⚠️ Partial |
 
 **Implementation Notes:**
 - AS-030: The Protocol Exploits paper is the first to catalogue MCP/A2A/ANP vulnerabilities. MCP allows arbitrary tool server registration — need to validate server identity, monitor for suspicious tool registration patterns, and detect data exfiltration via MCP channels.
 - AS-035: Toxic Agent Flow via GitHub MCP server enables private repo data leakage. Detection: monitor for MCP tool calls accessing private data sources and validate against user permissions.
 - AS-036: ToolHijacker achieves 96.7% ASR against GPT-4o with 99.6% bypass of StruQ/SecAlign defenses. Defense requires tool-call validation beyond simple pattern matching.
+
+**Audit Notes (Literature Alignment):**
+- Tool-boundary firewalling and LLM-based tool parsing expectations: `docs/research/indirect-injection-firewalls.md` and `docs/research/defense-tool-result-parsing.md`.
+- Design pattern enforcement expectations (Action-Selector, Plan-then-Execute, Context-Minimization): `docs/research/design-patterns-securing-agents.md`.
+- Multi-agent coordination expectations (Coordinator + Guard + second opinion): `docs/research/multi-agent-defense-pipeline.md`.
+- Protocol exploit expectations (MCP/A2A/ANP, ToolHijacker, Toxic Agent Flow): `docs/research/prompt-injections-to-protocol-exploits.md`.
 
 ---
 
@@ -321,12 +339,12 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| ML-001 | **Joint end-to-end training** — train fusion FC layer jointly with labelled data | SoA Report (DMPI-PMHFE) | P1 | High | ❌ Missing (random weights only) |
-| ML-002 | **InjecGuard model integration** — evaluate and integrate InjecGuard as alternative/ensemble member | InjecGuard, Benchmarks | P1 | Medium | ❌ Missing |
-| ML-003 | **Meta Prompt Guard 2 integration** — 86M and 22M variants as ensemble members | SoA Report, Benchmarks | P1 | Medium | ❌ Missing |
+| ML-001 | **Joint end-to-end training** — train fusion FC layer jointly with labelled data | SoA Report (DMPI-PMHFE) | P1 | High | ❌ Missing |
+| ML-002 | **InjecGuard model integration** — evaluate and integrate InjecGuard as alternative/ensemble member | InjecGuard, Benchmarks | P1 | Medium | ✅ Implemented |
+| ML-003 | **Meta Prompt Guard 2 integration** — 86M and 22M variants as ensemble members | SoA Report, Benchmarks | P1 | Medium | ✅ Implemented |
 | ML-004 | **PIGuard model integration** — DeBERTa + MOF training for reduced over-defense | SoA Report (PIGuard) | P1 | Medium | ❌ Missing |
 | ML-005 | **ModernBERT support** — port ModernBERT to Candle for sentinel/token-level detection | SoA Report (HaluGate) | P2 | High | ❌ Missing |
-| ML-006 | **Multi-model ensemble voting** — diverse architectures for robustness against AML | Bypassing Guardrails | P1 | Medium | ❌ Missing |
+| ML-006 | **Multi-model ensemble voting** — diverse architectures for robustness against AML | Bypassing Guardrails | P1 | Medium | ⚠️ Partial |
 | ML-007 | **Model hot-swapping** — swap models without proxy restart | Design Patterns | P3 | Medium | ❌ Missing |
 
 **Implementation Notes:**
@@ -352,6 +370,11 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | ML-021 | **Quantised model support** — INT8/INT4 quantisation for faster inference | SoA Report | P3 | Medium | ❌ Missing |
 | ML-022 | **Batched inference** — batch multiple requests for GPU utilisation | SoA Report | P3 | Medium | ❌ Missing |
 
+**Audit Notes (Literature Alignment):**
+- InjecGuard MOF training and over-defense mitigation expectations: `docs/research/injecguard-over-defense-mitigation.md`.
+- Ensemble diversification expectations and robustness claims: `docs/research/bypassing-llm-guardrails-evasion.md`.
+- HaluGate/ModernBERT support expectations: `docs/research/security-state-of-art-2026.md`.
+
 ---
 
 ### 3.5 Multimodal Security
@@ -369,6 +392,9 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 - MM-001: The Protocol Exploits survey documents adversarial perturbation attacks on multimodal models (LLaVA, PandaGPT). As a proxy, LLMTrace can intercept image/audio payloads in API requests and run secondary analysis. Initial approach: OCR on images → text analysis pipeline.
 - MM-004: Most practical first step — extract text from images using OCR, then apply existing text-based injection detection. Many "visual injection" attacks embed readable text in images.
 
+**Audit Notes (Literature Alignment):**
+- Multimodal attack expectations (image/audio/stego/video): `docs/research/prompt-injections-to-protocol-exploits.md`.
+
 ---
 
 ### 3.6 Privacy
@@ -380,10 +406,10 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | PR-003 | **Federated learning poisoning defense** — detection of local model manipulation | Protocol Exploits | P3 | High | ❌ Missing |
 | PR-004 | **Vector/embedding poisoning detection** — OWASP LLM08 coverage | SoA Report | P2 | High | ❌ Missing |
 | PR-005 | **RAG retrieval anomaly monitoring** — detect unusual similarity scores and retrieval patterns | SoA Report | P2 | Medium | ❌ Missing |
-| PR-006 | **Multi-language PII detection** — CJK, Arabic, and other non-Latin scripts | SoA Report, InjecGuard | P2 | High | ⚠️ Partial (international phone, IBAN, EU passports) |
+| PR-006 | **Multi-language PII detection** — CJK, Arabic, and other non-Latin scripts | SoA Report, InjecGuard | P2 | High | ⚠️ Partial |
 | PR-007 | **Context-aware PII enhancement** — lemma-based context boosting (Presidio-style) | SoA Report | P2 | Medium | ⚠️ Partial |
 | PR-008 | **Custom entity type plugins** — architecture for user-defined PII patterns | SoA Report (Presidio) | P2 | Medium | ❌ Missing |
-| PR-009 | **Compliance mapping** — automatic GDPR/HIPAA/CCPA entity classification | SoA Report (IBM OneShield) | P2 | Medium | ⚠️ Partial (compliance reports exist) |
+| PR-009 | **Compliance mapping** — automatic GDPR/HIPAA/CCPA entity classification | SoA Report (IBM OneShield) | P2 | Medium | ⚠️ Partial |
 | PR-010 | **Memory poisoning detection** — MINJA-style memory injection in agent memory banks | Protocol Exploits | P2 | High | ❌ Missing |
 | PR-011 | **Cross-session state integrity** — detect persistent state manipulation | Protocol Exploits | P2 | High | ❌ Missing |
 | PR-012 | **Speculative side-channel defense** — network packet timing attack protection | Protocol Exploits | P3 | High | ❌ Missing |
@@ -392,6 +418,10 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 - PR-001: S2MIA (Semantic Similarity Membership Inference Attack) exploits RAG databases. Defense: add noise to similarity scores, monitor for systematic probing patterns.
 - PR-010: MINJA injects malicious records into agent memory banks. As a proxy, LLMTrace can monitor for memory/context injection patterns across sessions.
 
+**Audit Notes (Literature Alignment):**
+- Privacy and protocol exploit expectations (membership inference, poisoning, MINJA): `docs/research/prompt-injections-to-protocol-exploits.md`.
+- PII expansion and compliance mapping expectations: `docs/research/security-state-of-art-2026.md`.
+
 ---
 
 ### 3.7 Evaluation & Benchmarking
@@ -399,7 +429,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
 | EV-001 | **AgentDojo evaluation** — 97 environments testing tool misuse, injection resilience | Benchmarks | P0 | Medium | ❌ Missing |
-| EV-002 | **NotInject evaluation** — 339 benign samples with trigger words (3 difficulty levels) | InjecGuard, Benchmarks | P0 | Low | ❌ Missing |
+| EV-002 | **NotInject evaluation** — 339 benign samples with trigger words (3 difficulty levels) | InjecGuard, Benchmarks | P0 | Low | ✅ Implemented |
 | EV-003 | **InjecAgent evaluation** — indirect injection in agents, 8 defense mechanisms | Benchmarks | P1 | Medium | ❌ Missing |
 | EV-004 | **Agent Security Bench (ASB) evaluation** — comprehensive multi-domain agent security | Benchmarks | P2 | Medium | ❌ Missing |
 | EV-005 | **WASP evaluation** — web agent security benchmark | Benchmarks | P2 | Medium | ❌ Missing |
@@ -407,9 +437,13 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | EV-007 | **MLCommons AILuminate Jailbreak Benchmark** — industry-standard jailbreak evaluation | SoA Report | P2 | Medium | ❌ Missing |
 | EV-008 | **HPI_ATTACK_DATASET evaluation** — 55 unique attacks, 8 categories, 400 instances | Multi-Agent Defense | P1 | Low | ❌ Missing |
 | EV-009 | **Automated benchmark runner** — CI-integrated evaluation pipeline | All papers | P1 | Medium | ❌ Missing |
-| EV-010 | **Paper-table output format** — results formatted for academic paper tables | All papers | P2 | Low | ❌ Missing |
+| EV-010 | **Paper-table output format** — results formatted for academic paper tables | All papers | P2 | Low | ✅ Implemented |
 | EV-011 | **safeguard-v2 evaluation** — 1,300 test samples from DMPI-PMHFE | SoA Report | P1 | Low | ❌ Missing |
 | EV-012 | **deepset-v2 evaluation** — 354 challenging external validation samples | SoA Report | P1 | Low | ❌ Missing |
+
+**Audit Notes (Literature Alignment):**
+- Benchmark suite expectations (AgentDojo, ASB, InjecAgent, WASP, etc.): `docs/research/benchmarks-and-tools-landscape.md`.
+- WASP benchmark specifics: `docs/research/wasp-web-agent-security-benchmark.md`.
 
 ---
 
@@ -418,7 +452,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
 | SA-001 | **Policy/rules language** — declarative policy specification (Colang-like or OPA-style) | SoA Report (NeMo, OneShield) | P2 | High | ❌ Missing |
-| SA-002 | **Canary token system** — inject canary tokens in prompts, detect leakage in responses | Benchmarks (tldrsec) | P1 | Low | ❌ Missing |
+| SA-002 | **Canary token system** — inject canary tokens in prompts, detect leakage in responses | Benchmarks (tldrsec) | P1 | Low | ✅ Implemented |
 | SA-003 | **Taint tracking** — track untrusted data flow through LLM pipeline | Benchmarks (tldrsec), Design Patterns | P2 | High | ❌ Missing |
 | SA-004 | **Blast radius reduction** — least-privilege enforcement for LLM tool access | Benchmarks (tldrsec), Design Patterns | P2 | Medium | ❌ Missing |
 | SA-005 | **Backdoor detection** — prompt-level and parameter-level backdoor detection (BadPrompt, DemonAgent) | Protocol Exploits | P2 | High | ❌ Missing |
@@ -427,6 +461,10 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | SA-008 | **Social engineering simulation defense** — SE-VSim-style human manipulation tactic detection | Protocol Exploits | P3 | High | ❌ Missing |
 | SA-009 | **Contagious recursive blocking defense** — Corba attacks on multi-agent systems | Protocol Exploits | P3 | High | ❌ Missing |
 | SA-010 | **GuardReasoner integration** — reasoning-based safeguards with explanation | Benchmarks | P3 | High | ❌ Missing |
+
+**Audit Notes (Literature Alignment):**
+- Policy language and orchestration expectations: `docs/research/llmtrace-defense-pipeline-design.md`.
+- Backdoor/poisoning and protocol exploit expectations: `docs/research/prompt-injections-to-protocol-exploits.md`.
 
 ---
 

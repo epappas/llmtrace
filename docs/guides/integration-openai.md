@@ -80,14 +80,14 @@ async def main():
         base_url="http://localhost:8080/v1",
         api_key=os.getenv("OPENAI_API_KEY")
     )
-    
+
     response = await client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "user", "content": "Hello, async world!"}
         ]
     )
-    
+
     print(response.choices[0].message.content)
 
 asyncio.run(main())
@@ -262,7 +262,7 @@ async function handleErrors() {
         { role: 'user', content: 'Hello!' }
       ]
     });
-    
+
     console.log(response.choices[0].message.content);
   } catch (error) {
     if (error instanceof OpenAI.APIError) {
@@ -360,7 +360,7 @@ from urllib.parse import urlparse
 
 def create_resilient_client():
     llmtrace_url = "http://localhost:8080"
-    
+
     # Check if LLMTrace is available
     try:
         response = requests.get(f"{llmtrace_url}/health", timeout=2)
@@ -372,7 +372,7 @@ def create_resilient_client():
             )
     except requests.RequestException:
         pass
-    
+
     print("LLMTrace unavailable, falling back to direct OpenAI")
     return openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -387,7 +387,7 @@ import axios from 'axios';
 
 async function createResilientClient() {
   const llmtraceUrl = 'http://localhost:8080';
-  
+
   try {
     await axios.get(`${llmtraceUrl}/health`, { timeout: 2000 });
     console.log('Using LLMTrace proxy');
@@ -540,7 +540,7 @@ pip show openai
 npm list openai
 
 # LLMTrace supports:
-# - Python SDK v1.0+ 
+# - Python SDK v1.0+
 # - Node.js SDK v4.0+
 ```
 

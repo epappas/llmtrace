@@ -35,7 +35,7 @@ print(response.content)
 from langchain.llms import OpenAI
 
 llm = OpenAI(
-    model="gpt-3.5-turbo-instruct", 
+    model="gpt-3.5-turbo-instruct",
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     openai_api_base="http://localhost:8080/v1",
     temperature=0.7
@@ -227,17 +227,17 @@ from typing import Any, Dict
 
 class CustomStreamingHandler(BaseCallbackHandler):
     """Custom handler to process streaming tokens."""
-    
+
     def __init__(self):
         self.tokens = []
         self.total_tokens = 0
-    
+
     def on_llm_new_token(self, token: str, ** kwargs: Any) -> None:
         """Called when a new token is generated."""
         self.tokens.append(token)
         self.total_tokens += 1
         print(f"Token {self.total_tokens}: {token}", end="", flush=True)
-    
+
     def on_llm_end(self, response, ** kwargs: Any) -> None:
         """Called when LLM finishes."""
         print(f"\n\n Streaming complete. Total tokens: {self.total_tokens}")
@@ -277,7 +277,7 @@ def get_weather(location: str) -> str:
     # Mock weather API call
     return f"The weather in {location} is sunny and 72°F."
 
-@tool 
+@tool
 def calculate_math(expression: str) -> str:
     """Calculate a mathematical expression."""
     try:
@@ -478,7 +478,7 @@ import os
 class MultiTenantLLMManager:
     def __init__(self):
         self.llms: Dict[str, ChatOpenAI] = {}
-    
+
     def get_llm_for_customer(self, customer_id: str) -> ChatOpenAI:
         if customer_id not in self.llms:
             self.llms[customer_id] = ChatOpenAI(
@@ -499,7 +499,7 @@ manager = MultiTenantLLMManager()
 customer_a_llm = manager.get_llm_for_customer("customer_a")
 response_a = customer_a_llm.invoke("Hello from customer A")
 
-# Customer B's request  
+# Customer B's request
 customer_b_llm = manager.get_llm_for_customer("customer_b")
 response_b = customer_b_llm.invoke("Hello from customer B")
 
@@ -556,7 +556,7 @@ import requests
 
 def create_resilient_llm() -> ChatOpenAI:
     """Create LLM with fallback logic."""
-    
+
     # First, try LLMTrace proxy
     try:
         response = requests.get("http://localhost:8080/health", timeout=2)
@@ -569,7 +569,7 @@ def create_resilient_llm() -> ChatOpenAI:
             )
     except requests.RequestException:
         pass
-    
+
     # Fallback to direct OpenAI
     print(" LLMTrace unavailable, using direct OpenAI API")
     return ChatOpenAI(
@@ -596,22 +596,22 @@ import time
 
 class LLMTraceMonitoringCallback(BaseCallbackHandler):
     """Custom callback to enhance LLMTrace monitoring."""
-    
+
     def __init__(self, llmtrace_url: str = "http://localhost:8080"):
         self.llmtrace_url = llmtrace_url
         self.start_time = None
-        
+
     def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str], ** kwargs) -> None:
         """Called when LLM starts."""
         self.start_time = time.time()
         print(f" LLM started with {len(prompts)} prompts")
-        
+
     def on_llm_end(self, response, ** kwargs) -> None:
         """Called when LLM ends."""
         if self.start_time:
             duration = time.time() - self.start_time
             print(f" LLM completed in {duration:.2f}s")
-            
+
             # Check for security findings
             try:
                 findings_response = requests.get(f"{self.llmtrace_url}/security/findings", timeout=5)
@@ -622,7 +622,7 @@ class LLMTraceMonitoringCallback(BaseCallbackHandler):
                         print(f" {len(recent_findings)} security findings in last minute")
             except:
                 pass
-                
+
     def on_llm_error(self, error: BaseException, ** kwargs) -> None:
         """Called when LLM encounters an error."""
         print(f" LLM error: {error}")
@@ -653,7 +653,7 @@ class LLMConfig:
     temperature: float = 0.7
     max_tokens: int = 1000
     llmtrace_url: str = "http://localhost:8080"
-    
+
 class ConfigurableLLMFactory:
     @staticmethod
     def create_llm(config: LLMConfig) -> ChatOpenAI:
@@ -749,23 +749,23 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 def safe_llm_call(llm, text: str, max_tokens: int = 3000) -> str:
     """Split long text and process in chunks."""
-    
+
     if len(text) <= max_tokens:
         return llm.invoke(text).content
-    
+
     # Split text into chunks
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=max_tokens,
         chunk_overlap=200
     )
     chunks = splitter.split_text(text)
-    
+
     # Process each chunk
     results = []
     for chunk in chunks:
         response = llm.invoke(f"Summarize this text: {chunk}")
         results.append(response.content)
-    
+
     return "\n".join(results)
 ```
 
@@ -799,7 +799,7 @@ def check_llmtrace_health():
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Direct SDK usage patterns
 - **[Python SDK](python-sdk.md)** — Native instrumentation approach
-- **[Dashboard Usage](dashboard.md)** — Monitor your LangChain applications 
+- **[Dashboard Usage](dashboard.md)** — Monitor your LangChain applications
 - **[Custom Policies](custom-policies.md)** — Configure security for your use cases
 
 **Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](../deployment/troubleshooting.md).

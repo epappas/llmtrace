@@ -41,7 +41,7 @@ services:
       LLMTRACE_STORAGE_PROFILE: "lite"
     volumes:
       - ./data:/data
-    
+
   dashboard:
     image: epappas/llmtrace-dashboard:latest
     ports:
@@ -245,7 +245,7 @@ llmtrace-proxy --version
 curl -L -o llmtrace-proxy \
   https://github.com/epappas/llmtrace/releases/latest/download/llmtrace-proxy-macos-x86_64
 
-# Apple Silicon Macs  
+# Apple Silicon Macs
 curl -L -o llmtrace-proxy \
   https://github.com/epappas/llmtrace/releases/latest/download/llmtrace-proxy-macos-aarch64
 
@@ -384,7 +384,7 @@ response = client.chat.completions.create(
 ### Recommended for production:
 
 - **CPU:** 2+ cores
-- **Memory:** 512MB+ 
+- **Memory:** 512MB+
 - **Storage:** 10GB+ SSD
 - **Network:** Low-latency connection to LLM providers
 

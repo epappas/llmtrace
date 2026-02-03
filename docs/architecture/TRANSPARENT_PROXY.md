@@ -1,8 +1,8 @@
 # LLMSec Trace: Transparent Proxy Architecture
 
-**Version**: 1.0  
-**Date**: 2025-01-31  
-**Status**: Final  
+**Version**: 1.0
+**Date**: 2025-01-31
+**Status**: Final
 **Related Documents**: SYSTEM_ARCHITECTURE.md v1.0, ARCHITECTURE_SUPPLEMENT.md v1.0
 
 ---
@@ -62,7 +62,7 @@ response = client.chat.completions.create(
 # Proxied through LLMSec Trace - IDENTICAL API
 client = OpenAI(base_url="https://llmsec-proxy.company.com/v1")
 response = client.chat.completions.create(
-    model="gpt-4", 
+    model="gpt-4",
     messages=[{"role": "user", "content": "Hello"}]
 )
 # Application code unchanged, full security monitoring active
@@ -167,36 +167,36 @@ pub struct RequestProcessor {
 impl RequestProcessor {
     pub async fn process_request(&self, req: Request<Body>) -> Result<ProcessedRequest> {
         let start_time = Instant::now(); // T+0ms
-        
+
         // Extract headers and validate format (T+0.1ms)
         let headers = req.headers().clone();
         let method = req.method().clone();
         let uri = req.uri().clone();
-        
+
         // Parse Content-Type and validate against expected LLM API formats
         let content_type = headers
             .get("content-type")
             .and_then(|ct| ct.to_str().ok())
             .unwrap_or("application/json");
-            
+
         if !self.request_validator.is_valid_llm_request(&method, &uri, content_type) {
             return Err(ProxyError::InvalidRequest("Unsupported request format".to_string()));
         }
-        
+
         // Extract API key for tenant identification (T+0.2ms)
         let api_key = self.extract_api_key(&headers)?;
         let tenant_context = self.tenant_resolver.resolve(api_key).await?;
-        
+
         // Rate limiting check
         self.rate_limiter.check_limits(&tenant_context).await?;
-        
+
         // Create trace context for request tracking
         let trace_context = TraceContext::new(
             tenant_context.tenant_id,
             Uuid::new_v4(), // trace_id
             start_time,
         );
-        
+
         Ok(ProcessedRequest {
             original_request: req,
             tenant_context,
@@ -224,34 +224,34 @@ impl TenantResolver {
                 return Ok(context.clone());
             }
         }
-        
+
         // Medium path: Redis cache lookup (<0.1ms)
         if let Ok(cached_context) = self.redis_client
             .get::<TenantContext>(&format!("tenant:{}", api_key))
-            .await 
+            .await
         {
             self.api_key_cache.insert(api_key.clone(), cached_context.clone());
             return Ok(cached_context);
         }
-        
+
         // Slow path: PostgreSQL lookup (~1-5ms)
         let context = sqlx::query_as!(
             TenantContext,
-            "SELECT tenant_id, plan, rate_limit, security_config 
-             FROM tenants t 
-             JOIN api_keys ak ON t.id = ak.tenant_id 
+            "SELECT tenant_id, plan, rate_limit, security_config
+             FROM tenants t
+             JOIN api_keys ak ON t.id = ak.tenant_id
              WHERE ak.key_hash = $1",
             api_key.hash()
         )
         .fetch_one(&*self.postgres_pool)
         .await?;
-        
+
         // Cache results
         self.redis_client
             .setex(&format!("tenant:{}", api_key), 300, &context) // 5min cache
             .await?;
         self.api_key_cache.insert(api_key, context.clone());
-        
+
         Ok(context)
     }
 }
@@ -275,36 +275,36 @@ impl SecurityAnalysisEngine {
             let engine = self.clone();
             async move {
                 if let Err(e) = engine.perform_analysis(&request).await {
-                    log::error!("Security analysis failed for trace {}: {}", 
+                    log::error!("Security analysis failed for trace {}: {}",
                               request.trace_context.trace_id, e);
                 }
             }
         });
-        
+
         Ok(()) // Returns immediately, analysis continues in background
     }
-    
+
     async fn perform_analysis(&self, request: &ProcessedRequest) -> Result<()> {
         let start_time = Instant::now();
-        
+
         // Parse request body for analysis
         let body_bytes = hyper::body::to_bytes(request.body.clone()).await?;
         let request_data: LLMRequest = serde_json::from_slice(&body_bytes)?;
-        
+
         // Concurrent security analyses
         let (prompt_result, pii_result, anomaly_result) = tokio::join!(
             self.prompt_detector.analyze(&request_data.messages),
             self.pii_scanner.scan_content(&request_data),
             self.anomaly_detector.check_request_patterns(&request_data, &request.tenant_context)
         );
-        
+
         // Aggregate results and generate alerts
         let security_score = self.calculate_risk_score(
-            prompt_result?, 
-            pii_result?, 
+            prompt_result?,
+            pii_result?,
             anomaly_result?
         );
-        
+
         // Generate alerts if thresholds exceeded
         if security_score.risk_level >= request.tenant_context.alert_threshold {
             self.alert_dispatcher.dispatch_alert(AlertEvent {
@@ -315,8 +315,8 @@ impl SecurityAnalysisEngine {
                 analysis_duration: start_time.elapsed(),
             }).await?;
         }
-        
-        log::info!("Security analysis completed for trace {} in {:?}", 
+
+        log::info!("Security analysis completed for trace {} in {:?}",
                   request.trace_context.trace_id, start_time.elapsed());
         Ok(())
     }
@@ -339,23 +339,23 @@ impl ResponseProcessor {
         trace_context: TraceContext,
     ) -> Result<Response<Body>> {
         let (parts, body) = response.into_parts();
-        
+
         // Create streaming processor for SSE responses
         let stream = FramedRead::new(
             StreamReader::new(body),
             LinesCodec::new(),
         );
-        
+
         let processed_stream = stream.map({
             let trace_context = trace_context.clone();
             let analyzer = self.security_analyzer.clone();
             let collector = self.trace_collector.clone();
-            
+
             move |line_result| {
                 let trace_context = trace_context.clone();
                 let analyzer = analyzer.clone();
                 let collector = collector.clone();
-                
+
                 async move {
                     match line_result {
                         Ok(line) => {
@@ -363,13 +363,13 @@ impl ResponseProcessor {
                             if let Some(data) = parse_sse_line(&line) {
                                 // Capture token data (non-blocking)
                                 collector.capture_token(trace_context.trace_id, &data).await;
-                                
+
                                 // Real-time response security analysis
                                 if let Err(e) = analyzer.analyze_response_chunk(&data, &trace_context).await {
                                     log::warn!("Response analysis error: {}", e);
                                 }
                             }
-                            
+
                             // Return original line unchanged to client
                             Ok(line)
                         }
@@ -378,10 +378,10 @@ impl ResponseProcessor {
                 }
             }
         });
-        
+
         // Convert back to hyper::Body for response
         let processed_body = Body::wrap_stream(processed_stream);
-        
+
         Ok(Response::from_parts(parts, processed_body))
     }
 }
@@ -408,8 +408,8 @@ LLMSec Trace supports all major LLM inference backends through protocol-specific
 
 ### 3.2 vLLM Integration
 
-**Protocol**: OpenAI-compatible HTTP API  
-**Base URL**: `http://vllm-server:8000/v1`  
+**Protocol**: OpenAI-compatible HTTP API
+**Base URL**: `http://vllm-server:8000/v1`
 **Streaming**: Server-Sent Events (SSE)
 
 ```rust
@@ -423,12 +423,12 @@ impl VLLMAdapter {
         // vLLM uses OpenAI-compatible endpoints
         match original_path {
             "/v1/chat/completions" => "/v1/chat/completions",
-            "/v1/completions" => "/v1/completions", 
+            "/v1/completions" => "/v1/completions",
             "/v1/models" => "/v1/models",
             path => path, // Pass through unknown paths
         }
     }
-    
+
     pub fn extract_model_info(&self, request: &LLMRequest) -> ModelInfo {
         ModelInfo {
             provider: "vllm".to_string(),
@@ -437,10 +437,10 @@ impl VLLMAdapter {
             api_version: "openai-compatible".to_string(),
         }
     }
-    
+
     pub async fn forward_request(&self, request: ProcessedRequest) -> Result<Response<Body>> {
         let target_url = format!("{}{}", self.base_url, request.rewritten_path);
-        
+
         // Forward request with original headers
         let response = self.client
             .request(request.method, &target_url)
@@ -448,7 +448,7 @@ impl VLLMAdapter {
             .body(request.body)
             .send()
             .await?;
-        
+
         // Convert reqwest::Response to hyper::Response
         self.convert_response(response).await
     }
@@ -476,7 +476,7 @@ backends:
 
 ### 3.3 SGLang Integration
 
-**Protocol**: OpenAI-compatible + Native endpoints  
+**Protocol**: OpenAI-compatible + Native endpoints
 **Base URL**: `http://sglang-server:30000`
 
 ```rust
@@ -500,7 +500,7 @@ impl SGLangAdapter {
             path => (self.native_base_url.clone(), path.to_string()),
         }
     }
-    
+
     pub async fn handle_native_request(&self, request: &LLMRequest) -> Result<Response<Body>> {
         // Convert OpenAI format to SGLang native format
         let sglang_request = SGLangRequest {
@@ -511,14 +511,14 @@ impl SGLangAdapter {
                 stop: request.stop.clone(),
             },
         };
-        
+
         // Forward to SGLang
         let response = self.client
             .post(&format!("{}/generate", self.native_base_url))
             .json(&sglang_request)
             .send()
             .await?;
-        
+
         // Convert response back to OpenAI format
         self.convert_to_openai_response(response).await
     }
@@ -527,7 +527,7 @@ impl SGLangAdapter {
 
 ### 3.4 Text Generation Inference (TGI) Integration
 
-**Protocol**: HuggingFace Text Generation API  
+**Protocol**: HuggingFace Text Generation API
 **Endpoints**: `/generate`, `/generate_stream`
 
 ```rust
@@ -540,7 +540,7 @@ impl TGIAdapter {
     pub fn rewrite_request(&self, original_path: &str, request: &LLMRequest) -> Result<TGIRequest> {
         // Convert OpenAI format to TGI format
         let prompt = self.convert_messages_to_prompt(&request.messages)?;
-        
+
         Ok(TGIRequest {
             inputs: prompt,
             parameters: TGIParameters {
@@ -552,19 +552,19 @@ impl TGIAdapter {
             },
         })
     }
-    
+
     pub async fn handle_streaming_response(&self, response: reqwest::Response) -> Result<Response<Body>> {
         let stream = response.bytes_stream();
-        
+
         let converted_stream = stream.map(|chunk_result| {
             chunk_result.and_then(|chunk| {
                 // Convert TGI streaming format to OpenAI SSE format
                 self.convert_tgi_chunk_to_openai(&chunk)
             })
         });
-        
+
         let body = Body::wrap_stream(converted_stream);
-        
+
         Ok(Response::builder()
             .status(200)
             .header("content-type", "text/plain; charset=utf-8")
@@ -577,7 +577,7 @@ impl TGIAdapter {
 
 ### 3.5 Ollama Integration
 
-**Protocol**: Native Ollama HTTP API  
+**Protocol**: Native Ollama HTTP API
 **Base URL**: `http://ollama:11434`
 
 ```rust
@@ -591,13 +591,13 @@ impl OllamaAdapter {
         match original_path {
             // Map OpenAI endpoints to Ollama endpoints
             "/v1/chat/completions" => "/api/chat",
-            "/v1/completions" => "/api/generate", 
+            "/v1/completions" => "/api/generate",
             "/v1/models" => "/api/tags",
             path if path.starts_with("/api/") => path, // Pass through native Ollama
             path => path, // Unknown paths passed through
         }
     }
-    
+
     pub async fn convert_openai_to_ollama(&self, request: &LLMRequest) -> Result<OllamaRequest> {
         Ok(OllamaRequest {
             model: request.model.clone(),
@@ -619,7 +619,7 @@ impl OllamaAdapter {
 
 ### 3.6 OpenAI API Integration
 
-**Protocol**: Native OpenAI HTTP API  
+**Protocol**: Native OpenAI HTTP API
 **Base URL**: `https://api.openai.com/v1`
 
 ```rust
@@ -633,23 +633,23 @@ impl OpenAIAdapter {
         // Pass through all OpenAI endpoints unchanged
         original_path.to_string()
     }
-    
+
     pub async fn forward_with_usage_tracking(&self, request: ProcessedRequest) -> Result<Response<Body>> {
         // Add custom headers for tracking
         let mut headers = request.headers.clone();
         headers.insert("X-LLMSec-Trace-ID", request.trace_context.trace_id.to_string().parse()?);
         headers.insert("X-LLMSec-Tenant-ID", request.tenant_context.tenant_id.to_string().parse()?);
-        
+
         let response = self.client
             .request(request.method, &format!("{}{}", self.base_url, request.path))
             .headers(headers)
             .body(request.body)
             .send()
             .await?;
-        
+
         // Track API usage for billing
         self.track_openai_usage(&response, &request.tenant_context).await?;
-        
+
         self.convert_response(response).await
     }
 }
@@ -657,7 +657,7 @@ impl OpenAIAdapter {
 
 ### 3.7 Anthropic Claude Integration
 
-**Protocol**: Anthropic Messages API  
+**Protocol**: Anthropic Messages API
 **Base URL**: `https://api.anthropic.com`
 
 ```rust
@@ -672,7 +672,7 @@ impl AnthropicAdapter {
         let system_message = request.messages.iter()
             .find(|msg| msg.role == "system")
             .map(|msg| msg.content.clone());
-            
+
         let messages = request.messages.iter()
             .filter(|msg| msg.role != "system")
             .map(|msg| AnthropicMessage {
@@ -680,7 +680,7 @@ impl AnthropicAdapter {
                 content: msg.content.clone(),
             })
             .collect();
-        
+
         Ok(AnthropicRequest {
             model: request.model.clone(),
             max_tokens: request.max_tokens.unwrap_or(4096),
@@ -690,19 +690,19 @@ impl AnthropicAdapter {
             stream: true,
         })
     }
-    
+
     pub async fn handle_anthropic_streaming(&self, response: reqwest::Response) -> Result<Response<Body>> {
         let stream = response.bytes_stream();
-        
+
         let converted_stream = stream.map(|chunk_result| {
             chunk_result.and_then(|chunk| {
                 // Convert Anthropic SSE format to OpenAI format
                 self.convert_anthropic_to_openai_chunk(&chunk)
             })
         });
-        
+
         let body = Body::wrap_stream(converted_stream);
-        
+
         Ok(Response::builder()
             .status(200)
             .header("content-type", "text/plain; charset=utf-8")
@@ -713,7 +713,7 @@ impl AnthropicAdapter {
 
 ### 3.8 Azure OpenAI Integration
 
-**Protocol**: OpenAI-compatible with Azure-specific URL patterns  
+**Protocol**: OpenAI-compatible with Azure-specific URL patterns
 **Base URL**: `https://{resource}.openai.azure.com`
 
 ```rust
@@ -728,24 +728,24 @@ impl AzureOpenAIAdapter {
         // Azure OpenAI uses deployment-specific URLs
         match original_path {
             "/v1/chat/completions" => format!(
-                "/openai/deployments/{}/chat/completions?api-version={}", 
-                deployment_name, 
+                "/openai/deployments/{}/chat/completions?api-version={}",
+                deployment_name,
                 self.api_version
             ),
             "/v1/completions" => format!(
-                "/openai/deployments/{}/completions?api-version={}", 
-                deployment_name, 
+                "/openai/deployments/{}/completions?api-version={}",
+                deployment_name,
                 self.api_version
             ),
             "/v1/embeddings" => format!(
-                "/openai/deployments/{}/embeddings?api-version={}", 
-                deployment_name, 
+                "/openai/deployments/{}/embeddings?api-version={}",
+                deployment_name,
                 self.api_version
             ),
             path => path.to_string(),
         }
     }
-    
+
     pub fn extract_deployment_from_model(&self, model: &str) -> String {
         // Azure uses deployment names instead of model names
         // Map common model names to deployment names
@@ -782,51 +782,51 @@ impl StreamingProcessor {
         let mut token_buffer = TokenBuffer::new();
         let mut first_token_time: Option<Instant> = None;
         let stream_start = Instant::now();
-        
+
         stream.map(move |chunk_result| {
             match chunk_result {
                 Ok(chunk) => {
                     // Parse SSE chunk without buffering entire response
                     let sse_lines = self.parse_sse_chunk(&chunk);
-                    
+
                     for line in &sse_lines {
                         if let Some(token_data) = self.extract_token_data(line) {
                             // Record first token time (TTFT)
                             if first_token_time.is_none() {
                                 first_token_time = Some(Instant::now());
                                 let ttft = stream_start.elapsed();
-                                
+
                                 self.metrics_collector.record_ttft(
                                     trace_context.tenant_id,
                                     ttft,
                                 );
                             }
-                            
+
                             // Accumulate tokens for analysis
                             token_buffer.add_token(token_data);
-                            
+
                             // Real-time security scanning (non-blocking)
                             if token_buffer.should_analyze() {
                                 tokio::spawn({
                                     let buffer_content = token_buffer.get_accumulated_content();
                                     let scanner = self.security_scanner.clone();
                                     let trace_id = trace_context.trace_id;
-                                    
+
                                     async move {
                                         if let Err(e) = scanner.scan_partial_response(
-                                            &buffer_content, 
+                                            &buffer_content,
                                             trace_id
                                         ).await {
                                             log::warn!("Real-time security scan failed: {}", e);
                                         }
                                     }
                                 });
-                                
+
                                 token_buffer.mark_analyzed();
                             }
                         }
                     }
-                    
+
                     // Pass through original chunk unchanged
                     Ok(chunk)
                 }
@@ -846,9 +846,9 @@ impl TokenBuffer {
     pub fn should_analyze(&self) -> bool {
         // Analyze every 10 tokens or if we detect potential injection patterns
         let token_threshold = self.tokens.len() >= self.last_analysis_token_count + 10;
-        let pattern_detected = self.accumulated_text.contains("IGNORE") || 
+        let pattern_detected = self.accumulated_text.contains("IGNORE") ||
                               self.accumulated_text.contains("SYSTEM:");
-        
+
         token_threshold || pattern_detected
     }
 }
@@ -870,7 +870,7 @@ impl TokenCountEstimator {
     ) -> Result<usize> {
         // Use cached tokenizer for the model
         let tokenizer = self.get_or_load_tokenizer(model_name).await?;
-        
+
         // For streaming, estimate based on character count and model-specific ratios
         let estimated_new_tokens = match model_name {
             model if model.starts_with("gpt-") => {
@@ -886,10 +886,10 @@ impl TokenCountEstimator {
                 (new_content.len() as f32 / 4.0) as usize
             }
         };
-        
+
         Ok(previous_count + estimated_new_tokens)
     }
-    
+
     pub async fn get_exact_token_count_final(
         &self,
         complete_content: &str,
@@ -922,7 +922,7 @@ impl StreamingSecurityScanner {
         let pattern_matches = self.injection_patterns.iter()
             .filter(|pattern| pattern.is_match(partial_content))
             .collect::<Vec<_>>();
-        
+
         if !pattern_matches.is_empty() {
             // Immediate alert for known dangerous patterns
             return Ok(SecurityScanResult {
@@ -932,11 +932,11 @@ impl StreamingSecurityScanner {
                 requires_immediate_alert: true,
             });
         }
-        
+
         // ML-based analysis for subtle injections (only if enough content)
         if partial_content.len() > 100 {
             let ml_score = self.ml_classifier.predict_injection_probability(partial_content).await?;
-            
+
             if ml_score > self.alert_threshold {
                 return Ok(SecurityScanResult {
                     risk_score: ml_score * 100.0,
@@ -946,7 +946,7 @@ impl StreamingSecurityScanner {
                 });
             }
         }
-        
+
         Ok(SecurityScanResult::safe())
     }
 }
@@ -970,18 +970,18 @@ impl StreamingSecurityScanner {
 #[cfg(test)]
 mod streaming_performance_tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_streaming_latency_impact() {
         let processor = StreamingProcessor::new();
         let mock_stream = create_mock_sse_stream(1000); // 1000 tokens
-        
+
         let start = Instant::now();
         let processed_stream = processor.process_sse_stream(mock_stream, test_trace_context()).await;
-        
+
         let mut total_latency = Duration::ZERO;
         let mut token_count = 0;
-        
+
         while let Some(chunk) = processed_stream.next().await {
             let chunk_start = Instant::now();
             // Measure processing time per chunk
@@ -989,9 +989,9 @@ mod streaming_performance_tests {
             total_latency += chunk_start.elapsed();
             token_count += 1;
         }
-        
+
         let avg_latency_per_token = total_latency / token_count;
-        
+
         // Verify latency guarantees
         assert!(avg_latency_per_token < Duration::from_micros(10)); // <0.01ms per token
         assert!(total_latency < Duration::from_millis(10)); // <10ms total overhead
@@ -1014,13 +1014,13 @@ server:
     cert_file: "/etc/certs/server.crt"
     key_file: "/etc/certs/server.key"
     client_auth: "optional"  # none, optional, required
-  
+
   # Connection settings
   max_connections: 10000
   keep_alive_timeout: "30s"
   read_timeout: "60s"
   write_timeout: "60s"
-  
+
   # Request limits
   max_request_size: "50MB"
   max_header_size: "8KB"
@@ -1044,13 +1044,13 @@ backends:
         weight: 100
       - url: "http://vllm-node-3:8000"
         weight: 80  # Slower node
-    
+
     # Connection pooling
     connection_pool:
       max_idle: 100
       max_active: 1000
       idle_timeout: "300s"
-    
+
     # Retry policy
     retry_policy:
       max_attempts: 3
@@ -1061,7 +1061,7 @@ backends:
         - "connection_error"
         - "timeout"
         - "5xx_status"
-    
+
     # Circuit breaker
     circuit_breaker:
       failure_threshold: 10
@@ -1076,13 +1076,13 @@ backends:
     rate_limiting:
       requests_per_minute: 3000
       tokens_per_minute: 250000
-    
+
   # Anthropic Claude
   anthropic:
     type: "anthropic"
     base_url: "https://api.anthropic.com"
     timeout: "120s"
-    
+
   # Azure OpenAI
   azure-openai:
     type: "azure_openai"
@@ -1099,24 +1099,24 @@ routing:
     - match:
         api_key_prefix: "vllm-"
       backend: "vllm-cluster"
-      
+
     - match:
         api_key_prefix: "oai-"
       backend: "openai"
-      
+
     - match:
         api_key_prefix: "claude-"
       backend: "anthropic"
-    
+
     # Route by model name
     - match:
         model: "gpt-4"
       backend: "openai"
-      
+
     - match:
         model: "claude-3-opus"
       backend: "anthropic"
-    
+
     # Default fallback
     - match: {}
       backend: "vllm-cluster"
@@ -1136,7 +1136,7 @@ security:
       - name: "system_override"
         regex: "(?i)system\\s*:"
         severity: "medium"
-    
+
   # PII detection
   pii_detection:
     enabled: true
@@ -1150,14 +1150,14 @@ security:
       email:
         regex: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
         action: "alert_only"
-    
+
   # Anomaly detection
   anomaly_detection:
     enabled: true
     cost_threshold_multiplier: 3.0  # Alert if cost > 3x baseline
     request_rate_threshold: 1000    # Requests per minute
     token_velocity_threshold: 50000 # Tokens per minute
-    
+
   # Rate limiting
   rate_limiting:
     global:
@@ -1166,7 +1166,7 @@ security:
     per_tenant:
       default_rps: 100
       default_burst: 200
-    
+
 # Storage configuration
 storage:
   # ClickHouse for traces
@@ -1178,17 +1178,17 @@ storage:
     database: "llmsec_traces"
     username: "llmsec"
     password_file: "/secrets/clickhouse-password"
-    
+
     # Performance settings
     max_connections: 100
     connection_timeout: "30s"
     query_timeout: "60s"
-    
+
     # Batch settings
     batch_size: 10000
     flush_interval: "5s"
     max_batch_delay: "10s"
-  
+
   # PostgreSQL for metadata
   postgres:
     host: "postgres-primary"
@@ -1196,21 +1196,21 @@ storage:
     database: "llmsec_metadata"
     username: "llmsec"
     password_file: "/secrets/postgres-password"
-    
+
     # Connection pool
     max_connections: 50
     min_connections: 10
     connection_timeout: "30s"
-  
+
   # Redis for caching
   redis:
     mode: "cluster"  # standalone, sentinel, cluster
     nodes:
       - "redis-1:6379"
-      - "redis-2:6379"  
+      - "redis-2:6379"
       - "redis-3:6379"
     password_file: "/secrets/redis-password"
-    
+
     # Cache settings
     default_ttl: "300s"
     max_memory_usage: "2GB"
@@ -1223,7 +1223,7 @@ observability:
       enabled: true
       endpoint: "/metrics"
       port: 9090
-    
+
     custom_metrics:
       - name: "llmsec_requests_total"
         type: "counter"
@@ -1232,24 +1232,24 @@ observability:
         type: "histogram"
         labels: ["tenant_id", "backend"]
         buckets: [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]
-  
+
   # Tracing
   tracing:
     jaeger:
       enabled: true
       agent_endpoint: "jaeger:14268"
       service_name: "llmsec-trace-proxy"
-    
+
     sampling:
       default_rate: 0.1  # 10% sampling
       error_rate: 1.0    # 100% sampling for errors
-  
+
   # Logging
   logging:
     level: "info"
     format: "json"
     output: "stdout"
-    
+
     # Structured logging fields
     include_fields:
       - "trace_id"
@@ -1264,37 +1264,37 @@ alerting:
     slack:
       webhook_url_file: "/secrets/slack-webhook"
       default_channel: "#security-alerts"
-      
+
     pagerduty:
       service_key_file: "/secrets/pagerduty-key"
-      
+
     email:
       smtp_host: "smtp.company.com"
       smtp_port: 587
       from_address: "llmsec-alerts@company.com"
-      
+
     webhook:
       url: "https://internal.company.com/webhooks/security-alerts"
       timeout: "10s"
       retry_attempts: 3
-  
+
   # Alert rules
   rules:
     - name: "high_risk_prompt_injection"
       condition: "security_score > 90"
       channels: ["slack", "pagerduty"]
       priority: "critical"
-      
+
     - name: "pii_detected"
       condition: "pii_types.length > 0"
       channels: ["slack", "email"]
       priority: "high"
-      
+
     - name: "cost_anomaly"
       condition: "cost_multiplier > 5.0"
       channels: ["slack"]
       priority: "medium"
-      
+
     - name: "high_error_rate"
       condition: "error_rate_5m > 0.1"  # >10% errors in 5 minutes
       channels: ["slack", "email"]
@@ -1324,7 +1324,7 @@ security:
     enabled: true
     ml_model:
       confidence_threshold: 0.6  # Lower threshold for testing
-  
+
   rate_limiting:
     per_tenant:
       default_rps: 1000  # Higher limits for dev
@@ -1365,7 +1365,7 @@ security:
   prompt_injection:
     ml_model:
       confidence_threshold: 0.9  # Higher threshold for prod
-  
+
   rate_limiting:
     global:
       requests_per_second: 10000
@@ -1380,7 +1380,7 @@ storage:
       - "clickhouse-prod-3.internal:9000"
     connection_timeout: "10s"
     query_timeout: "30s"
-  
+
   redis:
     mode: "cluster"
     nodes:
@@ -1404,36 +1404,36 @@ pub struct ConfigValidator;
 impl ConfigValidator {
     pub fn validate(config: &ProxyConfig) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
-        
+
         // Validate server configuration
         if config.server.max_connections < 1 {
             errors.push(ValidationError::new("server.max_connections must be >= 1"));
         }
-        
+
         if config.server.bind_address.is_empty() {
             errors.push(ValidationError::new("server.bind_address is required"));
         }
-        
+
         // Validate backend configurations
         for (name, backend) in &config.backends {
             if let Err(e) = self.validate_backend(name, backend) {
                 errors.extend(e);
             }
         }
-        
+
         // Validate storage configuration
         if config.storage.clickhouse.nodes.is_empty() {
             errors.push(ValidationError::new("storage.clickhouse.nodes cannot be empty"));
         }
-        
+
         // Validate security configuration
-        if config.security.prompt_injection.ml_model.confidence_threshold < 0.0 
+        if config.security.prompt_injection.ml_model.confidence_threshold < 0.0
             || config.security.prompt_injection.ml_model.confidence_threshold > 1.0 {
             errors.push(ValidationError::new(
                 "security.prompt_injection.ml_model.confidence_threshold must be between 0.0 and 1.0"
             ));
         }
-        
+
         if errors.is_empty() {
             Ok(())
         } else {
@@ -1470,10 +1470,10 @@ metadata:
 spec:
   type: ExternalName
   externalName: llmsec-proxy-primary.company.com
-  
+
 ---
 # Fallback service pointing directly to backends
-apiVersion: v1  
+apiVersion: v1
 kind: Service
 metadata:
   name: llmsec-proxy-fallback
@@ -1495,7 +1495,7 @@ class ResilientLLMClient:
             failure_threshold=5,
             recovery_timeout=60
         )
-    
+
     async def chat_completion(self, **kwargs):
         try:
             if self.circuit_breaker.can_execute():
@@ -1503,7 +1503,7 @@ class ResilientLLMClient:
         except (ConnectionError, TimeoutError) as e:
             self.circuit_breaker.record_failure()
             log.warning(f"Primary LLMSec proxy unavailable, using fallback: {e}")
-        
+
         # Fallback to direct backend connection
         return await self.fallback.chat.completions.create(**kwargs)
 ```
@@ -1535,25 +1535,25 @@ pub struct UpstreamHealthMonitor {
 impl UpstreamHealthMonitor {
     pub async fn monitor_backends(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
-        
+
         loop {
             interval.tick().await;
-            
+
             for backend_entry in self.backends.iter() {
                 let (name, backend) = backend_entry.pair();
-                
+
                 let health_result = self.health_checker.check_health(backend).await;
-                
+
                 match health_result {
                     HealthStatus::Healthy => {
                         backend.mark_healthy();
                     }
                     HealthStatus::Unhealthy(reason) => {
                         backend.mark_unhealthy(&reason);
-                        
+
                         // Trigger failover to backup backend
                         if let Some(backup) = backend.backup_backend() {
-                            log::warn!("Backend {} unhealthy ({}), failing over to {}", 
+                            log::warn!("Backend {} unhealthy ({}), failing over to {}",
                                      name, reason, backup.name());
                             self.initiate_failover(name, backup).await;
                         }
@@ -1567,14 +1567,14 @@ impl UpstreamHealthMonitor {
             }
         }
     }
-    
+
     async fn initiate_failover(&self, primary: &str, backup: &Backend) {
         // Update routing table atomically
         self.update_routing_table(primary, backup).await;
-        
+
         // Send alert about failover
         self.send_failover_alert(primary, backup.name()).await;
-        
+
         // Start recovery monitoring for primary
         self.start_recovery_monitoring(primary).await;
     }
@@ -1651,7 +1651,7 @@ impl SecurityAnalysisManager {
     pub async fn analyze_with_timeout(&self, request: &LLMRequest) -> SecurityResult {
         // Never block request flow - always use timeout
         let analysis_future = self.perform_full_analysis(request);
-        
+
         match tokio::time::timeout(self.analysis_timeout, analysis_future).await {
             Ok(result) => result.unwrap_or_else(|e| {
                 log::error!("Security analysis failed: {}", e);
@@ -1659,10 +1659,10 @@ impl SecurityAnalysisManager {
             }),
             Err(_timeout) => {
                 log::warn!("Security analysis timed out, enabling fallback mode");
-                
+
                 // Switch to fallback mode temporarily
                 self.fallback_mode.store(true, Ordering::Relaxed);
-                
+
                 // Schedule async analysis for later
                 tokio::spawn({
                     let request = request.clone();
@@ -1673,27 +1673,27 @@ impl SecurityAnalysisManager {
                         }
                     }
                 });
-                
+
                 // Return safe default
                 SecurityResult::timeout_fallback()
             }
         }
     }
-    
+
     pub async fn perform_full_analysis(&self, request: &LLMRequest) -> Result<SecurityResult> {
         // Parallel analysis with individual timeouts
         let prompt_future = tokio::time::timeout(
             Duration::from_millis(100),
             self.prompt_analyzer.analyze(&request.messages)
         );
-        
+
         let pii_future = tokio::time::timeout(
             Duration::from_millis(50),
             self.pii_scanner.scan(&request.messages)
         );
-        
+
         let (prompt_result, pii_result) = tokio::join!(prompt_future, pii_future);
-        
+
         Ok(SecurityResult {
             prompt_injection: prompt_result.unwrap_or_else(|_| PromptResult::timeout()),
             pii_detection: pii_result.unwrap_or_else(|_| PIIResult::timeout()),
@@ -1730,22 +1730,22 @@ impl TraceStorageManager {
                 }
             }
         }
-        
+
         // Fallback to local buffering
         self.local_buffer.push(trace).await?;
-        
+
         // Schedule background sync when storage recovers
         self.schedule_background_sync().await;
-        
+
         Ok(())
     }
-    
+
     pub async fn background_sync_loop(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
-        
+
         loop {
             interval.tick().await;
-            
+
             if self.storage_circuit_breaker.can_execute() {
                 match self.flush_local_buffer().await {
                     Ok(flushed_count) => {
@@ -1777,7 +1777,7 @@ impl MetadataManager {
         if let Some(metadata) = self.metadata_cache.get(&tenant_id) {
             return Ok(metadata.clone());
         }
-        
+
         // Try primary database
         match self.query_tenant_metadata_primary(tenant_id).await {
             Ok(metadata) => {
@@ -1786,7 +1786,7 @@ impl MetadataManager {
             }
             Err(_) => {
                 log::warn!("Primary database unavailable, trying replica");
-                
+
                 // Fallback to read replica
                 let metadata = self.query_tenant_metadata_replica(tenant_id).await?;
                 self.metadata_cache.insert(tenant_id, metadata.clone());
@@ -1806,8 +1806,8 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-    pub async fn get<T>(&self, key: &str) -> Option<T> 
-    where 
+    pub async fn get<T>(&self, key: &str) -> Option<T>
+    where
         T: serde::DeserializeOwned,
     {
         // Try local cache first (always available)
@@ -1816,7 +1816,7 @@ impl CacheManager {
                 return Some(deserialized);
             }
         }
-        
+
         // Try Redis if circuit breaker allows
         if self.cache_circuit_breaker.can_execute() {
             match self.redis_cluster.get(key).await {
@@ -1833,7 +1833,7 @@ impl CacheManager {
                 }
             }
         }
-        
+
         None
     }
 }
@@ -1865,10 +1865,10 @@ impl GracefulDegradationController {
             _ => DegradationLevel::Emergency,
         }
     }
-    
+
     pub async fn evaluate_degradation(&self, system_metrics: &SystemMetrics) {
         let mut highest_degradation = DegradationLevel::Normal;
-        
+
         // Check all degradation triggers
         for trigger in &self.degradation_triggers {
             if trigger.is_triggered(system_metrics) {
@@ -1877,10 +1877,10 @@ impl GracefulDegradationController {
                 }
             }
         }
-        
+
         self.set_degradation_level(highest_degradation).await;
     }
-    
+
     pub async fn configure_for_level(&self, level: DegradationLevel) {
         match level {
             DegradationLevel::Normal => {
@@ -1964,7 +1964,7 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1"
-      
+
       # LLMSec Trace sidecar proxy
       - name: llmsec-trace-sidecar
         image: llmsec/trace-proxy:v1.0.0
@@ -2002,7 +2002,7 @@ spec:
             port: 8080
           initialDelaySeconds: 5
           periodSeconds: 10
-          
+
       volumes:
       - name: config
         configMap:
@@ -2025,20 +2025,20 @@ data:
       bind_address: "0.0.0.0:8080"
       tls:
         enabled: false  # Internal communication
-    
+
     backends:
       openai:
         type: "openai"
         base_url: "https://api.openai.com/v1"
-    
+
     routing:
       default_backend: "openai"
-    
+
     security:
       prompt_injection:
         enabled: true
         confidence_threshold: 0.8
-    
+
     storage:
       clickhouse:
         nodes: ["clickhouse.llmsec-system:9000"]
@@ -2064,10 +2064,10 @@ data:
 graph TB
     subgraph "Applications"
         A1[App 1]
-        A2[App 2] 
+        A2[App 2]
         A3[App 3]
     end
-    
+
     subgraph "LLMSec Trace Gateway"
         G[Load Balancer]
         P1[Proxy Instance 1]
@@ -2077,11 +2077,11 @@ graph TB
         G --> P2
         G --> P3
     end
-    
+
     A1 -->|HTTPS| G
     A2 -->|HTTPS| G
     A3 -->|HTTPS| G
-    
+
     P1 --> B1[Backend 1]
     P2 --> B2[Backend 2]
     P3 --> B3[Backend 3]
@@ -2148,7 +2148,7 @@ spec:
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5
-          
+
       volumes:
       - name: config
         configMap:
@@ -2229,7 +2229,7 @@ data:
         cert_file: "/etc/ssl/certs/tls.crt"
         key_file: "/etc/ssl/certs/tls.key"
       max_connections: 10000
-    
+
     # Multiple backend configurations
     backends:
       openai-production:
@@ -2237,7 +2237,7 @@ data:
         base_url: "https://api.openai.com/v1"
         connection_pool:
           max_active: 500
-        
+
       vllm-cluster:
         type: "vllm"
         load_balancer:
@@ -2246,28 +2246,28 @@ data:
           - url: "http://vllm-1:8000"
           - url: "http://vllm-2:8000"
           - url: "http://vllm-3:8000"
-        
+
       anthropic-production:
         type: "anthropic"
         base_url: "https://api.anthropic.com"
-    
+
     # Tenant-based routing
     routing:
       rules:
         - match:
             tenant_id: "tenant-enterprise-1"
           backend: "vllm-cluster"
-          
+
         - match:
             tenant_id: "tenant-startup-1"
           backend: "openai-production"
           rate_limit:
             requests_per_minute: 1000
-            
+
         - match:
             api_key_prefix: "claude-"
           backend: "anthropic-production"
-    
+
     # Shared storage for all tenants
     storage:
       clickhouse:
@@ -2302,19 +2302,19 @@ graph TB
             EP[Envoy Proxy Sidecar]
             A <--> EP
         end
-        
+
         subgraph "LLMSec Namespace"
             LP[LLMSec Trace Proxy]
             EL[Envoy Proxy Sidecar]
             LP <--> EL
         end
-        
+
         subgraph "Backend Namespace"
             B[LLM Backend]
             EB[Envoy Proxy Sidecar]
             B <--> EB
         end
-        
+
         EP -->|mTLS| EL
         EL -->|mTLS| EB
     end
@@ -2345,7 +2345,7 @@ spec:
   - match:
     - headers:
         x-tenant-tier:
-          exact: "standard"  
+          exact: "standard"
     route:
     - destination:
         host: llmsec-proxy.llmsec-system.svc.cluster.local
@@ -2462,17 +2462,17 @@ impl HttpContext for LLMSecTraceFilter {
         if let Some(tenant_header) = self.get_http_request_header("x-tenant-id") {
             self.tenant_id = Some(tenant_header);
         }
-        
+
         // Generate request ID for tracing
         self.request_id = format!("req_{}", self.get_current_time_nanoseconds());
-        
+
         // Add tracing headers
         self.set_http_request_header("x-llmsec-request-id", Some(&self.request_id));
         self.set_http_request_header("x-llmsec-start-time", Some(&self.start_time.to_string()));
-        
+
         Action::Continue
     }
-    
+
     fn on_http_request_body(&mut self, body_size: usize, end_of_stream: bool) -> Action {
         if end_of_stream {
             // Capture request body for security analysis
@@ -2490,15 +2490,15 @@ impl HttpContext for LLMSecTraceFilter {
                 );
             }
         }
-        
+
         Action::Continue
     }
-    
+
     fn on_http_response_headers(&mut self, _num_headers: usize, _end_of_stream: bool) -> Action {
         // Add response timing headers
         let duration = self.get_current_time_nanoseconds() - self.start_time;
         self.set_http_response_header("x-llmsec-duration-ns", Some(&duration.to_string()));
-        
+
         Action::Continue
     }
 }
@@ -2568,21 +2568,21 @@ impl PerformanceBenchmark {
                 duration: Duration::from_secs(300),
             },
         ];
-        
+
         let mut results = Vec::new();
-        
+
         for scenario in test_scenarios {
             let result = self.run_scenario(scenario).await?;
             results.push(result);
         }
-        
+
         BenchmarkResult { scenarios: results }
     }
-    
+
     async fn run_scenario(&self, scenario: TestScenario) -> Result<ScenarioResult> {
         // Warm up phase
         self.warmup_phase(&scenario).await?;
-        
+
         // Main test execution
         let start_time = Instant::now();
         let load_task = tokio::spawn({
@@ -2592,7 +2592,7 @@ impl PerformanceBenchmark {
                 generator.generate_load(scenario).await
             }
         });
-        
+
         let metrics_task = tokio::spawn({
             let collector = self.metrics_collector.clone();
             let duration = scenario.duration;
@@ -2600,9 +2600,9 @@ impl PerformanceBenchmark {
                 collector.collect_during_test(duration).await
             }
         });
-        
+
         let (load_result, metrics_result) = tokio::try_join!(load_task, metrics_task)?;
-        
+
         Ok(ScenarioResult {
             scenario_name: scenario.name,
             throughput_achieved: load_result.actual_rps,
@@ -2661,15 +2661,15 @@ pub fn calculate_resource_requirements(
     let baseline_memory_mb = 510;
     let concurrent_requests = (requests_per_second * target_latency_ms) / 1000;
     let memory_per_request_kb = 15.5 + (avg_request_size_kb * 0.1); // 10% overhead
-    let total_memory_mb = baseline_memory_mb + 
+    let total_memory_mb = baseline_memory_mb +
         ((concurrent_requests * memory_per_request_kb as u32) / 1024);
-    
-    // CPU calculation  
+
+    // CPU calculation
     let baseline_cpu_cores = 0.6;
     let cpu_per_request = 0.004;
-    let total_cpu_cores = baseline_cpu_cores + 
+    let total_cpu_cores = baseline_cpu_cores +
         (requests_per_second as f64 * cpu_per_request);
-    
+
     ResourceRequirements {
         memory_mb: total_memory_mb,
         cpu_cores: total_cpu_cores,
@@ -2695,48 +2695,48 @@ pub struct ProxyBenchmark {
 impl ProxyBenchmark {
     pub fn benchmark_request_processing(c: &mut Criterion) {
         let benchmark = Self::new();
-        
+
         c.bench_function("request_processing_small", |b| {
             b.to_async(&benchmark.runtime).iter(|| {
                 benchmark.send_request(RequestSize::Small)
             })
         });
-        
+
         c.bench_function("request_processing_large", |b| {
             b.to_async(&benchmark.runtime).iter(|| {
                 benchmark.send_request(RequestSize::Large)
             })
         });
-        
+
         c.bench_function("streaming_response", |b| {
             b.to_async(&benchmark.runtime).iter(|| {
                 benchmark.send_streaming_request(1000) // 1000 tokens
             })
         });
     }
-    
+
     pub fn benchmark_security_analysis(c: &mut Criterion) {
         let benchmark = Self::new();
-        
+
         c.bench_function("prompt_injection_detection", |b| {
             b.to_async(&benchmark.runtime).iter(|| {
                 benchmark.analyze_prompt(SAMPLE_MALICIOUS_PROMPT)
             })
         });
-        
+
         c.bench_function("pii_detection", |b| {
             b.to_async(&benchmark.runtime).iter(|| {
                 benchmark.scan_for_pii(SAMPLE_PII_TEXT)
             })
         });
     }
-    
+
     async fn send_request(&self, size: RequestSize) -> Result<Duration> {
         let request = self.generate_request(size);
         let start = Instant::now();
-        
+
         let response = self.proxy_server.handle_request(request).await?;
-        
+
         Ok(start.elapsed())
     }
 }
@@ -2798,13 +2798,13 @@ impl ZeroCopyProcessor {
     pub async fn process_request_zero_copy(&self, raw_bytes: &[u8]) -> Result<ProcessedRequest> {
         // Use pre-allocated buffers from pool
         let mut buffer = self.buffer_pool.acquire().await;
-        
+
         // Parse in-place without allocating new strings
         let request = self.parse_borrowed(raw_bytes, &mut buffer)?;
-        
+
         // Extract tenant information without copying
         let tenant_info = self.extract_tenant_info_borrowed(&request)?;
-        
+
         Ok(ProcessedRequest {
             raw_data: raw_bytes,
             parsed_data: request,
@@ -2812,7 +2812,7 @@ impl ZeroCopyProcessor {
             buffer_handle: buffer, // Released when dropped
         })
     }
-    
+
     fn parse_borrowed<'a>(
         &self,
         data: &'a [u8],
@@ -2820,7 +2820,7 @@ impl ZeroCopyProcessor {
     ) -> Result<BorrowedRequest<'a>> {
         // Use simd-json for faster parsing with borrowed strings
         let mut parser = simd_json::borrowed::to_value_borrowed(data, scratch_buffer)?;
-        
+
         // Extract fields without string allocation
         Ok(BorrowedRequest {
             model: parser["model"].as_str().ok_or(ParseError::MissingModel)?,
@@ -2846,31 +2846,31 @@ impl OptimizedHttpClient {
         // Reuse existing connection pool for the host
         let host = url.host_str().unwrap_or_default();
         let pool = self.get_or_create_pool(host).await;
-        
+
         // Get connection from pool (or create new if needed)
         let mut connection = pool.acquire().await?;
-        
+
         // Reuse TLS session if available
         if url.scheme() == "https" {
             if let Some(session) = self.tls_session_cache.get(host) {
                 connection.resume_tls_session(session)?;
             }
         }
-        
+
         // Send request using pooled connection
         let response = connection.send_request(request).await?;
-        
+
         // Return connection to pool for reuse
         pool.release(connection).await;
-        
+
         Ok(response)
     }
-    
+
     async fn get_or_create_pool(&self, host: &str) -> Arc<ConnectionPool> {
         if let Some(pool) = self.connection_pools.get(host) {
             return pool.clone();
         }
-        
+
         // Create new pool with optimized settings
         let pool = Arc::new(ConnectionPool::new(PoolConfig {
             max_idle_per_host: 100,
@@ -2878,7 +2878,7 @@ impl OptimizedHttpClient {
             idle_connection_timeout: Duration::from_secs(30),
             max_lifetime: Duration::from_secs(600),
         }));
-        
+
         self.connection_pools.insert(host.to_string(), pool.clone());
         pool
     }
@@ -2898,47 +2898,47 @@ impl PipelinedSecurityAnalysis {
     pub async fn analyze_async(&self, request: &LLMRequest) -> Result<AnalysisHandle> {
         // Generate cache key from request content
         let cache_key = self.generate_cache_key(request);
-        
+
         // Check cache first
         if let Some(cached_result) = self.result_cache.get(&cache_key) {
             return Ok(AnalysisHandle::Completed(cached_result.clone()));
         }
-        
+
         // Queue for analysis
         let analysis_id = Uuid::new_v4();
         let (sender, receiver) = oneshot::channel();
-        
+
         let analysis_request = AnalysisRequest {
             id: analysis_id,
             request: request.clone(),
             result_sender: sender,
             cache_key: cache_key.clone(),
         };
-        
+
         // Send to worker pool (non-blocking)
         self.analysis_queue.send(analysis_request).await?;
-        
-        Ok(AnalysisHandle::Pending { 
+
+        Ok(AnalysisHandle::Pending {
             receiver,
             analysis_id,
             cache_key,
         })
     }
-    
+
     async fn worker_loop(&self, worker_id: usize) {
         while let Ok(request) = self.analysis_queue.recv().await {
             let start_time = Instant::now();
-            
+
             // Perform security analysis
             let result = self.perform_analysis(&request.request).await
                 .unwrap_or_else(|e| AnalysisResult::error(e));
-            
+
             // Cache result for future requests
             self.result_cache.put(request.cache_key, result.clone());
-            
+
             // Send result back to requester
             let _ = request.result_sender.send(result);
-            
+
             // Record metrics
             metrics::histogram!("security_analysis_duration", start_time.elapsed());
             metrics::counter!("security_analysis_completed").increment(1);
@@ -2974,7 +2974,7 @@ use tower_http::{
 pub struct ProxyServer {
     config: Arc<ProxyConfig>,
     request_processor: Arc<RequestProcessor>,
-    response_processor: Arc<ResponseProcessor>, 
+    response_processor: Arc<ResponseProcessor>,
     backend_manager: Arc<BackendManager>,
     security_engine: Arc<SecurityEngine>,
     trace_collector: Arc<TraceCollector>,
@@ -2983,23 +2983,23 @@ pub struct ProxyServer {
 impl ProxyServer {
     pub async fn new(config: ProxyConfig) -> Result<Self> {
         let config = Arc::new(config);
-        
+
         // Initialize core components
         let backend_manager = Arc::new(BackendManager::new(&config.backends).await?);
         let security_engine = Arc::new(SecurityEngine::new(&config.security).await?);
         let trace_collector = Arc::new(TraceCollector::new(&config.storage).await?);
-        
+
         let request_processor = Arc::new(RequestProcessor::new(
             config.clone(),
             backend_manager.clone(),
             security_engine.clone(),
         ));
-        
+
         let response_processor = Arc::new(ResponseProcessor::new(
             trace_collector.clone(),
             security_engine.clone(),
         ));
-        
+
         Ok(Self {
             config,
             request_processor,
@@ -3009,40 +3009,40 @@ impl ProxyServer {
             trace_collector,
         })
     }
-    
+
     pub async fn serve(self) -> Result<()> {
         let app = self.create_router();
-        
+
         let listener = TcpListener::bind(&self.config.server.bind_address).await?;
-        
+
         info!("LLMSec Trace Proxy listening on {}", self.config.server.bind_address);
-        
+
         axum::serve(listener, app)
             .with_graceful_shutdown(self.shutdown_signal())
             .await?;
-            
+
         Ok(())
     }
-    
+
     fn create_router(self) -> Router {
         let shared_state = Arc::new(self);
-        
+
         Router::new()
             // Main proxy endpoints - catch all HTTP methods
             .route("/v1/*path", any(proxy_handler))
             .route("/api/*path", any(proxy_handler))
             .route("/generate", any(proxy_handler))
             .route("/generate_stream", any(proxy_handler))
-            
+
             // Health and metrics endpoints
             .route("/health", get(health_handler))
             .route("/ready", get(readiness_handler))
             .route("/metrics", get(metrics_handler))
-            
+
             // Administrative endpoints
             .route("/admin/config", get(config_handler))
             .route("/admin/backends", get(backends_handler))
-            
+
             .layer(
                 ServiceBuilder::new()
                     .layer(TraceLayer::new_for_http())
@@ -3052,14 +3052,14 @@ impl ProxyServer {
             )
             .with_state(shared_state)
     }
-    
+
     async fn shutdown_signal(&self) {
         let ctrl_c = async {
             tokio::signal::ctrl_c()
                 .await
                 .expect("Failed to install Ctrl+C handler");
         };
-        
+
         #[cfg(unix)]
         let terminate = async {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -3067,15 +3067,15 @@ impl ProxyServer {
                 .recv()
                 .await;
         };
-        
+
         #[cfg(not(unix))]
         let terminate = std::future::pending::<()>();
-        
+
         tokio::select! {
             _ = ctrl_c => {},
             _ = terminate => {},
         }
-        
+
         info!("Shutdown signal received, gracefully stopping proxy server");
     }
 }
@@ -3086,42 +3086,42 @@ async fn proxy_handler(
     mut request: Request,
 ) -> Result<Response, ProxyError> {
     let request_start = Instant::now();
-    
+
     // Extract path and method for routing
     let path = request.uri().path();
     let method = request.method().clone();
-    
+
     info!("Proxying {} {}", method, path);
-    
+
     // Process request (tenant identification, security analysis)
     let processed_request = server
         .request_processor
         .process_request(request)
         .await?;
-    
+
     // Route to appropriate backend
     let backend = server
         .backend_manager
         .select_backend(&processed_request)
         .await?;
-    
+
     // Forward request and handle response
     let backend_response = backend
         .forward_request(processed_request.clone())
         .await?;
-    
+
     // Process response (streaming, trace collection)
     let final_response = server
         .response_processor
         .process_response(backend_response, processed_request)
         .await?;
-    
+
     // Record metrics
     let request_duration = request_start.elapsed();
     metrics::histogram!("proxy_request_duration", request_duration);
     metrics::counter!("proxy_requests_total")
         .increment(1);
-    
+
     Ok(final_response.into_response())
 }
 ```
@@ -3142,19 +3142,19 @@ pub struct RequestInterceptor {
 impl RequestInterceptor {
     pub async fn intercept_request(&self, request: Request<Body>) -> Result<InterceptedRequest> {
         let (parts, body) = request.into_parts();
-        
+
         // Capture headers
         let headers = parts.headers.clone();
         let method = parts.method.clone();
         let uri = parts.uri.clone();
-        
+
         // Stream body with size limits
         let body_stream = StreamReader::new(body);
         let limited_stream = body_stream.take(self.max_body_size);
-        
+
         // Buffer body for analysis while preserving streaming
         let (body_for_analysis, body_for_forwarding) = self.tee_body_stream(limited_stream).await?;
-        
+
         Ok(InterceptedRequest {
             method,
             uri,
@@ -3164,31 +3164,31 @@ impl RequestInterceptor {
             received_at: Utc::now(),
         })
     }
-    
+
     async fn tee_body_stream(
         &self,
         mut stream: impl Stream<Item = Result<Bytes, std::io::Error>>,
     ) -> Result<(Vec<u8>, Body)> {
         let mut analysis_buffer = Vec::new();
         let mut forwarding_chunks = Vec::new();
-        
+
         // Read stream once, store for both analysis and forwarding
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
-            
+
             // Store for security analysis
             analysis_buffer.extend_from_slice(&chunk);
-            
+
             // Store for forwarding (as Bytes to avoid copying)
             forwarding_chunks.push(chunk);
         }
-        
+
         // Create new body for forwarding from stored chunks
         let forwarding_stream = futures_util::stream::iter(
             forwarding_chunks.into_iter().map(Ok::<Bytes, hyper::Error>)
         );
         let forwarding_body = Body::wrap_stream(forwarding_stream);
-        
+
         Ok((analysis_buffer, forwarding_body))
     }
 }
@@ -3205,13 +3205,13 @@ impl ResponseInterceptor {
         trace_context: TraceContext,
     ) -> Result<Response<Body>> {
         let (parts, body) = response.into_parts();
-        
+
         // Check if this is a streaming response (SSE)
         let is_streaming = parts.headers.get("content-type")
             .and_then(|ct| ct.to_str().ok())
             .map(|ct| ct.contains("text/plain") || ct.contains("text/event-stream"))
             .unwrap_or(false);
-        
+
         if is_streaming {
             // Handle Server-Sent Events streaming
             let processed_body = self.process_sse_stream(body, trace_context).await?;
@@ -3222,7 +3222,7 @@ impl ResponseInterceptor {
             Ok(Response::from_parts(parts, processed_body))
         }
     }
-    
+
     async fn process_sse_stream(
         &self,
         body: Body,
@@ -3230,17 +3230,17 @@ impl ResponseInterceptor {
     ) -> Result<Body> {
         let reader = StreamReader::new(body);
         let mut lines = FramedRead::new(reader, LinesCodec::new());
-        
+
         let processed_stream = lines.map({
             let trace_context = trace_context.clone();
             let collector = self.trace_collector.clone();
             let analyzer = self.security_analyzer.clone();
-            
+
             move |line_result| {
                 let trace_context = trace_context.clone();
                 let collector = collector.clone();
                 let analyzer = analyzer.clone();
-                
+
                 async move {
                     match line_result {
                         Ok(line) => {
@@ -3257,7 +3257,7 @@ impl ResponseInterceptor {
                                         }
                                     }
                                 });
-                                
+
                                 // Async security analysis
                                 tokio::spawn({
                                     let trace_id = trace_context.trace_id;
@@ -3270,7 +3270,7 @@ impl ResponseInterceptor {
                                     }
                                 });
                             }
-                            
+
                             // Return original line unchanged
                             Ok(Bytes::from(line + "\n"))
                         }
@@ -3279,7 +3279,7 @@ impl ResponseInterceptor {
                 }
             }
         });
-        
+
         Ok(Body::wrap_stream(processed_stream))
     }
 }
@@ -3325,12 +3325,12 @@ impl SSEProcessor {
         let mut first_token_time: Option<Instant> = None;
         let stream_start = Instant::now();
         let mut content_buffer = String::new();
-        
+
         stream.map(move |chunk_result| {
             match chunk_result {
                 Ok(chunk) => {
                     let chunk_str = String::from_utf8_lossy(&chunk);
-                    
+
                     // Process each line in the chunk
                     for line in chunk_str.lines() {
                         if let Some(sse_data) = self.parse_sse_line(line) {
@@ -3339,7 +3339,7 @@ impl SSEProcessor {
                                 if first_token_time.is_none() {
                                     first_token_time = Some(Instant::now());
                                     let ttft = stream_start.elapsed();
-                                    
+
                                     tokio::spawn({
                                         let metrics = self.metrics_collector.clone();
                                         let tenant_id = trace_context.tenant_id;
@@ -3348,10 +3348,10 @@ impl SSEProcessor {
                                         }
                                     });
                                 }
-                                
+
                                 token_count += 1;
                                 content_buffer.push_str(&token_data.text);
-                                
+
                                 // Real-time security analysis every 10 tokens
                                 if token_count % 10 == 0 {
                                     tokio::spawn({
@@ -3368,7 +3368,7 @@ impl SSEProcessor {
                             }
                         }
                     }
-                    
+
                     // Pass through original chunk unchanged
                     Ok(chunk)
                 }
@@ -3376,7 +3376,7 @@ impl SSEProcessor {
             }
         })
     }
-    
+
     fn parse_sse_line(&self, line: &str) -> Option<serde_json::Value> {
         if line.starts_with("data: ") {
             let data_content = &line[6..];
@@ -3389,7 +3389,7 @@ impl SSEProcessor {
             None
         }
     }
-    
+
     fn extract_token_from_sse(&self, sse_data: &serde_json::Value) -> Option<TokenData> {
         // OpenAI format
         if let Some(choices) = sse_data["choices"].as_array() {
@@ -3405,7 +3405,7 @@ impl SSEProcessor {
                 }
             }
         }
-        
+
         // Anthropic format
         if sse_data["type"] == "content_block_delta" {
             if let Some(delta) = sse_data.get("delta") {
@@ -3418,7 +3418,7 @@ impl SSEProcessor {
                 }
             }
         }
-        
+
         // TGI format
         if let Some(token) = sse_data.get("token") {
             if let Some(text) = token["text"].as_str() {
@@ -3429,7 +3429,7 @@ impl SSEProcessor {
                 });
             }
         }
-        
+
         None
     }
 }
@@ -3482,7 +3482,7 @@ struct CircuitBreakerState {
 impl CircuitBreaker {
     pub fn new(config: CircuitBreakerConfig) -> Self {
         let half_open_permits = config.half_open_max_calls as usize;
-        
+
         Self {
             state: Arc::new(Mutex::new(CircuitBreakerState {
                 current_state: CircuitState::Closed,
@@ -3495,7 +3495,7 @@ impl CircuitBreaker {
             half_open_semaphore: Arc::new(Semaphore::new(half_open_permits)),
         }
     }
-    
+
     pub async fn call<F, T, E>(&self, operation: F) -> Result<T, CircuitBreakerError<E>>
     where
         F: Future<Output = Result<T, E>>,
@@ -3535,16 +3535,16 @@ impl CircuitBreaker {
             }
         }
     }
-    
+
     async fn can_execute(&self) -> CircuitDecision {
         let current_state = {
             let state = self.state.lock().unwrap();
             state.current_state.clone()
         };
-        
+
         match current_state {
             CircuitState::Closed => CircuitDecision::Allow,
-            
+
             CircuitState::Open => {
                 // Check if timeout has elapsed
                 if let Some(last_failure) = *self.last_failure_time.lock().unwrap() {
@@ -3556,7 +3556,7 @@ impl CircuitBreaker {
                 }
                 CircuitDecision::Reject
             }
-            
+
             CircuitState::HalfOpen => {
                 // Try to acquire permit for half-open execution
                 match self.half_open_semaphore.try_acquire() {
@@ -3566,15 +3566,15 @@ impl CircuitBreaker {
             }
         }
     }
-    
+
     async fn record_success(&self) {
         let success_count = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
-        
+
         let current_state = {
             let state = self.state.lock().unwrap();
             state.current_state.clone()
         };
-        
+
         match current_state {
             CircuitState::HalfOpen => {
                 if success_count >= self.config.success_threshold {
@@ -3584,16 +3584,16 @@ impl CircuitBreaker {
             _ => {} // No state change needed
         }
     }
-    
+
     async fn record_failure(&self) {
         let failure_count = self.failure_count.fetch_add(1, Ordering::Relaxed) + 1;
         *self.last_failure_time.lock().unwrap() = Some(Instant::now());
-        
+
         let current_state = {
             let state = self.state.lock().unwrap();
             state.current_state.clone()
         };
-        
+
         match current_state {
             CircuitState::Closed => {
                 if failure_count >= self.config.failure_threshold {
@@ -3607,43 +3607,43 @@ impl CircuitBreaker {
             _ => {} // Already open
         }
     }
-    
+
     async fn transition_to_open(&self) {
         {
             let mut state = self.state.lock().unwrap();
             state.current_state = CircuitState::Open;
             state.state_changed_at = Instant::now();
         }
-        
+
         log::warn!("Circuit breaker opened due to failures");
-        
+
         // Reset success count
         self.success_count.store(0, Ordering::Relaxed);
     }
-    
+
     async fn transition_to_half_open(&self) {
         {
             let mut state = self.state.lock().unwrap();
             state.current_state = CircuitState::HalfOpen;
             state.state_changed_at = Instant::now();
         }
-        
+
         log::info!("Circuit breaker transitioning to half-open for testing");
-        
+
         // Reset counters
         self.failure_count.store(0, Ordering::Relaxed);
         self.success_count.store(0, Ordering::Relaxed);
     }
-    
+
     async fn transition_to_closed(&self) {
         {
             let mut state = self.state.lock().unwrap();
             state.current_state = CircuitState::Closed;
             state.state_changed_at = Instant::now();
         }
-        
+
         log::info!("Circuit breaker closed - normal operation restored");
-        
+
         // Reset all counters
         self.failure_count.store(0, Ordering::Relaxed);
         self.success_count.store(0, Ordering::Relaxed);
@@ -3723,70 +3723,70 @@ impl ProxyConfig {
     pub fn from_file(path: &str) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| ConfigError::FileRead(path.to_string(), e))?;
-        
+
         let config: ProxyConfig = toml::from_str(&content)
             .or_else(|_| serde_yaml::from_str(&content))
             .or_else(|_| serde_json::from_str(&content))
             .map_err(|e| ConfigError::Parse(e.to_string()))?;
-        
+
         config.validate()?;
-        
+
         Ok(config)
     }
-    
+
     pub fn from_env() -> Result<Self, ConfigError> {
         let mut config = Self::default();
-        
+
         // Override with environment variables
         if let Ok(bind_addr) = std::env::var("LLMSEC_BIND_ADDRESS") {
             config.server.bind_address = bind_addr;
         }
-        
+
         if let Ok(clickhouse_nodes) = std::env::var("LLMSEC_CLICKHOUSE_NODES") {
             config.storage.clickhouse.nodes = clickhouse_nodes
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect();
         }
-        
+
         // ... more environment variable mappings
-        
+
         config.validate()?;
         Ok(config)
     }
-    
+
     fn validate(&self) -> Result<(), ConfigError> {
         let mut errors = Vec::new();
-        
+
         // Validate server config
         if self.server.bind_address.is_empty() {
             errors.push("server.bind_address cannot be empty".to_string());
         }
-        
+
         if self.server.max_connections == 0 {
             errors.push("server.max_connections must be > 0".to_string());
         }
-        
+
         // Validate backends
         if self.backends.is_empty() {
             errors.push("At least one backend must be configured".to_string());
         }
-        
+
         for (name, backend) in &self.backends {
             if backend.base_url.is_none() && backend.endpoints.is_none() {
                 errors.push(format!("Backend '{}' must have either base_url or endpoints", name));
             }
         }
-        
+
         // Validate storage config
         if self.storage.clickhouse.nodes.is_empty() {
             errors.push("storage.clickhouse.nodes cannot be empty".to_string());
         }
-        
+
         if !errors.is_empty() {
             return Err(ConfigError::Validation(errors));
         }
-        
+
         Ok(())
     }
 }
@@ -3889,16 +3889,16 @@ T = TypeVar('T')
 
 class LLMInstrumenter:
     """Main instrumentation class that wraps LLM clients."""
-    
+
     def __init__(self, config: InstrumentationConfig):
         self.config = config
         self.tracing_manager = TracingManager(config.tracing)
         self.security_analyzer = SecurityAnalyzer(config.security)
         self._active_traces: Dict[str, 'TraceContext'] = {}
-    
+
     def instrument(self, client: Any) -> Any:
         """Instrument any LLM client with automatic tracing."""
-        
+
         if isinstance(client, (OpenAI, AsyncOpenAI)):
             return self._instrument_openai_client(client)
         elif isinstance(client, (Anthropic, AsyncAnthropic)):
@@ -3906,13 +3906,13 @@ class LLMInstrumenter:
         else:
             # Generic instrumentation for any HTTP-based client
             return self._instrument_generic_client(client)
-    
+
     def _instrument_openai_client(self, client: Union[OpenAI, AsyncOpenAI]) -> Union[OpenAI, AsyncOpenAI]:
         """Instrument OpenAI client with tracing and security analysis."""
-        
+
         # Wrap the chat completions create method
         original_create = client.chat.completions.create
-        
+
         if asyncio.iscoroutinefunction(original_create):
             @functools.wraps(original_create)
             async def traced_create(*args, **kwargs):
@@ -3921,56 +3921,56 @@ class LLMInstrumenter:
             @functools.wraps(original_create)
             def traced_create(*args, **kwargs):
                 return self._trace_openai_request_sync(original_create, *args, **kwargs)
-        
+
         # Replace the original method
         client.chat.completions.create = traced_create
-        
+
         # Also instrument streaming if available
         if hasattr(client.chat.completions, 'create_stream'):
             original_stream = client.chat.completions.create_stream
-            
+
             if asyncio.iscoroutinefunction(original_stream):
                 @functools.wraps(original_stream)
                 async def traced_stream(*args, **kwargs):
                     return await self._trace_openai_stream_async(original_stream, *args, **kwargs)
             else:
-                @functools.wraps(original_stream)  
+                @functools.wraps(original_stream)
                 def traced_stream(*args, **kwargs):
                     return self._trace_openai_stream_sync(original_stream, *args, **kwargs)
-            
+
             client.chat.completions.create_stream = traced_stream
-        
+
         return client
-    
+
     async def _trace_openai_request_async(self, original_func: Callable, *args, **kwargs) -> Any:
         """Trace an async OpenAI request with security analysis."""
-        
+
         # Extract request parameters
         request_data = self._extract_openai_params(args, kwargs)
-        
+
         # Start trace
         trace_context = await self._start_trace(
             operation_type="openai_chat_completion",
             model_name=request_data.get("model"),
             request_params=request_data
         )
-        
+
         try:
             # Pre-request security analysis (async, non-blocking)
             asyncio.create_task(
                 self.security_analyzer.analyze_request_async(request_data, trace_context.trace_id)
             )
-            
+
             # Execute original request
             start_time = time.perf_counter()
             response = await original_func(*args, **kwargs)
             request_duration = time.perf_counter() - start_time
-            
+
             # Capture response data
             await self._capture_response_data(trace_context, response, request_duration)
-            
+
             return response
-            
+
         except Exception as e:
             # Capture error information
             await self._capture_error(trace_context, e)
@@ -3978,46 +3978,46 @@ class LLMInstrumenter:
         finally:
             # End trace
             await self._end_trace(trace_context)
-    
+
     def _trace_openai_request_sync(self, original_func: Callable, *args, **kwargs) -> Any:
         """Trace a sync OpenAI request with security analysis."""
-        
+
         # Run async tracing in background thread to avoid blocking
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         try:
             return loop.run_until_complete(
                 self._trace_openai_request_async(original_func, *args, **kwargs)
             )
         finally:
             loop.close()
-    
+
     async def _trace_openai_stream_async(self, original_func: Callable, *args, **kwargs) -> Any:
         """Trace an async OpenAI streaming request."""
-        
+
         request_data = self._extract_openai_params(args, kwargs)
         trace_context = await self._start_trace(
             operation_type="openai_chat_completion_stream",
             model_name=request_data.get("model"),
             request_params=request_data
         )
-        
+
         try:
             # Start streaming request
             start_time = time.perf_counter()
             stream = await original_func(*args, **kwargs)
-            
+
             # Wrap the stream for monitoring
             return self._wrap_openai_stream(stream, trace_context, start_time)
-            
+
         except Exception as e:
             await self._capture_error(trace_context, e)
             raise
-    
+
     def _wrap_openai_stream(self, stream, trace_context: 'TraceContext', start_time: float):
         """Wrap streaming response for real-time monitoring."""
-        
+
         class TracedStream:
             def __init__(self, original_stream, instrumenter, trace_ctx, req_start_time):
                 self.stream = original_stream
@@ -4027,24 +4027,24 @@ class LLMInstrumenter:
                 self.tokens_collected = 0
                 self.content_buffer = ""
                 self.first_token_time = None
-            
+
             def __iter__(self):
                 return self
-            
+
             def __next__(self):
                 try:
                     chunk = next(self.stream)
-                    
+
                     # Process chunk for monitoring
                     asyncio.create_task(self._process_chunk(chunk))
-                    
+
                     return chunk
-                    
+
                 except StopIteration:
                     # Stream ended
                     asyncio.create_task(self._finalize_stream())
                     raise
-            
+
             async def _process_chunk(self, chunk):
                 """Process individual stream chunk."""
                 if hasattr(chunk, 'choices') and chunk.choices:
@@ -4057,10 +4057,10 @@ class LLMInstrumenter:
                             await self.instrumenter.tracing_manager.record_first_token_time(
                                 self.trace_context.trace_id, ttft
                             )
-                        
+
                         self.tokens_collected += 1
                         self.content_buffer += choice.delta.content
-                        
+
                         # Real-time security analysis every 10 tokens
                         if self.tokens_collected % 10 == 0:
                             asyncio.create_task(
@@ -4068,7 +4068,7 @@ class LLMInstrumenter:
                                     self.content_buffer, self.trace_context.trace_id
                                 )
                             )
-            
+
             async def _finalize_stream(self):
                 """Finalize stream monitoring."""
                 total_duration = time.perf_counter() - self.start_time
@@ -4076,12 +4076,12 @@ class LLMInstrumenter:
                     self.trace_context, self.content_buffer, total_duration, self.tokens_collected
                 )
                 await self.instrumenter._end_trace(self.trace_context)
-        
+
         return TracedStream(stream, self, trace_context, start_time)
 
 class TraceContext:
     """Context object for tracking individual traces."""
-    
+
     def __init__(self, trace_id: str, operation_type: str, model_name: str):
         self.trace_id = trace_id
         self.operation_type = operation_type
@@ -4089,11 +4089,11 @@ class TraceContext:
         self.start_time = time.perf_counter()
         self.metadata = {}
         self.tags = {}
-    
+
     def set_tag(self, key: str, value: str):
         """Set a tag on the trace."""
         self.tags[key] = value
-    
+
     def set_metadata(self, key: str, value: Any):
         """Set metadata on the trace."""
         self.metadata[key] = value
@@ -4101,10 +4101,10 @@ class TraceContext:
 # Convenience function for easy instrumentation
 def instrument(client: Any, config: Optional[InstrumentationConfig] = None) -> Any:
     """Instrument any LLM client with default or provided configuration."""
-    
+
     if config is None:
         config = InstrumentationConfig.from_env()
-    
+
     instrumenter = LLMInstrumenter(config)
     return instrumenter.instrument(client)
 ```
@@ -4127,7 +4127,7 @@ class TracingConfig:
     headers: Dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 30
 
-@dataclass 
+@dataclass
 class SecurityConfig:
     """Configuration for security analysis."""
     enabled: bool = True
@@ -4135,7 +4135,7 @@ class SecurityConfig:
     pii_detection_enabled: bool = True
     real_time_analysis: bool = True
     analysis_timeout_seconds: int = 1
-    
+
 @dataclass
 class InstrumentationConfig:
     """Main configuration for LLMSec Trace instrumentation."""
@@ -4145,7 +4145,7 @@ class InstrumentationConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     sampling_rate: float = 1.0
     debug: bool = False
-    
+
     @classmethod
     def from_env(cls) -> 'InstrumentationConfig':
         """Create configuration from environment variables."""
@@ -4165,15 +4165,15 @@ class InstrumentationConfig:
             sampling_rate=float(os.getenv('LLMSEC_SAMPLING_RATE', '1.0')),
             debug=os.getenv('LLMSEC_DEBUG', 'false').lower() == 'true',
         )
-    
+
     @classmethod
     def from_file(cls, config_path: str) -> 'InstrumentationConfig':
         """Load configuration from YAML/JSON file."""
         import yaml
-        
+
         with open(config_path, 'r') as f:
             config_data = yaml.safe_load(f)
-        
+
         return cls(**config_data)
 ```
 
@@ -4286,7 +4286,7 @@ async def main():
     client = instrument(AsyncOpenAI(
         base_url="http://vllm-cluster:8000/v1"
     ))
-    
+
     # Concurrent requests with individual tracing
     tasks = []
     for i in range(10):
@@ -4295,10 +4295,10 @@ async def main():
             messages=[{"role": "user", "content": f"Query {i}"}]
         )
         tasks.append(task)
-    
+
     # All requests traced independently with correlation
     responses = await asyncio.gather(*tasks)
-    
+
     for i, response in enumerate(responses):
         print(f"Response {i}: {response.choices[0].message.content}")
 
@@ -4376,7 +4376,7 @@ from openai import OpenAI
 class CompanySecurityPolicy(SecurityPolicy):
     def analyze_request(self, request_data):
         results = super().analyze_request(request_data)
-        
+
         # Add custom company-specific checks
         if self._contains_confidential_keywords(request_data):
             results.add_violation(
@@ -4384,9 +4384,9 @@ class CompanySecurityPolicy(SecurityPolicy):
                 severity="high",
                 message="Request contains confidential keywords"
             )
-        
+
         return results
-    
+
     def _contains_confidential_keywords(self, request_data):
         confidential_keywords = ["SECRET", "CONFIDENTIAL", "INTERNAL_ONLY"]
         content = str(request_data.get("messages", "")).upper()

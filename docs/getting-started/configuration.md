@@ -70,14 +70,14 @@ listen_addr: "0.0.0.0:8080"
 # Production storage backends
 storage:
   profile: "production"
-  
+
   # PostgreSQL for structured data
   postgres_url: "postgresql://llmtrace:password@postgres:5432/llmtrace"
-  
+
   # ClickHouse for high-volume analytics
   clickhouse_url: "http://clickhouse:8123"
   clickhouse_database: "llmtrace"
-  
+
   # Redis for caching and rate limiting
   redis_url: "redis://redis:6379"
 
@@ -87,14 +87,14 @@ security:
   enable_pii_detection: true
   enable_data_leakage_detection: true
   enable_streaming_analysis: true
-  
+
   # Custom security rules
   prompt_injection:
     sensitivity: "high"
     custom_patterns:
       - "ignore.*previous.*instructions"
       - "system.*prompt.*override"
-  
+
   pii_detection:
     types: ["email", "phone", "ssn", "credit_card"]
     redaction_enabled: true
@@ -104,7 +104,7 @@ rate_limiting:
   enabled: true
   requests_per_minute: 1000
   burst_capacity: 2000
-  
+
   # Per-tenant limits
   per_tenant:
     requests_per_minute: 100
@@ -114,10 +114,10 @@ rate_limiting:
 cost_control:
   enabled: true
   daily_budget_usd: 1000.0
-  
+
   # Per-agent budgets
   per_agent_daily_budget_usd: 100.0
-  
+
   # Token limits
   max_prompt_tokens: 4000
   max_completion_tokens: 2000
@@ -130,12 +130,12 @@ alerts:
     webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
     channel: "#llm-alerts"
     mention_users: ["@security-team"]
-    
+
   # PagerDuty for critical issues
   pagerduty:
     enabled: true
     integration_key: "your-pagerduty-key"
-    
+
   # Email alerts
   email:
     enabled: true
@@ -147,17 +147,17 @@ alerts:
 # Anomaly detection
 anomaly_detection:
   enabled: true
-  
+
   # Cost anomalies
   cost:
     threshold_multiplier: 2.0
     window_minutes: 60
-    
+
   # Token usage anomalies
   tokens:
     threshold_multiplier: 3.0
     window_minutes: 30
-    
+
   # Request velocity anomalies
   velocity:
     threshold_multiplier: 5.0
@@ -167,7 +167,7 @@ anomaly_detection:
 logging:
   level: "info"
   format: "json"
-  
+
   # Log sampling for high-volume environments
   sampling:
     enabled: true
@@ -179,7 +179,7 @@ monitoring:
   prometheus:
     enabled: true
     listen_addr: "0.0.0.0:9090"
-    
+
   # Health check configuration
   health_check:
     timeout_seconds: 5
@@ -214,7 +214,7 @@ security:
   enable_pii_detection: true
   enable_data_leakage_detection: true
   enable_streaming_analysis: true
-  
+
   # Strict prompt injection detection
   prompt_injection:
     sensitivity: "maximum"
@@ -226,19 +226,19 @@ security:
       - "pretend.*you.*are"
       - "act.*as.*different"
       - "bypass.*safety"
-      
+
   # Comprehensive PII detection
   pii_detection:
     types: ["email", "phone", "ssn", "credit_card", "passport", "driver_license"]
     redaction_enabled: true
     strict_mode: true
-    
+
   # Data leakage protection
   data_leakage:
     detect_credential_exposure: true
     detect_system_prompt_leaks: true
     detect_api_key_exposure: true
-    
+
   # OWASP LLM Top 10 coverage
   owasp_llm_top10:
     enabled: true
@@ -249,7 +249,7 @@ rate_limiting:
   enabled: true
   requests_per_minute: 100
   burst_capacity: 200
-  
+
   # Per-tenant strict limits
   per_tenant:
     requests_per_minute: 10
@@ -260,11 +260,11 @@ cost_control:
   enabled: true
   daily_budget_usd: 100.0
   per_agent_daily_budget_usd: 10.0
-  
+
   # Strict token limits
   max_prompt_tokens: 2000
   max_completion_tokens: 1000
-  
+
   # Block expensive models
   blocked_models: ["gpt-4-turbo", "claude-3-opus"]
 
@@ -275,12 +275,12 @@ alerts:
     webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
     channel: "#security-alerts"
     mention_users: ["@security-team", "@incident-response"]
-    
+
   email:
     enabled: true
     smtp_host: "smtp.company.com"
     to_addresses: ["security@company.com"]
-    
+
   # Alert on any security finding
   security_thresholds:
     prompt_injection: "any"
@@ -291,11 +291,11 @@ alerts:
 logging:
   level: "debug"
   format: "json"
-  
+
   # Log everything for audit trails
   sampling:
     enabled: false
-    
+
   # Secure log shipping
   audit:
     enabled: true
@@ -318,26 +318,26 @@ storage:
 # Cost-focused settings
 cost_control:
   enabled: true
-  
+
   # Overall budget limits
   daily_budget_usd: 500.0
   weekly_budget_usd: 3000.0
   monthly_budget_usd: 10000.0
-  
+
   # Per-agent limits
   per_agent_daily_budget_usd: 50.0
   per_agent_weekly_budget_usd: 300.0
-  
+
   # Per-model limits
   per_model_daily_budget_usd:
     gpt-4: 200.0
     gpt-3.5-turbo: 100.0
     claude-3: 150.0
-  
+
   # Token limits to prevent expensive requests
   max_prompt_tokens: 3000
   max_completion_tokens: 1500
-  
+
   # Block expensive models during certain hours
   schedule:
     business_hours_only:
@@ -348,11 +348,11 @@ cost_control:
 # Aggressive cost anomaly detection
 anomaly_detection:
   enabled: true
-  
+
   cost:
     threshold_multiplier: 1.5  # Alert on 50% cost increase
     window_minutes: 30
-    
+
   tokens:
     threshold_multiplier: 2.0
     window_minutes: 15
@@ -363,7 +363,7 @@ alerts:
     enabled: true
     webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
     channel: "#cost-alerts"
-    
+
   # Alert thresholds
   cost_thresholds:
     daily_spend_percentage: 80  # Alert at 80% of daily budget
@@ -374,7 +374,7 @@ alerts:
 security:
   enable_prompt_injection_detection: true
   enable_pii_detection: false  # Disabled to reduce processing cost
-  
+
   # Lightweight analysis only
   prompt_injection:
     sensitivity: "low"
@@ -486,9 +486,9 @@ security:
   prompt_injection:
     custom_patterns:
       - "(?i)ignore.*previous.*instructions"
-      - "(?i)system.*prompt.*override" 
+      - "(?i)system.*prompt.*override"
       - "(?i)pretend.*you.*are.*different"
-      
+
   pii_detection:
     custom_patterns:
       internal_employee_id: "EMP\\d{6}"
@@ -502,7 +502,7 @@ security:
 tenancy:
   mode: "api_key"  # or "header"
   header_name: "X-LLMTrace-Tenant-ID"
-  
+
   # Per-tenant settings
   tenant_config:
     customer_a:
@@ -510,7 +510,7 @@ tenancy:
         daily_budget_usd: 100
       rate_limiting:
         requests_per_minute: 50
-        
+
     customer_b:
       security:
         enable_pii_detection: false  # They handle PII themselves
@@ -523,13 +523,13 @@ tenancy:
 ```yaml
 storage:
   profile: "production"
-  
+
   # Time-based partitioning
   partitioning:
     strategy: "time"
     partition_size: "daily"
     retention_days: 90
-    
+
   # Hot/cold storage tiering
   tiering:
     hot_storage_days: 7
@@ -544,16 +544,16 @@ performance:
   # Worker thread configuration
   worker_threads: 4
   blocking_threads: 8
-  
+
   # Connection pooling
   connection_pools:
     postgres_max_connections: 20
     redis_max_connections: 10
-    
+
   # Request buffering
   request_buffer_size: 1024
   response_buffer_size: 4096
-  
+
   # Analysis queuing
   analysis_queue_size: 1000
   analysis_workers: 2
@@ -562,7 +562,7 @@ performance:
 ## Next Steps
 
 - **[Quick Start Guide](quickstart.md)** — Test your configuration
-- **[Integration Guides](../guides/)** — Connect your applications 
+- **[Integration Guides](../guides/)** — Connect your applications
 - **[Custom Policies Guide](../guides/custom-policies.md)** — Deep dive into security configuration
 - **[Production Deployment](../deployment/)** — Scale your configuration
 

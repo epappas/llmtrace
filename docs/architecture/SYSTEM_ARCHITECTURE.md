@@ -1,8 +1,8 @@
 # LLMSec Trace: System Architecture Document
 
-**Version**: 1.0  
-**Date**: 2025-01-29  
-**Status**: Final  
+**Version**: 1.0
+**Date**: 2025-01-29
+**Status**: Final
 
 ## Table of Contents
 
@@ -254,10 +254,10 @@ impl SecurityAnalysisEngine {
         let prompt_result = self.prompt_injection.analyze(&trace.input).await?;
         let pii_result = self.pii_detector.scan_content(&trace).await?;
         let anomaly_result = self.anomaly_detector.detect_anomalies(&trace).await?;
-        
+
         self.event_aggregator.aggregate_results(
             prompt_result,
-            pii_result, 
+            pii_result,
             anomaly_result,
             trace
         ).await
@@ -401,7 +401,7 @@ impl SecurityAnalysisEngine {
 
 **Given**: A client application sending 10,000 traces/second
 **When**: Traces are sent via gRPC API with valid authentication
-**Then**: 
+**Then**:
 - All traces are ingested within 100ms P95
 - No data loss occurs
 - Tenant isolation is enforced
@@ -613,7 +613,7 @@ pub mod tenant {
 }
 ```
 
-**Dependencies**: 
+**Dependencies**:
 - `serde` (serialization)
 - `uuid` (tenant/trace IDs)
 - `chrono` (timestamps)
@@ -762,7 +762,7 @@ graph TD
 #[async_trait]
 pub trait TenantIsolated {
     type Context;
-    
+
     async fn with_tenant<T>(&self, tenant_id: TenantId, op: impl FnOnce(Self::Context) -> T) -> Result<T>;
 }
 
@@ -789,10 +789,10 @@ impl TraceProcessor {
     pub async fn process(&self, raw_data: &[u8]) -> Result<ProcessedTrace> {
         // Parse in-place without allocations
         let parsed = TraceSpan::parse_borrowed(raw_data)?;
-        
+
         // Use buffer pool for intermediate results
         let mut buffer = self.buffer_pool.acquire().await;
-        
+
         // Process without copying
         self.analyze_in_place(&parsed, &mut buffer).await
     }
@@ -819,12 +819,12 @@ impl SecurityEngine {
     pub fn register_analyzer(&mut self, analyzer: Box<dyn SecurityAnalyzer>) {
         self.analyzers.push(analyzer);
     }
-    
+
     pub async fn analyze_all(&self, trace: &TraceSpan) -> Vec<SecurityResult> {
         // Run all analyzers concurrently
         let futures = self.analyzers.iter()
             .map(|analyzer| analyzer.analyze(trace));
-        
+
         try_join_all(futures).await.unwrap_or_default()
     }
 }
@@ -902,7 +902,7 @@ pub struct SecurityEngine {
 
 **Choice Rationale**: ClickHouse selected for trace storage due to:
 - **Column Storage**: Optimal for analytical queries on wide trace schemas
-- **Compression**: 10x compression ratio on JSON trace data vs row stores  
+- **Compression**: 10x compression ratio on JSON trace data vs row stores
 - **Performance**: Sub-second aggregation queries on billions of spans
 - **Scalability**: Linear scaling with cluster size
 - **SQL Interface**: Familiar to security teams
@@ -918,22 +918,22 @@ CREATE TABLE traces.spans (
     start_time DateTime64(3),
     end_time DateTime64(3),
     duration_ms UInt32,
-    
+
     -- LLM-specific fields
     model_name LowCardinality(String),
     prompt_tokens UInt32,
     completion_tokens UInt32,
     total_tokens UInt32,
-    
+
     -- Content (compressed)
     prompt String CODEC(ZSTD(1)),
     response String CODEC(ZSTD(1)),
-    
+
     -- Security metadata
     security_score UInt8,
     security_events Array(String),
     pii_detected Array(LowCardinality(String)),
-    
+
     -- Metadata
     tags Map(String, String),
     events Array(String)
@@ -943,7 +943,7 @@ ORDER BY (tenant_id, start_time, trace_id, span_id)
 SETTINGS index_granularity = 8192;
 
 -- Hot/warm/cold tiering via TTL
-ALTER TABLE traces.spans MODIFY TTL 
+ALTER TABLE traces.spans MODIFY TTL
     start_time + INTERVAL 7 DAY TO DISK 'warm',
     start_time + INTERVAL 90 DAY TO DISK 'cold',
     start_time + INTERVAL 2 YEAR DELETE;
@@ -951,7 +951,7 @@ ALTER TABLE traces.spans MODIFY TTL
 
 **Cluster Configuration**:
 - **Hot Tier**: NVMe SSD, 7 day retention
-- **Warm Tier**: SATA SSD, 7-90 day retention  
+- **Warm Tier**: SATA SSD, 7-90 day retention
 - **Cold Tier**: Object storage (S3), 90 day - 2 year retention
 - **Replication**: 2x replication factor for durability
 
@@ -1013,7 +1013,7 @@ CREATE INDEX idx_audit_events_tenant_time ON audit_events(tenant_id, created_at 
 - **Compression**: LZ4 for speed over compression ratio
 
 **Warm Tier (7-90 days)**:
-- **Storage**: SATA SSD ClickHouse cluster  
+- **Storage**: SATA SSD ClickHouse cluster
 - **Replication**: 2x replication for durability
 - **Performance**: <500ms P95 query latency
 - **Compression**: ZSTD(3) for better compression
@@ -1047,7 +1047,7 @@ CREATE INDEX idx_audit_events_tenant_time ON audit_events(tenant_id, created_at 
 ```rust
 pub struct TenantStorageRouter {
     hot_storage: ClickHouseCluster,
-    warm_storage: ClickHouseCluster, 
+    warm_storage: ClickHouseCluster,
     cold_storage: ObjectStorage,
     metadata_storage: PostgresPool,
 }
@@ -1056,14 +1056,14 @@ impl TenantStorageRouter {
     pub async fn query_traces(&self, tenant_id: TenantId, query: &TraceQuery) -> Result<Vec<TraceSpan>> {
         // Validate tenant access
         self.validate_tenant_access(tenant_id).await?;
-        
+
         // Route to appropriate tier based on time range
         let storage = match query.time_range.age() {
             age if age < Duration::days(7) => &self.hot_storage,
             age if age < Duration::days(90) => &self.warm_storage,
             _ => return self.query_cold_storage(tenant_id, query).await,
         };
-        
+
         // Inject tenant_id into query
         let tenant_query = query.with_tenant_filter(tenant_id);
         storage.execute_query(tenant_query).await
@@ -1204,10 +1204,10 @@ impl MLInjectionDetector {
     pub async fn classify_prompt(&self, prompt: &str) -> Result<InjectionResult> {
         let tokens = self.tokenizer.encode(prompt)?;
         let embeddings = self.model.embed(&tokens).await?;
-        
+
         // Binary classification: legitimate vs injection
         let injection_score = self.model.classify(&embeddings).await?;
-        
+
         Ok(InjectionResult {
             is_injection: injection_score > self.threshold,
             confidence: injection_score,
@@ -1227,23 +1227,23 @@ pub struct StatisticalDetector {
 impl StatisticalDetector {
     pub fn detect_anomalies(&self, prompt: &str) -> Vec<Anomaly> {
         let mut anomalies = Vec::new();
-        
+
         // Length anomaly detection
         if self.is_length_anomaly(prompt.len()) {
             anomalies.push(Anomaly::UnusualLength);
         }
-        
+
         // Entropy analysis
         let entropy = self.calculate_entropy(prompt);
         if entropy > self.baseline_metrics.entropy_p99 {
             anomalies.push(Anomaly::HighEntropy);
         }
-        
+
         // Character distribution analysis
         if self.is_character_distribution_anomaly(prompt) {
             anomalies.push(Anomaly::UnusualCharacterDistribution);
         }
-        
+
         anomalies
     }
 }
@@ -1276,19 +1276,19 @@ pub enum PIIType {
 impl PIIDetector {
     pub async fn detect_pii(&self, content: &str, context: &TraceContext) -> Result<Vec<PIIMatch>> {
         let mut matches = Vec::new();
-        
+
         // Regex-based detection for structured data
         matches.extend(self.regex_engine.find_patterns(content));
-        
+
         // NER model for contextual detection
         let entities = self.ner_model.extract_entities(content).await?;
         matches.extend(self.entities_to_pii_matches(entities));
-        
+
         // Context-aware filtering
         let filtered_matches = self.context_analyzer
             .filter_with_context(matches, context)
             .await?;
-            
+
         // Remove false positives
         Ok(self.false_positive_filter.filter(filtered_matches))
     }
@@ -1309,12 +1309,12 @@ impl ZeroTrustGateway {
     pub async fn authorize_request(&self, request: &Request) -> Result<AuthorizationResult> {
         // 1. Verify identity
         let identity = self.identity_verifier.verify(request.auth_token()).await?;
-        
+
         // 2. Check authorization policy
         let policy_result = self.policy_engine
             .evaluate(identity, request.resource(), request.action())
             .await?;
-            
+
         // 3. Log access attempt
         self.audit_logger.log_access_attempt(AccessAttempt {
             identity: identity.clone(),
@@ -1323,7 +1323,7 @@ impl ZeroTrustGateway {
             result: policy_result.clone(),
             timestamp: Utc::now(),
         }).await?;
-        
+
         Ok(policy_result)
     }
 }
@@ -1359,7 +1359,7 @@ spec:
         memory: "2Gi"
         cpu: "1000m"
       requests:
-        memory: "1Gi" 
+        memory: "1Gi"
         cpu: "500m"
 ```
 

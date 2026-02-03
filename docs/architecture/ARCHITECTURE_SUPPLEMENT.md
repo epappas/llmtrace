@@ -1,8 +1,8 @@
 # LLMSec Trace: Architecture Supplement
 
-**Version**: 1.0  
-**Date**: 2026-01-31  
-**Status**: Final  
+**Version**: 1.0
+**Date**: 2026-01-31
+**Status**: Final
 **Supplement to**: SYSTEM_ARCHITECTURE.md v1.0
 
 ---
@@ -42,7 +42,7 @@ This supplement addresses critical architectural gaps in the LLMSec Trace system
 pub struct ScalableIngestionEngine {
     // Front-end load balancers (4x redundancy)
     ingress_tier: Vec<IngressNode>,
-    
+
     // Processing tier (auto-scaling 10-100 nodes)
     processing_tier: ProcessingCluster {
         min_replicas: 10,
@@ -51,7 +51,7 @@ pub struct ScalableIngestionEngine {
         scale_up_threshold: 80,
         scale_down_threshold: 40,
     },
-    
+
     // Storage tier (separate read/write paths)
     storage_tier: StorageCluster {
         write_nodes: Vec<ClickHouseWriteNode>,
@@ -87,7 +87,7 @@ Based on ClickHouse's demonstrated ability to handle billions of rows with linea
 ```sql
 -- Hot tier (NVMe SSD): 0-7 days
 -- Target: <100ms P95 query latency
-ALTER TABLE traces.spans MODIFY TTL 
+ALTER TABLE traces.spans MODIFY TTL
     start_time + INTERVAL 7 DAY TO DISK 'warm',
     start_time + INTERVAL 90 DAY TO DISK 'cold',
     start_time + INTERVAL 2 YEAR DELETE;
@@ -192,12 +192,12 @@ impl BackPressureController {
             RateLimitResult::Reject => self.reject_request(request).await,
         }
     }
-    
+
     fn calculate_shed_probability(&self) -> f64 {
         let cpu_usage = self.metrics.current_cpu_usage();
         let memory_usage = self.metrics.current_memory_usage();
         let queue_depth = self.metrics.current_queue_depth();
-        
+
         // Exponential back-off based on resource utilization
         ((cpu_usage + memory_usage) / 2.0).powf(2.0).min(0.95)
     }
@@ -258,25 +258,25 @@ impl LLMSecTracer {
         F: FnOnce() -> T,
     {
         let start_time = Instant::now();
-        
+
         // Execute operation without blocking
         let result = operation();
-        
+
         // Capture trace data asynchronously
         let trace_data = self.capture_trace_data(start_time, &result);
-        
+
         // Send to async processing (non-blocking)
         if self.circuit_breaker.is_closed() {
             let _ = self.async_sender.try_send(trace_data);
         }
-        
+
         result // Return immediately, no latency impact
     }
-    
+
     fn capture_trace_data<T>(&self, start_time: Instant, result: &T) -> TraceEvent {
         // Zero-copy data capture using buffer pool
         let mut buffer = self.buffer_pool.acquire();
-        
+
         TraceEvent {
             timestamp: start_time,
             duration: start_time.elapsed(),
@@ -353,14 +353,14 @@ impl GracefulDegradationController {
     pub fn handle_platform_unavailable(&self) {
         // Reduce sampling to minimize data loss
         self.sampling_rate.store(0.01, Ordering::Relaxed); // 1% sampling
-        
+
         // Switch to essential-only mode
         self.essential_only.store(true, Ordering::Relaxed);
-        
+
         // Start local buffering with size limits
         self.local_buffer.set_max_capacity(10_000_000); // 10MB limit
     }
-    
+
     pub fn should_trace_event(&self, event: &TraceEvent) -> bool {
         if self.essential_only.load(Ordering::Relaxed) {
             // Only trace security-critical events during degradation
@@ -393,7 +393,7 @@ processors:
     timeout: 1s
     send_batch_size: 8192
     send_batch_max_size: 65536
-  
+
   # Memory limiter to prevent OOM
   memory_limiter:
     limit_mib: 2048
@@ -469,18 +469,18 @@ jobs:
     with:
       build-definition: .slsa/build-definition.yml
       provenance-name: llmsec-trace-provenance.intoto.jsonl
-      
+
   sign:
     needs: build
     runs-on: ubuntu-latest
     steps:
     - name: Install Cosign
       uses: sigstore/cosign-installer@v3
-      
+
     - name: Sign Container Images
       run: |
         cosign sign --yes ${{ needs.build.outputs.container-digest }}
-        
+
     - name: Generate SBOM
       uses: anchore/sbom-action@v0.14.3
       with:
@@ -503,7 +503,7 @@ jobs:
     # NIST SP 800-218 compliance checks
     cargo audit --deny warnings
     semgrep --config=auto --error
-    
+
     # License compliance
     cargo license --format json > licenses.json
     license-checker --allowedLicenses Apache-2.0,MIT,BSD-3-Clause
@@ -523,32 +523,32 @@ impl SecureSecretsManager {
     pub async fn get_tenant_api_key(&self, tenant_id: TenantId) -> Result<ApiKey> {
         // Retrieve from Vault with automatic rotation
         let secret_path = format!("secret/tenants/{}/api-key", tenant_id);
-        
+
         let secret = self.vault_client.kv2()
             .read(&secret_path)
             .await?;
-            
+
         // Decrypt with current encryption key
         let encrypted_key = secret.data["api_key"].as_str()?;
         self.encryption_keys.decrypt(encrypted_key).await
     }
-    
+
     pub async fn rotate_tenant_secrets(&self, tenant_id: TenantId) -> Result<()> {
         // Automatic 30-day key rotation
         let new_key = ApiKey::generate_secure();
         let encrypted = self.encryption_keys.encrypt(&new_key).await?;
-        
+
         // Store new key
         self.vault_client.kv2()
             .create(&format!("secret/tenants/{}/api-key", tenant_id))
             .data([("api_key", encrypted)])
             .await?;
-            
+
         // Update Kubernetes secrets
         self.k8s_secret_store
             .update_secret(tenant_id, new_key)
             .await?;
-            
+
         Ok(())
     }
 }
@@ -674,35 +674,35 @@ impl AuditLogger {
             trace_id: Some(event.trace_id),
             digital_signature: String::new(), // Will be filled below
         };
-        
+
         // Sign audit event for tamper detection
         let signature = self.signer.sign(&audit_event).await?;
         let signed_event = AuditEvent {
             digital_signature: signature,
             ..audit_event
         };
-        
+
         // Store in tamper-evident storage
         self.storage.store_audit_event(signed_event).await?;
-        
+
         // Real-time SIEM forwarding
         self.structured_logger.security_event(&signed_event).await?;
-        
+
         Ok(())
     }
-    
+
     pub async fn verify_audit_trail(&self, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<AuditVerificationResult> {
         let events = self.storage.get_events_in_range(start, end).await?;
-        
+
         let mut verification_result = AuditVerificationResult::new();
-        
+
         for event in events {
             let is_valid = self.signer.verify(&event).await?;
             if !is_valid {
                 verification_result.add_tampered_event(event.event_id);
             }
         }
-        
+
         Ok(verification_result)
     }
 }
@@ -751,41 +751,41 @@ impl CedarPolicyEngine {
     ) -> Result<AuthorizationDecision> {
         // Cedar policy evaluation with <1ms latency guarantee
         let request = Request::new(principal.clone(), action.clone(), resource.clone(), context.clone())?;
-        
+
         // Check cache first (sub-microsecond lookup)
         if let Some(cached_decision) = self.check_cached_decision(&request) {
             return Ok(cached_decision);
         }
-        
+
         // Evaluate policies
         let policies = self.policy_store.get_applicable_policies(&request).await?;
         let response = self.authorizer.is_authorized(&request, &policies);
-        
+
         // Cache result with TTL
         self.cache_decision(&request, &response, Duration::minutes(5)).await;
-        
+
         Ok(AuthorizationDecision::from(response))
     }
-    
+
     pub async fn deploy_policy(&self, policy_text: &str) -> Result<PolicyDeployment> {
         // Policy validation pipeline
         let parsed_policy = Policy::parse(policy_text)?;
-        
+
         // Static analysis and formal verification
         let validation_result = self.validator.validate(&parsed_policy).await?;
         if !validation_result.is_valid() {
             return Err(PolicyError::ValidationFailed(validation_result.errors));
         }
-        
+
         // Shadow deployment for testing
         let shadow_result = self.shadow_deploy(&parsed_policy).await?;
         if shadow_result.has_conflicts() {
             return Err(PolicyError::ConflictDetected(shadow_result.conflicts));
         }
-        
+
         // Atomic deployment with rollback capability
         let deployment_id = self.atomic_deploy(&parsed_policy).await?;
-        
+
         Ok(PolicyDeployment {
             id: deployment_id,
             policy_id: parsed_policy.id(),
@@ -807,7 +807,7 @@ permit(
     resource == TraceData::"trace-456"
 )
 when {
-    resource.security_score < 80 && 
+    resource.security_score < 80 &&
     resource.content_type == "prompt"
 }
 unless {
@@ -912,16 +912,16 @@ jobs:
         for policy in policies/*.cedar; do
           cedar validate --schema schema.json "$policy"
         done
-        
+
     - name: Policy Conflict Detection
       run: |
         cedar analyze --detect-conflicts policies/
-        
+
     - name: Performance Testing
       run: |
         # Test policy evaluation performance
         cargo test --release policy_performance_tests
-        
+
     - name: Security Property Verification
       run: |
         # Formal verification of security properties
@@ -948,10 +948,10 @@ class LLMSecVLLMIntegration:
     def __init__(self, engine: AsyncLLMEngine, tracer: LLMSecTracer):
         self.engine = engine
         self.tracer = tracer
-        
+
     async def generate(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         sampling_params: SamplingParams,
         request_id: str,
     ) -> AsyncGenerator[RequestOutput, None]:
@@ -961,7 +961,7 @@ class LLMSecVLLMIntegration:
             model_name=self.engine.model_config.model,
             request_id=request_id,
         )
-        
+
         with trace_context:
             # Capture prompt metadata (zero-copy)
             trace_context.set_input_data(
@@ -969,7 +969,7 @@ class LLMSecVLLMIntegration:
                 sampling_params=sampling_params.to_dict(),
                 timestamp=time.time_ns(),
             )
-            
+
             try:
                 # Execute generation without performance impact
                 async for output in self.engine.generate(prompt, sampling_params, request_id):
@@ -979,14 +979,14 @@ class LLMSecVLLMIntegration:
                         finish_reason=output.outputs[0].finish_reason,
                     )
                     yield output
-                    
+
                 # Final trace data capture
                 trace_context.set_completion_data(
                     total_tokens=output.usage.total_tokens,
                     completion_tokens=output.usage.completion_tokens,
                     prompt_tokens=output.usage.prompt_tokens,
                 )
-                
+
             except Exception as e:
                 trace_context.record_error(e)
                 raise
@@ -1022,7 +1022,7 @@ def multi_turn_conversation(s, user_input: str):
     s += "User: " + user_input
     s += "\nAssistant:"
     s += sgl.gen("response", max_tokens=256, stop="User:")
-    
+
     # Plugin automatically captures:
     # - Input prompt structure
     # - Generated tokens and latency
@@ -1062,7 +1062,7 @@ impl TGIIntegration {
         // Start distributed trace
         let trace_id = TraceId::new();
         let span = self.tracer.start_span("tgi_generate_stream", trace_id);
-        
+
         // Add TGI-specific metadata
         span.set_attributes([
             ("model.name", request.model.clone()),
@@ -1070,13 +1070,13 @@ impl TGIIntegration {
             ("generation.temperature", request.parameters.temperature.to_string()),
             ("generation.top_p", request.parameters.top_p.to_string()),
         ]);
-        
+
         // Execute request with streaming capture
         let mut response_stream = self.client.generate_stream(request).await?.into_inner();
-        
+
         let mut tokens_generated = 0u32;
         let mut total_time = Duration::ZERO;
-        
+
         while let Some(response) = response_stream.message().await? {
             // Capture streaming metrics
             if let Some(token) = response.token {
@@ -1087,7 +1087,7 @@ impl TGIIntegration {
                     ("token.logprob", token.logprob.to_string()),
                 ]);
             }
-            
+
             // Performance metrics
             if let Some(details) = response.details {
                 span.set_attributes([
@@ -1097,10 +1097,10 @@ impl TGIIntegration {
                 ]);
             }
         }
-        
+
         span.set_status(SpanStatus::Ok);
         span.end();
-        
+
         Ok(response_stream)
     }
 }
@@ -1118,7 +1118,7 @@ class OllamaIntegration:
     def __init__(self, tracer: LocalTracer):
         self.client = ollama.Client()
         self.tracer = tracer
-        
+
     def generate(self, model: str, prompt: str, **kwargs) -> dict:
         # Local tracing without external dependencies
         with self.tracer.local_trace(
@@ -1126,21 +1126,21 @@ class OllamaIntegration:
             deployment_type="local",
             capture_mode="offline",  # Store locally, sync later
         ) as trace:
-            
+
             # Pre-execution capture
             trace.set_input(
                 prompt=prompt,
                 prompt_tokens=len(prompt.split()),  # Approximate tokenization
                 model_params=kwargs,
             )
-            
+
             # Execute with Ollama
             response = self.client.generate(
                 model=model,
                 prompt=prompt,
                 **kwargs
             )
-            
+
             # Post-execution capture
             trace.set_output(
                 response=response['response'],
@@ -1149,7 +1149,7 @@ class OllamaIntegration:
                 load_duration=response.get('load_duration', 0),
                 prompt_eval_duration=response.get('prompt_eval_duration', 0),
             )
-            
+
             return response
 ```
 
@@ -1180,17 +1180,17 @@ impl CloudAPIProxy {
         // Extract API key for tenant identification
         let api_key = self.extract_api_key(&req)?;
         let tenant_id = self.resolve_tenant(api_key).await?;
-        
+
         // Start distributed trace
         let trace_context = self.tracer.create_distributed_trace(tenant_id);
-        
+
         // Parse request for security analysis
         let request_body = hyper::body::to_bytes(req.into_body()).await
             .map_err(|_| StatusCode::BAD_REQUEST)?;
-        
+
         let openai_request: OpenAIRequest = serde_json::from_slice(&request_body)
             .map_err(|_| StatusCode::BAD_REQUEST)?;
-        
+
         // Capture request metadata
         trace_context.record_request(
             model=openai_request.model.clone(),
@@ -1198,7 +1198,7 @@ impl CloudAPIProxy {
             max_tokens=openai_request.max_tokens,
             temperature=openai_request.temperature,
         );
-        
+
         // Real-time security analysis (async)
         tokio::spawn({
             let messages = openai_request.messages.clone();
@@ -1209,20 +1209,20 @@ impl CloudAPIProxy {
                 }
             }
         });
-        
+
         // Forward to OpenAI (or other provider)
         let response = self.openai_client
             .chat_completion(openai_request)
             .await
             .map_err(|_| StatusCode::BAD_GATEWAY)?;
-        
+
         // Capture response
         trace_context.record_response(&response);
-        
+
         // Convert to HTTP response
         let response_json = serde_json::to_string(&response)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        
+
         Ok(Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/json")
@@ -1335,7 +1335,7 @@ ingestion:
     maxReplicas: 100
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
-  
+
   resources:
     requests:
       memory: "512Mi"
@@ -1343,7 +1343,7 @@ ingestion:
     limits:
       memory: "2Gi"
       cpu: "2"
-  
+
   podDisruptionBudget:
     enabled: true
     minAvailable: 5
@@ -1368,7 +1368,7 @@ storage:
       enabled: true
       storageClass: "ssd-high-iops"
       size: "1Ti"
-  
+
   redis:
     cluster:
       enabled: true
@@ -1505,34 +1505,34 @@ impl LLMSecTraceController {
     pub async fn reconcile(&self, trace_config: Arc<LLMSecTrace>) -> Result<Action> {
         let namespace = trace_config.namespace().unwrap_or_default();
         let name = trace_config.name_any();
-        
+
         info!("Reconciling LLMSecTrace {}/{}", namespace, name);
-        
+
         // Deploy ingestion components based on spec
         self.deploy_ingestion_components(&trace_config).await?;
-        
+
         // Configure security policies
         self.apply_security_policies(&trace_config).await?;
-        
+
         // Setup monitoring and alerting
         self.configure_monitoring(&trace_config).await?;
-        
+
         // Update status
         self.update_status(&trace_config, LLMSecTracePhase::Ready).await?;
-        
+
         // Recheck every 5 minutes
         Ok(Action::requeue(Duration::from_secs(300)))
     }
-    
+
     async fn deploy_ingestion_components(&self, config: &LLMSecTrace) -> Result<()> {
         let helm_values = self.generate_helm_values(config)?;
-        
+
         self.helm_client.install_or_upgrade(
             &config.spec.tenant_id,
             "llmsec-trace",
             &helm_values,
         ).await?;
-        
+
         Ok(())
     }
 }
@@ -1559,7 +1559,7 @@ data:
         memory: "2Gi"      # Burst capacity
         cpu: "2"           # Max 2 CPU cores
         ephemeral-storage: "5Gi"
-        
+
   analysis-pod.yaml: |
     resources:
       requests:
@@ -1568,7 +1568,7 @@ data:
       limits:
         memory: "4Gi"      # Large model inference
         cpu: "4"           # Parallel processing
-        
+
   clickhouse-pod.yaml: |
     resources:
       requests:
@@ -1776,19 +1776,19 @@ impl PromptSandbox {
         // Select sandbox tier based on risk assessment
         let risk_level = self.assess_prompt_risk(prompt).await?;
         let sandbox_tier = self.select_sandbox_tier(risk_level);
-        
+
         // Create isolated evaluation environment
         let sandbox_instance = self.create_sandbox(sandbox_tier).await?;
-        
+
         // Execute with strict resource limits and timeout
         let evaluation_result = timeout(
             Duration::from_secs(30), // Maximum evaluation time
             sandbox_instance.evaluate_prompt(prompt, context)
         ).await??;
-        
+
         // Cleanup sandbox immediately
         sandbox_instance.destroy().await?;
-        
+
         Ok(evaluation_result)
     }
 }
@@ -1882,7 +1882,7 @@ impl FirecrackerPromptSandbox {
             smt: false,          // Disable simultaneous multithreading
             track_dirty_pages: false,
         };
-        
+
         let vm_config = VmConfiguration {
             machine_config,
             boot_source: BootSource {
@@ -1915,24 +1915,24 @@ impl FirecrackerPromptSandbox {
                 metrics_path: "/tmp/firecracker-metrics".into(),
             }),
         };
-        
+
         FirecrackerPromptSandbox {
             vm_config,
             socket_path: PathBuf::from("/tmp/firecracker-prompt-eval.socket"),
         }
     }
-    
+
     pub async fn evaluate_prompt(&self, prompt: &str) -> Result<EvaluationResult> {
         // Start microVM with strict resource limits
         let firecracker = FirecrackerApi::new(&self.socket_path);
         firecracker.create_vm(&self.vm_config).await?;
-        
+
         // Execute prompt evaluation in isolated microVM
         let result = self.execute_in_vm(prompt).await;
-        
+
         // Immediately terminate microVM (complete isolation reset)
         firecracker.shutdown_vm().await?;
-        
+
         result
     }
 }
@@ -1969,7 +1969,7 @@ impl ResourceLimiter for PromptEvalLimiter {
     fn memory_growing(&mut self, current: usize, desired: usize, _maximum: Option<usize>) -> bool {
         desired <= self.memory_limit
     }
-    
+
     fn table_growing(&mut self, _current: u32, desired: u32, _maximum: Option<u32>) -> bool {
         desired <= self.table_elements_limit
     }
@@ -1982,13 +1982,13 @@ impl WasmPromptSandbox {
         config.max_wasm_stack(1024 * 1024); // 1MB stack limit
         config.static_memory_maximum_size(16 * 1024 * 1024); // 16MB memory limit
         config.dynamic_memory_maximum_size(16 * 1024 * 1024);
-        
+
         let engine = Engine::new(&config)?;
-        
+
         // Load pre-compiled WASM module for prompt evaluation
         let module_bytes = include_bytes!("../wasm/prompt_evaluator.wasm");
         let module = Module::from_binary(&engine, module_bytes)?;
-        
+
         let limiter = Box::new(PromptEvalLimiter {
             memory_limit: 16 * 1024 * 1024, // 16MB
             table_elements_limit: 1000,
@@ -1996,34 +1996,34 @@ impl WasmPromptSandbox {
             tables_limit: 1,
             memories_limit: 1,
         });
-        
+
         Ok(WasmPromptSandbox {
             engine,
             module,
             limiter,
         })
     }
-    
+
     pub async fn evaluate_prompt(&self, prompt: &str) -> Result<EvaluationResult> {
         let mut store = Store::new(&self.engine, ());
         store.set_fuel(1_000_000)?; // Limit computation to 1M instructions
         store.limiter(|_| &mut *self.limiter);
-        
+
         let mut linker = Linker::new(&self.engine);
-        
+
         // Provide minimal host functions (no filesystem, network, etc.)
         linker.func_wrap("env", "log", |msg: i32| {
             // Sandboxed logging only
             eprintln!("WASM log: {}", msg);
         })?;
-        
+
         // Instantiate and execute with timeout
         let instance = linker.instantiate(&mut store, &self.module)?;
         let evaluate_func = instance.get_typed_func::<(i32, i32), i32>(&mut store, "evaluate")?;
-        
+
         // Execute with automatic timeout via fuel consumption
         let result = evaluate_func.call(&mut store, (prompt.as_ptr() as i32, prompt.len() as i32))?;
-        
+
         Ok(EvaluationResult::from_wasm_result(result))
     }
 }
@@ -2056,40 +2056,40 @@ impl SandboxResourceManager {
             max_network_io: 0,                 // No network access
             max_file_descriptors: 10,          // Minimal FD limit
         };
-        
+
         // Set up cgroup limits (for container-based sandboxes)
         self.configure_cgroup_limits(sandbox_id, &limits).await?;
-        
+
         // Monitor resource usage in real-time
         let monitor_handle = self.start_resource_monitoring(sandbox_id, limits).await?;
-        
+
         // Automatic termination on limit exceeded
         self.setup_limit_enforcement(sandbox_id, monitor_handle).await?;
-        
+
         Ok(())
     }
-    
+
     async fn configure_cgroup_limits(&self, sandbox_id: SandboxId, limits: &ResourceLimits) -> Result<()> {
         let cgroup_path = format!("/sys/fs/cgroup/llmsec-sandbox-{}", sandbox_id);
-        
+
         // Memory limit
         fs::write(
             format!("{}/memory.max", cgroup_path),
             limits.max_memory.to_string()
         )?;
-        
+
         // CPU time limit
         fs::write(
             format!("{}/cpu.max", cgroup_path),
             format!("{} 100000", limits.max_cpu_time.as_micros())
         )?;
-        
+
         // Block I/O limits
         fs::write(
             format!("{}/io.max", cgroup_path),
             format!("8:0 rbps={} wbps={}", limits.max_disk_io, limits.max_disk_io)
         )?;
-        
+
         Ok(())
     }
 }
@@ -2119,12 +2119,12 @@ impl EscapePreventionSystem {
             .allow_syscall("munmap")
             .allow_syscall("mprotect")
             .deny_all_others();
-        
+
         // Drop all capabilities
         let capability_dropper = CapabilityDropper::new()
             .drop_all_capabilities()
             .prevent_privilege_escalation();
-        
+
         // Complete namespace isolation
         let namespace_isolator = NamespaceIsolator::new()
             .isolate_pid_namespace()
@@ -2133,7 +2133,7 @@ impl EscapePreventionSystem {
             .isolate_ipc_namespace()
             .isolate_uts_namespace()
             .isolate_user_namespace();
-        
+
         EscapePreventionSystem {
             syscall_filter,
             capability_dropper,
@@ -2141,7 +2141,7 @@ impl EscapePreventionSystem {
             integrity_checker: SandboxIntegrityChecker::new(),
         }
     }
-    
+
     pub async fn monitor_for_escape_attempts(&self, sandbox_id: SandboxId) -> Result<()> {
         loop {
             // Check for suspicious syscalls
@@ -2149,13 +2149,13 @@ impl EscapePreventionSystem {
                 self.terminate_sandbox_immediately(sandbox_id).await?;
                 return Err(SecurityError::EscapeAttemptDetected);
             }
-            
+
             // Verify sandbox integrity
             if !self.integrity_checker.verify_integrity(sandbox_id).await? {
                 self.terminate_sandbox_immediately(sandbox_id).await?;
                 return Err(SecurityError::SandboxIntegrityViolation);
             }
-            
+
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
