@@ -70,6 +70,26 @@ Before committing, verify ALL acceptance criteria listed in your RALPH loop task
 ## Environment
 
 - Rust 1.93.0 (`source ~/.cargo/env` before running cargo)
-- Working directory: /home/rootshell/llmtrace
-- Git config: user.name="Jenkins" user.email="jenkins@llmtrace.dev"
-- Push to: origin/main
+
+## Operating Constraints
+
+- Only perform actions explicitly requested by the user. Do not introduce additional edits, files, commits, or commands beyond what the user asked for.
+- If any request is ambiguous or would require extra steps, ask for confirmation before proceeding.
+
+## Delivery Requirements
+
+Make sure to adhere to the following:
+
+1. Always create a persistent TODO.md file to create a tracking list for all the work that you're tasked to deliver.
+2. Verify each fix as complete before moving to the next.
+3. Follow the strict zero-tolerance policy (no placeholders/TODOs/mocks).
+4. Ensure all code is production-ready, clean, and adheres to best practices.
+5. ALWAYS provide evidence of all work done (screenshots, logs, test results, commands that you used etc.).
+
+Make sure to write down your tasks as a list of TODOs so you can stay accurate as the context is being populated.
+
+IT IS IMPORTANT TO ADHERE TO THE GOOD SOFTWARE QUALITY PRINCIPLES SUCH AS DRY, SOLID AND KISS.
+
+THIS IS IMPORTANT: KEEP THE CODE ROBUST, SIMPLE, SOLID AND KISS.
+
+critical reminder: NEVER LIE, DO NOT LIE! THERE IS ZERO TOLERANCE FOR FAKE OR TODO OR MOCK OR STUB OR PLACEHOLDER OR ANYTHING ELSE OTHER THAN 100% REAL WORKING CODE AND SOLUTIONS.

@@ -31,7 +31,7 @@ Every loop must adhere to:
 ## Phase 1: Input Security Hardening
 
 ### Loop R-IS-01: FPR-Aware Threshold Calibration (IS-006)
-**Priority:** P0 | **Complexity:** Medium  
+**Priority:** P0 | **Complexity:** Medium
 **Deps:** R8 thresholds.rs (done)
 
 **Tasks:**
@@ -41,7 +41,7 @@ Every loop must adhere to:
 4. Add evaluation output showing TPR at each FPR operating point
 5. Unit tests with synthetic labeled data demonstrating calibration correctness
 
-**Status:** 🔄 (spawned)
+**Status:** ✅ Done — `fpr_monitor.rs` (909 lines)
 
 ---
 
@@ -70,7 +70,7 @@ Every loop must adhere to:
 4. Implement progressive confidence scoring across turns
 5. Tests with multi-turn extraction attack scenarios
 
-**Status:** ⬜
+**Status:** ✅ Done — `session_analyzer.rs` (1,090 lines)
 
 ---
 
@@ -136,7 +136,7 @@ Every loop must adhere to:
 4. Add confidence calibration via Platt scaling
 5. Tests with adversarial text attack variants
 
-**Status:** ⬜
+**Status:** ✅ Done — `adversarial_defense.rs` (1,437 lines)
 
 ---
 
@@ -219,7 +219,7 @@ Every loop must adhere to:
 4. Integrate with existing tool-boundary firewalling
 5. Tests with real tool output scenarios
 
-**Status:** ⬜
+**Status:** ✅ Done — `result_parser.rs` (1,123 lines)
 
 ---
 
@@ -258,7 +258,7 @@ Every loop must adhere to:
 4. Implement centralised policy store accessed by all modules
 5. Tests achieving <5% ASR on attack scenarios
 
-**Status:** ⬜
+**Status:** ✅ Done — `multi_agent.rs` (1,560 lines)
 
 ---
 
@@ -271,7 +271,7 @@ Every loop must adhere to:
 3. Implement cross-request state tracking
 4. Tests with multi-step attack scenarios
 
-**Status:** ⬜
+**Status:** ✅ Done — `action_correlator.rs` (1,674 lines)
 
 ---
 
@@ -285,7 +285,7 @@ Every loop must adhere to:
 4. Validate MCP server identity, monitor suspicious tool registrations
 5. Tests with MCP attack scenarios
 
-**Status:** ⬜
+**Status:** ✅ Done — `mcp_monitor.rs` (1,145 lines)
 
 ---
 
@@ -315,7 +315,7 @@ Every loop must adhere to:
 4. Make models independently loadable/optional
 5. Tests for ensemble voting strategies
 
-**Status:** 🔄 (spawned)
+**Status:** ✅ Done — commit `10a2369`
 
 ---
 
@@ -525,22 +525,22 @@ Every loop must adhere to:
 ## Execution Order (Priority-Based)
 
 ### Batch 1 — P0 Critical (Now)
-1. ✅ R-IS-01: FPR-Aware Threshold Calibration (in progress)
-2. ✅ R-ML-01: Model Ensemble Diversification (in progress)
+1. ✅ R-IS-01: FPR-Aware Threshold Calibration — `fpr_monitor.rs`
+2. ✅ R-ML-01: Model Ensemble Diversification — commit `10a2369`
 3. R-IS-02: MOF Training Pipeline
-4. R-AS-06: MCP Protocol Monitoring
+4. ✅ R-AS-06: MCP Protocol Monitoring — `mcp_monitor.rs`
 5. R-EV-01: AgentDojo + InjecAgent Evaluation
 
 ### Batch 2 — P1 High Priority
-6. R-IS-03: Multi-Turn Extraction Detection
+6. ✅ R-IS-03: Multi-Turn Extraction Detection — `session_analyzer.rs`
 7. R-IS-04: Automated Jailbreak Defense
-8. R-IS-08: Adversarial ML Robustness
+8. ✅ R-IS-08: Adversarial ML Robustness — `adversarial_defense.rs`
 9. R-OS-01: HaluGate Token-Level Hallucination
 10. R-OS-02: Llama Guard 3 + Bias Detection
 11. R-OS-04: CodeShield-Style Code Security
-12. R-AS-01: Tool Result Parsing
-13. R-AS-04: Multi-Agent Defense
-14. R-AS-05: Multi-Step Correlation
+12. ✅ R-AS-01: Tool Result Parsing — `result_parser.rs`
+13. ✅ R-AS-04: Multi-Agent Defense — `multi_agent.rs`
+14. ✅ R-AS-05: Multi-Step Correlation — `action_correlator.rs`
 15. R-ML-02: Joint Fusion Training
 16. R-ML-03: Adversarial Training
 17. R-ML-05: PIGuard + Hot-Swap

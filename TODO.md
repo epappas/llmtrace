@@ -1,0 +1,22 @@
+# TODO
+
+- [x] Create the `git-commit` skill scaffold
+- [x] Write `SKILL.md` with commit workflow rules
+- [x] Generate `agents/openai.yaml` metadata
+- [x] Validate the skill directory
+- [x] Create the `explore-plan-code-test` skill scaffold
+- [x] Write `SKILL.md` for Explore/Plan/Code/Test workflow
+- [x] Verify `agents/openai.yaml` metadata
+- [x] Validate the skill directory
+- [x] Create the `ai-engineer` skill scaffold
+- [x] Write `SKILL.md` with AI engineer workflow
+- [x] Verify `agents/openai.yaml` metadata
+- [x] Validate the skill directory
+- [x] Create the `rust-engineer` skill scaffold
+- [x] Write `SKILL.md` with Rust engineer workflow
+- [x] Verify `agents/openai.yaml` metadata
+- [x] Validate the skill directory
+- [x] Create the `mlops-engineer` skill scaffold
+- [x] Write `SKILL.md` with MLOps workflow
+- [x] Verify `agents/openai.yaml` metadata
+- [x] Validate the skill directory

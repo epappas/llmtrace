@@ -42,7 +42,7 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-006 | FPR-aware threshold optimisation — evaluate at 0.1%, 0.5%, 1% FPR | Medium | ⬜ |
+| IS-006 | FPR-aware threshold optimisation — evaluate at 0.1%, 0.5%, 1% FPR | Medium | ✅ `fpr_monitor.rs` |
 | IS-007 | Configurable operating points (high-precision / balanced / high-recall) | Low | ✅ (R8) |
 
 ### Loop 4 — Canary Token System
@@ -103,19 +103,19 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| AS-020 | Coordinator agent — pre-input classification | High | ⬜ |
-| AS-021 | Guard agent — post-generation validation | High | ⬜ |
-| AS-023 | Second opinion pass for borderline cases | Medium | ⬜ |
-| AS-024 | Policy store — centralised security rules | Medium | ⬜ |
+| AS-020 | Coordinator agent — pre-input classification | High | ✅ `multi_agent.rs` |
+| AS-021 | Guard agent — post-generation validation | High | ✅ `multi_agent.rs` |
+| AS-023 | Second opinion pass for borderline cases | Medium | ✅ `multi_agent.rs` |
+| AS-024 | Policy store — centralised security rules | Medium | ✅ `multi_agent.rs` |
 
 ### Loop 11 — MCP Protocol Monitoring
 > First-mover in protocol-level security
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| AS-030 | MCP monitoring — detect manipulation and server-side attacks | High | ⬜ |
-| AS-035 | Toxic Agent Flow defense — GitHub MCP vulnerability | Medium | ⬜ |
-| AS-036 | ToolHijacker defense — tool selection manipulation | High | ⬜ |
+| AS-030 | MCP monitoring — detect manipulation and server-side attacks | High | ✅ `mcp_monitor.rs` |
+| AS-035 | Toxic Agent Flow defense — GitHub MCP vulnerability | Medium | ✅ `mcp_monitor.rs` |
+| AS-036 | ToolHijacker defense — tool selection manipulation | High | ✅ `mcp_monitor.rs` |
 
 ### Loop 12 — Advanced Prompt Injection Detection
 > Synonym expansion, lemmatisation, P2SQL
@@ -203,10 +203,10 @@
 ### Loop 22 — Adversarial ML Robustness
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-024 | AML evasion resistance (TextFooler, BERT-Attack, BAE) | High | ⬜ |
-| IS-025 | Ensemble diversification against transferability | High | ⬜ |
-| ML-012 | Adversarial training on TextAttack samples | High | ⬜ |
-| IS-029 | Confidence calibration (Platt scaling) | Medium | ⬜ |
+| IS-024 | AML evasion resistance (TextFooler, BERT-Attack, BAE) | High | ✅ `adversarial_defense.rs` |
+| IS-025 | Ensemble diversification against transferability | High | ✅ `adversarial_defense.rs` |
+| ML-012 | Adversarial training on TextAttack samples | High | ⬜ (needs training pipeline) |
+| IS-029 | Confidence calibration (Platt scaling) | Medium | ✅ `adversarial_defense.rs` |
 
 ---
 
