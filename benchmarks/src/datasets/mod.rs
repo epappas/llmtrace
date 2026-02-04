@@ -9,7 +9,7 @@
 //! |---------|--------|---------|-------|
 //! | `injection_samples.json` | Literature compilation | ~120 | Prompt injection attacks |
 //! | `benign_samples.json` | Curated | ~100 | Benign inputs (should NOT trigger) |
-//! | `notinject_samples.json` | InjecGuard methodology | ~100 | Over-defense test cases |
+//! | `notinject_samples.json` | InjecGuard methodology | 339 | Over-defense test cases |
 //! | `encoding_evasion.json` | Bypassing Guardrails | ~80 | Unicode/encoding attacks |
 //! | `jailbreak_samples.json` | Multi-source | ~80 | Jailbreak patterns |
 
@@ -55,6 +55,15 @@ pub struct BenchmarkSample {
 /// Loads benchmark datasets from JSON files.
 pub struct DatasetLoader;
 
+/// NotInject dataset validation results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotInjectValidation {
+    /// Total number of samples.
+    pub total: usize,
+    /// Count by difficulty (index 0 => difficulty 1).
+    pub by_difficulty: [usize; 3],
+}
+
 impl DatasetLoader {
     /// Load a dataset from a JSON file path.
     ///
@@ -86,7 +95,9 @@ impl DatasetLoader {
 
     /// Load the NotInject-style over-defense test cases.
     pub fn load_notinject_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
-        Self::load_from_file(&datasets_dir.join("notinject_samples.json"))
+        let samples = Self::load_from_file(&datasets_dir.join("notinject_samples.json"))?;
+        validate_notinject_samples(&samples)?;
+        Ok(samples)
     }
 
     /// Load the encoding evasion test cases.
@@ -144,6 +155,99 @@ impl DatasetLoader {
             .filter(|s| s.difficulty == Some(difficulty))
             .collect()
     }
+}
+
+/// Validate NotInject dataset size, labels, and difficulty-tier distribution.
+///
+/// This enforces the InjecGuard NotInject specification:
+/// - 339 benign samples total
+/// - 3 difficulty tiers with 113 samples each
+/// - difficulty matches trigger-word count in metadata
+pub fn validate_notinject_samples(
+    samples: &[BenchmarkSample],
+) -> Result<NotInjectValidation, String> {
+    const EXPECTED_TOTAL: usize = 339;
+    const EXPECTED_PER_TIER: usize = 113;
+
+    if samples.len() != EXPECTED_TOTAL {
+        return Err(format!(
+            "NotInject dataset size mismatch: expected {}, got {}",
+            EXPECTED_TOTAL,
+            samples.len()
+        ));
+    }
+
+    let mut by_difficulty = [0usize; 3];
+    let mut invalid_labels = Vec::new();
+    let mut invalid_difficulty = Vec::new();
+    let mut invalid_trigger_counts = Vec::new();
+
+    for sample in samples {
+        if sample.label != Label::Benign {
+            invalid_labels.push(sample.id.clone());
+        }
+
+        let difficulty = match sample.difficulty {
+            Some(value @ 1..=3) => value,
+            _ => {
+                invalid_difficulty.push(sample.id.clone());
+                continue;
+            }
+        };
+
+        let trigger_words = sample.metadata.get("trigger_words").ok_or_else(|| {
+            format!(
+                "NotInject sample {} missing trigger_words metadata",
+                sample.id
+            )
+        })?;
+        let words: Vec<String> = serde_json::from_str(trigger_words).map_err(|e| {
+            format!(
+                "NotInject sample {} has invalid trigger_words metadata: {}",
+                sample.id, e
+            )
+        })?;
+
+        if words.len() != difficulty as usize {
+            invalid_trigger_counts.push(sample.id.clone());
+        }
+
+        by_difficulty[(difficulty - 1) as usize] += 1;
+    }
+
+    if !invalid_labels.is_empty() {
+        return Err(format!(
+            "NotInject samples should all be benign, but found {} non-benign: {:?}",
+            invalid_labels.len(),
+            invalid_labels
+        ));
+    }
+
+    if !invalid_difficulty.is_empty() {
+        return Err(format!(
+            "NotInject samples must have difficulty 1-3, but invalid values found: {:?}",
+            invalid_difficulty
+        ));
+    }
+
+    if !invalid_trigger_counts.is_empty() {
+        return Err(format!(
+            "NotInject samples with trigger-word count mismatch: {:?}",
+            invalid_trigger_counts
+        ));
+    }
+
+    if by_difficulty != [EXPECTED_PER_TIER; 3] {
+        return Err(format!(
+            "NotInject difficulty distribution mismatch: expected {:?}, got {:?}",
+            [EXPECTED_PER_TIER; 3], by_difficulty
+        ));
+    }
+
+    Ok(NotInjectValidation {
+        total: samples.len(),
+        by_difficulty,
+    })
 }
 
 #[cfg(test)]
@@ -205,5 +309,21 @@ mod tests {
         assert_eq!(benign.len(), 1);
         let malicious = DatasetLoader::filter_by_label(&samples, Label::Malicious);
         assert_eq!(malicious.len(), 1);
+    }
+
+    #[test]
+    fn test_notinject_dataset_validation() {
+        let datasets_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets");
+        let samples = DatasetLoader::load_notinject_samples(&datasets_dir).unwrap();
+        let validation = validate_notinject_samples(&samples).unwrap();
+        assert_eq!(validation.total, 339);
+        assert_eq!(validation.by_difficulty, [113, 113, 113]);
+    }
+
+    #[test]
+    fn test_notinject_dataset_size_regression() {
+        let datasets_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets");
+        let samples = DatasetLoader::load_notinject_samples(&datasets_dir).unwrap();
+        assert_eq!(samples.len(), 339);
     }
 }

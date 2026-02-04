@@ -9,7 +9,7 @@
 //!
 //! Results are output in both Markdown and LaTeX table formats for paper inclusion.
 
-use crate::datasets::{BenchmarkSample, DatasetLoader, Label};
+use crate::datasets::{validate_notinject_samples, BenchmarkSample, DatasetLoader, Label};
 use crate::metrics::ThreeDimensionalMetrics;
 use std::path::Path;
 
@@ -55,6 +55,7 @@ pub fn run_notinject_evaluation(
     let benign_samples = DatasetLoader::load_benign_samples(datasets_dir)?;
     let malicious_samples = DatasetLoader::load_injection_samples(datasets_dir)?;
     let notinject_samples = DatasetLoader::load_notinject_samples(datasets_dir)?;
+    validate_notinject_samples(&notinject_samples)?;
 
     // Evaluate benign samples
     let benign_results: Vec<bool> = benign_samples
@@ -178,11 +179,7 @@ pub fn collect_false_positives(
 
 /// Print the evaluation results as a Markdown table.
 pub fn print_markdown_table(evaluations: &[NotInjectEvaluation]) {
-    println!("\n{}", ThreeDimensionalMetrics::table_header());
-    println!("{}", ThreeDimensionalMetrics::table_separator());
-    for eval in evaluations {
-        println!("{}", eval.metrics.to_table_row(&eval.model_name));
-    }
+    println!("\n{}", format_markdown_table(evaluations));
 }
 
 /// Print the evaluation results as LaTeX table rows.
@@ -193,6 +190,17 @@ pub fn print_latex_table(evaluations: &[NotInjectEvaluation]) {
     for eval in evaluations {
         println!("{}", eval.metrics.to_latex_row(&eval.model_name));
     }
+}
+
+/// Format the evaluation results as a Markdown table (paper-table format).
+pub fn format_markdown_table(evaluations: &[NotInjectEvaluation]) -> String {
+    let mut lines = Vec::with_capacity(evaluations.len() + 2);
+    lines.push(ThreeDimensionalMetrics::table_header());
+    lines.push(ThreeDimensionalMetrics::table_separator());
+    for eval in evaluations {
+        lines.push(eval.metrics.to_table_row(&eval.model_name));
+    }
+    lines.join("\n")
 }
 
 /// Print a detailed evaluation report including all formats.
@@ -360,5 +368,34 @@ mod tests {
         let fps = collect_false_positives(&analyzer, &samples);
         // "How do I cook pasta?" should not trigger injection detection
         assert!(fps.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_table_formatting() {
+        let metrics = ThreeDimensionalMetrics {
+            benign_accuracy: 0.9,
+            malicious_accuracy: 0.8,
+            over_defense_accuracy: 0.7,
+            average_accuracy: 0.8,
+            over_defense_by_difficulty: Default::default(),
+        };
+        let eval = NotInjectEvaluation {
+            model_name: "Test Model".to_string(),
+            metrics,
+            num_benign: 1,
+            num_malicious: 1,
+            num_over_defense: 1,
+            duration_ms: 1,
+        };
+
+        let table = format_markdown_table(std::slice::from_ref(&eval));
+        let header = ThreeDimensionalMetrics::table_header();
+        let separator = ThreeDimensionalMetrics::table_separator();
+        let mut lines = table.lines();
+        assert_eq!(lines.next(), Some(header.as_str()));
+        assert_eq!(lines.next(), Some(separator.as_str()));
+        let row = lines.next().unwrap_or("");
+        assert!(row.contains("Test Model"));
+        assert!(row.starts_with('|'));
     }
 }
