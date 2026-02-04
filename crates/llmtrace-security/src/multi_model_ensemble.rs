@@ -778,7 +778,9 @@ mod tests {
 
     #[test]
     fn test_participant_creation() {
-        let m = Arc::new(MockAnalyzer::empty());
+        let analyzer = MockAnalyzer::empty().with_name("CustomAnalyzer");
+        assert_eq!(analyzer.name(), "CustomAnalyzer");
+        let m = Arc::new(analyzer);
         let p = ModelParticipant::new("test-model", m, 0.75);
         assert_eq!(p.name(), "test-model");
         assert!((p.weight() - 0.75).abs() < f64::EPSILON);
