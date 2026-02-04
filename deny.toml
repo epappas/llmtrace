@@ -10,10 +10,14 @@ all-features = true
 # Advisories — check for known vulnerabilities
 # =============================================================================
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
+# Use default cargo-deny advisory handling; ignore only advisories with no fix.
+ignore = [
+    # rsa has no fixed upgrade (via sqlx-mysql)
+    "RUSTSEC-2023-0071",
+    # Unmaintained transitive crates (no fixed upgrade available).
+    "RUSTSEC-2025-0119", # number_prefix
+    "RUSTSEC-2024-0436", # paste
+]
 
 # =============================================================================
 # Licenses — allowlist of acceptable licenses
@@ -25,6 +29,7 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
     "ISC",
     "Unicode-3.0",
     "Unicode-DFS-2016",

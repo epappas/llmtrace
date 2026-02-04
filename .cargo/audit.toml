@@ -1,0 +1,3 @@
+[advisories]
+# No fixed upgrade for rsa 0.9.x (pulled via sqlx-mysql). Track and remove once fixed upstream.
+ignore = ["RUSTSEC-2023-0071"]
