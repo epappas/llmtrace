@@ -54,6 +54,13 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 6. **Multi-agent coordination** — Single-pass analysis vs multi-pass defence-in-depth [Paper: Multi-Agent Defense]
 7. **Benchmark evaluation** — No evaluation against AgentDojo, NotInject, InjecAgent, WASP [Paper: Benchmarks & Tools]
 
+### Audit Acceptance Criteria (Literature-Anchored)
+All roadmap items can only be marked **✅ Implemented** if the implementation matches the behaviors and metrics described in the cited literature. Heuristic or partial substitutes must remain **⚠️ Partial**.
+
+Functional Requirements: Input-security improvements must implement MOF training (token-wise bias detection, debiasing data generation, retraining) and calibrated FPR operating points as described in `docs/research/injecguard-over-defense-mitigation.md` and `docs/research/security-state-of-art-2026.md`. Tool-boundary defenses must implement LLM-based tool result parsing and CheckTool-style triggering detection per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense must be a multi-pass coordinator+guard architecture with a second-opinion path per `docs/research/multi-agent-defense-pipeline.md`. Output safety must implement HaluGate-style token-level detection, NLI explanation, and SCM streaming models per `docs/research/security-state-of-art-2026.md`.
+
+Non-Functional Requirements: Latency classes and streaming compatibility must meet literature expectations (e.g., sentinel-class latency, token-level detection ranges) from `docs/research/security-state-of-art-2026.md`. Implementations must be deterministic, testable, and include benchmark evidence where the literature reports metrics (e.g., ASR, FPR, F1) using datasets from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
+
 ---
 
 ## 2. Current Capabilities
@@ -136,7 +143,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 | IS-001 | **MOF (Mitigating Over-defense for Free) training strategy** | InjecGuard | P0 | High | ❌ Missing |
 | IS-002 | **Token-wise bias detection** — test every vocabulary token individually for false positive bias | InjecGuard | P0 | Medium | ❌ Missing |
 | IS-003 | **Adaptive debiasing data generation** — generate benign samples using combinations of biased tokens | InjecGuard | P1 | Medium | ❌ Missing |
-| IS-004 | **NotInject-style over-defense benchmark** — 339 benign samples with trigger words at 3 difficulty levels | InjecGuard, Benchmarks | P0 | Low | ⚠️ Partial |
+| IS-004 | **NotInject-style over-defense benchmark** — 339 benign samples with trigger words at 3 difficulty levels | InjecGuard, Benchmarks | P0 | Low | ✅ Implemented |
 | IS-005 | **Three-dimensional evaluation** — separate benign/malicious/over-defense accuracy tracking | InjecGuard | P1 | Low | ✅ Implemented |
 | IS-006 | **FPR-aware threshold optimisation** — evaluate at 0.1%, 0.5%, 1% FPR operating points | SoA Report (PromptShield) | P0 | Medium | ✅ Implemented |
 | IS-007 | **Configurable operating points** — high-precision / balanced / high-recall modes | SoA Report | P1 | Low | ✅ Implemented |

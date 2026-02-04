@@ -14,6 +14,21 @@
 
 ---
 
+## Acceptance Criteria (Literature-Anchored)
+These criteria define when a task can be marked ✅. If any criterion is not met, status must remain 🔄 or ⬜.
+
+Input Security (IS): Must implement the specific algorithmic behaviors described in the literature, not heuristic approximations. For IS-001–IS-003, MOF requires token-wise bias detection, debiasing data generation, and retraining with reported over-defense gains in `docs/research/injecguard-over-defense-mitigation.md`. For IS-006/IS-007, thresholds must be calibrated at 0.1/0.5/1% FPR with TPR reporting per `docs/research/security-state-of-art-2026.md`. For IS-010/IS-011, WordNet-style synonym expansion and true lemmatization are required, not regex-only stems, per `docs/research/dmpi-pmhfe-prompt-injection-detection.md`. For IS-024–IS-029, adversarial robustness must include attack-specific defenses and calibration beyond normalization per `docs/research/bypassing-llm-guardrails-evasion.md`.
+
+Tool/Agent Security (AS): Tool boundary defenses must parse/sanitize with LLM-based extraction and CheckTool-style triggering detection, not heuristic filters, per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense requires an explicit coordinator + guard multi-pass architecture (and second opinion path) rather than a single-pass heuristic pipeline, per `docs/research/multi-agent-defense-pipeline.md`. Pattern enforcement must detect plan compliance and routing by trust level as defined in `docs/research/design-patterns-securing-agents.md`.
+
+Output Security (OS): HaluGate-style token-level detection requires ModernBERT token classification and NLI explanation layer, not heuristic or sentence-only checks, per `docs/research/security-state-of-art-2026.md`. Streaming safety must use partial-sequence models and progressive confidence (SCM), not re-running full-text detectors, per `docs/research/security-state-of-art-2026.md`. CodeShield parity requires Semgrep integration and coverage beyond basic static rules, per `docs/research/security-state-of-art-2026.md`.
+
+Privacy/Protocol/Multimodal (PR/AS/MM/SA): Membership inference, poisoning, MINJA, and protocol exploit defenses must match the threat models in `docs/research/prompt-injections-to-protocol-exploits.md`. Multimodal defenses must include OCR and modality-specific detectors as described in the same literature. Policy language and taint/blast-radius controls must align with `docs/research/llmtrace-defense-pipeline-design.md`.
+
+Evaluation (EV): Benchmarks must implement the named suites with published dataset sizes and result formatting per `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
+
+Non-Functional Requirements (NFR): Security-critical detections must be deterministic and testable, with clear latency budgets where specified (e.g., HaluGate sentinel 12ms class, token-level detection 76–162ms) from `docs/research/security-state-of-art-2026.md`. Any ML integration must include reproducible model loading, configuration, and tests demonstrating expected metrics.
+
 ## Phase 1: Critical / Quick Wins
 
 ### Loop 1 — Unicode Evasion Defenses
@@ -32,9 +47,9 @@
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-004 | NotInject-style over-defense benchmark dataset (210 samples, 3 difficulty levels; paper uses 339) | Low | 🔄 |
+| IS-004 | NotInject-style over-defense benchmark dataset (339 samples, 3 difficulty levels) | Low | ✅ |
 | IS-005 | Three-dimensional evaluation metrics (benign/malicious/over-defense) | Low | ✅ `33b3f55` |
-| EV-002 | NotInject evaluation runner | Low | ✅ `33b3f55` |
+| EV-002 | NotInject evaluation runner (dataset complete: 339 samples) | Low | ✅ |
 | EV-010 | Paper-table output format for results | Low | ✅ `33b3f55` |
 
 ### Loop 3 — FPR-Aware Threshold Optimisation
@@ -635,3 +650,4 @@
 - Adversarial robustness expectations come from `docs/research/bypassing-llm-guardrails-evasion.md`.
 - Over-defense mitigation expectations come from `docs/research/injecguard-over-defense-mitigation.md`.
 - Benchmark coverage expectations come from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
+- EV-002 is ✅ because the NotInject dataset is 339 samples with equal difficulty tiers (113/113/113).
