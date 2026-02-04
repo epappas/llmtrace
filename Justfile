@@ -32,3 +32,9 @@ test:
     cargo test --workspace
 
 check: fmt clippy test
+
+security:
+    @set -euo pipefail; \
+    source ~/.cargo/env; \
+    cargo audit; \
+    cargo deny check --all-features
