@@ -38,6 +38,7 @@
 /docs/_build/.env
 /docs/book/
 /target/
+/target-local/
 /test-results/
 Thumbs.db
 __pycache__/
@@ -45,3 +46,4 @@ config.dev.yaml
 config.local.yaml
 llmtrace-python/target/
 config.yaml
+TODO.md
