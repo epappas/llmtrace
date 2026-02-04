@@ -6,6 +6,11 @@ _default:
 fmt:
     @set -euo pipefail; \
     source ~/.cargo/env; \
+    cargo fmt --all --check
+
+fmt-write:
+    @set -euo pipefail; \
+    source ~/.cargo/env; \
     cargo fmt --all
 
 clippy:

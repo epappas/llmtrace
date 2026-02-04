@@ -17,8 +17,7 @@ fn build_calibration_dataset(
     analyzer: &llmtrace_security::RegexSecurityAnalyzer,
     datasets_dir: &Path,
 ) -> Result<CalibrationDataset, String> {
-    let benign =
-        DatasetLoader::load_benign_samples(datasets_dir).map_err(|e| e.to_string())?;
+    let benign = DatasetLoader::load_benign_samples(datasets_dir).map_err(|e| e.to_string())?;
     let malicious =
         DatasetLoader::load_injection_samples(datasets_dir).map_err(|e| e.to_string())?;
     let notinject =
