@@ -30,7 +30,7 @@ curl http://localhost:8080/v1/chat/completions \
         "content": "You are a helpful assistant."
       },
       {
-        "role": "user", 
+        "role": "user",
         "content": "What is the capital of France?"
       }
     ],
@@ -245,7 +245,7 @@ curl http://localhost:8080/v1/chat/completions \
 {
   "error": {
     "message": "Rate limit exceeded",
-    "type": "rate_limit_exceeded", 
+    "type": "rate_limit_exceeded",
     "param": null,
     "code": "rate_limit_exceeded"
   }
@@ -316,7 +316,7 @@ curl http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OPENAI_API_KEY" \
   -d '{
-    "model": "gpt-4", 
+    "model": "gpt-4",
     "messages": [
       {
         "role": "user",
@@ -393,7 +393,7 @@ MODEL="gpt-4"
 
 function chat() {
     local message="$1"
-    
+
     curl -s "$LLMTRACE_URL/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -420,7 +420,7 @@ MODEL="gpt-4"
 
 while IFS= read -r prompt; do
     echo "Processing: $prompt"
-    
+
     response=$(curl -s "$LLMTRACE_URL/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -430,25 +430,25 @@ while IFS= read -r prompt; do
                 {\"role\": \"user\", \"content\": \"$prompt\"}
             ]
         }")
-    
+
     # Extract response and trace ID
     content=$(echo "$response" | jq -r '.choices[0].message.content')
     trace_id=$(echo "$response" | jq -r '.id')
-    
+
     echo "Response: $content"
     echo "Trace ID: $trace_id"
     echo "---"
-    
+
     # Optional: Check for security findings
     sleep 1  # Allow time for async analysis
     findings=$(curl -s "$LLMTRACE_URL/security/findings?trace_id=$trace_id")
     finding_count=$(echo "$findings" | jq length)
-    
+
     if [ "$finding_count" -gt 0 ]; then
         echo " Security findings detected for trace $trace_id"
         echo "$findings" | jq
     fi
-    
+
 done < prompts.txt
 ```
 
@@ -464,7 +464,7 @@ function check_health() {
     response=$(curl -s -w "%{http_code}" "$LLMTRACE_URL/health")
     http_code="${response: -3}"
     body="${response%???}"
-    
+
     if [ "$http_code" = "200" ]; then
         echo " LLMTrace healthy"
         echo "$body" | jq
@@ -502,30 +502,30 @@ class LLMTraceClient:
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
         self.api_key = os.getenv("OPENAI_API_KEY")
-        
+
     def chat_completion(self, messages, model="gpt-4", ** kwargs):
         url = f"{self.base_url}/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
+
         data = {
             "model": model,
             "messages": messages,
             ** kwargs
         }
-        
+
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         return response.json()
-    
+
     def get_traces(self, limit=10):
         url = f"{self.base_url}/traces"
         response = requests.get(url, params={"limit": limit})
         response.raise_for_status()
         return response.json()
-    
+
     def get_security_findings(self):
         url = f"{self.base_url}/security/findings"
         response = requests.get(url)
@@ -620,7 +620,7 @@ curl -k https://localhost:8443/health  # -k ignores cert errors
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Use official SDKs instead of raw HTTP
 - **[LangChain Integration](integration-langchain.md)** — Framework integration
-- **[Python SDK](python-sdk.md)** — Native Python instrumentation 
+- **[Python SDK](python-sdk.md)** — Native Python instrumentation
 - **[Dashboard Usage](dashboard.md)** — Visual monitoring
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [API documentation](../api/).

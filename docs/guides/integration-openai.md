@@ -133,9 +133,9 @@ response = client.chat.completions.create(
 ### Image Analysis (Vision)
 
 ```python
-# Vision API works seamlessly
+# Vision API works seamlessly (use a vision-capable model for your provider)
 response = client.chat.completions.create(
-    model="gpt-4-vision-preview",
+    model="vision-capable-model",
     messages=[
         {
             "role": "user",
@@ -305,7 +305,7 @@ async function typedExample(): Promise<void> {
 
 ## Multi-Tenant Configuration
 
-For applications serving multiple customers, use tenant headers:
+For applications serving multiple customers, use tenant headers. Tenant IDs must be valid UUIDs.
 
 ### Python Example
 
@@ -322,8 +322,8 @@ def create_client_for_tenant(tenant_id: str) -> openai.OpenAI:
     )
 
 # Usage
-customer_a_client = create_client_for_tenant("customer_a")
-customer_b_client = create_client_for_tenant("customer_b")
+customer_a_client = create_client_for_tenant("550e8400-e29b-41d4-a716-446655440001")
+customer_b_client = create_client_for_tenant("550e8400-e29b-41d4-a716-446655440002")
 
 # Each client's requests are isolated in LLMTrace
 response_a = customer_a_client.chat.completions.create(...)
@@ -343,8 +343,8 @@ function createClientForTenant(tenantId) {
   });
 }
 
-const customerAClient = createClientForTenant('customer_a');
-const customerBClient = createClientForTenant('customer_b');
+const customerAClient = createClientForTenant('550e8400-e29b-41d4-a716-446655440001');
+const customerBClient = createClientForTenant('550e8400-e29b-41d4-a716-446655440002');
 ```
 
 ## Fallback Strategy
@@ -408,32 +408,34 @@ const client = await createResilientClient();
 
 ## Configuration Options
 
-### Request Metadata
+### Tenant, Agent, and Provider Headers
 
-Add custom metadata to requests for better tracing:
+LLMTrace recognizes the following optional headers:
+
+- `X-LLMTrace-Tenant-ID` (UUID)
+- `X-LLMTrace-Agent-ID` (string, used for cost caps)
+- `X-LLMTrace-Provider` (override provider detection)
 
 ```python
-# Python: Use default headers
 client = openai.OpenAI(
     base_url="http://localhost:8080/v1",
     api_key=os.getenv("OPENAI_API_KEY"),
     default_headers={
-        "X-LLMTrace-User-ID": "user123",
-        "X-LLMTrace-Session-ID": "session456",
-        "X-LLMTrace-Feature": "chatbot"
+        "X-LLMTrace-Tenant-ID": "550e8400-e29b-41d4-a716-446655440001",
+        "X-LLMTrace-Agent-ID": "research-agent",
+        "X-LLMTrace-Provider": "openai"
     }
 )
 ```
 
 ```javascript
-// Node.js: Use default headers
 const openai = new OpenAI({
   baseURL: 'http://localhost:8080/v1',
   apiKey: process.env.OPENAI_API_KEY,
   defaultHeaders: {
-    'X-LLMTrace-User-ID': 'user123',
-    'X-LLMTrace-Session-ID': 'session456',
-    'X-LLMTrace-Feature': 'chatbot'
+    'X-LLMTrace-Tenant-ID': '550e8400-e29b-41d4-a716-446655440001',
+    'X-LLMTrace-Agent-ID': 'research-agent',
+    'X-LLMTrace-Provider': 'openai'
   }
 });
 ```
@@ -466,37 +468,37 @@ After making requests through LLMTrace, you can inspect the captured traces:
 
 ```bash
 # Get recent traces
-curl http://localhost:8080/traces | jq '.[0]'
+curl http://localhost:8080/api/v1/traces | jq '.data[0]'
 
 # Get specific trace by ID
-curl http://localhost:8080/traces/trace_abc123 | jq
+curl http://localhost:8080/api/v1/traces/7aa2c9b2-1fb1-4d64-9a4f-0c19c7f0a2b1 | jq
 
 # Check for security findings
-curl http://localhost:8080/security/findings | jq
+curl http://localhost:8080/api/v1/security/findings | jq '.data[0]'
 ```
+
+If auth is enabled, include `Authorization: Bearer llmt_...`.
 
 ### API Integration
 
 ```python
 import requests
-import json
 
 def get_trace_stats():
-    response = requests.get("http://localhost:8080/metrics/summary")
+    response = requests.get("http://localhost:8080/api/v1/stats")
     return response.json()
 
 def get_recent_security_findings():
-    response = requests.get("http://localhost:8080/security/findings")
+    response = requests.get("http://localhost:8080/api/v1/security/findings")
     return response.json()
 
 # Check stats after your requests
 stats = get_trace_stats()
-print(f"Total requests: {stats['total_requests']}")
-print(f"Average latency: {stats['avg_latency_ms']}ms")
+print(stats)
 
 findings = get_recent_security_findings()
-if findings:
-    print(f" {len(findings)} security findings detected")
+if findings.get("data"):
+    print(f" {len(findings['data'])} security findings detected")
 ```
 
 ## Troubleshooting
@@ -533,52 +535,10 @@ client = openai.OpenAI(
 )
 ```
 
-**Version compatibility:**
-```bash
-# Check OpenAI SDK version
-pip show openai
-npm list openai
-
-# LLMTrace supports:
-# - Python SDK v1.0+
-# - Node.js SDK v4.0+
-```
-
-### Debug Mode
-
-Enable debug logging to troubleshoot issues:
-
-```python
-import logging
-import openai
-
-# Enable debug logging
-logging.basicConfig(level=logging.DEBUG)
-
-client = openai.OpenAI(
-    base_url="http://localhost:8080/v1",
-    api_key=os.getenv("OPENAI_API_KEY")
-)
-```
-
-```javascript
-// Node.js debug mode
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  baseURL: 'http://localhost:8080/v1',
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-// Enable debug logging
-openai.debug = true;
-```
-
 ## Next Steps
 
 - **[LangChain Integration](integration-langchain.md)** — Use with LangChain framework
-- **[curl Examples](integration-curl.md)** — Direct HTTP API examples
-- **[Python SDK](python-sdk.md)** — Native Python instrumentation
-- **[Dashboard Usage](dashboard.md)** — Visual trace analysis
+- **[API Guide](API.md)** — REST queries + proxy paths
+- **[Custom Policies](custom-policies.md)** — Configure security and budgets
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [troubleshooting guide](../deployment/troubleshooting.md).

@@ -367,11 +367,11 @@ result = agent_executor.invoke({
 
 ```python
 from langchain_openai import ChatOpenAI
-from langchain.schema.messages import HumanMessage, ImagePromptTemplate
+from langchain.schema.messages import HumanMessage
 
 # Configure vision-capable model
 llm = ChatOpenAI(
-    model="gpt-4-vision-preview",
+    model="vision-capable-model",
     openai_api_key=os.getenv("OPENAI_API_KEY"),
     openai_api_base="http://localhost:8080/v1",
     max_tokens=300
@@ -470,6 +470,8 @@ print(f"Sentiment: {result['sentiment']}")
 
 ### Per-Customer LLM Configuration
 
+Tenant IDs must be valid UUIDs to be accepted by the proxy.
+
 ```python
 from langchain_openai import ChatOpenAI
 from typing import Dict
@@ -486,8 +488,7 @@ class MultiTenantLLMManager:
                 openai_api_key=os.getenv("OPENAI_API_KEY"),
                 openai_api_base="http://localhost:8080/v1",
                 default_headers={
-                    "X-LLMTrace-Tenant-ID": customer_id,
-                    "X-LLMTrace-Customer": customer_id
+                    "X-LLMTrace-Tenant-ID": customer_id
                 }
             )
         return self.llms[customer_id]
@@ -496,11 +497,11 @@ class MultiTenantLLMManager:
 manager = MultiTenantLLMManager()
 
 # Customer A's request
-customer_a_llm = manager.get_llm_for_customer("customer_a")
+customer_a_llm = manager.get_llm_for_customer("550e8400-e29b-41d4-a716-446655440001")
 response_a = customer_a_llm.invoke("Hello from customer A")
 
 # Customer B's request
-customer_b_llm = manager.get_llm_for_customer("customer_b")
+customer_b_llm = manager.get_llm_for_customer("550e8400-e29b-41d4-a716-446655440002")
 response_b = customer_b_llm.invoke("Hello from customer B")
 
 # Each customer's requests are isolated in LLMTrace
@@ -614,12 +615,18 @@ class LLMTraceMonitoringCallback(BaseCallbackHandler):
 
             # Check for security findings
             try:
-                findings_response = requests.get(f"{self.llmtrace_url}/security/findings", timeout=5)
+                findings_response = requests.get(
+                    f"{self.llmtrace_url}/api/v1/security/findings",
+                    timeout=5,
+                )
                 if findings_response.status_code == 200:
                     findings = findings_response.json()
-                    recent_findings = [f for f in findings if time.time() - f.get('timestamp', 0) < 60]
-                    if recent_findings:
-                        print(f" {len(recent_findings)} security findings in last minute")
+                    spans = findings.get("data", [])
+                    total_findings = sum(
+                        len(span.get("security_findings", [])) for span in spans
+                    )
+                    if total_findings:
+                        print(f" {total_findings} security findings in latest page")
             except:
                 pass
 
@@ -798,8 +805,7 @@ def check_llmtrace_health():
 ## Next Steps
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Direct SDK usage patterns
-- **[Python SDK](python-sdk.md)** — Native instrumentation approach
-- **[Dashboard Usage](dashboard.md)** — Monitor your LangChain applications
+- **[API Guide](API.md)** — REST queries + proxy paths
 - **[Custom Policies](custom-policies.md)** — Configure security for your use cases
 
 **Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](../deployment/troubleshooting.md).

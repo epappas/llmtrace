@@ -66,7 +66,7 @@ storage:
 
 ## Security Analysis Policies
 
-LLMTrace provides two layers of security analysis: regex-based (always available) and ML-based (requires the `ml` feature flag at compile time).
+LLMTrace provides regex-based security analysis by default. When the binary is built with the `ml` feature and ML is enabled in config, the proxy uses an ensemble analyzer that combines regex findings with ML classifiers.
 
 ### Regex-Based Detection (Default)
 
@@ -81,7 +81,7 @@ enable_security_analysis: true
 security_analysis_timeout_ms: 5000
 ```
 
-The regex engine detects:
+The regex engine detects a mix of prompt injection, role injection, jailbreak, and leakage patterns. Examples include:
 
 | Category | Examples | Severity |
 |----------|----------|----------|
@@ -98,7 +98,7 @@ No configuration is needed beyond `enable_security_analysis: true` — all patte
 
 ### ML-Based Detection (Optional)
 
-For higher accuracy and fewer false positives, enable ML-based detection. This downloads a HuggingFace model at startup and runs local inference alongside regex analysis.
+For higher accuracy and fewer false positives, enable ML-based detection. When `ml_preload: true`, the proxy loads HuggingFace models at startup and runs local inference alongside regex analysis. If `ml_preload` is set to `false`, the proxy currently stays in regex-only mode (ML models are not loaded lazily).
 
 ```yaml
 security_analysis:
@@ -133,6 +133,14 @@ security_analysis:
 
   # HuggingFace model for Named Entity Recognition
   ner_model: "dslim/bert-base-NER"
+
+  # Optional jailbreak classifier (runs alongside prompt injection)
+  jailbreak_enabled: true
+  jailbreak_threshold: 0.7
+
+  # Optional feature-level fusion classifier (ADR-013)
+  fusion_enabled: false
+  fusion_model_path: null
 ```
 
 **When to use ML detection:**
@@ -147,10 +155,10 @@ security_analysis:
 
 ### Ensemble Behavior
 
-When both regex and ML are enabled, LLMTrace runs an **ensemble** analyzer:
-- Both engines analyze every request/response in parallel
-- Results are merged and deduplicated
-- The highest confidence score wins when the same pattern is detected by both
+When ML is enabled, LLMTrace uses the ensemble analyzer:
+- Regex findings are always included.
+- ML findings are added when the model is loaded successfully.
+- Findings are merged and deduplicated; overlapping items include metadata such as `ensemble_agreement`.
 
 ---
 
@@ -395,18 +403,13 @@ alerts:
 | Type | Required Fields | Notes |
 |------|----------------|-------|
 | `slack` | `url` (Incoming Webhook URL) | Posts formatted Slack messages with finding details |
-| `pagerduty` | `routing_key` (Events API v2) | Creates PagerDuty incidents; auto-resolves are not yet supported |
+| `pagerduty` | `routing_key` (Events API v2) | Creates PagerDuty events |
 | `webhook` | `url` (any HTTP endpoint) | POSTs a JSON payload with full finding data |
+| `email` | _(none)_ | Accepted in config but currently skipped (not implemented) |
 
 ### Alert Severity Mapping
 
-| Severity | Security Score | Example Findings |
-|----------|---------------|------------------|
-| `Info` | 10 | Informational metadata, benign pattern matches |
-| `Low` | 30 | Minor PII detection (e.g., email in a business context) |
-| `Medium` | 60 | PII detection, role injection attempts |
-| `High` | 80 | Prompt injection, encoding attacks, data leakage |
-| `Critical` | 95 | DAN jailbreaks, credential leaks, destructive commands |
+LLMTrace compares each finding's severity (`Info` → `Critical`) and confidence score (0–100) against the configured minimums. There is no fixed mapping between score and severity; both are emitted by the analyzers.
 
 ### Alert Deduplication
 
@@ -419,22 +422,9 @@ alerts:
 
 This means: if the same finding type fires multiple times within 5 minutes, only the first alert is sent. This prevents a flood of identical alerts when an attacker probes your system repeatedly.
 
-### Escalation (Optional)
+### Escalation (Not Implemented Yet)
 
-If an alert goes unacknowledged, escalate it:
-
-```yaml
-alerts:
-  enabled: true
-  channels:
-    - type: slack
-      url: "https://hooks.slack.com/services/T00/B00/xxx"
-      min_severity: "High"
-
-  escalation:
-    enabled: true
-    escalate_after_seconds: 600  # Re-send to higher-severity channels after 10 minutes
-```
+The config schema includes an `alerts.escalation` block, but the proxy does not currently implement escalation behavior. Any escalation settings are ignored at runtime.
 
 ---
 
@@ -552,13 +542,21 @@ streaming_analysis:
   # Higher = less overhead, slower detection
   # 50 is a good balance for most workloads
   token_interval: 50
+
+  # Enable output-side checks (PII/secrets/toxicity) on streaming content
+  output_enabled: true
+
+  # If a critical finding is detected mid-stream, inject a warning and stop
+  early_stop_on_critical: true
 ```
 
 **How it works:**
 1. As SSE chunks arrive, the proxy accumulates tokens
-2. Every `token_interval` tokens, it runs lightweight regex pattern matching on the accumulated content
+2. Every `token_interval` tokens, it runs lightweight regex pattern matching on the accumulated content (streaming analysis uses regex only)
 3. If a critical finding is detected mid-stream, an alert fires immediately (doesn't wait for stream completion)
-4. After the stream completes, full analysis (including ML if enabled) runs on the complete response
+4. After the stream completes, full analysis runs on the complete response
+
+**Note:** Output-side streaming checks require `output_safety.enabled: true` in addition to `streaming_analysis.output_enabled`.
 
 **When to enable:**
 - Long-running streaming responses (creative writing, code generation)
@@ -569,7 +567,7 @@ streaming_analysis:
 
 ## PII Detection & Redaction
 
-Beyond detecting PII, LLMTrace can optionally **redact** it before storing traces or forwarding responses.
+Beyond detecting PII, LLMTrace can optionally **redact** it inside the security analyzer output. The proxy does **not** currently replace upstream responses or stored traces with redacted text — redaction is available for downstream processing and future pipeline use.
 
 ```yaml
 pii:
@@ -589,9 +587,15 @@ pii:
 | `credit_card` | 16-digit card numbers | `4111 1111 1111 1111` | 0.90 |
 | `uk_nin` | UK National Insurance Number | `AB 12 34 56 C` | 0.90 |
 | `iban` | International Bank Account Number | `DE89 3704 0044 0532 0130 00` | 0.85 |
+| `eu_passport_de` | German passport | `C01X00T2Z` | 0.60 |
+| `eu_passport_fr` | French passport | `12AB34567` | 0.65 |
+| `eu_passport_it` | Italian passport | `AA1234567` | 0.60 |
+| `eu_passport_es` | Spanish passport | `ABC123456` | 0.60 |
+| `eu_passport_nl` | Dutch passport | `NX1A2B3C4` | 0.60 |
 | `intl_phone` | International phone numbers | `+44 20 7946 0958` | 0.80 |
 | `nhs_number` | UK NHS number | `943 476 5919` | 0.70 |
 | `canadian_sin` | Canadian Social Insurance Number | `046-454-286` | 0.80 |
+| `australian_tfn` | Australian Tax File Number | `123 456 789` | 0.70 |
 
 ### False Positive Suppression
 
@@ -620,8 +624,8 @@ LLMTrace generates compliance reports (SOC2, GDPR, HIPAA) from stored audit even
 
 ### How Reports Work
 
-1. **Audit events** are automatically recorded for security-relevant actions (config changes, tenant operations, security findings)
-2. **Reports** aggregate audit events over a time period into a structured compliance document
+1. **Audit events** are recorded for tenant and API key operations (and report generation)
+2. **Reports** aggregate audit events and trace data over a time period into a structured compliance document
 3. **Storage**: Reports are stored as JSON in the metadata repository (SQLite or PostgreSQL)
 
 ### Report Types
@@ -637,10 +641,10 @@ LLMTrace generates compliance reports (SOC2, GDPR, HIPAA) from stored audit even
 Audit events are generated automatically when trace storage is enabled. For complete compliance coverage, ensure:
 
 ```yaml
-# Required: traces must be stored (not just analyzed)
+# Recommended: traces must be stored to include trace data in reports
 enable_trace_storage: true
 
-# Required: security analysis generates the findings that feed into reports
+# Optional: security analysis adds findings that enrich reports
 enable_security_analysis: true
 
 # Recommended: production storage for durable audit trail
@@ -656,22 +660,18 @@ storage:
 
 ## OWASP LLM Top 10 Coverage
 
-LLMTrace includes built-in test coverage for the [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/). The detection patterns are compiled into the regex engine — no additional configuration is needed.
+LLMTrace includes built-in tests mapped to the [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/). The current test suite covers the following categories:
 
-### Coverage Summary
+### Coverage Summary (Tests Present)
 
-| OWASP ID | Category | Coverage | Detection Method |
-|----------|----------|----------|------------------|
-| **LLM01** | Prompt Injection | ✅ Full | Regex + ML ensemble (20 test cases) |
-| **LLM02** | Insecure Output Handling | ✅ Full | Data leakage patterns (7 test cases) |
-| **LLM03** | Training Data Poisoning | ⬜ N/A | Out of scope (training-time concern) |
-| **LLM04** | Model Denial of Service | ✅ Partial | Cost caps + rate limiting + anomaly detection |
-| **LLM05** | Supply Chain Vulnerabilities | ⬜ N/A | Handled by `cargo audit` in CI |
-| **LLM06** | Sensitive Information Disclosure | ✅ Full | PII patterns + NER (15 test cases) |
-| **LLM07** | Insecure Plugin Design | ✅ Full | Agent action analysis (22 test cases) |
-| **LLM08** | Excessive Agency | ✅ Partial | Agent action tracing + anomaly detection |
-| **LLM09** | Overreliance | ⬜ N/A | UX concern, not detectable by proxy |
-| **LLM10** | Model Theft | ⬜ N/A | Infrastructure concern |
+| OWASP ID | Category | Tests |
+|----------|----------|-------|
+| **LLM01** | Prompt Injection | ✅ |
+| **LLM02** | Insecure Output Handling | ✅ |
+| **LLM06** | Sensitive Information Disclosure | ✅ |
+| **LLM07** | Insecure Plugin Design | ✅ |
+
+Other OWASP categories are not currently covered by tests in this repo.
 
 ### Running OWASP Tests
 
@@ -720,8 +720,9 @@ The example configurations in the [`examples/`](../../examples/) directory show 
 | `LLMTRACE_STORAGE_PROFILE` | `storage.profile` | `production` |
 | `LLMTRACE_STORAGE_DATABASE_PATH` | `storage.database_path` | `/var/lib/llmtrace/traces.db` |
 | `LLMTRACE_CLICKHOUSE_URL` | `storage.clickhouse_url` | `http://clickhouse:8123` |
+| `LLMTRACE_CLICKHOUSE_DATABASE` | `storage.clickhouse_database` | `llmtrace` |
 | `LLMTRACE_POSTGRES_URL` | `storage.postgres_url` | `postgres://user:pass@pg:5432/llmtrace` |
 | `LLMTRACE_REDIS_URL` | `storage.redis_url` | `redis://redis:6379` |
-| `LLMTRACE_LOG_LEVEL` | `logging.level` | `debug` |
-| `LLMTRACE_LOG_FORMAT` | `logging.format` | `json` |
+| `LLMTRACE_LOG_LEVEL` | `logging.level` (via CLI env) | `debug` |
+| `LLMTRACE_LOG_FORMAT` | `logging.format` (via CLI env) | `json` |
 | `RUST_LOG` | Fine-grained tracing | `llmtrace_proxy=debug,info` |

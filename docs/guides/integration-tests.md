@@ -15,6 +15,7 @@ LLMTrace integration tests run against real infrastructure services
 
 ```bash
 # 1. Start infrastructure (ClickHouse, PostgreSQL, Redis)
+# Uses compose.yaml in the repo root.
 docker compose up -d --wait clickhouse postgres redis
 
 # 2. Export the connection URLs
@@ -50,6 +51,12 @@ running services:
 | **Redis** | `llmtrace-storage` | Cache get/set/TTL, invalidation, connection pooling |
 | **Production profile** | `llmtrace-storage` | Full `StorageProfile::Production` composite build |
 
+If you only want storage integration tests:
+
+```bash
+cargo test -p llmtrace-storage --features "clickhouse,postgres,redis_backend" -- --ignored
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -65,7 +72,7 @@ The GitHub Actions CI pipeline (`.github/workflows/ci.yml`) has a dedicated
 `integration` job that:
 
 1. Waits for unit tests to pass (`needs: test`)
-2. Starts Docker Compose services with `docker compose up -d --wait`
+2. Starts Docker Compose services with `docker compose up -d`
 3. Verifies service health (ClickHouse ping, `pg_isready`, Redis `PING`)
 4. Runs `cargo test --workspace --features "clickhouse,postgres,redis_backend" -- --ignored`
 5. Tears down services (`docker compose down -v`) regardless of test outcome
