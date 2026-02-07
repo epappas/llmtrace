@@ -37,7 +37,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 - **Rust-native performance**: <1ms regex analysis, ~50-100ms ML inference — faster than any Python framework
 - **True transparent proxy**: Zero-code integration deployment model
 - **Streaming security**: Real-time SSE analysis with output-side monitoring and early stopping
-- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa embedding concatenation with 15-dim heuristic vector through learned FC classifier
+- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa CLS embedding concatenated with 15-dim heuristic vector through 3-layer FC classifier (random weights). **Note:** 6 architectural deviations from DMPI-PMHFE paper remain (DMPI-001–DMPI-006): CLS pooling instead of average pooling, 3 FC layers instead of 2, 15 mixed features instead of 10 binary, repetition threshold >10 instead of >=3, 3 missing paper features, non-paper feature names. See section 3.4.1.
 - **Comprehensive input security**: 40+ regex patterns covering 8 attack categories (flattery, urgency, roleplay, impersonation, covert, excuse, many-shot, repetition)
 - **Unicode normalisation**: NFKC + zero-width stripping + homoglyph mapping (Cyrillic, Greek)
 - **Output safety**: Toxicity detection (BERT-based + keyword fallback), hallucination detection (cross-encoder + heuristic fallback)
@@ -59,6 +59,8 @@ All roadmap items can only be marked **✅ Implemented** if the implementation m
 
 Functional Requirements: Input-security improvements must implement MOF training (token-wise bias detection, debiasing data generation, retraining) and calibrated FPR operating points as described in `docs/research/injecguard-over-defense-mitigation.md` and `docs/research/security-state-of-art-2026.md`. Tool-boundary defenses must implement LLM-based tool result parsing and CheckTool-style triggering detection per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense must be a multi-pass coordinator+guard architecture with a second-opinion path per `docs/research/multi-agent-defense-pipeline.md`. Output safety must implement HaluGate-style token-level detection, NLI explanation, and SCM streaming models per `docs/research/security-state-of-art-2026.md`.
 
+DMPI-PMHFE Architecture (DMPI-001–DMPI-006): The fusion pipeline must match the paper's dual-channel design before training (ML-001). Required: average pooling over all token embeddings (not CLS), exactly 2 FC layers (not 3), exactly 10 binary heuristic features using the paper's `is_*` naming convention and keyword sets (not 15 mixed features), and pattern thresholds of >=3 (not >10). These 6 deviations are blocking prerequisites for ML-001 (fusion training). See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for full specification.
+
 Non-Functional Requirements: Latency classes and streaming compatibility must meet literature expectations (e.g., sentinel-class latency, token-level detection ranges) from `docs/research/security-state-of-art-2026.md`. Implementations must be deterministic, testable, and include benchmark evidence where the literature reports metrics (e.g., ASR, FPR, F1) using datasets from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
 
 ---
@@ -71,16 +73,16 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 |-----------|--------|-------------|
 | Prompt injection detection (regex) | `lib.rs` | 40+ patterns across system override, role injection, delimiter injection |
 | Prompt injection detection (ML) | `ml_detector.rs` | DeBERTa-v3-base (`protectai/deberta-v3-base-prompt-injection-v2`) |
-| Feature-level fusion | `fusion_classifier.rs` | 783-dim input (768 DeBERTa + 15 heuristic) → FC(256) → FC(64) → FC(2) |
-| Heuristic feature extraction | `feature_extraction.rs` | 15-dim vector: 8 binary attack categories + 7 numeric features |
+| Feature-level fusion | `fusion_classifier.rs` | 783-dim input (768 DeBERTa CLS + 15 heuristic) → FC(256) → FC(64) → FC(2). **Deviates from paper:** uses CLS pooling (not average), 3 FC layers (not 2), input dim 783 (not 778). See DMPI-001, DMPI-002. |
+| Heuristic feature extraction | `feature_extraction.rs` | 15-dim vector: 8 binary attack categories + 7 numeric features. **Deviates from paper:** paper specifies 10 binary features with different names and keyword sets. See DMPI-003, DMPI-005, DMPI-006. |
 | Flattery/incentive detection | `lib.rs` | 5 patterns: best_ai, reward, capable_ai, so_smart, tip |
 | Urgency detection | `lib.rs` | 4 patterns: emergency, lives_depend, respond_immediately, time_sensitive |
 | Roleplay/hypothetical detection | `lib.rs` | 5 patterns: pretend, game, hypothetical, dan_identity, act_as_if |
 | Impersonation detection | `lib.rs` | 5 patterns: developer, admin_override, sysadmin, internal, creator |
 | Covert/stealth detection | `lib.rs` | 5 patterns: dont_tell, between_us, secret_test, off_record, bypass |
-| Excuse/immorality detection | `lib.rs` | 4 patterns: educational, researcher, novel, fictional |
+| Excuse detection | `lib.rs` | 4 patterns: educational, researcher, novel, fictional. **Note:** paper's `is_immoral` feature (hitting, amoral, immoral, deceit, irresponsible, offensive, violent, unethical, smack, fake, illegal, biased) is entirely absent. See DMPI-005. |
 | Many-shot attack detection | `lib.rs` | Q&A pair counting (threshold ≥ 3 pairs) |
-| Repetition attack detection | `lib.rs` | Word-level (>10 occurrences) and phrase-level (2-3 gram, >10 occurrences) |
+| Repetition attack detection | `lib.rs` | Word-level (>10 occurrences) and phrase-level (2-3 gram, >10 occurrences). **Deviates from paper:** DMPI-PMHFE threshold is >=3, not >10. See DMPI-004. |
 | Base64 encoding detection | `lib.rs` | Decode candidates and check for suspicious instruction phrases |
 | Jailbreak detection (dedicated) | `jailbreak_detector.rs` | DAN, system prompt extraction, privilege escalation, encoding evasion |
 | Encoding evasion detection | `jailbreak_detector.rs` | Base64, ROT13, leetspeak, reversed text decoding and analysis |
@@ -167,7 +169,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | IS-018 | **"Important Messages" header attack detection** — high ASR attack vector | Tool Result Parsing | P1 | Low | ⚠️ Partial |
 
 **Implementation Notes:**
-- IS-010: DMPI-PMHFE uses WordNet to expand synonym sets for each of 8 attack categories. Each pattern like "ignore" expands to "reveal, disregard, forget, overlook" + WordNet synonyms. This catches paraphrased attacks that exact regex misses.
+- IS-010: DMPI-PMHFE uses WordNet to expand synonym sets for each of 8 semantic-based attack categories (is_ignore, is_urgent, is_incentive, is_covert, is_format_manipulation, is_hypothetical, is_systemic, is_immoral) plus 2 structure-based pattern matching features (is_shot_attack, is_repeated_token) — 10 binary features total. Each synonym feature like "is_ignore" expands keywords (ignore, reveal, disregard, forget, overlook, regardless) via WordNet. Pattern features use regex with threshold of 3 (e.g. >=3 Q&A pairs for many-shot detection). Input is tokenized and lemmatized via spaCy en_core_web_sm. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for full feature table and keyword lists.
 - IS-012: The Protocol Exploits paper describes P2SQL injection where attackers exploit LangChain middleware to inject malicious SQL queries through natural language prompts.
 - IS-014: GPTFuzz achieves >90% ASR via genetic algorithm mutation of jailbreak templates. Defense requires adversarial training on mutated attack samples.
 
@@ -203,6 +205,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 **Audit Notes (Literature Alignment):**
 - Over-defense/MOF expectations and data-format augmentation: `docs/research/injecguard-over-defense-mitigation.md`.
 - Synonym/lemmatization expectations for IS-010/IS-011: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
+- DMPI-PMHFE architectural deviations (DMPI-001–DMPI-006) tracked in section 3.4.1. These are prerequisites for IS-010/IS-011 full compliance and for ML-001 training.
 - Protocol exploit items (P2SQL, long-context, multi-turn extraction): `docs/research/prompt-injections-to-protocol-exploits.md`.
 - Adversarial evasion and transferability requirements (IS-020–IS-031): `docs/research/bypassing-llm-guardrails-evasion.md`.
 
@@ -346,7 +349,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| ML-001 | **Joint end-to-end training** — train fusion FC layer jointly with labelled data | SoA Report (DMPI-PMHFE) | P1 | High | ❌ Missing |
+| ML-001 | **Joint end-to-end training** — train fusion FC layer jointly with labelled data (blocked by DMPI-001–DMPI-006) | SoA Report (DMPI-PMHFE) | P1 | High | ❌ Missing |
 | ML-002 | **InjecGuard model integration** — evaluate and integrate InjecGuard as alternative/ensemble member | InjecGuard, Benchmarks | P1 | Medium | ✅ Implemented |
 | ML-003 | **Meta Prompt Guard 2 integration** — 86M and 22M variants as ensemble members | SoA Report, Benchmarks | P1 | Medium | ✅ Implemented |
 | ML-004 | **PIGuard model integration** — DeBERTa + MOF training for reduced over-defense | SoA Report (PIGuard) | P1 | Medium | ❌ Missing |
@@ -354,9 +357,25 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | ML-006 | **Multi-model ensemble voting** — diverse architectures for robustness against AML | Bypassing Guardrails | P1 | Medium | ⚠️ Partial |
 | ML-007 | **Model hot-swapping** — swap models without proxy restart | Design Patterns | P3 | Medium | ❌ Missing |
 
+#### 3.4.1a DMPI-PMHFE Architecture Alignment (Prerequisites for ML-001)
+
+6 architectural deviations between the current codebase and the DMPI-PMHFE paper (arXiv 2506.06384). All must be resolved before fusion training (ML-001) can produce paper-comparable results. Reference: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
+
+| ID | Feature | Paper(s) | Priority | Complexity | Status |
+|----|---------|----------|----------|------------|--------|
+| DMPI-001 | **Average pooling instead of CLS token** — `ml_detector.rs:137` (BERT: `hidden.i((.., 0))`) and `ml_detector.rs:146` (DeBERTa: `DebertaV2ContextPooler` extracts position 0) both use CLS token. Paper requires average pooling over all token embeddings to aggregate full-sequence information. | DMPI-PMHFE | P1 | Medium | ❌ Missing |
+| DMPI-002 | **2 FC layers instead of 3** — `fusion_classifier.rs:33-43` implements `fc1(783->256)->ReLU->fc2(256->64)->ReLU->fc3(64->2)->SoftMax`. Paper specifies `Concat->FC(H)->ReLU->FC(2)->SoftMax` (2 FC layers). Input dim becomes 778 (768+10) once DMPI-003 is also applied. | DMPI-PMHFE | P1 | Medium | ❌ Missing |
+| DMPI-003 | **10 binary features instead of 15 mixed** — `feature_extraction.rs:34` sets `HEURISTIC_FEATURE_DIM=15` (8 binary + 7 numeric). Paper specifies exactly 10 binary (0/1) features. Indices 8-14 (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent. Missing paper features `is_ignore` and `is_format_manipulation` must be added. `excuse_attack` (index 5) must be replaced with `is_immoral`. | DMPI-PMHFE | P1 | High | ❌ Missing |
+| DMPI-004 | **Repetition threshold >=3 instead of >10** — `lib.rs:1115` (word-level) and `lib.rs:1159` (phrase-level) both use hardcoded `> 10`. Paper specifies `>= 3` based on sensitivity analysis. Common-words exclusion list may need expansion at the lower threshold. | DMPI-PMHFE | P1 | Low | ❌ Missing |
+| DMPI-005 | **Missing paper features: is_immoral, is_ignore, is_format_manipulation** — (a) `is_immoral` keywords (hitting, amoral, immoral, deceit, irresponsible, offensive, violent, unethical, smack, fake, illegal, biased) are absent from all patterns; `excuse_attack` is a different concept. (b) `is_ignore` emits `prompt_injection` finding type, lacks own binary feature index. (c) `is_format_manipulation` feeds numeric injection count, not a dedicated binary feature; paper keywords `encode, disguising, morse, binary, hexadecimal` not matched individually. | DMPI-PMHFE | P1 | Medium | ❌ Missing |
+| DMPI-006 | **Feature naming alignment to paper convention** — `feature_extraction.rs:41-50` uses code-specific names (`flattery_attack`, `urgency_attack`, etc.). Paper uses `is_ignore`, `is_urgent`, `is_incentive`, `is_covert`, `is_format_manipulation`, `is_hypothetical`, `is_systemic`, `is_immoral`, `is_shot_attack`, `is_repeated_token`. Zero paper `is_*` names exist in codebase. Rename mapping: `flattery->is_incentive`, `urgency->is_urgent`, `roleplay->is_hypothetical`, `impersonation->is_systemic`, `covert->is_covert`, `excuse->is_immoral`, `many_shot->is_shot_attack`, `repetition->is_repeated_token`. | DMPI-PMHFE | P2 | Low | ❌ Missing |
+
 **Implementation Notes:**
-- ML-001: Current FusionClassifier uses random weights (`new_random`). Need training pipeline: (1) collect labeled prompt injection dataset, (2) extract DeBERTa embeddings, (3) extract heuristic features, (4) concatenate and train FC layers. DMPI-PMHFE shows +6% F1 on hard datasets with trained fusion.
+- ML-001: Current FusionClassifier uses random weights (`new_random`). Need training pipeline: (1) collect labeled prompt injection dataset, (2) extract DeBERTa embeddings via average pooling, (3) extract 10 binary heuristic features per paper spec, (4) concatenate and train 2-layer FC classifier. DMPI-PMHFE shows +6% F1 on hard datasets (deepset-v2: 84.21% -> 90.21%) with trained fusion. **Blocked by DMPI-001–DMPI-006:** training on the wrong architecture will not reproduce paper results.
 - ML-002: InjecGuard surpasses ProtectAIv2 by 30.8% on over-defense benchmark. Same DeBERTa architecture, different training strategy.
+- DMPI-001 and DMPI-002 are independent and can be done in parallel.
+- DMPI-003 and DMPI-005 are coupled: fixing feature dimension requires adding the 3 missing paper features and removing the 7 extra numeric features.
+- DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.
 
 #### 3.4.2 Training Strategies
 
@@ -446,7 +465,8 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | EV-009 | **Automated benchmark runner** — CI-integrated evaluation pipeline | All papers | P1 | Medium | ❌ Missing |
 | EV-010 | **Paper-table output format** — results formatted for academic paper tables | All papers | P2 | Low | ✅ Implemented |
 | EV-011 | **safeguard-v2 evaluation** — 1,300 test samples from DMPI-PMHFE | SoA Report | P1 | Low | ❌ Missing |
-| EV-012 | **deepset-v2 evaluation** — 354 challenging external validation samples | SoA Report | P1 | Low | ❌ Missing |
+| EV-012 | **deepset-v2 evaluation** — 354 challenging external validation samples | SoA Report (DMPI-PMHFE) | P1 | Low | ❌ Missing |
+| EV-013 | **Ivanleomk-v2 evaluation** — 610 external validation samples from `ivanleomk/prompt_injection_password` | SoA Report (DMPI-PMHFE) | P1 | Low | ❌ Missing |
 
 **Audit Notes (Literature Alignment):**
 - Benchmark suite expectations (AgentDojo, ASB, InjecAgent, WASP, etc.): `docs/research/benchmarks-and-tools-landscape.md`.
@@ -504,7 +524,7 @@ Focus: Agent security, model diversification, advanced detection.
 | 7-9 | AS-001, AS-002 | **Tool-boundary firewalling** — input minimiser + output sanitiser | High |
 | 7-9 | ML-002, ML-003, ML-006 | **Model ensemble diversification** — InjecGuard + Meta Prompt Guard | Medium |
 | 9-11 | AS-010, AS-015 | **Action-Selector pattern enforcement** + action-type rate limiting | Medium |
-| 10-12 | ML-001, ML-014 | **Joint fusion training pipeline** with curated dataset | High |
+| 10-12 | ML-001, ML-014 | **Joint fusion training pipeline** with curated dataset (blocked by DMPI-001–006; see §3.4.1a) | High |
 | 11-13 | ML-010, ML-012 | **MOF training** + adversarial training integration | High |
 | 12-14 | AS-020, AS-021, AS-023 | **Multi-agent defense** — coordinator + guard + second opinion | High |
 | 14-16 | AS-030, AS-035 | **MCP protocol monitoring** + Toxic Agent Flow defense | High |
@@ -547,7 +567,7 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 | **Prompt injection** | ✅ Ensemble | ✅ MOF-trained | ✅ DeBERTa | ✅ Proprietary | ✅ LLM-based | ✅ PromptGuard2 | ✅ Policy-driven | ✅ LLM-based |
 | **Over-defense mitigation** | ❌ | ✅ MOF | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
 | **Jailbreak detection** | ✅ Dedicated | ⚠️ General | ⚠️ General | ✅ | ✅ | ✅ PromptGuard2 | ✅ | ✅ |
-| **Feature-level fusion** | ✅ (random weights) | ❌ | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
+| **Feature-level fusion** | ⚠️ (random weights; 6 architectural deviations from DMPI-PMHFE — see §3.4.1a) | ❌ | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
 | **Unicode normalisation** | ✅ Comprehensive | ❌ | ❌ | Unknown | ❌ | ❌ | Unknown | ❌ |
 | **Toxicity detection** | ✅ BERT + fallback | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
 | **Hallucination detection** | ✅ Cross-encoder | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -574,7 +594,7 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 ### 5.2 LLMTrace Unique Differentiators
 
 1. **Only Rust-native LLM security proxy** — performance advantage is structural
-2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, once trained will be SOTA
+2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, but 6 architectural deviations (DMPI-001–006) must be resolved before trained weights can match paper SOTA (see §3.4.1a)
 3. **Only system combining streaming analysis + early stopping + output safety** — no competitor has all three
 4. **Only system with integrated cost control + security** — single deployment for both concerns
 5. **Most comprehensive Unicode normalisation** — 30+ homoglyph mappings + 18 zero-width chars

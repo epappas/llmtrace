@@ -19,6 +19,8 @@ These criteria define when a task can be marked ✅. If any criterion is not met
 
 Input Security (IS): Must implement the specific algorithmic behaviors described in the literature, not heuristic approximations. For IS-001–IS-003, MOF requires token-wise bias detection, debiasing data generation, and retraining with reported over-defense gains in `docs/research/injecguard-over-defense-mitigation.md`. For IS-006/IS-007, thresholds must be calibrated at 0.1/0.5/1% FPR with TPR reporting per `docs/research/security-state-of-art-2026.md`. For IS-010/IS-011, WordNet-style synonym expansion and true lemmatization are required, not regex-only stems, per `docs/research/dmpi-pmhfe-prompt-injection-detection.md`. For IS-024–IS-029, adversarial robustness must include attack-specific defenses and calibration beyond normalization per `docs/research/bypassing-llm-guardrails-evasion.md`.
 
+DMPI-PMHFE Architecture (DMPI-001–DMPI-006): The fusion pipeline must match the paper's dual-channel design before training (ML-001). This means: average pooling (not CLS), 2 FC layers (not 3), exactly 10 binary heuristic features using the paper's `is_*` naming and keyword sets, and pattern thresholds of >=3 (not >10). See Loop 12a and `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for full specification. DMPI-001–DMPI-006 are blocking prerequisites for ML-001 (fusion training).
+
 Tool/Agent Security (AS): Tool boundary defenses must parse/sanitize with LLM-based extraction and CheckTool-style triggering detection, not heuristic filters, per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense requires an explicit coordinator + guard multi-pass architecture (and second opinion path) rather than a single-pass heuristic pipeline, per `docs/research/multi-agent-defense-pipeline.md`. Pattern enforcement must detect plan compliance and routing by trust level as defined in `docs/research/design-patterns-securing-agents.md`.
 
 Output Security (OS): HaluGate-style token-level detection requires ModernBERT token classification and NLI explanation layer, not heuristic or sentence-only checks, per `docs/research/security-state-of-art-2026.md`. Streaming safety must use partial-sequence models and progressive confidence (SCM), not re-running full-text detectors, per `docs/research/security-state-of-art-2026.md`. CodeShield parity requires Semgrep integration and coverage beyond basic static rules, per `docs/research/security-state-of-art-2026.md`.
@@ -252,6 +254,20 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | IS-041 | Multi-language trigger detection | High | ⬜ |
 | IS-018 | "Important Messages" header attack hardening | Low | 🔄 |
 
+### Loop 12a — DMPI-PMHFE Architecture Alignment
+> Resolve 6 architectural deviations between codebase and DMPI-PMHFE paper (arXiv 2506.06384).
+> Must be completed before Loop 15 (Fusion Training Pipeline) to ensure trained weights match the paper.
+> Reference: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`
+
+| ID | Feature | Complexity | Status |
+|----|---------|-----------|--------|
+| DMPI-001 | **Average pooling instead of CLS token** — `ml_detector.rs:137` (BERT: `hidden.i((.., 0))`) and `ml_detector.rs:146` (DeBERTa: `DebertaV2ContextPooler` extracts position 0) both use CLS token. Paper requires average pooling over all token embeddings (`hidden.mean(1)?.squeeze(0)?`). CLS captures sentence-level representation from position 0; average pooling aggregates information from the full sequence, producing fundamentally different embedding semantics. | Medium | ⬜ |
+| DMPI-002 | **2 FC layers instead of 3** — `fusion_classifier.rs:33-34,41-43` defines `fc1(783->256)->ReLU->fc2(256->64)->ReLU->fc3(64->2)->SoftMax`. Paper specifies exactly 2 FC layers: `Concat->FC(H)->ReLU->FC(2)->SoftMax`. Remove `HIDDEN_2` and `fc3`; collapse to `fc1(input->H)->ReLU->fc2(H->2)->SoftMax`. Input dim changes from 783 to 778 once DMPI-003 is also applied (768 + 10 = 778). | Medium | ⬜ |
+| DMPI-003 | **10 binary features instead of 15 mixed** — `feature_extraction.rs:34` sets `HEURISTIC_FEATURE_DIM=15` (8 binary + 7 numeric). Paper specifies exactly 10 binary (0/1) features. Indices 8-14 (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent and must be removed. Missing paper features `is_ignore` and `is_format_manipulation` must be added as binary indices. `excuse_attack` (index 5) must be replaced with `is_immoral`. See DMPI-005 for keyword details. | High | ⬜ |
+| DMPI-004 | **Repetition threshold >=3 instead of >10** — `lib.rs:1115` (word-level) and `lib.rs:1159` (phrase-level) both use hardcoded `> 10` (effectively >=11). Paper specifies `>= 3` repetitions based on sensitivity analysis. Extract into a named constant `REPETITION_THRESHOLD: u32 = 3` and change conditions to `>= REPETITION_THRESHOLD`. The common-words exclusion list at `lib.rs:1117-1124` may need expansion since the lower threshold increases false-positive surface for common words. | Low | ⬜ |
+| DMPI-005 | **Missing paper features: is_immoral, is_ignore, is_format_manipulation** — Three of the paper's 10 features have no binary feature vector index. (a) `is_immoral`: keywords (hitting, amoral, immoral, deceit, irresponsible, offensive, violent, unethical, smack, fake, illegal, biased) are absent from all detection patterns; `excuse_attack` covers educational/research excuses which is a different concept. (b) `is_ignore`: detected as `prompt_injection` finding type (`lib.rs:417`) but lacks its own binary feature index; paper treats it as a dedicated category. (c) `is_format_manipulation`: encoding detected as `encoding_attack` finding type in `INJECTION_TYPES` array (`feature_extraction.rs:57`) feeding index 8 (numeric count), not a dedicated binary feature; paper keywords `encode, disguising, morse, binary, hexadecimal` are not matched individually. | Medium | ⬜ |
+| DMPI-006 | **Feature naming alignment to paper convention** — `feature_extraction.rs:41-50` uses `flattery_attack, urgency_attack, roleplay_attack, impersonation_attack, covert_attack, excuse_attack, many_shot_attack, repetition_attack`. Paper uses `is_ignore, is_urgent, is_incentive, is_covert, is_format_manipulation, is_hypothetical, is_systemic, is_immoral, is_shot_attack, is_repeated_token`. Zero occurrences of any `is_*` paper name exist in the codebase. Rename for traceability: `flattery_attack->is_incentive`, `urgency_attack->is_urgent`, `roleplay_attack->is_hypothetical`, `impersonation_attack->is_systemic`, `covert_attack->is_covert`, `excuse_attack->is_immoral`, `many_shot_attack->is_shot_attack`, `repetition_attack->is_repeated_token`. Downstream finding types in `lib.rs` pattern definitions and serialization code must be updated accordingly. | Low | ⬜ |
+
 ### Loop 13 — Hallucination Detection Upgrade
 > HaluGate-style token-level detection
 
@@ -311,6 +327,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-009 | Automated CI-integrated benchmark runner | Medium | ⬜ |
 | EV-011 | safeguard-v2 evaluation (1300 samples) | Low | ⬜ |
 | EV-012 | deepset-v2 evaluation (354 samples) | Low | ⬜ |
+| EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |
 
 ---
 
@@ -650,4 +667,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 - Adversarial robustness expectations come from `docs/research/bypassing-llm-guardrails-evasion.md`.
 - Over-defense mitigation expectations come from `docs/research/injecguard-over-defense-mitigation.md`.
 - Benchmark coverage expectations come from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
+- DMPI-001–DMPI-006 (Loop 12a) are blocking prerequisites for ML-001 (Loop 15). The fusion classifier cannot be trained against the paper's architecture until pooling, layer count, feature vector, thresholds, and feature naming all match the DMPI-PMHFE specification. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for the authoritative paper breakdown.
+- DMPI-003 and DMPI-005 are coupled: fixing the feature vector dimension (10 binary) requires adding the 3 missing paper features (is_ignore, is_format_manipulation, is_immoral) and removing the 7 extra numeric features.
+- DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.
 - EV-002 is ✅ because the NotInject dataset is 339 samples with equal difficulty tiers (113/113/113).
