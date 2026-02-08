@@ -10,7 +10,8 @@ Choose your preferred approach:
 |---------------|-----------|-------------|
 | **Python**| [`python/`](python/) | OpenAI SDK, LangChain, async patterns |
 | **Node.js**| [`nodejs/`](nodejs/) | OpenAI SDK, streaming, TypeScript |
-| ** curl/HTTP**| [`curl/`](curl/) | Raw API usage, testing, monitoring |
+| **curl/HTTP**| [`curl/`](curl/) | Raw API usage, testing, monitoring |
+| **Security**| [`security/`](security/) | Comprehensive attack catalog (17 categories) |
 
 ## Configuration Examples
 
@@ -43,11 +44,17 @@ cd curl && ./basic_usage.sh
 ### 2. Security Testing
 
 ```bash
-# Test security detection
-cd curl && ./security_testing.sh
+# Python: send attacks via OpenAI SDK, query findings API
+cd python && python security_testing.py
 
-# Check findings
-curl http://localhost:8080/security/findings | jq
+# Bash: full 17-category attack catalog with SQLite report
+./security/attack_catalog.sh
+
+# Quick smoke test (8 attacks)
+./security_test.sh
+
+# Check findings via API
+curl http://localhost:8080/api/v1/security/findings | jq
 ```
 
 ### 3. Cost Monitoring
