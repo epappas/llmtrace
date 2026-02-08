@@ -14,6 +14,7 @@ use llmtrace_benchmarks::datasets::DatasetLoader;
 use llmtrace_benchmarks::metrics::tpr_at_fpr;
 use llmtrace_benchmarks::regression;
 use llmtrace_benchmarks::regression::RegressionResult;
+use llmtrace_benchmarks::runners::cyberseceval2;
 use llmtrace_benchmarks::runners::notinject::{print_full_report, run_notinject_evaluation_async};
 use llmtrace_benchmarks::runners::{BenchmarkResult, BenchmarkRunner};
 use llmtrace_core::{AnalysisContext, SecurityAnalyzer, TenantId};
@@ -34,6 +35,10 @@ struct Cli {
     /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2, ivanleomk_v2, cyberseceval2
     #[arg(long)]
     suite: Vec<String>,
+
+    /// Fail immediately if no ML analyzer could load its model.
+    #[arg(long)]
+    require_ml: bool,
 }
 
 struct NamedAnalyzer {
@@ -43,6 +48,13 @@ struct NamedAnalyzer {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .init();
+
     let cli = Cli::parse();
 
     let datasets_dir = cli
@@ -50,6 +62,12 @@ async fn main() {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets"));
 
     let analyzers = build_analyzers().await;
+
+    let has_ml = analyzers.iter().any(|a| a.name != "Regex");
+    if cli.require_ml && !has_ml {
+        eprintln!("Error: --require-ml set but no ML analyzer loaded successfully");
+        std::process::exit(1);
+    }
 
     let run_all = cli.suite.is_empty();
     let should_run = |name: &str| run_all || cli.suite.iter().any(|s| s == name);
@@ -254,10 +272,14 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
                 "Ensemble (recommended default): ml_active={}",
                 a.is_ml_active()
             );
-            analyzers.push(NamedAnalyzer {
-                name: "Ensemble",
-                analyzer: Box::new(a),
-            });
+            if a.is_ml_active() {
+                analyzers.push(NamedAnalyzer {
+                    name: "Ensemble",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: Ensemble ML not active (model not loaded), skipping (would duplicate Regex)");
+            }
         }
         Err(e) => eprintln!("Warning: EnsembleSecurityAnalyzer init failed (skipping): {e}"),
     }
@@ -270,10 +292,16 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
     {
         Ok(a) => {
             println!("PromptGuard: model_loaded={}", a.is_model_loaded());
-            analyzers.push(NamedAnalyzer {
-                name: "PromptGuard",
-                analyzer: Box::new(a),
-            });
+            if a.is_model_loaded() {
+                analyzers.push(NamedAnalyzer {
+                    name: "PromptGuard",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!(
+                    "Warning: PromptGuard model not loaded, skipping (would duplicate Regex)"
+                );
+            }
         }
         Err(e) => eprintln!("Warning: PromptGuardAnalyzer init failed (skipping): {e}"),
     }
@@ -285,10 +313,14 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
     {
         Ok(a) => {
             println!("InjecGuard: model_loaded={}", a.is_model_loaded());
-            analyzers.push(NamedAnalyzer {
-                name: "InjecGuard",
-                analyzer: Box::new(a),
-            });
+            if a.is_model_loaded() {
+                analyzers.push(NamedAnalyzer {
+                    name: "InjecGuard",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: InjecGuard model not loaded, skipping (would duplicate Regex)");
+            }
         }
         Err(e) => eprintln!("Warning: InjecGuardAnalyzer init failed (skipping): {e}"),
     }
@@ -300,10 +332,14 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
     {
         Ok(a) => {
             println!("MLSecurity: model_loaded={}", a.is_model_loaded());
-            analyzers.push(NamedAnalyzer {
-                name: "MLSecurity",
-                analyzer: Box::new(a),
-            });
+            if a.is_model_loaded() {
+                analyzers.push(NamedAnalyzer {
+                    name: "MLSecurity",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: MLSecurity model not loaded, skipping (would duplicate Regex)");
+            }
         }
         Err(e) => eprintln!("Warning: MLSecurityAnalyzer init failed (skipping): {e}"),
     }
@@ -525,21 +561,27 @@ async fn run_cyberseceval2_suite(
     datasets_dir: &Path,
     analyzer_name: &str,
 ) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_cyberseceval2_samples(datasets_dir)?;
-    println!("Loaded {} CyberSecEval2 samples", samples.len());
+    let label = format!("LLMTrace {}", analyzer_name);
+    let eval =
+        cyberseceval2::run_cyberseceval2_evaluation_async(analyzer, datasets_dir, &label).await?;
+    cyberseceval2::print_full_report(&eval);
 
-    let result = BenchmarkRunner::run_async_benchmark(
-        analyzer,
-        &samples,
-        "CyberSecEval2 External",
-        analyzer_name,
-    )
-    .await;
-    result
-        .metrics
-        .print_summary(&format!("CyberSecEval2 External ({})", analyzer_name));
+    let result = BenchmarkResult {
+        benchmark_name: "CyberSecEval2 External".to_string(),
+        config_name: analyzer_name.to_string(),
+        metrics: eval.metrics.clone(),
+        total_duration_ms: eval.duration_ms,
+        avg_sample_us: if eval.num_samples > 0 {
+            (eval.duration_ms * 1000) / eval.num_samples as u64
+        } else {
+            0
+        },
+        num_samples: eval.num_samples,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        sample_results: Vec::new(),
+    };
 
-    let reg_result = regression::check_cyberseceval2(&result.metrics);
+    let reg_result = regression::check_cyberseceval2(&eval.metrics);
     let reg = RegressionResult {
         suite_name: format!("CyberSecEval2 ({})", analyzer_name),
         ..reg_result

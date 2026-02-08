@@ -180,7 +180,17 @@ jobs:
           key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-bench-
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: ${{ runner.os }}-hf-models-v1
+          restore-keys: |
+            ${{ runner.os }}-hf-models-
       - name: Run benchmark regression gate
+        env:
+          RUST_LOG: warn
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: cargo run --bin benchmarks -- --output-dir benchmarks/results
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
