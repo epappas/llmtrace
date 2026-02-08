@@ -176,7 +176,7 @@ mod tests {
 
         // Create a dummy embedding (768-dim)
         let embedding = Tensor::zeros(DEFAULT_EMBEDDING_DIM, DType::F32, &device).unwrap();
-        // Create dummy heuristic features (15-dim)
+        // Create dummy heuristic features (10-dim)
         let heuristic_features = vec![0.0_f32; HEURISTIC_FEATURE_DIM];
 
         let result = classifier.predict(&embedding, &heuristic_features);

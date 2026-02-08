@@ -1,6 +1,6 @@
 # DMPI-001: CLS Token to Average Pooling
 
-**Status:** Implementation Plan
+**Status:** Done
 **Deviation:** DMPI-001 (see TODO.md, FEATURE_ROADMAP.md section 3.4.1a)
 **Paper:** DMPI-PMHFE (arXiv 2506.06384), Section III-A
 
@@ -139,7 +139,7 @@ LoadedModel::extract_embedding(text)
 
 Average pooling produces the same output shape as CLS extraction: `[hidden_size]` (768 for DeBERTa-v3-base). No changes needed in:
 
-- `FUSION_INPUT_DIM` (stays 783 = 768 + 15)
+- `FUSION_INPUT_DIM` (now 778 = 768 + 10, updated by DMPI-003)
 - `FusionClassifier` layer dimensions
 - `extract_heuristic_features` (unchanged)
 - `EnsembleSecurityAnalyzer::analyze_with_fusion` (unchanged)
