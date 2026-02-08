@@ -1155,7 +1155,10 @@ mod tests {
             double_value: Some(std::f64::consts::PI),
             bool_value: None,
         };
-        assert_eq!(any_value_as_string(&v), Some(std::f64::consts::PI.to_string()));
+        assert_eq!(
+            any_value_as_string(&v),
+            Some(std::f64::consts::PI.to_string())
+        );
 
         let v = OtlpJsonAnyValue {
             string_value: None,
