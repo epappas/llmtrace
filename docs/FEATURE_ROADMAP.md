@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Date**: 2026-02-01
 **Author**: LLMTrace Engineering
-**Scope**: Comprehensive feature gap analysis across 16 research documents in `docs/research/`, competitive landscape, and phased implementation plan
+**Scope**: Comprehensive feature gap analysis across 21 research documents in `docs/research/`, competitive landscape, and phased implementation plan
 
 ---
 
@@ -654,6 +654,11 @@ All features in this roadmap are traceable to specific research papers:
 | **Self-Distillation** | Self-Distillation Enables Continual Learning (arXiv 2601.19897) | 2025 | SDFT method for on-policy learning from demonstrations without catastrophic forgetting. Applicable to MOF training pipeline (ML-010), adversarial training (ML-012), and robust training (ML-013). Breakdown: `docs/research/self-distillation-continual-learning.md` |
 | **Agent-as-a-Proxy** | Bypassing AI Control Protocols via Agent-as-a-Proxy Attacks (arXiv 2602.05066) | 2026 | Demonstrates monitoring-based defenses are fundamentally fragile: 90%+ ASR against AlignmentCheck/LlamaFirewall/Extract-and-Evaluate. Hybrid monitoring paradox (more observation = more attack surface). No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability. Validates structural defenses (sanitization, boundary tokens) over monitoring. Breakdown: `docs/research/agent-as-a-proxy-attacks.md` |
 | **Defense Pipeline Design** | LLMTrace Defense Pipeline Design | 2026 | Internal architecture doc: staged defense pipeline with 5 core capabilities (hook points, detector/guard plugin interface, policy engine, PII-safe data model, metrics/tracing). Defines policy actions (allow/block/redact/rewrite/confirm/downgrade/disable). Source for SA-001 policy language requirements. File: `docs/research/llmtrace-defense-pipeline-design.md` |
+| **Token-Level PPL** | Token-Level Adversarial Prompt Detection Based on Perplexity Measures and Contextual Information (UMD/Adobe, arXiv 2311.11509) | 2023 | PGM-based per-token adversarial detection using fused-lasso regularization over perplexity. Perfect sequence-level detection with GPT-2 124M (CPU-only, <1GB). Token-level F1 0.93+ (GPT-2) to 0.99+ (Llama2). O(n) DP algorithm. Core implementation reference for IS-050. Breakdown: `docs/research/token-level-perplexity-detection.md` |
+| **PPL Attack Detection** | Detecting Language Model Attacks with Perplexity (UMich, arXiv 2308.14132) | 2023 | GPT-2 perplexity + LightGBM two-feature classifier (PPL + token length). 99.1% F2 on GCG attacks (0% on human-crafted). GCG mean PPL 3525 vs benign ~30-45. Validates IS-050 approach; demonstrates that plain threshold is insufficient (false positives on code/non-English/short text). Breakdown: `docs/research/perplexity-based-attack-detection.md` |
+| **Task Shield** | The Task Shield: Enforcing Task Alignment to Defend Against Indirect Prompt Injection in LLM Agents (Penn State/Princeton, arXiv 2412.16682) | 2024 | Task-alignment defense: "does this serve the user?" vs "is this harmful?". 2.07% ASR with 69.79% utility on GPT-4o (Important Instructions attack). ContributesTo scoring at every message boundary. Directly informs ML-016 goal-drift detector design. Breakdown: `docs/research/task-shield-alignment-defense.md` |
+| **Spotlighting** | Defending Against Indirect Prompt Injection Attacks With Spotlighting (Microsoft, arXiv 2403.14720) | 2024 | Datamarking (whitespace replacement) reduces ASR from >50% to <3% with zero NLP quality impact. Encoding (base64) achieves 0% ASR but requires GPT-4-class models. Delimiting alone is insufficient. Dynamic/randomized tokens essential. Validates and extends IS-004 boundary tag approach. Breakdown: `docs/research/spotlighting-indirect-injection-defense.md` |
+| **Instruction Hierarchy** | The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions (OpenAI, arXiv 2404.13208) | 2024 | Privilege hierarchy (system > user > tool) via SFT + RLHF. +63.1 pp on system message extraction, +33.8 pp on jailbreak defense (generalized to unseen attacks). Over-refusal is main trade-off (-22.7 pp on jailbreak-styled benign prompts). Validates proxy-level boundary tags as complement to model-level hierarchy. Breakdown: `docs/research/instruction-hierarchy-defense.md` |
 
 ---
 
@@ -699,6 +704,10 @@ All features in this roadmap are traceable to specific research papers:
 | Agent-as-a-Proxy (monitor bypass) | 90%+ ASR against hybrid monitors | Agent-as-a-Proxy | ⚠️ Partial (monitoring-based; structural defenses needed) | **Critical** |
 | Multi-objective GCG (multi-layer bypass) | 99% ASR bypassing PromptGuard 2 + AlignmentCheck | Agent-as-a-Proxy | ❌ No adversarial robustness testing | **High** |
 | Cross-model transfer attacks | 88-90% ASR transfers 8B -> 405B | Agent-as-a-Proxy | ❌ No transfer resistance testing | **High** |
+| Indirect XPIA (no defense) | >50% ASR (GPT-3.5-Turbo) | Spotlighting | ⚠️ Partial (no datamarking) | **High** |
+| Indirect XPIA (with datamarking) | 3.1% ASR (GPT-3.5-Turbo) | Spotlighting | ❌ Not implemented | Opportunity |
+| Important Instructions (no defense) | 47.69% ASR (GPT-4o) | Task Shield | ⚠️ Partial (detection only) | High |
+| Important Instructions (Task Shield) | 2.07% ASR (GPT-4o) | Task Shield | ❌ No alignment-based defense | Opportunity |
 
 ## Appendix C: Model Comparison for Ensemble
 
@@ -716,4 +725,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 16 research documents in `docs/research/` (13 external papers + 3 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 21 research documents in `docs/research/` (18 external papers + 3 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
