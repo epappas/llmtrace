@@ -138,18 +138,33 @@ test.describe('LLMTrace Dashboard', () => {
     await expect(page.getByText('Budget Utilization')).toBeVisible();
   });
 
-  test('Sidebar: should persist tenant selection', async ({ page }) => {
-    // 1. Get available tenants
+  test('Sidebar: should persist tenant selection', async ({ page, request }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    
     const selector = page.locator('select');
     await expect(selector).toBeVisible();
 
-    const options = await selector.locator('option').all();
+    // 1. Ensure we have at least 2 tenants
+    let options = await selector.locator('option').all();
+    if (options.length < 2) {
+      console.log('[Test Setup] Creating second tenant for persistence test');
+      const res = await request.post('http://192.168.1.107:8081/api/v1/tenants', {
+        data: { name: `Temp-Persistence-Test-${Date.now()}`, plan: 'Pro' }
+      });
+      const tempTenant = await res.json();
+      createdTenantId = tempTenant.id;
+      await page.reload();
+      await page.waitForLoadState('networkidle');
+      options = await selector.locator('option').all();
+    }
+
     if (options.length > 1) {
       const targetId = await options[1].getAttribute('value');
       
       // 2. Select the second tenant
       await selector.selectOption(targetId!);
-      // Give it a moment to persist to localStorage
+      // Small delay to let localStorage sync
       await page.waitForTimeout(500);
       
       // 3. Verify it persists after navigation
@@ -158,6 +173,8 @@ test.describe('LLMTrace Dashboard', () => {
       
       // Select might take a moment to populate from API
       await expect(page.locator('select')).toHaveValue(targetId!, { timeout: 10000 });
+    } else {
+      throw new Error('Test failed to ensure 2 tenants are available');
     }
   });
 
