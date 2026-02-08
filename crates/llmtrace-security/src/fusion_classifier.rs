@@ -10,7 +10,7 @@
 //! # Architecture
 //!
 //! ```text
-//! Input (783) → Linear(256) → ReLU → Linear(64) → ReLU → Linear(2) → Softmax
+//! Input (783) → Linear(256) → ReLU → Linear(2) → Softmax
 //! ```
 //!
 //! # Feature Gate
@@ -32,18 +32,16 @@ pub const FUSION_INPUT_DIM: usize = DEFAULT_EMBEDDING_DIM + HEURISTIC_FEATURE_DI
 /// Number of output classes (safe, injection).
 const NUM_CLASSES: usize = 2;
 
-/// Hidden layer dimensions.
+/// Hidden layer dimension.
 const HIDDEN_1: usize = 256;
-const HIDDEN_2: usize = 64;
 
 /// Feature-level fusion classifier.
 ///
-/// A 3-layer fully-connected network that takes concatenated embedding +
+/// A 2-layer fully-connected network that takes concatenated embedding +
 /// heuristic features and outputs injection/safe logits.
 pub struct FusionClassifier {
     fc1: candle_nn::Linear,
     fc2: candle_nn::Linear,
-    fc3: candle_nn::Linear,
     device: Device,
 }
 
@@ -58,15 +56,12 @@ impl FusionClassifier {
 
         let fc1 = candle_nn::linear(FUSION_INPUT_DIM, HIDDEN_1, vb.pp("fc1"))
             .map_err(|e| LLMTraceError::Security(format!("Failed to create fusion fc1: {e}")))?;
-        let fc2 = candle_nn::linear(HIDDEN_1, HIDDEN_2, vb.pp("fc2"))
+        let fc2 = candle_nn::linear(HIDDEN_1, NUM_CLASSES, vb.pp("fc2"))
             .map_err(|e| LLMTraceError::Security(format!("Failed to create fusion fc2: {e}")))?;
-        let fc3 = candle_nn::linear(HIDDEN_2, NUM_CLASSES, vb.pp("fc3"))
-            .map_err(|e| LLMTraceError::Security(format!("Failed to create fusion fc3: {e}")))?;
 
         Ok(Self {
             fc1,
             fc2,
-            fc3,
             device: device.clone(),
         })
     }
@@ -86,15 +81,12 @@ impl FusionClassifier {
 
         let fc1 = candle_nn::linear(FUSION_INPUT_DIM, HIDDEN_1, vb.pp("fc1"))
             .map_err(|e| LLMTraceError::Security(format!("Failed to load fusion fc1: {e}")))?;
-        let fc2 = candle_nn::linear(HIDDEN_1, HIDDEN_2, vb.pp("fc2"))
+        let fc2 = candle_nn::linear(HIDDEN_1, NUM_CLASSES, vb.pp("fc2"))
             .map_err(|e| LLMTraceError::Security(format!("Failed to load fusion fc2: {e}")))?;
-        let fc3 = candle_nn::linear(HIDDEN_2, NUM_CLASSES, vb.pp("fc3"))
-            .map_err(|e| LLMTraceError::Security(format!("Failed to load fusion fc3: {e}")))?;
 
         Ok(Self {
             fc1,
             fc2,
-            fc3,
             device: device.clone(),
         })
     }
@@ -125,21 +117,15 @@ impl FusionClassifier {
             LLMTraceError::Security(format!("Failed to unsqueeze fusion input: {e}"))
         })?;
 
-        // Forward pass: fc1 → ReLU → fc2 → ReLU → fc3
+        // Forward pass: fc1 → ReLU → fc2
         let h1 = candle_nn::Module::forward(&self.fc1, &input)
             .map_err(|e| LLMTraceError::Security(format!("Fusion fc1 forward failed: {e}")))?;
         let h1 = h1
             .relu()
-            .map_err(|e| LLMTraceError::Security(format!("Fusion ReLU 1 failed: {e}")))?;
+            .map_err(|e| LLMTraceError::Security(format!("Fusion ReLU failed: {e}")))?;
 
-        let h2 = candle_nn::Module::forward(&self.fc2, &h1)
+        let logits = candle_nn::Module::forward(&self.fc2, &h1)
             .map_err(|e| LLMTraceError::Security(format!("Fusion fc2 forward failed: {e}")))?;
-        let h2 = h2
-            .relu()
-            .map_err(|e| LLMTraceError::Security(format!("Fusion ReLU 2 failed: {e}")))?;
-
-        let logits = candle_nn::Module::forward(&self.fc3, &h2)
-            .map_err(|e| LLMTraceError::Security(format!("Fusion fc3 forward failed: {e}")))?;
 
         // Softmax → probabilities
         let probs = candle_nn::ops::softmax(&logits, candle_core::D::Minus1)
