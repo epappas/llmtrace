@@ -47,3 +47,6 @@ config.local.yaml
 llmtrace-python/target/
 config.yaml
 TODO.md
+models/
+benchmarks/datasets/training/cache/
+benchmarks/datasets/training/training_dataset.json

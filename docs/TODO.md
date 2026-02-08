@@ -303,8 +303,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| ML-001 | Joint end-to-end training for fusion FC layer | High | ⬜ |
-| ML-014 | Curated training dataset (61k benign + 16k injection) | Medium | ⬜ |
+| ML-001 | Joint end-to-end training for fusion FC layer | High | ✅ |
+| ML-014 | Curated training dataset (61k benign + 16k injection) | Medium | ✅ |
 | IS-001 | Token-wise bias detection for over-defense | High | ⬜ |
 | IS-002 | Adaptive debiasing data generation (1–3 token combos) | High | ⬜ |
 | IS-003 | MOF retraining pipeline on debiased data | High | ⬜ |
@@ -321,19 +321,19 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| EV-001 | AgentDojo evaluation (97 environments) | Medium | ⬜ |
-| EV-003 | InjecAgent evaluation | Medium | ⬜ |
-| EV-004 | ASB evaluation | Medium | ⬜ |
-| EV-005 | WASP evaluation | Medium | ⬜ |
+| EV-001 | AgentDojo evaluation (97 environments) | Medium | ⬜ (requires Python framework, not static dataset) |
+| EV-003 | InjecAgent evaluation (2108 indirect injection samples) | Medium | ✅ |
+| EV-004 | ASB evaluation (400 agent security attack samples) | Medium | ✅ |
+| EV-005 | WASP evaluation | Medium | ⬜ (requires live web environment) |
 | EV-006 | CyberSecEval 2 prompt injection evaluation (251 attack samples per DMPI-PMHFE [28]) | Medium | ✅ `7ce0cf9` |
-| EV-007 | MLCommons AILuminate jailbreak benchmark | Medium | ⬜ |
-| EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ⬜ |
+| EV-007 | MLCommons AILuminate jailbreak benchmark (1200 demo prompts) | Medium | ✅ |
+| EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ❌ (dataset not publicly released) |
 | EV-009 | Automated CI-integrated benchmark runner | Medium | ✅ `b15f4f0` |
 | EV-011 | safeguard-v2 evaluation (1300 samples) | Low | ⬜ |
 | EV-012 | deepset-v2 evaluation (354 samples) | Low | ⬜ |
 | EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |
-| EV-014 | BIPIA evaluation (86,250 test prompts, 5 scenarios, 50 attack types, 25-model ASR baseline) | Medium | ⬜ |
-| EV-015 | HarmBench evaluation (standardized jailbreak/safety ASR measurement) | Medium | ⬜ |
+| EV-014 | BIPIA evaluation (400 samples: 200 benign + 200 indirect injection, 3 scenarios) | Medium | ✅ |
+| EV-015 | HarmBench evaluation (400 harmful behaviors, jailbreak/safety ASR) | Medium | ✅ |
 | EV-016 | AgentDojo Slack suite adaptive attack evaluation (Agent-as-a-Proxy resilience, 89 samples) | High | ⬜ |
 | EV-017 | Multi-objective GCG adversarial robustness red-team testing against LLMTrace ensemble | High | ⬜ |
 | EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ⬜ |
