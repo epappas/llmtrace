@@ -89,6 +89,10 @@ services:
       - ./config.yaml:/etc/llmtrace/config.yaml
     environment:
       - LLMTRACE_CONFIG=/etc/llmtrace/config.yaml
+      # Keep the local stack responsive: ML model downloads can take minutes and
+      # block server startup if preloaded.
+      - LLMTRACE_ML_ENABLED=0
+      - LLMTRACE_ML_PRELOAD=0
     depends_on:
       clickhouse:
         condition: service_healthy
