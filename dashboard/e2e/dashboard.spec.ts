@@ -1,7 +1,26 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('LLMTrace Dashboard', () => {
+  const proxyBaseUrl = process.env.LLMTRACE_PROXY_URL ?? 'http://localhost:8081';
   
+  test.beforeAll(async ({ request }) => {
+    // Ensure the proxy is reachable before browser tests start.
+    // Some environments need a short warmup window after `docker compose up`.
+    const deadline = Date.now() + 30_000;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const res = await request.get(`${proxyBaseUrl}/health`);
+        if (res.ok()) return;
+      } catch {
+        // ignore
+      }
+      if (Date.now() > deadline) throw new Error(`Proxy not healthy at ${proxyBaseUrl}/health`);
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  });
+
   test.beforeEach(async ({ page }) => {
     page.on('console', msg => console.log(`[Browser]: ${msg.text()}`));
     // Navigate to the dashboard
@@ -22,15 +41,17 @@ test.describe('LLMTrace Dashboard', () => {
     await expect(page.getByText('Trace Activity')).toBeVisible();
   });
 
-  let createdTenantId: string | null = null;
+  let createdTenantIds: string[] = [];
 
   test.afterEach(async ({ request }) => {
-    if (createdTenantId) {
-      console.log(`[Cleanup] Deleting test tenant: ${createdTenantId}`);
+    for (const id of createdTenantIds) {
+      console.log(`[Cleanup] Deleting test tenant: ${id}`);
       // Use direct API request for reliable cleanup even if UI fails
-      await request.delete(`http://192.168.1.107:8081/api/v1/tenants/${createdTenantId}`).catch(() => {});
-      createdTenantId = null;
+      // Ignore errors so one failed delete doesn't hide the rest.
+      // eslint-disable-next-line no-await-in-loop
+      await request.delete(`${proxyBaseUrl}/api/v1/tenants/${id}`).catch(() => {});
     }
+    createdTenantIds = [];
   });
 
   test('Tenants: should create, generate token, and delete a tenant', async ({ page }) => {
@@ -48,7 +69,7 @@ test.describe('LLMTrace Dashboard', () => {
     await page.getByRole('button', { name: 'Create' }).click();
     const createRes = await createResponsePromise;
     const body = await createRes.json();
-    createdTenantId = body.id;
+    createdTenantIds.push(body.id);
 
     // Verify it appeared in the list
     await expect(page.getByTestId(`tenant-name-${tenantName}`)).toBeVisible({ timeout: 15000 });
@@ -67,7 +88,7 @@ test.describe('LLMTrace Dashboard', () => {
     await expect(page.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 15000 });
     
     // Clear the tracker since UI deletion succeeded
-    createdTenantId = null;
+    createdTenantIds = createdTenantIds.filter((id) => id !== body.id);
   });
 
   test('Traces: should filter by Trace ID and Model', async ({ page }) => {
@@ -133,49 +154,95 @@ test.describe('LLMTrace Dashboard', () => {
     
     // Check for the "Budget Status" card
     await expect(page.getByText('Budget Status')).toBeVisible();
-    
-    // Check for "Budget Utilization" chart
-    await expect(page.getByText('Budget Utilization')).toBeVisible();
+
+    // In the default proxy configuration, cost caps can be disabled; in that case
+    // the page intentionally shows an informational empty state instead of charts.
+    const disabledMsg = page.getByText('Cost caps are not enabled in the proxy configuration.');
+    const chartTitle = page.getByText('Budget Utilization');
+
+    const outcome = await Promise.race([
+      disabledMsg.waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'disabled' as const),
+      chartTitle.waitFor({ state: 'visible', timeout: 10_000 }).then(() => 'chart' as const),
+    ]);
+
+    if (outcome === 'disabled') {
+      await expect(disabledMsg).toBeVisible();
+      return;
+    }
+
+    await expect(chartTitle).toBeVisible();
   });
 
   test('Sidebar: should persist tenant selection', async ({ page, request }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     
-    const selector = page.locator('select');
+    const selector = page.locator('aside select');
     await expect(selector).toBeVisible();
 
     // 1. Ensure we have at least 2 tenants
     let options = await selector.locator('option').all();
     if (options.length < 2) {
-      console.log('[Test Setup] Creating second tenant for persistence test');
-      const res = await request.post('http://192.168.1.107:8081/api/v1/tenants', {
-        data: { name: `Temp-Persistence-Test-${Date.now()}`, plan: 'Pro' }
-      });
-      const tempTenant = await res.json();
-      createdTenantId = tempTenant.id;
+      const needed = 2 - options.length;
+      console.log(`[Test Setup] Creating ${needed} tenant(s) for persistence test`);
+
+      for (let i = 0; i < needed; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await request.post(`${proxyBaseUrl}/api/v1/tenants`, {
+          data: { name: `Temp-Persistence-Test-${Date.now()}-${i}`, plan: 'Pro' }
+        });
+        if (!res.ok()) {
+          // eslint-disable-next-line no-await-in-loop
+          const text = await res.text().catch(() => '<no body>');
+          throw new Error(`Failed to create tenant: ${res.status()} ${text}`);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const tempTenant = await res.json();
+        createdTenantIds.push(tempTenant.id);
+      }
+
+      // Wait until the API reflects the new tenants (avoids flakiness around reload timing).
+      const deadline = Date.now() + 10_000;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await request.get(`${proxyBaseUrl}/api/v1/tenants`);
+        if (res.ok()) {
+          // eslint-disable-next-line no-await-in-loop
+          const list = await res.json().catch(() => []);
+          if (Array.isArray(list) && list.length >= 2) break;
+        }
+        if (Date.now() > deadline) break;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
       await page.reload();
       await page.waitForLoadState('networkidle');
+      await page.waitForFunction(() => document.querySelectorAll('aside select option').length >= 2);
       options = await selector.locator('option').all();
     }
 
-    if (options.length > 1) {
-      const targetId = await options[1].getAttribute('value');
-      
-      // 2. Select the second tenant
-      await selector.selectOption(targetId!);
-      // Small delay to let localStorage sync
-      await page.waitForTimeout(500);
-      
-      // 3. Verify it persists after navigation
-      await page.goto('/settings');
-      await page.waitForLoadState('networkidle');
-      
-      // Select might take a moment to populate from API
-      await expect(page.locator('select')).toHaveValue(targetId!, { timeout: 10000 });
-    } else {
-      throw new Error('Test failed to ensure 2 tenants are available');
+    if (options.length < 2) {
+      throw new Error(`Test requires 2 tenants but only found ${options.length}`);
     }
+
+    const targetId = await options[1].getAttribute('value');
+    if (!targetId) {
+      throw new Error('Second tenant option had no value attribute');
+    }
+    
+    // 2. Select the second tenant and wait until it is persisted in localStorage
+    await selector.selectOption(targetId);
+    await page.waitForFunction((id) => localStorage.getItem("llmtrace_tenant_id") === id, targetId);
+    
+    // 3. Verify it persists after navigation + reload (forces sidebar to re-read localStorage)
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.locator('aside select')).toHaveValue(targetId, { timeout: 10000 });
   });
 
 });
