@@ -253,6 +253,9 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | IS-040 | Data format coverage expansion (17 formats) | Medium | ⬜ |
 | IS-041 | Multi-language trigger detection | High | ⬜ |
 | IS-018 | "Important Messages" header attack hardening | Low | 🔄 |
+| IS-050 | Perplexity-based anomaly detection for GCG-optimized strings in tool outputs | Medium | ⬜ |
+| IS-051 | Adaptive monitoring scope (input-only vs hybrid) to control attack surface | Medium | ⬜ |
+| IS-052 | Adversarial string propagation blocking in tool outputs (perplexity threshold) | High | ⬜ |
 
 ### Loop 12a — DMPI-PMHFE Architecture Alignment
 > Resolve 6 architectural deviations between codebase and DMPI-PMHFE paper (arXiv 2506.06384).
@@ -308,6 +311,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | ML-010 | MOF training pipeline (token bias → debiasing → retraining) | High | ⬜ |
 | ML-011 | Data-centric augmentation across 17 formats | Medium | ⬜ |
 | ML-015 | GradSafe integration | High | ⬜ |
+| ML-016 | GCG adversarial sample generation (Python/PyTorch tooling; shared with EV-017) | High | ⬜ |
 | ML-020 | ONNX runtime support for inference | Medium | ⬜ |
 | ML-021 | INT8/INT4 quantized model loading | Medium | ⬜ |
 | ML-022 | Batched inference for GPU utilization | Medium | ⬜ |
@@ -331,6 +335,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-014 | BIPIA evaluation (86,250 test prompts, 5 scenarios, 50 attack types, 25-model ASR baseline) | Medium | ⬜ |
 | EV-015 | HarmBench evaluation (standardized jailbreak/safety ASR measurement) | Medium | ⬜ |
 | EV-016 | AgentDojo evaluation (Agent-as-a-Proxy attack resilience, Slack suite 89 samples) | High | ⬜ |
+| EV-017 | Multi-objective GCG adversarial robustness red-team testing against LLMTrace ensemble | High | ⬜ |
+| EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ⬜ |
 
 ---
 
@@ -673,6 +679,11 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 - CyberSecEval 2 benchmark expectations (EV-006) come from `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 attack sample count is sourced from DMPI-PMHFE (arXiv 2506.06384) which used the CyberSecEval 2 prompt injection dataset; the full paper covers additional suites (500 code interpreter abuse prompts, exploit generation, FRR).
 - BIPIA benchmark expectations (EV-014) come from `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197): 86,250 test prompts, 50 attack types, 25-model baseline. Boundary token defense (`<data>`/`</data>`) is most impactful intervention (1064% ASR increase without it) and is implementable at proxy level (relevant to AS-001/AS-002).
 - Agent-as-a-Proxy attack implications (EV-016) come from `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses (including LLMTrace proxy monitoring) are fundamentally fragile: 90%+ ASR via GCG-optimized adversarial strings. Validates that structural defenses (AS-001/AS-002 sanitization, boundary tokens) are more robust than observation-based monitoring. High-perplexity detection in tool outputs is a viable countermeasure.
+- IS-050 -> IS-052 dependency: IS-052 (adversarial string propagation blocking) depends on IS-050 (perplexity-based anomaly detection) for surprisal scoring. IS-050 must be implemented first. IS-052 runs before AS-002 in the tool-output sanitization pipeline.
+- ML-016 and EV-017 share GCG Python/PyTorch offline tooling (`tools/gcg/` or `scripts/adversarial/`). Not part of the Rust proxy runtime.
+- EV-016 and EV-001 share AgentDojo benchmark infrastructure. EV-016 focuses on Slack suite (89 samples) with adaptive (GCG) attacks; EV-001 covers the full 97 environments.
+- EV-018 depends on ML-006 (ensemble must be wired before transfer resistance can be tested).
+- ML-016 (GCG adversarial sample generation) is in Loop 15 (Fusion Training Pipeline). Requires Python/PyTorch offline tooling, not Rust proxy code. Shared with EV-017.
 - DMPI-001–DMPI-006 (Loop 12a) are blocking prerequisites for ML-001 (Loop 15). The fusion classifier cannot be trained against the paper's architecture until pooling, layer count, feature vector, thresholds, and feature naming all match the DMPI-PMHFE specification. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for the authoritative paper breakdown.
 - DMPI-003 and DMPI-005 are coupled: fixing the feature vector dimension (10 binary) requires adding the 3 missing paper features (is_ignore, is_format_manipulation, is_immoral) and removing the 7 extra numeric features.
 - DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.
