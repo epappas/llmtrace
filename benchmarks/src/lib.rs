@@ -23,6 +23,7 @@ pub mod datasets;
 pub mod metrics;
 pub mod regression;
 pub mod runners;
+pub mod training;
 
 /// Re-export commonly used types for benchmark implementations.
 pub mod prelude {

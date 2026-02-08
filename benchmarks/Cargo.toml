@@ -10,6 +10,10 @@ description = "Comprehensive benchmark suite for LLMTrace security analysis"
 name = "benchmarks"
 path = "src/main.rs"
 
+[[bin]]
+name = "train-fusion"
+path = "src/train_fusion.rs"
+
 [features]
 default = []
 cuda = ["llmtrace-security/cuda"]
@@ -25,6 +29,11 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+rand = "0.8"
+rand_chacha = "0.3"
+candle-core = "0.9"
+candle-nn = "0.9"
+safetensors = "0.4"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
