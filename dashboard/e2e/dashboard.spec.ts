@@ -1,12 +1,14 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('LLMTrace Dashboard', () => {
-  const proxyBaseUrl = process.env.LLMTRACE_PROXY_URL ?? 'http://localhost:8081';
+  // Prefer IPv4 loopback; some CI environments don't have the proxy bound on ::1.
+  const proxyBaseUrl = process.env.LLMTRACE_PROXY_URL ?? 'http://127.0.0.1:8081';
   
-  test.beforeAll(async ({ request }) => {
+  test.beforeAll(async ({ request }, testInfo) => {
+    testInfo.setTimeout(120_000);
     // Ensure the proxy is reachable before browser tests start.
     // Some environments need a short warmup window after `docker compose up`.
-    const deadline = Date.now() + 30_000;
+    const deadline = Date.now() + 120_000;
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
