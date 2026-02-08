@@ -30,6 +30,7 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 | **WASP** | Web agent security | arXiv:2504.18575 | 2024 | ❌ Not evaluated | **Medium** |
 | **CyberSecEval 2** | Defense effectiveness | Meta | 2024 | ⚠️ Limited coverage | **Low** |
 | **BIPIA** | Indirect prompt injection benchmark | USTC/HKUST/Microsoft (KDD 2025) | 2023 | ⚠️ Partial detection | **High** |
+| **Agent-as-a-Proxy** | Monitor bypass via agent repetition | Isbarov & Kantarcioglu (arXiv 2602.05066) | 2026 | ⚠️ Monitoring-based (vulnerable) | **Critical** |
 
 ### 1. AgentDojo (NeurIPS 2024) — **Priority: High**
 
@@ -139,6 +140,19 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 - Missing boundary token injection defense (proxy-level, highest-impact intervention per ablation: 1064% ASR increase without it)
 - No explicit reminder injection or multi-turn dialogue restructuring
 - No position-aware detection weighting (end-of-content injections most effective)
+
+### 8. Agent-as-a-Proxy (Isbarov & Kantarcioglu, 2026) — **Priority: Critical**
+
+**Paper:** arXiv 2602.05066 (February 2026)
+**Breakdown:** `docs/research/agent-as-a-proxy-attacks.md`
+**Focus**: Demonstrates monitoring-based defenses are fundamentally fragile. Agent-as-a-Proxy attack uses GCG-optimized adversarial strings that agents repeat in their traces, bypassing hybrid monitors at 90%+ ASR. Tested against AlignmentCheck, LlamaFirewall (PromptGuard 2 + AlignmentCheck), and Extract-and-Evaluate on AgentDojo.
+**Scope**: 99% ASR against multi-layer defenses (Mistral-7B). Hybrid monitoring paradox: more observation = more attack surface. No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability.
+
+**LLMTrace Coverage**: ⚠️ **Directly Vulnerable**
+- LLMTrace is a monitoring-based defense -- the exact category this paper attacks
+- No perplexity-based anomaly detection for GCG-optimized strings
+- Structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) are validated as more robust
+- No adversarial robustness testing against multi-objective GCG
 
 ## Benchmark Evaluation Recommendations
 

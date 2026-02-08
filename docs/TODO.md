@@ -330,6 +330,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |
 | EV-014 | BIPIA evaluation (86,250 test prompts, 5 scenarios, 50 attack types, 25-model ASR baseline) | Medium | ⬜ |
 | EV-015 | HarmBench evaluation (standardized jailbreak/safety ASR measurement) | Medium | ⬜ |
+| EV-016 | AgentDojo evaluation (Agent-as-a-Proxy attack resilience, Slack suite 89 samples) | High | ⬜ |
 
 ---
 
@@ -671,6 +672,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 - Benchmark coverage expectations come from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
 - CyberSecEval 2 benchmark expectations (EV-006) come from `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 attack sample count is sourced from DMPI-PMHFE (arXiv 2506.06384) which used the CyberSecEval 2 prompt injection dataset; the full paper covers additional suites (500 code interpreter abuse prompts, exploit generation, FRR).
 - BIPIA benchmark expectations (EV-014) come from `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197): 86,250 test prompts, 50 attack types, 25-model baseline. Boundary token defense (`<data>`/`</data>`) is most impactful intervention (1064% ASR increase without it) and is implementable at proxy level (relevant to AS-001/AS-002).
+- Agent-as-a-Proxy attack implications (EV-016) come from `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses (including LLMTrace proxy monitoring) are fundamentally fragile: 90%+ ASR via GCG-optimized adversarial strings. Validates that structural defenses (AS-001/AS-002 sanitization, boundary tokens) are more robust than observation-based monitoring. High-perplexity detection in tool outputs is a viable countermeasure.
 - DMPI-001–DMPI-006 (Loop 12a) are blocking prerequisites for ML-001 (Loop 15). The fusion classifier cannot be trained against the paper's architecture until pooling, layer count, feature vector, thresholds, and feature naming all match the DMPI-PMHFE specification. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for the authoritative paper breakdown.
 - DMPI-003 and DMPI-005 are coupled: fixing the feature vector dimension (10 binary) requires adding the 3 missing paper features (is_ignore, is_format_manipulation, is_immoral) and removing the 7 extra numeric features.
 - DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.

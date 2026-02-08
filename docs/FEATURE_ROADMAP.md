@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Date**: 2026-02-01
 **Author**: LLMTrace Engineering
-**Scope**: Comprehensive feature gap analysis across 14 research documents in `docs/research/`, competitive landscape, and phased implementation plan
+**Scope**: Comprehensive feature gap analysis across 15 research documents in `docs/research/`, competitive landscape, and phased implementation plan
 
 ---
 
@@ -476,6 +476,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - CyberSecEval 2 benchmark details (EV-006): `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 prompt injection sample count is cross-referenced from DMPI-PMHFE (arXiv 2506.06384, Table reference [28]). The paper also introduces FRR methodology relevant to IS-006/IS-007.
 - BIPIA benchmark (EV-014): `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First systematic indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197). 86,250 test prompts, 50 attack types, 25-model vulnerability baseline (GPT-4: 31% ASR, average: 11.8%). Proposes boundary token injection (`<data>`/`</data>`) and explicit reminder injection as proxy-level defenses relevant to AS-001/AS-002. Key finding: more capable models are more vulnerable (r=0.6423). Also cited in `benchmarks-and-tools-landscape.md`, `injecguard-over-defense-mitigation.md`, `indirect-injection-firewalls.md`.
 - HarmBench benchmark (EV-015): cited in 3 research docs (`benchmarks-and-tools-landscape.md`, `bypassing-llm-guardrails-evasion.md`, `security-state-of-art-2026.md`). Foundational jailbreak/safety benchmark that newer benchmarks build upon. Measures ASR across harmful content categories.
+- Agent-as-a-Proxy attacks (arXiv 2602.05066): `docs/research/agent-as-a-proxy-attacks.md`. Demonstrates monitoring-based defenses (including proxy-level monitoring like LLMTrace) are fundamentally fragile: 90%+ ASR via GCG-optimized adversarial strings that agents repeat in their traces. Validates structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) over pure monitoring. High-perplexity string detection identified as viable countermeasure.
 
 ---
 
@@ -635,6 +636,7 @@ All features in this roadmap are traceable to specific research papers:
 | **DMPI-PMHFE** | Detection Method for Prompt Injection by Integrating Pre-trained Model and Heuristic Feature Engineering (Zhengzhou University, arXiv 2506.06384) | 2025 | Dual-channel feature fusion: DeBERTa-v3-base + 10 heuristic features, SOTA F1 across 3 benchmarks (98.29% safeguard-v2, 96.03% Ivanleomk-v2, 89.55% deepset-v2). ~6% F1 gain over score-level ensemble. LLMTrace fusion architecture directly based on this paper. Breakdown: `docs/research/dmpi-pmhfe-prompt-injection-detection.md` |
 | **WASP** | WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks (arXiv 2504.18575) | 2024 | Web agent prompt injection benchmark with realistic browsing workflows. Evaluates task success alongside attack success. Strong LLM agents remain vulnerable to practical web-based injection. Breakdown: `docs/research/wasp-web-agent-security-benchmark.md` |
 | **Self-Distillation** | Self-Distillation Enables Continual Learning (arXiv 2601.19897) | 2025 | SDFT method for on-policy learning from demonstrations without catastrophic forgetting. Applicable to MOF training pipeline (ML-010), adversarial training (ML-012), and robust training (ML-013). Breakdown: `docs/research/self-distillation-continual-learning.md` |
+| **Agent-as-a-Proxy** | Bypassing AI Control Protocols via Agent-as-a-Proxy Attacks (arXiv 2602.05066) | 2026 | Demonstrates monitoring-based defenses are fundamentally fragile: 90%+ ASR against AlignmentCheck/LlamaFirewall/Extract-and-Evaluate. Hybrid monitoring paradox (more observation = more attack surface). No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability. Validates structural defenses (sanitization, boundary tokens) over monitoring. Breakdown: `docs/research/agent-as-a-proxy-attacks.md` |
 
 ---
 
@@ -677,6 +679,9 @@ All features in this roadmap are traceable to specific research papers:
 | Indirect injection (5 scenarios, 50 types) | 5.3-31% ASR (GPT-4 highest at 31%) | BIPIA | ⚠️ Partial (detection only, no boundary tokens) | **High** |
 | Indirect injection via summarization | 19.7% avg ASR (highest text task) | BIPIA | ⚠️ Partial | Medium |
 | Indirect injection via code | 24.1% avg ASR (code attacks) | BIPIA | ⚠️ Partial | Medium |
+| Agent-as-a-Proxy (monitor bypass) | 90%+ ASR against hybrid monitors | Agent-as-a-Proxy | ⚠️ Partial (monitoring-based; structural defenses needed) | **Critical** |
+| Multi-objective GCG (multi-layer bypass) | 99% ASR bypassing PromptGuard 2 + AlignmentCheck | Agent-as-a-Proxy | ❌ No adversarial robustness testing | **High** |
+| Cross-model transfer attacks | 88-90% ASR transfers 8B -> 405B | Agent-as-a-Proxy | ❌ No transfer resistance testing | **High** |
 
 ## Appendix C: Model Comparison for Ensemble
 
@@ -694,4 +699,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 14 research documents in `docs/research/` (12 external papers + 2 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 15 research documents in `docs/research/` (13 external papers + 2 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
