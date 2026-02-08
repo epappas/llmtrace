@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, use } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -9,18 +9,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import type { TraceEvent } from "@/lib/api";
+import { type TraceEvent, getTrace, findActiveTenant } from "@/lib/api";
 
-export default function TraceDetailPage() {
-  const params = useParams<{ id: string }>();
+export default function TraceDetailPage(props: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { id } = use(props.params);
+  const searchParams = use(props.searchParams);
   const [trace, setTrace] = useState<TraceEvent | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`/api/proxy/traces/${params.id}`);
-        if (res.ok) setTrace(await res.json());
+        const queryTenant = searchParams.tenant as string | null;
+        const tenantId = queryTenant || await findActiveTenant();
+        const data = await getTrace(id, tenantId);
+        setTrace(data);
       } catch {
         /* ignore */
       } finally {
@@ -28,7 +34,7 @@ export default function TraceDetailPage() {
       }
     }
     load();
-  }, [params.id]);
+  }, [id, searchParams]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (!trace) {
@@ -155,13 +161,13 @@ export default function TraceDetailPage() {
 
               <TabsContent value="prompt" className="pt-4">
                 <pre className="max-h-96 overflow-auto rounded-md bg-muted p-4 text-xs">
-                  {span.prompt_text || "No prompt captured"}
+                  {span.prompt || "No prompt captured"}
                 </pre>
               </TabsContent>
 
               <TabsContent value="response" className="pt-4">
                 <pre className="max-h-96 overflow-auto rounded-md bg-muted p-4 text-xs">
-                  {span.response_text || "No response captured"}
+                  {span.response || "No response captured"}
                 </pre>
               </TabsContent>
 

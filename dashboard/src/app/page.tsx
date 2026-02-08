@@ -17,10 +17,17 @@ import {
 import { StatCard } from "@/components/stat-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type {
-  StorageStats,
-  TraceSpan,
-  PaginatedResponse,
+import {
+  type StorageStats,
+  type TraceSpan,
+  type TraceEvent,
+  type PaginatedResponse,
+  getStats,
+  listSecurityFindings,
+  listTenants,
+  listTraces,
+  findActiveTenant,
+  getGlobalStats,
 } from "@/lib/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -35,23 +42,63 @@ const PIE_COLORS = ["#dc2626", "#ea580c", "#ca8a04", "#2563eb", "#6b7280"];
 
 export default function OverviewPage() {
   const [stats, setStats] = useState<StorageStats | null>(null);
+  const [globalStats, setGlobalStats] = useState<StorageStats | null>(null);
   const [findings, setFindings] = useState<PaginatedResponse<TraceSpan> | null>(null);
+  const [activityData, setActivityData] = useState<{ hour: string; traces: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
-        const [statsRes, findingsRes] = await Promise.all([
-          fetch("/api/proxy/stats").then((r) => r.json()),
-          fetch("/api/proxy/security/findings?limit=10").then((r) => r.json()),
+        // Find the tenant with the most activity to display meaningful data
+        const tenantId = await findActiveTenant();
+
+        const [statsRes, findingsRes, tracesRes, globalRes] = await Promise.all([
+          getStats(tenantId),
+          listSecurityFindings({ limit: 10 }, tenantId),
+          listTraces({ limit: 100 }, tenantId),
+          getGlobalStats(),
         ]);
         setStats(statsRes);
+        setGlobalStats(globalRes);
         setFindings(findingsRes);
+
+        // Aggregate trace activity (last 24h)
+        const now = new Date();
+        const buckets = new Map<string, number>();
+        
+        // Initialize buckets for the last 6 hours (example)
+        for (let i = 5; i >= 0; i--) {
+          const d = new Date(now.getTime() - i * 60 * 60 * 1000);
+          const key = `${d.getHours().toString().padStart(2, '0')}:00`;
+          buckets.set(key, 0);
+        }
+
+        if (tracesRes?.data) {
+          for (const trace of tracesRes.data) {
+            const date = new Date(trace.created_at);
+            const key = `${date.getHours().toString().padStart(2, '0')}:00`;
+            if (buckets.has(key)) {
+              buckets.set(key, (buckets.get(key) ?? 0) + 1);
+            }
+          }
+        }
+
+        const aggregated = Array.from(buckets.entries()).map(([hour, traces]) => ({
+          hour,
+          traces,
+        }));
+        setActivityData(aggregated);
+
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load data");
       }
     }
     load();
+    
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Build severity breakdown from findings
@@ -67,17 +114,6 @@ export default function OverviewPage() {
     name,
     value,
   }));
-
-  // Mock time-series for the bar chart (in a real deployment, a dedicated
-  // endpoint or aggregation query would provide this data).
-  const traceActivity = [
-    { hour: "00:00", traces: 12 },
-    { hour: "04:00", traces: 8 },
-    { hour: "08:00", traces: 34 },
-    { hour: "12:00", traces: 52 },
-    { hour: "16:00", traces: 47 },
-    { hour: "20:00", traces: 29 },
-  ];
 
   if (error) {
     return (
@@ -103,11 +139,17 @@ export default function OverviewPage() {
       <h1 className="text-3xl font-bold">Overview</h1>
 
       {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+        <StatCard
+          title="Global Transactions"
+          value={globalStats?.total_traces ?? "—"}
+          description="Total across all tenants"
+          icon={Activity}
+        />
         <StatCard
           title="Total Traces"
           value={stats?.total_traces ?? "—"}
-          description="Across all tenants"
+          description="Selected tenant traces"
           icon={Activity}
         />
         <StatCard
@@ -142,7 +184,7 @@ export default function OverviewPage() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={traceActivity}>
+              <BarChart data={activityData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis dataKey="hour" className="text-xs" />
                 <YAxis className="text-xs" />

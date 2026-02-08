@@ -5,6 +5,7 @@ import { RefreshCw, CheckCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { healthCheck } from "@/lib/api";
 
 interface HealthStatus {
   status: string;
@@ -16,15 +17,18 @@ export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [apiUrl] = useState(
-    process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080",
   );
 
   async function checkHealth() {
+    console.log("[Settings] Checking health via API helper...");
     setLoading(true);
     try {
-      const res = await fetch("/api/proxy/health");
-      setHealth(await res.json());
-    } catch {
+      const data = await healthCheck();
+      console.log("[Settings] Health check response:", data);
+      setHealth(data);
+    } catch (e) {
+      console.error("[Settings] Health check failed:", e);
       setHealth({ status: "unreachable" });
     } finally {
       setLoading(false);
@@ -56,7 +60,7 @@ export default function SettingsPage() {
             <div>
               <label className="text-xs text-muted-foreground">Status</label>
               <div className="flex items-center gap-2">
-                {health?.status === "ok" ? (
+                {health?.status === "ok" || health?.status === "healthy" ? (
                   <>
                     <CheckCircle className="h-4 w-4 text-green-500" />
                     <Badge variant="secondary" className="bg-green-100 text-green-800">

@@ -8,6 +8,7 @@
 use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::Router;
+use tower_http::cors::{Any, CorsLayer};
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
 use llmtrace_proxy::alerts::AlertEngine;
@@ -517,6 +518,11 @@ async fn build_security_analyzer(
 
 /// Build the axum [`Router`] with all routes.
 fn build_router(state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health_handler))
         .route("/metrics", get(llmtrace_proxy::metrics::metrics_handler))
@@ -596,6 +602,7 @@ fn build_router(state: Arc<AppState>) -> Router {
             Arc::clone(&state),
             llmtrace_proxy::auth::auth_middleware,
         ))
+        .layer(cors)
         .with_state(state)
 }
 

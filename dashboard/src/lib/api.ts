@@ -29,8 +29,8 @@ export interface TraceSpan {
   operation_name: string;
   provider: string;
   model_name: string;
-  prompt_text: string;
-  response_text: string | null;
+  prompt: string;
+  response: string | null;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   total_tokens: number | null;
@@ -74,6 +74,8 @@ export interface StorageStats {
   total_traces: number;
   total_spans: number;
   total_cost_usd: number;
+  newest_trace?: string;
+  oldest_trace?: string;
 }
 
 export interface Tenant {
@@ -82,6 +84,16 @@ export interface Tenant {
   plan: string;
   created_at: string;
   config: Record<string, unknown>;
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  key?: string; // Only present on creation
+  key_prefix: string;
+  role: string;
+  created_at: string;
+  tenant_id: string;
 }
 
 export interface SpendSnapshot {
@@ -145,23 +157,38 @@ async function apiFetch<T>(
   init?: RequestInit,
   tenantId?: string,
 ): Promise<T> {
+  const url = `${API_BASE}${path}`;
+  console.log(`[API] Fetching: ${url}${tenantId ? ` (Tenant: ${tenantId})` : ""}`);
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
   };
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: { ...headers, ...(init?.headers as Record<string, string>) },
-    cache: "no-store",
-  });
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers: { ...headers, ...(init?.headers as Record<string, string>) },
+      cache: "no-store",
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+    console.log(`[API] Response from ${url}: ${res.status} ${res.statusText}`);
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[API] Error body from ${url}:`, body);
+      throw new Error(`API ${res.status}: ${body}`);
+    }
+
+    if (res.status === 204) {
+      return {} as T;
+    }
+
+    return res.json() as Promise<T>;
+  } catch (e) {
+    console.error(`[API] Fetch failed for ${url}:`, e);
+    throw e;
   }
-
-  return res.json() as Promise<T>;
 }
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -192,6 +219,14 @@ export async function getTrace(
   return apiFetch(`/api/v1/traces/${traceId}`, undefined, tenantId);
 }
 
+/** Delete a single trace by ID. */
+export async function deleteTrace(
+  traceId: string,
+  tenantId?: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/traces/${traceId}`, { method: "DELETE" }, tenantId);
+}
+
 /** List spans with optional filters. */
 export async function listSpans(
   params: ListSpansParams = {},
@@ -208,9 +243,39 @@ export async function getSpan(
   return apiFetch(`/api/v1/spans/${spanId}`, undefined, tenantId);
 }
 
+/** Delete a single span by ID. */
+export async function deleteSpan(
+  spanId: string,
+  tenantId?: string,
+): Promise<void> {
+  await apiFetch(`/api/v1/spans/${spanId}`, { method: "DELETE" }, tenantId);
+}
+
 /** Get storage stats. */
 export async function getStats(tenantId?: string): Promise<StorageStats> {
   return apiFetch("/api/v1/stats", undefined, tenantId);
+}
+
+/** Get global storage stats across all tenants. */
+export async function getGlobalStats(): Promise<StorageStats> {
+  try {
+    const tenants = await listTenants();
+    const statsPromises = tenants.map(t => getStats(t.id).catch(() => null));
+    const allStats = await Promise.all(statsPromises);
+    
+    return allStats.reduce((acc: StorageStats, s) => {
+      if (!s) return acc;
+      return {
+        ...acc,
+        total_traces: acc.total_traces + s.total_traces,
+        total_spans: acc.total_spans + s.total_spans,
+        total_cost_usd: acc.total_cost_usd + s.total_cost_usd,
+      };
+    }, { total_traces: 0, total_spans: 0, total_cost_usd: 0 });
+  } catch (e) {
+    console.error("Failed to fetch global stats:", e);
+    return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
+  }
 }
 
 /** Get security findings (spans with security_score > 0). */
@@ -275,7 +340,73 @@ export async function deleteTenant(id: string): Promise<void> {
   await apiFetch(`/api/v1/tenants/${id}`, { method: "DELETE" });
 }
 
+/** List API keys for a tenant. */
+export async function listApiKeys(tenantId: string): Promise<ApiKey[]> {
+  return apiFetch("/api/v1/auth/keys", undefined, tenantId);
+}
+
+/** Create a new API key for a tenant. */
+export async function createApiKey(
+  tenantId: string,
+  name: string,
+  role: "admin" | "operator" | "viewer" = "operator",
+): Promise<ApiKey> {
+  return apiFetch("/api/v1/auth/keys", {
+    method: "POST",
+    body: JSON.stringify({ tenant_id: tenantId, name, role }),
+  }, tenantId);
+}
+
 /** Health check. */
 export async function healthCheck(): Promise<{ status: string }> {
   return apiFetch("/health");
+}
+
+/** Helper: Find the tenant with the most recent activity. */
+export async function findActiveTenant(): Promise<string | undefined> {
+  try {
+    const tenants = await listTenants();
+    if (tenants.length === 0) {
+      setStoredTenant(undefined);
+      return undefined;
+    }
+
+    // Check localStorage first and verify it still exists
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("llmtrace_tenant_id");
+      if (stored && tenants.some(t => t.id === stored)) {
+        return stored;
+      }
+    }
+
+    // Fetch stats for all tenants in parallel
+    const statsPromises = tenants.map(t => 
+      getStats(t.id).then(s => ({ 
+        id: t.id, 
+        count: s.total_traces, 
+        newest: s.newest_trace ? new Date(s.newest_trace).getTime() : 0 
+      })).catch(() => ({ id: t.id, count: 0, newest: 0 }))
+    );
+    
+    const results = await Promise.all(statsPromises);
+    // Sort by newest trace first, then by count
+    results.sort((a, b) => b.newest - a.newest || b.count - a.count);
+    
+    const activeId = results[0]?.id;
+    if (activeId) setStoredTenant(activeId);
+    return activeId;
+  } catch (e) {
+    console.error("Failed to find active tenant:", e);
+    return undefined;
+  }
+}
+
+/** Helper: Store the selected tenant ID in localStorage. */
+export function setStoredTenant(tenantId: string | undefined): void {
+  if (typeof window === "undefined") return;
+  if (tenantId) {
+    localStorage.setItem("llmtrace_tenant_id", tenantId);
+  } else {
+    localStorage.removeItem("llmtrace_tenant_id");
+  }
 }

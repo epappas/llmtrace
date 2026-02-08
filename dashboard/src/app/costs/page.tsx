@@ -14,7 +14,15 @@ import { DollarSign, TrendingUp, AlertTriangle } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { SpendSnapshot, StorageStats, WindowSpend } from "@/lib/api";
+import {
+  type SpendSnapshot,
+  type StorageStats,
+  type WindowSpend,
+  getStats,
+  getCurrentCosts,
+  listTenants,
+  findActiveTenant,
+} from "@/lib/api";
 
 export default function CostsPage() {
   const [costs, setCosts] = useState<SpendSnapshot | null>(null);
@@ -24,20 +32,20 @@ export default function CostsPage() {
   useEffect(() => {
     async function load() {
       try {
-        const statsRes = await fetch("/api/proxy/stats");
-        setStats(await statsRes.json());
-      } catch {
-        /* ignore */
-      }
-      try {
-        const costsRes = await fetch("/api/proxy/costs/current");
-        if (costsRes.ok) {
-          setCosts(await costsRes.json());
-        } else {
+        const tenantId = await findActiveTenant();
+
+        try {
+          setStats(await getStats(tenantId));
+        } catch {
+          /* ignore */
+        }
+        try {
+          setCosts(await getCurrentCosts(undefined, tenantId));
+        } catch {
           setCostsError(true);
         }
       } catch {
-        setCostsError(true);
+        /* ignore */
       }
     }
     load();
