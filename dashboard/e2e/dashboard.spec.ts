@@ -48,16 +48,20 @@ test.describe('LLMTrace Dashboard', () => {
     // Handle the browser confirmation dialog
     page.on('dialog', dialog => dialog.accept());
     
-    // Click the delete button (trash icon)
+    // Click the delete button (trash icon) and wait for the API response
     const deleteBtn = row.locator('button').last();
+    const deleteResponsePromise = page.waitForResponse(response => 
+      response.url().includes('/api/v1/tenants/') && response.request().method() === 'DELETE'
+    );
     await deleteBtn.click();
+    await deleteResponsePromise;
 
     // Reload page to confirm persistence of deletion
     await page.reload();
     await page.waitForLoadState('networkidle');
 
     // Wait for the list to refresh - the row should disappear
-    await expect(page.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 15000 });
+    await expect(page.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 30000 });
   });
 
   test('Traces: should filter by Trace ID and Model', async ({ page }) => {

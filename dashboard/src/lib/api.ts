@@ -393,7 +393,10 @@ export async function findActiveTenant(): Promise<string | undefined> {
     results.sort((a, b) => b.newest - a.newest || b.count - a.count);
     
     const activeId = results[0]?.id;
-    if (activeId) setStoredTenant(activeId);
+    // Only set stored tenant if none is currently selected
+    if (activeId && !localStorage.getItem("llmtrace_tenant_id")) {
+      setStoredTenant(activeId);
+    }
     return activeId;
   } catch (e) {
     console.error("Failed to find active tenant:", e);
