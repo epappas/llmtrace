@@ -421,10 +421,11 @@ impl PromptGuardAnalyzer {
                 let deberta_config: DebertaConfig = serde_json::from_value(config_json.clone())
                     .map_err(|e| LLMTraceError::Security(format!("Invalid DeBERTa config: {e}")))?;
                 let id2label = extract_id2label(&config_json);
-                let model = DebertaV2SeqClassificationModel::load(vb, &deberta_config, None)
-                    .map_err(|e| {
-                        LLMTraceError::Security(format!("Failed to load DeBERTa model: {e}"))
-                    })?;
+                let model =
+                    DebertaV2SeqClassificationModel::load(vb.pp("deberta"), &deberta_config, None)
+                        .map_err(|e| {
+                            LLMTraceError::Security(format!("Failed to load DeBERTa model: {e}"))
+                        })?;
                 (ClassificationBackend::DebertaV2(Box::new(model)), id2label)
             }
             _ => {

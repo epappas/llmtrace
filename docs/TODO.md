@@ -325,10 +325,10 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-003 | InjecAgent evaluation | Medium | ⬜ |
 | EV-004 | ASB evaluation | Medium | ⬜ |
 | EV-005 | WASP evaluation | Medium | ⬜ |
-| EV-006 | CyberSecEval 2 prompt injection evaluation (251 attack samples per DMPI-PMHFE [28]) | Medium | ⬜ |
+| EV-006 | CyberSecEval 2 prompt injection evaluation (251 attack samples per DMPI-PMHFE [28]) | Medium | ✅ `7ce0cf9` |
 | EV-007 | MLCommons AILuminate jailbreak benchmark | Medium | ⬜ |
 | EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ⬜ |
-| EV-009 | Automated CI-integrated benchmark runner | Medium | ⬜ |
+| EV-009 | Automated CI-integrated benchmark runner | Medium | ✅ `b15f4f0` |
 | EV-011 | safeguard-v2 evaluation (1300 samples) | Low | ⬜ |
 | EV-012 | deepset-v2 evaluation (354 samples) | Low | ⬜ |
 | EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |

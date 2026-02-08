@@ -29,6 +29,7 @@ pub mod prelude {
     pub use crate::datasets::{BenchmarkSample, DatasetLoader, Label};
     pub use crate::metrics::{BenchmarkMetrics, ConfusionMatrix, ThreeDimensionalMetrics};
     pub use crate::regression::{self, RegressionResult, RegressionThresholds};
+    pub use crate::runners::cyberseceval2;
     pub use crate::runners::notinject;
     pub use crate::runners::{BenchmarkResult, BenchmarkRunner};
 }

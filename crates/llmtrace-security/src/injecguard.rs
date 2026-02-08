@@ -23,7 +23,7 @@ use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use candle_transformers::models::debertav2::{
-    Config as DebertaConfig, DebertaV2SeqClassificationModel,
+    Config as DebertaConfig, DebertaV2Model, DebertaV2SeqClassificationModel,
 };
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
@@ -45,7 +45,7 @@ use crate::RegexSecurityAnalyzer;
 /// use llmtrace_security::InjecGuardConfig;
 ///
 /// let config = InjecGuardConfig {
-///     model_id: "epappas/injecguard".to_string(),
+///     model_id: "leolee99/InjecGuard".to_string(),
 ///     threshold: 0.85,
 ///     cache_dir: Some("~/.cache/llmtrace/models".to_string()),
 /// };
@@ -66,7 +66,7 @@ pub struct InjecGuardConfig {
 impl Default for InjecGuardConfig {
     fn default() -> Self {
         Self {
-            model_id: "epappas/injecguard".to_string(),
+            model_id: "leolee99/InjecGuard".to_string(),
             threshold: 0.85,
             cache_dir: None,
         }
@@ -77,13 +77,18 @@ impl Default for InjecGuardConfig {
 // Model abstraction (shared with ml_detector)
 // ---------------------------------------------------------------------------
 
-/// Classification model backend — supports both BERT and DeBERTa-v2.
+/// Classification model backend — supports BERT, DeBERTa-v2, and PIGuard.
 enum ClassificationBackend {
     Bert {
         model: Box<BertModel>,
         classifier: candle_nn::Linear,
     },
     DebertaV2(Box<DebertaV2SeqClassificationModel>),
+    /// PIGuard-style: base DeBERTa encoder + CLS token + classifier (no ContextPooler).
+    DebertaV2Cls {
+        model: Box<DebertaV2Model>,
+        classifier: candle_nn::Linear,
+    },
 }
 
 impl ClassificationBackend {
@@ -104,6 +109,15 @@ impl ClassificationBackend {
                 Some(token_type_ids.clone()),
                 Some(attention_mask.clone()),
             ),
+            Self::DebertaV2Cls { model, classifier } => {
+                let hidden = model.forward(
+                    input_ids,
+                    Some(token_type_ids.clone()),
+                    Some(attention_mask.clone()),
+                )?;
+                let cls_output = hidden.i((.., 0))?;
+                candle_nn::Module::forward(classifier, &cls_output)
+            }
         }
     }
 }
@@ -326,14 +340,40 @@ impl InjecGuardAnalyzer {
         };
 
         let (backend, id2label) = match model_type {
+            "piguard" => {
+                let deberta_config: DebertaConfig = serde_json::from_value(config_json.clone())
+                    .map_err(|e| LLMTraceError::Security(format!("Invalid DeBERTa config: {e}")))?;
+                let id2label = extract_id2label(&config_json);
+                let num_labels = config_json
+                    .get("num_labels")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2) as usize;
+                let model =
+                    DebertaV2Model::load(vb.pp("deberta"), &deberta_config).map_err(|e| {
+                        LLMTraceError::Security(format!("Failed to load PIGuard model: {e}"))
+                    })?;
+                let classifier =
+                    candle_nn::linear(deberta_config.hidden_size, num_labels, vb.pp("classifier"))
+                        .map_err(|e| {
+                            LLMTraceError::Security(format!("Failed to load classifier: {e}"))
+                        })?;
+                (
+                    ClassificationBackend::DebertaV2Cls {
+                        model: Box::new(model),
+                        classifier,
+                    },
+                    id2label,
+                )
+            }
             "deberta-v2" => {
                 let deberta_config: DebertaConfig = serde_json::from_value(config_json.clone())
                     .map_err(|e| LLMTraceError::Security(format!("Invalid DeBERTa config: {e}")))?;
                 let id2label = extract_id2label(&config_json);
-                let model = DebertaV2SeqClassificationModel::load(vb, &deberta_config, None)
-                    .map_err(|e| {
-                        LLMTraceError::Security(format!("Failed to load DeBERTa model: {e}"))
-                    })?;
+                let model =
+                    DebertaV2SeqClassificationModel::load(vb.pp("deberta"), &deberta_config, None)
+                        .map_err(|e| {
+                            LLMTraceError::Security(format!("Failed to load DeBERTa model: {e}"))
+                        })?;
                 (ClassificationBackend::DebertaV2(Box::new(model)), id2label)
             }
             _ => {
@@ -522,7 +562,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = InjecGuardConfig::default();
-        assert_eq!(config.model_id, "epappas/injecguard");
+        assert_eq!(config.model_id, "leolee99/InjecGuard");
         assert!((config.threshold - 0.85).abs() < f64::EPSILON);
         assert!(config.cache_dir.is_none());
     }

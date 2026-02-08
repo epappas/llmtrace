@@ -19,6 +19,7 @@
 //! | SOTA: ProtectAI v2             | 63.81%  | N/A     | 48.60%  | N/A     |  13.80% |  51.40% |
 //! ```
 
+pub mod cyberseceval2;
 pub mod notinject;
 
 use crate::datasets::{BenchmarkSample, Label};

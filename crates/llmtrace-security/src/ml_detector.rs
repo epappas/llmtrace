@@ -583,7 +583,7 @@ impl MLSecurityAnalyzer {
 
         let id2label = extract_id2label(config_json);
 
-        let model = DebertaV2SeqClassificationModel::load(vb, &config, None)
+        let model = DebertaV2SeqClassificationModel::load(vb.pp("deberta"), &config, None)
             .map_err(|e| LLMTraceError::Security(format!("Failed to load DeBERTa model: {e}")))?;
 
         Ok((ClassificationModel::DebertaV2(Box::new(model)), id2label))
