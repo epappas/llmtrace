@@ -461,6 +461,17 @@ impl MLSecurityAnalyzer {
         self.model.as_ref()
     }
 
+    /// Extract a pooled embedding vector from text using the loaded DeBERTa model.
+    ///
+    /// Returns `Ok(None)` if the embedding model is not loaded.
+    /// Returns `Ok(Some(tensor))` with shape `[768]` on success.
+    pub async fn extract_embedding(&self, text: &str) -> Result<Option<Tensor>> {
+        match &self.model {
+            Some(m) => m.extract_embedding(text),
+            None => Ok(None),
+        }
+    }
+
     // -- Model loading ------------------------------------------------------
 
     /// Download and load a model from HuggingFace Hub.
