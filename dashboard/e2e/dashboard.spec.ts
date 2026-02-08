@@ -52,6 +52,10 @@ test.describe('LLMTrace Dashboard', () => {
     const deleteBtn = row.locator('button').last();
     await deleteBtn.click();
 
+    // Reload page to confirm persistence of deletion
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
     // Wait for the list to refresh - the row should disappear
     await expect(page.getByText(tenantName)).toHaveCount(0, { timeout: 15000 });
   });

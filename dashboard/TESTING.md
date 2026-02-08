@@ -42,7 +42,7 @@ docker run --rm \
   -v $(pwd)/llmtrace/dashboard:/work \
   -w /work \
   mcr.microsoft.com/playwright:v1.58.2-jammy \
-  /bin/bash -c "npm ci && npx playwright test"
+  /bin/bash -c "npm install && npx playwright test"
 ```
 
 *Note: We use `--network host` so the test container can access `localhost:3000`.*

@@ -1,0 +1,172 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - link "LLMTrace" [ref=e5]:
+        - /url: /
+        - img [ref=e6]
+        - generic [ref=e8]: LLMTrace
+      - generic [ref=e9]:
+        - generic [ref=e10]: Current Tenant
+        - generic [ref=e11]:
+          - combobox [ref=e12] [cursor=pointer]:
+            - option "Test-Tenant-1770559320184" [selected]
+            - option "Test-Tenant-1770559319110"
+            - option "Test-Tenant-1770559317906"
+            - option "Test-Tenant-1770559177573"
+            - option "Test-Tenant-1770559175964"
+            - option "Test-Tenant-1770559175216"
+            - option "Test-Tenant-1770558780711"
+            - option "Test-Tenant-1770558779714"
+            - option "Test-Tenant-1770558778535"
+            - option "George"
+          - generic:
+            - img
+      - navigation [ref=e13]:
+        - link "Overview" [ref=e14]:
+          - /url: /
+          - img [ref=e15]
+          - text: Overview
+        - link "Traces" [ref=e20]:
+          - /url: /traces
+          - img [ref=e21]
+          - text: Traces
+        - link "Security" [ref=e26]:
+          - /url: /security
+          - img [ref=e27]
+          - text: Security
+        - link "Costs" [ref=e29]:
+          - /url: /costs
+          - img [ref=e30]
+          - text: Costs
+        - link "Tenants" [ref=e32]:
+          - /url: /tenants
+          - img [ref=e33]
+          - text: Tenants
+        - link "Settings" [ref=e38]:
+          - /url: /settings
+          - img [ref=e39]
+          - text: Settings
+      - generic [ref=e42]: LLMTrace Dashboard v0.1.0
+    - main [ref=e43]:
+      - generic [ref=e45]:
+        - heading "Settings" [level=1] [ref=e46]
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - heading "API Connection" [level=3] [ref=e49]
+            - paragraph [ref=e50]: The dashboard connects to the LLMTrace proxy REST API.
+          - generic [ref=e52]:
+            - generic [ref=e53]:
+              - text: Backend URL
+              - paragraph [ref=e54]: http://192.168.1.107:8081
+            - generic [ref=e55]:
+              - text: Status
+              - generic [ref=e56]:
+                - img [ref=e57]
+                - generic [ref=e60]: Connected
+            - button "Check" [ref=e61] [cursor=pointer]:
+              - img [ref=e62]
+              - text: Check
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - heading "Environment Variables" [level=3] [ref=e69]
+            - paragraph [ref=e70]: Configure the dashboard via environment variables.
+          - table [ref=e73]:
+            - rowgroup [ref=e74]:
+              - row "Variable Description Default" [ref=e75]:
+                - columnheader "Variable" [ref=e76]
+                - columnheader "Description" [ref=e77]
+                - columnheader "Default" [ref=e78]
+            - rowgroup [ref=e79]:
+              - row "NEXT_PUBLIC_API_URL LLMTrace proxy base URL (client-side) http://localhost:8080" [ref=e80]:
+                - cell "NEXT_PUBLIC_API_URL" [ref=e81]
+                - cell "LLMTrace proxy base URL (client-side)" [ref=e82]
+                - cell "http://localhost:8080" [ref=e83]
+              - row "LLMTRACE_API_URL LLMTrace proxy base URL (server-side proxy routes) http://localhost:8080" [ref=e84]:
+                - cell "LLMTRACE_API_URL" [ref=e85]
+                - cell "LLMTrace proxy base URL (server-side proxy routes)" [ref=e86]
+                - cell "http://localhost:8080" [ref=e87]
+              - row "PORT Dashboard listen port 3000" [ref=e88]:
+                - cell "PORT" [ref=e89]
+                - cell "Dashboard listen port" [ref=e90]
+                - cell "3000" [ref=e91]
+        - generic [ref=e92]:
+          - generic [ref=e93]:
+            - heading "API Endpoints" [level=3] [ref=e94]
+            - paragraph [ref=e95]: Available LLMTrace REST API endpoints.
+          - table [ref=e98]:
+            - rowgroup [ref=e99]:
+              - row "Method Path Description" [ref=e100]:
+                - columnheader "Method" [ref=e101]
+                - columnheader "Path" [ref=e102]
+                - columnheader "Description" [ref=e103]
+            - rowgroup [ref=e104]:
+              - row "GET /api/v1/traces List traces with filters" [ref=e105]:
+                - cell "GET" [ref=e106]:
+                  - generic [ref=e107]: GET
+                - cell "/api/v1/traces" [ref=e108]
+                - cell "List traces with filters" [ref=e109]
+              - row "GET /api/v1/traces/:id Get trace with all spans" [ref=e110]:
+                - cell "GET" [ref=e111]:
+                  - generic [ref=e112]: GET
+                - cell "/api/v1/traces/:id" [ref=e113]
+                - cell "Get trace with all spans" [ref=e114]
+              - row "GET /api/v1/spans List spans with filters" [ref=e115]:
+                - cell "GET" [ref=e116]:
+                  - generic [ref=e117]: GET
+                - cell "/api/v1/spans" [ref=e118]
+                - cell "List spans with filters" [ref=e119]
+              - row "GET /api/v1/spans/:id Get a single span" [ref=e120]:
+                - cell "GET" [ref=e121]:
+                  - generic [ref=e122]: GET
+                - cell "/api/v1/spans/:id" [ref=e123]
+                - cell "Get a single span" [ref=e124]
+              - row "GET /api/v1/stats Storage statistics" [ref=e125]:
+                - cell "GET" [ref=e126]:
+                  - generic [ref=e127]: GET
+                - cell "/api/v1/stats" [ref=e128]
+                - cell "Storage statistics" [ref=e129]
+              - row "GET /api/v1/security/findings Spans with security findings" [ref=e130]:
+                - cell "GET" [ref=e131]:
+                  - generic [ref=e132]: GET
+                - cell "/api/v1/security/findings" [ref=e133]
+                - cell "Spans with security findings" [ref=e134]
+              - row "GET /api/v1/costs/current Current spend per budget window" [ref=e135]:
+                - cell "GET" [ref=e136]:
+                  - generic [ref=e137]: GET
+                - cell "/api/v1/costs/current" [ref=e138]
+                - cell "Current spend per budget window" [ref=e139]
+              - row "GET /api/v1/actions/summary Agent actions aggregate" [ref=e140]:
+                - cell "GET" [ref=e141]:
+                  - generic [ref=e142]: GET
+                - cell "/api/v1/actions/summary" [ref=e143]
+                - cell "Agent actions aggregate" [ref=e144]
+              - row "GET /api/v1/tenants List tenants" [ref=e145]:
+                - cell "GET" [ref=e146]:
+                  - generic [ref=e147]: GET
+                - cell "/api/v1/tenants" [ref=e148]
+                - cell "List tenants" [ref=e149]
+              - row "POST /api/v1/tenants Create tenant" [ref=e150]:
+                - cell "POST" [ref=e151]:
+                  - generic [ref=e152]: POST
+                - cell "/api/v1/tenants" [ref=e153]
+                - cell "Create tenant" [ref=e154]
+              - row "PUT /api/v1/tenants/:id Update tenant" [ref=e155]:
+                - cell "PUT" [ref=e156]:
+                  - generic [ref=e157]: PUT
+                - cell "/api/v1/tenants/:id" [ref=e158]
+                - cell "Update tenant" [ref=e159]
+              - row "DELETE /api/v1/tenants/:id Delete tenant" [ref=e160]:
+                - cell "DELETE" [ref=e161]:
+                  - generic [ref=e162]: DELETE
+                - cell "/api/v1/tenants/:id" [ref=e163]
+                - cell "Delete tenant" [ref=e164]
+              - row "GET /health Health check" [ref=e165]:
+                - cell "GET" [ref=e166]:
+                  - generic [ref=e167]: GET
+                - cell "/health" [ref=e168]
+                - cell "Health check" [ref=e169]
+  - alert [ref=e170]
+```
