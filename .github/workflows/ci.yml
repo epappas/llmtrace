@@ -105,6 +105,72 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Generate HTML report
         run: cargo llvm-cov --workspace --html
+      - name: Write Coverage Summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+          
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          html_index = Path("target/llvm-cov/html/index.html")
+          lcov = Path("lcov.info")
+          
+          def fmt_row(label: str, pct: str, frac: str) -> str:
+            return f"| {label} | {pct} | {frac} |"
+          
+          if not html_index.exists():
+            summary_path.write_text("## Coverage (llvm-cov)\n\nNo HTML report found.\n")
+            raise SystemExit(0)
+          
+          html = html_index.read_text(encoding="utf-8", errors="ignore")
+          m = re.search(r"<tr class='light-row-bold'>.*?<pre>Totals</pre>.*?</tr>", html, flags=re.S)
+          if not m:
+            summary_path.write_text("## Coverage (llvm-cov)\n\nFailed to locate totals row in HTML report.\n")
+            raise SystemExit(0)
+          
+          row = m.group(0)
+          cells = re.findall(r"<pre>\\s*([^<]+?)\\s*</pre>", row)
+          # cells = ["Totals", func, line, region, branch]
+          func, line, region, branch = (cells + ["?", "?", "?", "?"])[1:5]
+          
+          created = ""
+          m2 = re.search(r"Created:\\s*([^<]+)</h4>", html)
+          if m2:
+            created = m2.group(1).strip()
+          
+          def split_metric(s: str):
+            s = s.strip()
+            m = re.match(r"([0-9]+\\.[0-9]+%)\\s*\\(([^)]+)\\)", s)
+            if not m:
+              return s, ""
+            return m.group(1), m.group(2)
+          
+          func_pct, func_frac = split_metric(func)
+          line_pct, line_frac = split_metric(line)
+          region_pct, region_frac = split_metric(region)
+          branch_pct, branch_frac = split_metric(branch)
+          
+          parts = []
+          parts.append("## Coverage (llvm-cov)\\n")
+          if created:
+            parts.append(f"_Report created: {created}_\\n\\n")
+          parts.append("| Metric | % | Covered/Total |\\n")
+          parts.append("|---|---:|---:|\\n")
+          parts.append(fmt_row("Function", func_pct, func_frac) + \"\\n\")
+          parts.append(fmt_row("Line", line_pct, line_frac) + \"\\n\")
+          parts.append(fmt_row("Region", region_pct, region_frac) + \"\\n\")
+          if branch_frac:
+            parts.append(fmt_row("Branch", branch_pct, branch_frac) + \"\\n\")
+          else:
+            parts.append(fmt_row("Branch", branch_pct, \"\") + \"\\n\")
+          parts.append(\"\\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\\n\")
+          
+          # Append (don't clobber other summaries in the same job).
+          with summary_path.open(\"a\", encoding=\"utf-8\") as f:
+            f.write(\"\".join(parts))
+          PY
       - name: Upload coverage to Codecov
         # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && env.CODECOV_TOKEN != '' }}
@@ -285,7 +351,61 @@ jobs:
       - name: Run E2E Tests
         run: |
           cd dashboard
-          npx playwright test
+          # Write JSON results for a human-readable summary even if tests fail.
+          npx playwright test --reporter=json,line > ../playwright-results.json
+
+      - name: Write E2E Summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          report = Path("playwright-results.json")
+          
+          if not report.exists():
+            with summary_path.open("a", encoding="utf-8") as f:
+              f.write("## E2E (Playwright)\\n\\nNo `playwright-results.json` found.\\n")
+            raise SystemExit(0)
+          
+          data = json.loads(report.read_text(encoding="utf-8", errors="ignore") or "{}")
+          
+          def walk(obj):
+            if isinstance(obj, dict):
+              yield obj
+              for v in obj.values():
+                yield from walk(v)
+            elif isinstance(obj, list):
+              for it in obj:
+                yield from walk(it)
+          
+          # Count test outcomes by scanning all dicts with a `status` key.
+          counts = {"passed": 0, "failed": 0, "skipped": 0, "timedOut": 0, "interrupted": 0, "flaky": 0}
+          for o in walk(data):
+            status = o.get("status")
+            if status in counts:
+              counts[status] += 1
+          
+          total = sum(counts.values())
+          duration_ms = data.get("stats", {}).get("duration")
+          duration = f"{duration_ms/1000:.1f}s" if isinstance(duration_ms, (int, float)) else ""
+          
+          lines = []
+          lines.append("## E2E (Playwright)\\n\\n")
+          if duration:
+            lines.append(f"_Duration: {duration}_\\n\\n")
+          lines.append("| Outcome | Count |\\n")
+          lines.append("|---|---:|\\n")
+          for k in ["passed", "failed", "skipped", "flaky", "timedOut", "interrupted"]:
+            lines.append(f"| {k} | {counts[k]} |\\n")
+          lines.append(f"| total | {total} |\\n")
+          lines.append("\\nArtifacts: `playwright-report`.\\n")
+          
+          with summary_path.open("a", encoding="utf-8") as f:
+            f.write("".join(lines))
+          PY
 
       - name: Upload Playwright Report
         if: always()
