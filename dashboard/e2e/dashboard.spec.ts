@@ -33,11 +33,11 @@ test.describe('LLMTrace Dashboard', () => {
     await page.getByRole('button', { name: 'Create' }).click();
 
     // Verify it appeared in the list
-    await expect(page.getByText(tenantName)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId(`tenant-name-${tenantName}`)).toBeVisible({ timeout: 15000 });
 
     // 2. Generate Token
     // Find the row with our tenant and click the "Token" button
-    const row = page.locator('tr', { hasText: tenantName });
+    const row = page.locator('tr', { has: page.getByTestId(`tenant-name-${tenantName}`) });
     await row.getByRole('button', { name: 'Token' }).click();
 
     // Verify Token Generated card appeared and key is visible
@@ -57,7 +57,7 @@ test.describe('LLMTrace Dashboard', () => {
     await page.waitForLoadState('networkidle');
 
     // Wait for the list to refresh - the row should disappear
-    await expect(page.getByText(tenantName)).toHaveCount(0, { timeout: 15000 });
+    await expect(page.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 15000 });
   });
 
   test('Traces: should filter by Trace ID and Model', async ({ page }) => {

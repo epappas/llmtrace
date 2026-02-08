@@ -111,7 +111,7 @@ export default function TenantsPage() {
   const columns = [
     {
       header: "Name",
-      accessor: (t: Tenant) => <span className="font-medium">{t.name}</span>,
+      accessor: (t: Tenant) => <span className="font-medium" data-testid={`tenant-name-${t.name}`}>{t.name}</span>,
     },
     {
       header: "ID",
