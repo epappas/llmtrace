@@ -26,6 +26,21 @@ from pathlib import Path
 
 from datasets import load_dataset, concatenate_datasets
 
+# Pinned commit SHAs for reproducibility (fetched 2026-02-08).
+_COMMITS = {
+    # GitHub repos
+    "PurpleLlama": "31a82e49871c6457c9dfa559f69b7f811666aa30",
+    "HarmBench": "8e1604d1171fe8a48d8febecd22f600e462bdcdd",
+    "ailuminate": "769cc2be9d20c8d4fb26ce53b68865ed41dfb8e2",
+    "InjecAgent": "f19c9f2c79a41046eb13c03c51a24c567a8ffa07",
+    "ASB": "eac7bcf38c116f42b46e6d480e56e599b99e73c2",
+    "BIPIA": "a004b69ec0dd446e0afd461d98cb5e96e120a5d0",
+    # HuggingFace datasets
+    "safeguard_hf": "a3a877d608f37b7d20d9945671902df895ecdb46",
+    "deepset_hf": "4f61ecb038e9c3fb77e21034b22511b523772cdd",
+    "ivanleomk_hf": "07858746d34ad8c6a5dad1d94b02ba75aec844e5",
+}
+
 
 def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
     return {
@@ -38,7 +53,11 @@ def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
 
 
 def download_safeguard(output_dir: Path) -> None:
-    ds = load_dataset("xTRam1/safe-guard-prompt-injection", split="test")
+    ds = load_dataset(
+        "xTRam1/safe-guard-prompt-injection",
+        split="test",
+        revision=_COMMITS["safeguard_hf"],
+    )
     samples = [
         convert_sample(i, row["text"], row["label"], "safeguard")
         for i, row in enumerate(ds)
@@ -52,8 +71,16 @@ def download_safeguard(output_dir: Path) -> None:
 
 
 def download_deepset(output_dir: Path) -> None:
-    ds_train = load_dataset("deepset/prompt-injections", split="train")
-    ds_test = load_dataset("deepset/prompt-injections", split="test")
+    ds_train = load_dataset(
+        "deepset/prompt-injections",
+        split="train",
+        revision=_COMMITS["deepset_hf"],
+    )
+    ds_test = load_dataset(
+        "deepset/prompt-injections",
+        split="test",
+        revision=_COMMITS["deepset_hf"],
+    )
     ds = concatenate_datasets([ds_train, ds_test])
     samples = [
         convert_sample(i, row["text"], row["label"], "deepset")
@@ -68,7 +95,11 @@ def download_deepset(output_dir: Path) -> None:
 
 
 def download_ivanleomk(output_dir: Path) -> None:
-    ds = load_dataset("ivanleomk/prompt_injection_password", split="train")
+    ds = load_dataset(
+        "ivanleomk/prompt_injection_password",
+        split="train",
+        revision=_COMMITS["ivanleomk_hf"],
+    )
     samples = [
         convert_sample(i, row["text"], row["label"], "ivanleomk")
         for i, row in enumerate(ds)
@@ -84,9 +115,9 @@ def download_ivanleomk(output_dir: Path) -> None:
 def download_cyberseceval2(output_dir: Path) -> None:
     url = (
         "https://raw.githubusercontent.com/meta-llama/PurpleLlama/"
-        "main/CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json"
+        f"{_COMMITS['PurpleLlama']}/CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         raw = json.loads(resp.read().decode("utf-8"))
 
     samples = []
@@ -109,9 +140,9 @@ def download_harmbench(output_dir: Path) -> None:
     """EV-015: HarmBench harmful behaviors (CSV from centerforaisafety/HarmBench)."""
     url = (
         "https://raw.githubusercontent.com/centerforaisafety/HarmBench/"
-        "main/data/behavior_datasets/harmbench_behaviors_text_all.csv"
+        f"{_COMMITS['HarmBench']}/data/behavior_datasets/harmbench_behaviors_text_all.csv"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         text = resp.read().decode("utf-8")
 
     reader = csv.DictReader(io.StringIO(text))
@@ -138,9 +169,9 @@ def download_ailuminate(output_dir: Path) -> None:
     """EV-007: MLCommons AILuminate demo prompts (CSV from mlcommons/ailuminate)."""
     url = (
         "https://raw.githubusercontent.com/mlcommons/ailuminate/"
-        "main/airr_official_1.0_demo_en_us_prompt_set_release.csv"
+        f"{_COMMITS['ailuminate']}/airr_official_1.0_demo_en_us_prompt_set_release.csv"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         text = resp.read().decode("utf-8")
 
     reader = csv.DictReader(io.StringIO(text))
@@ -166,7 +197,7 @@ def download_ailuminate(output_dir: Path) -> None:
 def download_injecagent(output_dir: Path) -> None:
     """EV-003: InjecAgent indirect prompt injection test cases."""
     base_url = (
-        "https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/"
+        f"https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/{_COMMITS['InjecAgent']}/data/"
     )
     files = [
         "test_cases_dh_base.json",
@@ -179,7 +210,7 @@ def download_injecagent(output_dir: Path) -> None:
     idx = 0
     for fname in files:
         url = base_url + fname
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             cases = json.loads(resp.read().decode("utf-8"))
 
         variant = fname.replace("test_cases_", "").replace(".json", "")
@@ -206,9 +237,9 @@ def download_asb(output_dir: Path) -> None:
     """EV-004: Agent Security Bench attack tools (JSONL from agiresearch/ASB)."""
     url = (
         "https://raw.githubusercontent.com/agiresearch/ASB/"
-        "main/data/all_attack_tools.jsonl"
+        f"{_COMMITS['ASB']}/data/all_attack_tools.jsonl"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         lines = resp.read().decode("utf-8").strip().split("\n")
 
     samples = []
@@ -239,12 +270,12 @@ def download_bipia(output_dir: Path) -> None:
     """
     random.seed(42)
 
-    base_url = "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/"
+    base_url = f"https://raw.githubusercontent.com/microsoft/BIPIA/{_COMMITS['BIPIA']}/benchmark/"
 
     contexts: list[dict] = []
     for task in ["email", "code", "table"]:
         url = base_url + f"{task}/test.jsonl"
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             lines = resp.read().decode("utf-8").strip().split("\n")
         for line in lines:
             entry = json.loads(line)
@@ -264,7 +295,7 @@ def download_bipia(output_dir: Path) -> None:
     attacks: list[dict] = []
     for attack_file in ["text_attack_test.json", "code_attack_test.json"]:
         url = base_url + attack_file
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         for category, prompts in data.items():
             for prompt in prompts:
