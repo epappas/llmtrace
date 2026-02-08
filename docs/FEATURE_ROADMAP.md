@@ -37,7 +37,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 - **Rust-native performance**: <1ms regex analysis, ~50-100ms ML inference — faster than any Python framework
 - **True transparent proxy**: Zero-code integration deployment model
 - **Streaming security**: Real-time SSE analysis with output-side monitoring and early stopping
-- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa average-pooled embedding concatenated with 10-dim binary heuristic vector through 2-layer FC classifier (random weights). **Note:** 2 architectural deviations from DMPI-PMHFE paper remain (DMPI-004, DMPI-006): repetition threshold >10 instead of >=3, non-paper feature names. DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), and DMPI-005 (missing features) resolved. See section 3.4.1.
+- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa average-pooled embedding concatenated with 10-dim binary heuristic vector through 2-layer FC classifier (random weights). **Note:** 1 architectural deviation from DMPI-PMHFE paper remains (DMPI-006): non-paper feature names. DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), DMPI-004 (repetition threshold >=3), and DMPI-005 (missing features) resolved. See section 3.4.1.
 - **Comprehensive input security**: 40+ regex patterns covering 8 attack categories (flattery, urgency, roleplay, impersonation, covert, excuse, many-shot, repetition)
 - **Unicode normalisation**: NFKC + zero-width stripping + homoglyph mapping (Cyrillic, Greek)
 - **Output safety**: Toxicity detection (BERT-based + keyword fallback), hallucination detection (cross-encoder + heuristic fallback)
@@ -82,7 +82,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | Covert/stealth detection | `lib.rs` | 5 patterns: dont_tell, between_us, secret_test, off_record, bypass |
 | Excuse detection | `lib.rs` | 4 patterns: educational, researcher, novel, fictional. **Note:** paper's `is_immoral` feature (hitting, amoral, immoral, deceit, irresponsible, offensive, violent, unethical, smack, fake, illegal, biased) is entirely absent. See DMPI-005. |
 | Many-shot attack detection | `lib.rs` | Q&A pair counting (threshold ≥ 3 pairs) |
-| Repetition attack detection | `lib.rs` | Word-level (>10 occurrences) and phrase-level (2-3 gram, >10 occurrences). **Deviates from paper:** DMPI-PMHFE threshold is >=3, not >10. See DMPI-004. |
+| Repetition attack detection | `lib.rs` | Word-level (>=3 occurrences) and phrase-level (2-3 gram, >=3 occurrences) with common-word and common-phrase exclusion lists. Matches DMPI-PMHFE paper threshold (>=3). |
 | Base64 encoding detection | `lib.rs` | Decode candidates and check for suspicious instruction phrases |
 | Jailbreak detection (dedicated) | `jailbreak_detector.rs` | DAN, system prompt extraction, privilege escalation, encoding evasion |
 | Encoding evasion detection | `jailbreak_detector.rs` | Base64, ROT13, leetspeak, reversed text decoding and analysis |
@@ -366,19 +366,19 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 
 #### 3.4.1a DMPI-PMHFE Architecture Alignment (Prerequisites for ML-001)
 
-6 architectural deviations between the current codebase and the DMPI-PMHFE paper (arXiv 2506.06384). 4 resolved (DMPI-001, DMPI-002, DMPI-003, DMPI-005), 2 remaining (DMPI-004, DMPI-006). All must be resolved before fusion training (ML-001) can produce paper-comparable results. Reference: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
+6 architectural deviations between the current codebase and the DMPI-PMHFE paper (arXiv 2506.06384). 5 resolved (DMPI-001, DMPI-002, DMPI-003, DMPI-004, DMPI-005), 1 remaining (DMPI-006). All must be resolved before fusion training (ML-001) can produce paper-comparable results. Reference: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
 | DMPI-001 | **Average pooling instead of CLS token** — Implemented `masked_mean_pool()` with `PoolingStrategy` enum (Cls/MeanPool). Both BERT and DeBERTa paths now default to attention-mask-aware average pooling. See `docs/architecture/DMPI_001_AVERAGE_POOLING.md`. | DMPI-PMHFE | P1 | Medium | :white_check_mark: Done |
 | DMPI-002 | **2 FC layers instead of 3** — Removed `HIDDEN_2` and `fc3`; collapsed to `fc1(783->256)->ReLU->fc2(256->2)->SoftMax` matching paper spec. Input dim becomes 778 (768+10) once DMPI-003 is also applied. Architecture doc: `docs/architecture/DMPI_002_TWO_FC_LAYERS.md`. | DMPI-PMHFE | P1 | Medium | :white_check_mark: Done |
 | DMPI-003 | **10 binary features instead of 15 mixed** — Replaced 15-dim vector (8 binary + 7 numeric) with 10 binary features matching paper Appendix A. Removed all numeric features. Added keyword-based detection for `is_ignore`, `is_format_manipulation`, `is_immoral`. Reordered to paper spec. `FUSION_INPUT_DIM` now 778 (768+10). Architecture doc: `docs/architecture/DMPI_003_TEN_BINARY_FEATURES.md`. | DMPI-PMHFE | P1 | High | :white_check_mark: Done |
-| DMPI-004 | **Repetition threshold >=3 instead of >10** — `lib.rs:1115` (word-level) and `lib.rs:1159` (phrase-level) both use hardcoded `> 10`. Paper specifies `>= 3` based on sensitivity analysis. Common-words exclusion list may need expansion at the lower threshold. | DMPI-PMHFE | P1 | Low | ❌ Missing |
+| DMPI-004 | **Repetition threshold >=3 instead of >10** — Named constant `REPETITION_THRESHOLD = 3`. Word-level and phrase-level conditions changed to `>= REPETITION_THRESHOLD`. Expanded `COMMON_WORDS` list (+37 words) and added `COMMON_PHRASES` exclusion list (29 common English bigrams) to control false positives at the lower threshold. | DMPI-PMHFE | P1 | Low | :white_check_mark: Done |
 | DMPI-005 | **Missing paper features: is_immoral, is_ignore, is_format_manipulation** — All 3 missing features now implemented as keyword-in-text checks in `feature_extraction.rs`. Resolved as part of DMPI-003. Architecture doc: `docs/architecture/DMPI_003_TEN_BINARY_FEATURES.md`. | DMPI-PMHFE | P1 | Medium | :white_check_mark: Done |
 | DMPI-006 | **Feature naming alignment to paper convention** — `feature_extraction.rs:41-50` uses code-specific names (`flattery_attack`, `urgency_attack`, etc.). Paper uses `is_ignore`, `is_urgent`, `is_incentive`, `is_covert`, `is_format_manipulation`, `is_hypothetical`, `is_systemic`, `is_immoral`, `is_shot_attack`, `is_repeated_token`. Zero paper `is_*` names exist in codebase. Rename mapping: `flattery->is_incentive`, `urgency->is_urgent`, `roleplay->is_hypothetical`, `impersonation->is_systemic`, `covert->is_covert`, `excuse->is_immoral`, `many_shot->is_shot_attack`, `repetition->is_repeated_token`. | DMPI-PMHFE | P2 | Low | ❌ Missing |
 
 **Implementation Notes:**
-- ML-001: Current FusionClassifier uses random weights (`new_random`). Need training pipeline: (1) collect labeled prompt injection dataset, (2) extract DeBERTa embeddings via average pooling, (3) extract 10 binary heuristic features per paper spec, (4) concatenate and train 2-layer FC classifier. DMPI-PMHFE shows +6% F1 on hard datasets (deepset-v2: 84.21% -> 90.21%) with trained fusion. **Blocked by DMPI-001–DMPI-006:** training on the wrong architecture will not reproduce paper results.
+- ML-001: Current FusionClassifier uses random weights (`new_random`). Need training pipeline: (1) collect labeled prompt injection dataset, (2) extract DeBERTa embeddings via average pooling, (3) extract 10 binary heuristic features per paper spec, (4) concatenate and train 2-layer FC classifier. DMPI-PMHFE shows +6% F1 on hard datasets (deepset-v2: 84.21% -> 90.21%) with trained fusion. **Blocked by DMPI-006:** training on the wrong architecture will not reproduce paper results.
 - ML-002: InjecGuard surpasses ProtectAIv2 by 30.8% on over-defense benchmark. Same DeBERTa architecture, different training strategy.
 - DMPI-001 and DMPI-002 are independent and can be done in parallel.
 - DMPI-003 and DMPI-005 are coupled: fixing feature dimension requires adding the 3 missing paper features and removing the 7 extra numeric features.
@@ -616,7 +616,7 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 ### 5.2 LLMTrace Unique Differentiators
 
 1. **Only Rust-native LLM security proxy** — performance advantage is structural
-2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, but 2 architectural deviations (DMPI-004, DMPI-006) must be resolved before trained weights can match paper SOTA; DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), and DMPI-005 (missing features) resolved (see §3.4.1a)
+2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, but 1 architectural deviation (DMPI-006) must be resolved before trained weights can match paper SOTA; DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), DMPI-004 (repetition threshold >=3), and DMPI-005 (missing features) resolved (see §3.4.1a)
 3. **Only system combining streaming analysis + early stopping + output safety** — no competitor has all three
 4. **Only system with integrated cost control + security** — single deployment for both concerns
 5. **Most comprehensive Unicode normalisation** — 30+ homoglyph mappings + 18 zero-width chars

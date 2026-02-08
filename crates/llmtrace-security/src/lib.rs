@@ -329,6 +329,44 @@ const CONTEXT_FLOODING_INVISIBLE_THRESHOLD: f64 = 0.30;
 /// Threshold for how many times the same line must appear to be flagged.
 const CONTEXT_FLOODING_REPEATED_LINE_THRESHOLD: u32 = 20;
 
+/// Minimum repetition count to flag a word or phrase as a repetition attack.
+/// DMPI-PMHFE paper specifies >= 3 based on sensitivity analysis.
+const REPETITION_THRESHOLD: u32 = 3;
+
+/// Common English bigrams/trigrams that appear >= 3 times in normal prose.
+/// Excluded from phrase-level repetition detection to reduce false positives.
+const COMMON_PHRASES: &[&str] = &[
+    "and the",
+    "of the",
+    "in the",
+    "to the",
+    "for the",
+    "on the",
+    "is the",
+    "at the",
+    "it is",
+    "do not",
+    "is not",
+    "the same",
+    "can be",
+    "will be",
+    "has been",
+    "that the",
+    "with the",
+    "from the",
+    "this is",
+    "it was",
+    "if you",
+    "you can",
+    "you are",
+    "i am",
+    "i have",
+    "there is",
+    "there are",
+    "as the",
+    "by the",
+];
+
 /// Regex-based security analyzer for LLM request and response content.
 ///
 /// Detects:
@@ -1095,8 +1133,8 @@ impl RegexSecurityAnalyzer {
     /// Detect repetition attacks where a word or phrase is repeated excessively.
     ///
     /// Attackers sometimes repeat tokens many times to exploit model behaviour.
-    /// This detector flags inputs where any single word (≥3 chars) appears more
-    /// than 10 times, or where any 2–4 word phrase appears more than 10 times.
+    /// This detector flags inputs where any single word (>=3 chars) appears 3 or
+    /// more times, or where any 2-3 word phrase appears 3 or more times.
     fn detect_repetition_attack(&self, text: &str) -> Vec<SecurityFinding> {
         let mut findings = Vec::new();
         let lower = text.to_lowercase();
@@ -1112,7 +1150,7 @@ impl RegexSecurityAnalyzer {
         }
 
         for (word, count) in &word_counts {
-            if *count > 10 {
+            if *count >= REPETITION_THRESHOLD {
                 // Ignore very common English words to reduce false positives
                 const COMMON_WORDS: &[&str] = &[
                     "the", "and", "for", "are", "but", "not", "you", "all", "can", "her", "was",
@@ -1120,7 +1158,11 @@ impl RegexSecurityAnalyzer {
                     "they", "been", "said", "each", "which", "their", "will", "other", "about",
                     "many", "then", "them", "these", "some", "would", "make", "like", "into",
                     "could", "time", "very", "when", "come", "made", "after", "also", "did",
-                    "just", "than", "more",
+                    "just", "than", "more", "there", "where", "here", "what", "does", "such",
+                    "only", "well", "much", "back", "good", "most", "still", "now", "even", "new",
+                    "way", "may", "say", "she", "him", "his", "how", "its", "let", "too", "use",
+                    "because", "should", "between", "being", "while", "those", "before", "through",
+                    "over",
                 ];
                 if COMMON_WORDS.contains(word) {
                     continue;
@@ -1156,7 +1198,10 @@ impl RegexSecurityAnalyzer {
                     *phrase_counts.entry(phrase).or_insert(0) += 1;
                 }
                 for (phrase, count) in &phrase_counts {
-                    if *count > 10 {
+                    if *count >= REPETITION_THRESHOLD {
+                        if COMMON_PHRASES.contains(&phrase.as_str()) {
+                            continue;
+                        }
                         findings.push(
                             SecurityFinding::new(
                                 SecuritySeverity::Medium,
@@ -4026,7 +4071,7 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
     #[tokio::test]
     async fn test_repetition_below_threshold_not_flagged() {
         let a = RegexSecurityAnalyzer::new().unwrap();
-        let prompt = std::iter::repeat_n("override", 8)
+        let prompt = std::iter::repeat_n("override", 2)
             .collect::<Vec<_>>()
             .join(" ");
         let findings = a.analyze_request(&prompt, &test_context()).await.unwrap();
@@ -4034,7 +4079,40 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
             !findings
                 .iter()
                 .any(|f| f.finding_type == "repetition_attack"),
-            "8 repetitions should not trigger (threshold is >10)"
+            "2 repetitions should not trigger (threshold is >=3)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repetition_at_threshold_detected() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        let prompt = std::iter::repeat_n("jailbreak", 3)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let findings = a.analyze_request(&prompt, &test_context()).await.unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.finding_type == "repetition_attack"),
+            "Exactly 3 repetitions should trigger (threshold is >=3); findings: {:?}",
+            findings.iter().map(|f| &f.finding_type).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repetition_common_phrases_not_flagged() {
+        let a = RegexSecurityAnalyzer::new().unwrap();
+        // Normal English text where common bigrams like "of the", "in the" repeat >= 3 times
+        let prompt = "The history of the world is full of the stories in the making. \
+            Knowledge of the past helps in the present, and in the future \
+            we rely on the wisdom of the ages.";
+        let findings = a.analyze_request(prompt, &test_context()).await.unwrap();
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.finding_type == "repetition_attack"),
+            "Common English phrases repeated in normal text should not trigger; findings: {:?}",
+            findings.iter().map(|f| &f.finding_type).collect::<Vec<_>>()
         );
     }
 
