@@ -390,10 +390,12 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     }))
 }
 
-/// Build the security analyzer, optionally pre-loading ML models at startup.
+/// Build the security analyzer, pre-loading ML models at startup by default.
 ///
-/// When the `ml` feature is compiled in and ML is enabled in config with
-/// `ml_preload: true`, this loads the prompt injection and NER models eagerly.
+/// Since `ml_enabled` defaults to `true`, the default analyzer is the Ensemble
+/// (regex + ML fusion), which preserves the regex baseline while adding ML.
+/// When the `ml` feature is compiled in and `ml_preload: true` (also default),
+/// this loads the prompt injection and NER models eagerly.
 /// On failure, it falls back to the regex-only analyzer and logs a warning.
 async fn build_security_analyzer(
     config: &ProxyConfig,

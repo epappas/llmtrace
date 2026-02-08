@@ -1581,7 +1581,8 @@ impl Default for ShutdownConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAnalysisConfig {
     /// Enable ML-based security analysis (requires `ml` feature in `llmtrace-security`).
-    #[serde(default)]
+    /// Enabled by default -- the Ensemble analyzer (regex + ML fusion) is the recommended path.
+    #[serde(default = "default_ml_enabled")]
     pub ml_enabled: bool,
     /// HuggingFace model ID for ML-based prompt injection detection.
     #[serde(default = "default_ml_model")]
@@ -1629,6 +1630,10 @@ pub struct SecurityAnalysisConfig {
     pub jailbreak_threshold: f32,
 }
 
+fn default_ml_enabled() -> bool {
+    true
+}
+
 fn default_ml_model() -> String {
     "protectai/deberta-v3-base-prompt-injection-v2".to_string()
 }
@@ -1664,7 +1669,7 @@ fn default_jailbreak_threshold() -> f32 {
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
-            ml_enabled: false,
+            ml_enabled: default_ml_enabled(),
             ml_model: default_ml_model(),
             ml_threshold: default_ml_threshold(),
             ml_cache_dir: default_ml_cache_dir(),
@@ -3104,7 +3109,7 @@ mod tests {
     #[test]
     fn test_proxy_config_default_includes_security_analysis() {
         let config = ProxyConfig::default();
-        assert!(!config.security_analysis.ml_enabled);
+        assert!(config.security_analysis.ml_enabled);
         assert_eq!(
             config.security_analysis.ml_model,
             "protectai/deberta-v3-base-prompt-injection-v2"
@@ -3127,7 +3132,7 @@ mod tests {
     #[test]
     fn test_security_analysis_config_default() {
         let config = SecurityAnalysisConfig::default();
-        assert!(!config.ml_enabled);
+        assert!(config.ml_enabled);
         assert_eq!(
             config.ml_model,
             "protectai/deberta-v3-base-prompt-injection-v2"
