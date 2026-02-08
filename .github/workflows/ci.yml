@@ -104,9 +104,11 @@ jobs:
       - name: Generate HTML report
         run: cargo llvm-cov --workspace --html
       - name: Upload coverage to Codecov
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
       - name: Upload coverage artifacts
