@@ -9,7 +9,6 @@
 //! This module is only available when the `ml` feature is enabled.
 
 use async_trait::async_trait;
-use candle_core::Device;
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
 };
@@ -159,7 +158,7 @@ impl EnsembleSecurityAnalyzer {
         };
 
         let fusion_classifier = if fusion_enabled && ml.is_fusion_enabled() {
-            let device = Device::Cpu;
+            let device = crate::device::select_device();
             let classifier = match fusion_model_path {
                 Some(path) => match FusionClassifier::load(path, &device) {
                     Ok(c) => {

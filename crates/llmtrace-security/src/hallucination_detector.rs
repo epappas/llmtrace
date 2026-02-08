@@ -487,7 +487,7 @@ impl HallucinationDetector {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| LLMTraceError::Security(format!("Failed to load tokenizer: {e}")))?;
 
-        let device = Device::Cpu;
+        let device = crate::device::select_device();
         // SAFETY: memory-mapping safetensors is the standard candle pattern.
         let vb = unsafe {
             VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)

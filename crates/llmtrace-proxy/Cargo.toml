@@ -10,6 +10,8 @@ description = "Transparent proxy server for LLM API calls"
 [features]
 default = ["ml"]
 ml = ["llmtrace-security/ml"]
+cuda = ["llmtrace-security/cuda"]
+metal = ["llmtrace-security/metal"]
 
 [lib]
 name = "llmtrace_proxy"

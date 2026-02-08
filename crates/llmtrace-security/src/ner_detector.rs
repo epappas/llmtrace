@@ -391,7 +391,7 @@ impl NerDetector {
             .map_err(|e| LLMTraceError::Security(format!("NER: failed to load tokenizer: {e}")))?;
 
         // Load weights
-        let device = Device::Cpu;
+        let device = crate::device::select_device();
         // SAFETY: memory-mapping safetensors is the standard candle pattern.
         // The file is read-only and remains valid for the lifetime of VarBuilder.
         let vb = unsafe {

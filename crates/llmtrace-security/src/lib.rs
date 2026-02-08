@@ -73,6 +73,8 @@ pub use result_parser::{
 pub use session_analyzer::{SessionAnalysisResult, SessionAnalyzer, SessionAnalyzerConfig};
 
 #[cfg(feature = "ml")]
+pub mod device;
+#[cfg(feature = "ml")]
 pub mod ensemble;
 #[cfg(feature = "ml")]
 pub mod feature_extraction;

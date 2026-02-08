@@ -18,6 +18,8 @@ ml = [
     "dep:tracing",
     "dep:tokio",
 ]
+cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
+metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
 
 [dependencies]
 llmtrace-core = { path = "../llmtrace-core" }
