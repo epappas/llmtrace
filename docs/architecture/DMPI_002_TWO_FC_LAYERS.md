@@ -17,7 +17,7 @@ Concatenation -> FC + ReLU -> FC + SoftMax -> Binary Prediction
 The previous implementation had 3 FC layers:
 
 ```
-Input(783) -> FC(256) -> ReLU -> FC(64) -> ReLU -> FC(2) -> Softmax
+Input(778) -> FC(256) -> ReLU -> FC(64) -> ReLU -> FC(2) -> Softmax
 ```
 
 The extra hidden layer (64-dim) with its ReLU activation was not present in the paper architecture. Training on this 3-layer architecture would not reproduce paper results.
@@ -48,29 +48,29 @@ The extra hidden layer (64-dim) with its ReLU activation was not present in the 
 ### Before (3 FC layers)
 
 ```
-Input [783] -> fc1 Linear(783, 256) -> ReLU -> fc2 Linear(256, 64) -> ReLU -> fc3 Linear(64, 2) -> Softmax
+Input [778] -> fc1 Linear(778, 256) -> ReLU -> fc2 Linear(256, 64) -> ReLU -> fc3 Linear(64, 2) -> Softmax
 ```
 
-Parameters: 783*256 + 256 + 256*64 + 64 + 64*2 + 2 = 217,474
+Parameters: 778*256 + 256 + 256*64 + 64 + 64*2 + 2 = 216,194
 
 ### After (2 FC layers, paper-aligned)
 
 ```
-Input [783] -> fc1 Linear(783, 256) -> ReLU -> fc2 Linear(256, 2) -> Softmax
+Input [778] -> fc1 Linear(778, 256) -> ReLU -> fc2 Linear(256, 2) -> Softmax
 ```
 
-Parameters: 783*256 + 256 + 256*2 + 2 = 201,026
+Parameters: 778*256 + 256 + 256*2 + 2 = 199,746
 
 ### Data Flow
 
 ```
-predict(embedding: [768], heuristic_features: [15])
+predict(embedding: [768], heuristic_features: [10])
   |
-  +-- Concatenate -> input [783]
+  +-- Concatenate -> input [778]
   |
-  +-- Unsqueeze -> [1, 783]
+  +-- Unsqueeze -> [1, 778]
   |
-  +-- fc1: Linear(783, 256) -> [1, 256]
+  +-- fc1: Linear(778, 256) -> [1, 256]
   |
   +-- ReLU -> [1, 256]
   |
@@ -106,7 +106,7 @@ All existing tests pass without modification:
 
 | Test | Validates |
 |------|-----------|
-| `test_fusion_input_dim` | Input dimension still 783 (768 + 15) |
+| `test_fusion_input_dim` | Input dimension 778 (768 + 10) |
 | `test_new_random_creates_classifier` | Constructor works with 2-layer architecture |
 | `test_predict_with_random_weights` | Forward pass produces valid softmax probabilities summing to 1.0 |
 | `test_predict_with_nonzero_features` | Non-zero inputs produce valid probabilities |
@@ -121,7 +121,7 @@ All existing tests pass without modification:
 | Breaking trained weights | No trained weights exist yet (random initialization only) |
 | Changed output distribution | Softmax still produces valid probabilities; tests verify sum-to-1.0 |
 | Caller impact | Public API unchanged; `ensemble.rs` uses same `new_random`/`load`/`predict` |
-| Input dimension change | Input dim stays 783 until DMPI-003 changes it to 778 |
+| Input dimension change | Input dim is 778 (768 + 10) after DMPI-003 |
 
 ---
 

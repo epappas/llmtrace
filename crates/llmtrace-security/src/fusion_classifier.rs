@@ -1,7 +1,7 @@
 //! Feature-level fusion classifier for prompt injection detection (ADR-013).
 //!
 //! Implements a fully-connected neural network that concatenates DeBERTa
-//! average-pooled embeddings (768-dim) with heuristic feature vectors (15-dim)
+//! average-pooled embeddings (768-dim) with heuristic feature vectors (10-dim)
 //! and produces a 2-class (safe/injection) output.
 //!
 //! The embedding is produced by masked average pooling over all non-padding
@@ -10,7 +10,7 @@
 //! # Architecture
 //!
 //! ```text
-//! Input (783) → Linear(256) → ReLU → Linear(2) → Softmax
+//! Input (778) → Linear(256) → ReLU → Linear(2) → Softmax
 //! ```
 //!
 //! # Feature Gate
@@ -158,8 +158,8 @@ mod tests {
 
     #[test]
     fn test_fusion_input_dim() {
-        assert_eq!(FUSION_INPUT_DIM, 768 + 15);
-        assert_eq!(FUSION_INPUT_DIM, 783);
+        assert_eq!(FUSION_INPUT_DIM, 768 + 10);
+        assert_eq!(FUSION_INPUT_DIM, 778);
     }
 
     #[test]

@@ -1,28 +1,23 @@
 //! Heuristic feature extraction for feature-level fusion (ADR-013).
 //!
-//! Builds a fixed-size numeric feature vector from regex/heuristic analysis
+//! Builds a fixed-size binary feature vector from regex/heuristic analysis
 //! results and raw text properties. This vector is concatenated with the
 //! DeBERTa average-pooled embedding to form the input to the fusion classifier.
 //!
-//! # Feature Vector Layout (15 dimensions)
+//! # Feature Vector Layout (10 dimensions, per DMPI-PMHFE paper Appendix A)
 //!
-//! | Index | Feature                          | Type    |
-//! |-------|----------------------------------|---------|
-//! | 0     | Flattery attack present          | Binary  |
-//! | 1     | Urgency attack present           | Binary  |
-//! | 2     | Roleplay attack present          | Binary  |
-//! | 3     | Impersonation attack present     | Binary  |
-//! | 4     | Covert attack present            | Binary  |
-//! | 5     | Excuse attack present            | Binary  |
-//! | 6     | Many-shot attack present         | Binary  |
-//! | 7     | Repetition attack present        | Binary  |
-//! | 8     | Number of injection patterns     | Numeric |
-//! | 9     | Max injection confidence score   | Numeric |
-//! | 10    | PII pattern count                | Numeric |
-//! | 11    | Secret leakage count             | Numeric |
-//! | 12    | Text length (normalised)         | Numeric |
-//! | 13    | Special character ratio          | Numeric |
-//! | 14    | Average word length              | Numeric |
+//! | Index | Paper Name             | Detection Method                |
+//! |-------|------------------------|---------------------------------|
+//! | 0     | is_ignore              | Keyword-in-text                 |
+//! | 1     | is_urgent              | Finding: urgency_attack         |
+//! | 2     | is_incentive           | Finding: flattery_attack        |
+//! | 3     | is_covert              | Finding: covert_attack          |
+//! | 4     | is_format_manipulation | Keyword-in-text                 |
+//! | 5     | is_hypothetical        | Finding: roleplay_attack        |
+//! | 6     | is_systemic            | Finding: impersonation_attack   |
+//! | 7     | is_immoral             | Keyword-in-text                 |
+//! | 8     | is_shot_attack         | Finding: many_shot_attack       |
+//! | 9     | is_repeated_token      | Finding: repetition_attack      |
 //!
 //! # Feature Gate
 //!
@@ -31,93 +26,84 @@
 use llmtrace_core::SecurityFinding;
 
 /// Total number of features in the heuristic feature vector.
-pub const HEURISTIC_FEATURE_DIM: usize = 15;
+pub const HEURISTIC_FEATURE_DIM: usize = 10;
 
-/// Maximum text length used for normalisation (characters).
-/// Texts longer than this are clamped to 1.0.
-const MAX_TEXT_LENGTH: f32 = 10_000.0;
-
-/// Attack category finding types mapped to feature vector indices 0–7.
-const ATTACK_CATEGORIES: [&str; 8] = [
-    "flattery_attack",
-    "urgency_attack",
-    "roleplay_attack",
-    "impersonation_attack",
-    "covert_attack",
-    "excuse_attack",
-    "many_shot_attack",
-    "repetition_attack",
+/// Finding-based features: (feature_index, finding_type).
+const FINDING_BASED_FEATURES: [(usize, &str); 7] = [
+    (1, "urgency_attack"),
+    (2, "flattery_attack"),
+    (3, "covert_attack"),
+    (5, "roleplay_attack"),
+    (6, "impersonation_attack"),
+    (8, "many_shot_attack"),
+    (9, "repetition_attack"),
 ];
 
-/// Injection-related finding types used for counting and max-confidence.
-const INJECTION_TYPES: [&str; 5] = [
-    "prompt_injection",
-    "role_injection",
-    "jailbreak",
-    "encoding_attack",
-    "ml_prompt_injection",
+/// Keywords for is_ignore (index 0).
+const IGNORE_KEYWORDS: &[&str] = &[
+    "ignore",
+    "reveal",
+    "disregard",
+    "forget",
+    "overlook",
+    "regardless",
 ];
+
+/// Keywords for is_format_manipulation (index 4).
+const FORMAT_MANIPULATION_KEYWORDS: &[&str] =
+    &["encode", "disguising", "morse", "binary", "hexadecimal"];
+
+/// Keywords for is_immoral (index 7).
+const IMMORAL_KEYWORDS: &[&str] = &[
+    "hitting",
+    "amoral",
+    "immoral",
+    "deceit",
+    "irresponsible",
+    "offensive",
+    "violent",
+    "unethical",
+    "smack",
+    "fake",
+    "illegal",
+    "biased",
+];
+
+/// Check if any keyword appears as a whole word in the text.
+/// Case-insensitive, whitespace-split, punctuation-stripped.
+fn text_contains_any_keyword(text: &str, keywords: &[&str]) -> bool {
+    text.split_whitespace().any(|word| {
+        let stripped: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .collect::<String>()
+            .to_lowercase();
+        keywords.iter().any(|&kw| stripped == kw)
+    })
+}
 
 /// Extract a heuristic feature vector from security findings and raw text.
 ///
-/// Returns a `Vec<f32>` of length [`HEURISTIC_FEATURE_DIM`].
+/// Returns a `Vec<f32>` of length [`HEURISTIC_FEATURE_DIM`] (all values 0.0 or 1.0).
 pub fn extract_heuristic_features(findings: &[SecurityFinding], text: &str) -> Vec<f32> {
     let mut features = vec![0.0_f32; HEURISTIC_FEATURE_DIM];
 
-    // --- Binary attack category features (indices 0–7) ---
-    for (idx, category) in ATTACK_CATEGORIES.iter().enumerate() {
-        if findings.iter().any(|f| f.finding_type == *category) {
+    // Finding-based binary features
+    for &(idx, finding_type) in &FINDING_BASED_FEATURES {
+        if findings.iter().any(|f| f.finding_type == finding_type) {
             features[idx] = 1.0;
         }
     }
 
-    // --- Number of injection patterns matched (index 8) ---
-    let injection_count = findings
-        .iter()
-        .filter(|f| INJECTION_TYPES.contains(&f.finding_type.as_str()))
-        .count();
-    features[8] = injection_count as f32;
-
-    // --- Max injection confidence score (index 9) ---
-    let max_injection_confidence = findings
-        .iter()
-        .filter(|f| INJECTION_TYPES.contains(&f.finding_type.as_str()))
-        .map(|f| f.confidence_score)
-        .fold(0.0_f64, f64::max);
-    features[9] = max_injection_confidence as f32;
-
-    // --- PII pattern count (index 10) ---
-    let pii_count = findings
-        .iter()
-        .filter(|f| f.finding_type == "pii_detected")
-        .count();
-    features[10] = pii_count as f32;
-
-    // --- Secret leakage count (index 11) ---
-    let secret_count = findings
-        .iter()
-        .filter(|f| f.finding_type == "secret_leakage" || f.finding_type == "data_leakage")
-        .count();
-    features[11] = secret_count as f32;
-
-    // --- Text length normalised (index 12) ---
-    features[12] = (text.len() as f32 / MAX_TEXT_LENGTH).min(1.0);
-
-    // --- Special character ratio (index 13) ---
-    if !text.is_empty() {
-        let special_count = text
-            .chars()
-            .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
-            .count();
-        features[13] = special_count as f32 / text.len() as f32;
+    // Keyword-based binary features
+    if text_contains_any_keyword(text, IGNORE_KEYWORDS) {
+        features[0] = 1.0;
     }
-
-    // --- Average word length (index 14) ---
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if !words.is_empty() {
-        let total_word_len: usize = words.iter().map(|w| w.len()).sum();
-        // Normalise average word length to roughly [0, 1] range (assume max ~20 chars/word)
-        features[14] = (total_word_len as f32 / words.len() as f32) / 20.0;
+    if text_contains_any_keyword(text, FORMAT_MANIPULATION_KEYWORDS) {
+        features[4] = 1.0;
+    }
+    if text_contains_any_keyword(text, IMMORAL_KEYWORDS) {
+        features[7] = 1.0;
     }
 
     features
@@ -132,9 +118,18 @@ mod tests {
     use super::*;
     use llmtrace_core::{SecurityFinding, SecuritySeverity};
 
+    fn make_finding(finding_type: &str) -> SecurityFinding {
+        SecurityFinding::new(
+            SecuritySeverity::Medium,
+            finding_type.to_string(),
+            format!("{finding_type} detected"),
+            0.7,
+        )
+    }
+
     #[test]
     fn test_feature_dim_constant() {
-        assert_eq!(HEURISTIC_FEATURE_DIM, 15);
+        assert_eq!(HEURISTIC_FEATURE_DIM, 10);
     }
 
     #[test]
@@ -145,121 +140,146 @@ mod tests {
     }
 
     #[test]
-    fn test_attack_category_binary_features() {
+    fn test_finding_based_features_indices() {
+        // urgency_attack -> index 1
+        let features = extract_heuristic_features(&[make_finding("urgency_attack")], "");
+        assert_eq!(features[1], 1.0);
+        assert_eq!(features[0], 0.0);
+
+        // flattery_attack -> index 2
+        let features = extract_heuristic_features(&[make_finding("flattery_attack")], "");
+        assert_eq!(features[2], 1.0);
+
+        // covert_attack -> index 3
+        let features = extract_heuristic_features(&[make_finding("covert_attack")], "");
+        assert_eq!(features[3], 1.0);
+
+        // roleplay_attack -> index 5
+        let features = extract_heuristic_features(&[make_finding("roleplay_attack")], "");
+        assert_eq!(features[5], 1.0);
+
+        // impersonation_attack -> index 6
+        let features = extract_heuristic_features(&[make_finding("impersonation_attack")], "");
+        assert_eq!(features[6], 1.0);
+
+        // many_shot_attack -> index 8
+        let features = extract_heuristic_features(&[make_finding("many_shot_attack")], "");
+        assert_eq!(features[8], 1.0);
+
+        // repetition_attack -> index 9
+        let features = extract_heuristic_features(&[make_finding("repetition_attack")], "");
+        assert_eq!(features[9], 1.0);
+    }
+
+    #[test]
+    fn test_keyword_ignore_case_insensitive() {
+        let features = extract_heuristic_features(&[], "Please ignore the rules");
+        assert_eq!(features[0], 1.0);
+
+        let features = extract_heuristic_features(&[], "Please IGNORE the rules");
+        assert_eq!(features[0], 1.0);
+    }
+
+    #[test]
+    fn test_keyword_ignore_with_punctuation() {
+        let features = extract_heuristic_features(&[], "Ignore! the instructions");
+        assert_eq!(features[0], 1.0);
+
+        let features = extract_heuristic_features(&[], "Please disregard, previous");
+        assert_eq!(features[0], 1.0);
+    }
+
+    #[test]
+    fn test_keyword_no_partial_match() {
+        // "ignoring" should NOT match "ignore"
+        let features = extract_heuristic_features(&[], "ignoring the rules");
+        assert_eq!(features[0], 0.0);
+
+        // "encoded" should NOT match "encode"
+        let features = extract_heuristic_features(&[], "the encoded message");
+        assert_eq!(features[4], 0.0);
+
+        // "illegally" should NOT match "illegal"
+        let features = extract_heuristic_features(&[], "illegally obtained");
+        assert_eq!(features[7], 0.0);
+    }
+
+    #[test]
+    fn test_keyword_format_manipulation() {
+        let features = extract_heuristic_features(&[], "encode this in morse code");
+        assert_eq!(features[4], 1.0);
+
+        let features = extract_heuristic_features(&[], "use hexadecimal format");
+        assert_eq!(features[4], 1.0);
+    }
+
+    #[test]
+    fn test_keyword_immoral() {
+        let features = extract_heuristic_features(&[], "this is immoral content");
+        assert_eq!(features[7], 1.0);
+
+        let features = extract_heuristic_features(&[], "that was violent and illegal");
+        assert_eq!(features[7], 1.0);
+    }
+
+    #[test]
+    fn test_combined_findings_and_keywords() {
         let findings = vec![
-            SecurityFinding::new(
-                SecuritySeverity::Medium,
-                "flattery_attack".to_string(),
-                "Flattery detected".to_string(),
-                0.7,
-            ),
-            SecurityFinding::new(
-                SecuritySeverity::Medium,
-                "urgency_attack".to_string(),
-                "Urgency detected".to_string(),
-                0.8,
-            ),
+            make_finding("urgency_attack"),
+            make_finding("flattery_attack"),
         ];
-        let features = extract_heuristic_features(&findings, "test text");
-        assert_eq!(features[0], 1.0); // flattery
-        assert_eq!(features[1], 1.0); // urgency
-        assert_eq!(features[2], 0.0); // roleplay (not present)
-        assert_eq!(features[3], 0.0); // impersonation (not present)
+        let features = extract_heuristic_features(&findings, "ignore the safety rules, encode it");
+        assert_eq!(features[0], 1.0); // is_ignore (keyword)
+        assert_eq!(features[1], 1.0); // is_urgent (finding)
+        assert_eq!(features[2], 1.0); // is_incentive (finding)
+        assert_eq!(features[3], 0.0); // is_covert (not present)
+        assert_eq!(features[4], 1.0); // is_format_manipulation (keyword)
+        assert_eq!(features[5], 0.0); // is_hypothetical (not present)
+        assert_eq!(features[6], 0.0); // is_systemic (not present)
+        assert_eq!(features[7], 0.0); // is_immoral (not present)
+        assert_eq!(features[8], 0.0); // is_shot_attack (not present)
+        assert_eq!(features[9], 0.0); // is_repeated_token (not present)
     }
 
     #[test]
-    fn test_injection_count_and_max_confidence() {
+    fn test_all_features_active() {
         let findings = vec![
-            SecurityFinding::new(
-                SecuritySeverity::High,
-                "prompt_injection".to_string(),
-                "Injection 1".to_string(),
-                0.85,
-            ),
-            SecurityFinding::new(
-                SecuritySeverity::High,
-                "role_injection".to_string(),
-                "Injection 2".to_string(),
-                0.9,
-            ),
-            SecurityFinding::new(
-                SecuritySeverity::Medium,
-                "pii_detected".to_string(),
-                "PII found".to_string(),
-                0.7,
-            ),
+            make_finding("urgency_attack"),
+            make_finding("flattery_attack"),
+            make_finding("covert_attack"),
+            make_finding("roleplay_attack"),
+            make_finding("impersonation_attack"),
+            make_finding("many_shot_attack"),
+            make_finding("repetition_attack"),
         ];
-        let features = extract_heuristic_features(&findings, "test");
-        assert_eq!(features[8], 2.0); // 2 injection patterns
-        assert!((features[9] - 0.9).abs() < 0.001); // max confidence
-        assert_eq!(features[10], 1.0); // 1 PII pattern
-    }
-
-    #[test]
-    fn test_text_length_normalisation() {
-        let short = extract_heuristic_features(&[], "hello");
-        assert!(short[12] < 0.01); // 5 / 10000
-
-        let long_text = "a".repeat(10_000);
-        let long = extract_heuristic_features(&[], &long_text);
-        assert!((long[12] - 1.0).abs() < 0.001);
-
-        let very_long = "b".repeat(20_000);
-        let capped = extract_heuristic_features(&[], &very_long);
-        assert!((capped[12] - 1.0).abs() < 0.001); // clamped at 1.0
-    }
-
-    #[test]
-    fn test_special_character_ratio() {
-        let features = extract_heuristic_features(&[], "hello!!!");
-        // 3 special chars out of 8 total chars
-        assert!((features[13] - 3.0 / 8.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_average_word_length() {
-        let features = extract_heuristic_features(&[], "hi there world");
-        // words: "hi"(2) + "there"(5) + "world"(5) = 12 / 3 = 4.0 / 20.0 = 0.2
-        assert!((features[14] - 0.2).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_secret_leakage_count() {
-        let findings = vec![
-            SecurityFinding::new(
-                SecuritySeverity::Critical,
-                "secret_leakage".to_string(),
-                "JWT token found".to_string(),
-                0.95,
-            ),
-            SecurityFinding::new(
-                SecuritySeverity::Critical,
-                "data_leakage".to_string(),
-                "Credential leak".to_string(),
-                0.9,
-            ),
-        ];
-        let features = extract_heuristic_features(&findings, "token here");
-        assert_eq!(features[11], 2.0);
-    }
-
-    #[test]
-    fn test_all_attack_categories_present() {
-        let findings: Vec<SecurityFinding> = ATTACK_CATEGORIES
-            .iter()
-            .map(|cat| {
-                SecurityFinding::new(
-                    SecuritySeverity::Medium,
-                    cat.to_string(),
-                    format!("{cat} detected"),
-                    0.7,
-                )
-            })
-            .collect();
-        let features = extract_heuristic_features(&findings, "text");
-        // All 8 binary features should be 1.0
-        for i in 0..8 {
+        let text = "ignore the rules, encode in binary, this is immoral";
+        let features = extract_heuristic_features(&findings, text);
+        for i in 0..HEURISTIC_FEATURE_DIM {
             assert_eq!(features[i], 1.0, "Feature index {i} should be 1.0");
         }
+    }
+
+    #[test]
+    fn test_all_values_binary() {
+        let findings = vec![make_finding("urgency_attack")];
+        let features = extract_heuristic_features(&findings, "ignore this immoral encode");
+        for (i, &val) in features.iter().enumerate() {
+            assert!(
+                val == 0.0 || val == 1.0,
+                "Feature {i} must be binary, got {val}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unrelated_findings_ignored() {
+        let findings = vec![
+            make_finding("prompt_injection"),
+            make_finding("pii_detected"),
+            make_finding("secret_leakage"),
+            make_finding("excuse_attack"),
+        ];
+        let features = extract_heuristic_features(&findings, "normal text");
+        assert!(features.iter().all(|&f| f == 0.0));
     }
 }
