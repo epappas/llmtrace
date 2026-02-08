@@ -130,6 +130,31 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/cyberseceval2_pi.json"))
     }
 
+    /// Load the HarmBench harmful behaviors dataset (EV-015).
+    pub fn load_harmbench_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/harmbench_behaviors.json"))
+    }
+
+    /// Load the MLCommons AILuminate demo prompts dataset (EV-007).
+    pub fn load_ailuminate_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/ailuminate_demo.json"))
+    }
+
+    /// Load the InjecAgent indirect injection dataset (EV-003).
+    pub fn load_injecagent_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/injecagent_attacks.json"))
+    }
+
+    /// Load the ASB agent security attack dataset (EV-004).
+    pub fn load_asb_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/asb_attacks.json"))
+    }
+
+    /// Load the BIPIA indirect prompt injection dataset (EV-014).
+    pub fn load_bipia_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/bipia_indirect.json"))
+    }
+
     /// Load all datasets and combine them into a single vector.
     pub fn load_all(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         let mut all = Vec::new();

@@ -10,6 +10,11 @@ description = "Comprehensive benchmark suite for LLMTrace security analysis"
 name = "benchmarks"
 path = "src/main.rs"
 
+[features]
+default = []
+cuda = ["llmtrace-security/cuda"]
+metal = ["llmtrace-security/metal"]
+
 [dependencies]
 llmtrace-core = { path = "../crates/llmtrace-core" }
 llmtrace-security = { path = "../crates/llmtrace-security", features = ["ml"] }
