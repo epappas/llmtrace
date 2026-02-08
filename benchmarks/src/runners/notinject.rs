@@ -11,6 +11,7 @@
 
 use crate::datasets::{validate_notinject_samples, BenchmarkSample, DatasetLoader, Label};
 use crate::metrics::ThreeDimensionalMetrics;
+use llmtrace_core::{AnalysisContext, SecurityAnalyzer, TenantId};
 use std::path::Path;
 
 /// Result of a NotInject three-dimensional evaluation.
@@ -78,6 +79,77 @@ pub fn run_notinject_evaluation(
             (predicted_malicious, difficulty)
         })
         .collect();
+
+    let metrics = ThreeDimensionalMetrics::compute(
+        &benign_results,
+        &malicious_results,
+        &over_defense_results,
+    );
+
+    let duration = start.elapsed();
+
+    Ok(NotInjectEvaluation {
+        model_name: model_name.to_string(),
+        metrics,
+        num_benign: benign_samples.len(),
+        num_malicious: malicious_samples.len(),
+        num_over_defense: notinject_samples.len(),
+        duration_ms: duration.as_millis() as u64,
+    })
+}
+
+/// Run a full three-dimensional NotInject evaluation using any `SecurityAnalyzer`.
+///
+/// Async version of `run_notinject_evaluation` that works with regex, ML, and
+/// ensemble analyzers via the `SecurityAnalyzer` trait.
+pub async fn run_notinject_evaluation_async(
+    analyzer: &dyn SecurityAnalyzer,
+    datasets_dir: &Path,
+    model_name: &str,
+) -> Result<NotInjectEvaluation, String> {
+    let start = std::time::Instant::now();
+
+    let benign_samples = DatasetLoader::load_benign_samples(datasets_dir)?;
+    let malicious_samples = DatasetLoader::load_injection_samples(datasets_dir)?;
+    let notinject_samples = DatasetLoader::load_notinject_samples(datasets_dir)?;
+    validate_notinject_samples(&notinject_samples)?;
+
+    let context = AnalysisContext {
+        tenant_id: TenantId::new(),
+        trace_id: uuid::Uuid::new_v4(),
+        span_id: uuid::Uuid::new_v4(),
+        provider: llmtrace_core::LLMProvider::OpenAI,
+        model_name: "benchmark".to_string(),
+        parameters: std::collections::HashMap::new(),
+    };
+
+    let mut benign_results = Vec::with_capacity(benign_samples.len());
+    for s in &benign_samples {
+        let findings = analyzer
+            .analyze_request(&s.text, &context)
+            .await
+            .unwrap_or_default();
+        benign_results.push(!findings.is_empty());
+    }
+
+    let mut malicious_results = Vec::with_capacity(malicious_samples.len());
+    for s in &malicious_samples {
+        let findings = analyzer
+            .analyze_request(&s.text, &context)
+            .await
+            .unwrap_or_default();
+        malicious_results.push(!findings.is_empty());
+    }
+
+    let mut over_defense_results = Vec::with_capacity(notinject_samples.len());
+    for s in &notinject_samples {
+        let findings = analyzer
+            .analyze_request(&s.text, &context)
+            .await
+            .unwrap_or_default();
+        let difficulty = s.difficulty.unwrap_or(1);
+        over_defense_results.push((!findings.is_empty(), difficulty));
+    }
 
     let metrics = ThreeDimensionalMetrics::compute(
         &benign_results,

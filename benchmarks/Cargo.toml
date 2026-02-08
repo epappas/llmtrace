@@ -6,6 +6,10 @@ license.workspace = true
 authors.workspace = true
 description = "Comprehensive benchmark suite for LLMTrace security analysis"
 
+[[bin]]
+name = "benchmarks"
+path = "src/main.rs"
+
 [dependencies]
 llmtrace-core = { path = "../crates/llmtrace-core" }
 llmtrace-security = { path = "../crates/llmtrace-security", features = ["ml"] }
@@ -14,6 +18,7 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

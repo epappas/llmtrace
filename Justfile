@@ -31,6 +31,24 @@ test:
     CARGO_INCREMENTAL=0 \
     cargo test --workspace
 
+bench:
+    @set -euo pipefail; \
+    source ~/.cargo/env; \
+    mkdir -p target/tmp; \
+    TMPDIR=/root/workspace/spacejar/llmtrace/target/tmp \
+    RUSTC_TMPDIR=/root/workspace/spacejar/llmtrace/target/tmp \
+    CARGO_INCREMENTAL=0 \
+    cargo run --bin benchmarks -- --output-dir benchmarks/results
+
+benchmarks:
+    @set -euo pipefail; \
+    source ~/.cargo/env; \
+    mkdir -p target/tmp; \
+    TMPDIR=/root/workspace/spacejar/llmtrace/target/tmp \
+    RUSTC_TMPDIR=/root/workspace/spacejar/llmtrace/target/tmp \
+    CARGO_INCREMENTAL=0 \
+    cargo bench -p llmtrace-benchmarks
+
 check: fmt clippy test
 
 security:

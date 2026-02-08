@@ -160,6 +160,35 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  benchmarks:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+      - name: Run benchmark regression gate
+        run: cargo run --bin benchmarks -- --output-dir benchmarks/results
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: benchmarks/results/
+
   build:
     name: Build
     runs-on: ubuntu-latest
