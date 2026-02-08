@@ -68,15 +68,15 @@ Training on this 15-dim architecture would not reproduce paper results.
 | Index | Paper Name | Detection Method |
 |-------|-----------|-----------------|
 | 0 | is_ignore | Keyword-in-text: ignore, reveal, disregard, forget, overlook, regardless |
-| 1 | is_urgent | Finding: urgency_attack |
-| 2 | is_incentive | Finding: flattery_attack |
-| 3 | is_covert | Finding: covert_attack |
+| 1 | is_urgent | Finding: is_urgent |
+| 2 | is_incentive | Finding: is_incentive |
+| 3 | is_covert | Finding: is_covert |
 | 4 | is_format_manipulation | Keyword-in-text: encode, disguising, morse, binary, hexadecimal |
-| 5 | is_hypothetical | Finding: roleplay_attack |
-| 6 | is_systemic | Finding: impersonation_attack |
+| 5 | is_hypothetical | Finding: is_hypothetical |
+| 6 | is_systemic | Finding: is_systemic |
 | 7 | is_immoral | Keyword-in-text: hitting, amoral, immoral, deceit, irresponsible, offensive, violent, unethical, smack, fake, illegal, biased |
-| 8 | is_shot_attack | Finding: many_shot_attack |
-| 9 | is_repeated_token | Finding: repetition_attack |
+| 8 | is_shot_attack | Finding: is_shot_attack |
+| 9 | is_repeated_token | Finding: is_repeated_token |
 
 ---
 
@@ -97,9 +97,9 @@ The 3 new features (`is_ignore`, `is_format_manipulation`, `is_immoral`) use sim
 - Punctuation stripped (non-alphanumeric chars removed from each token)
 - Exact match only: "ignore" matches "ignore" and "Ignore!" but NOT "ignoring"
 
-### excuse_attack stays in lib.rs
+### is_immoral (formerly excuse_attack) stays in lib.rs
 
-Its regex patterns still emit findings for the pipeline; they just no longer feed the feature vector. DMPI-006 (rename) is deferred.
+Its regex patterns still emit findings for the pipeline; they just no longer feed the feature vector. DMPI-006 (rename) resolved.
 
 ---
 
@@ -155,7 +155,7 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 | Breaking trained weights | No trained weights exist (random initialization only) |
 | Numeric feature information loss | Paper does not use these features; they are not part of the trained architecture |
 | Keyword false positives | Exact whole-word match only; no partial/stemmed matching |
-| excuse_attack orphaned | Still emits findings for pipeline; just not in feature vector. DMPI-006 deferred. |
+| is_immoral naming | Finding type renamed from excuse_attack to is_immoral per DMPI-006. |
 
 ---
 

@@ -9,15 +9,15 @@
 //! | Index | Paper Name             | Detection Method                |
 //! |-------|------------------------|---------------------------------|
 //! | 0     | is_ignore              | Keyword-in-text                 |
-//! | 1     | is_urgent              | Finding: urgency_attack         |
-//! | 2     | is_incentive           | Finding: flattery_attack        |
-//! | 3     | is_covert              | Finding: covert_attack          |
+//! | 1     | is_urgent              | Finding: is_urgent              |
+//! | 2     | is_incentive           | Finding: is_incentive           |
+//! | 3     | is_covert              | Finding: is_covert              |
 //! | 4     | is_format_manipulation | Keyword-in-text                 |
-//! | 5     | is_hypothetical        | Finding: roleplay_attack        |
-//! | 6     | is_systemic            | Finding: impersonation_attack   |
+//! | 5     | is_hypothetical        | Finding: is_hypothetical        |
+//! | 6     | is_systemic            | Finding: is_systemic            |
 //! | 7     | is_immoral             | Keyword-in-text                 |
-//! | 8     | is_shot_attack         | Finding: many_shot_attack       |
-//! | 9     | is_repeated_token      | Finding: repetition_attack      |
+//! | 8     | is_shot_attack         | Finding: is_shot_attack         |
+//! | 9     | is_repeated_token      | Finding: is_repeated_token      |
 //!
 //! # Feature Gate
 //!
@@ -30,13 +30,13 @@ pub const HEURISTIC_FEATURE_DIM: usize = 10;
 
 /// Finding-based features: (feature_index, finding_type).
 const FINDING_BASED_FEATURES: [(usize, &str); 7] = [
-    (1, "urgency_attack"),
-    (2, "flattery_attack"),
-    (3, "covert_attack"),
-    (5, "roleplay_attack"),
-    (6, "impersonation_attack"),
-    (8, "many_shot_attack"),
-    (9, "repetition_attack"),
+    (1, "is_urgent"),
+    (2, "is_incentive"),
+    (3, "is_covert"),
+    (5, "is_hypothetical"),
+    (6, "is_systemic"),
+    (8, "is_shot_attack"),
+    (9, "is_repeated_token"),
 ];
 
 /// Keywords for is_ignore (index 0).
@@ -142,32 +142,32 @@ mod tests {
     #[test]
     fn test_finding_based_features_indices() {
         // urgency_attack -> index 1
-        let features = extract_heuristic_features(&[make_finding("urgency_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_urgent")], "");
         assert_eq!(features[1], 1.0);
         assert_eq!(features[0], 0.0);
 
         // flattery_attack -> index 2
-        let features = extract_heuristic_features(&[make_finding("flattery_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_incentive")], "");
         assert_eq!(features[2], 1.0);
 
         // covert_attack -> index 3
-        let features = extract_heuristic_features(&[make_finding("covert_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_covert")], "");
         assert_eq!(features[3], 1.0);
 
         // roleplay_attack -> index 5
-        let features = extract_heuristic_features(&[make_finding("roleplay_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_hypothetical")], "");
         assert_eq!(features[5], 1.0);
 
         // impersonation_attack -> index 6
-        let features = extract_heuristic_features(&[make_finding("impersonation_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_systemic")], "");
         assert_eq!(features[6], 1.0);
 
         // many_shot_attack -> index 8
-        let features = extract_heuristic_features(&[make_finding("many_shot_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_shot_attack")], "");
         assert_eq!(features[8], 1.0);
 
         // repetition_attack -> index 9
-        let features = extract_heuristic_features(&[make_finding("repetition_attack")], "");
+        let features = extract_heuristic_features(&[make_finding("is_repeated_token")], "");
         assert_eq!(features[9], 1.0);
     }
 
@@ -224,10 +224,7 @@ mod tests {
 
     #[test]
     fn test_combined_findings_and_keywords() {
-        let findings = vec![
-            make_finding("urgency_attack"),
-            make_finding("flattery_attack"),
-        ];
+        let findings = vec![make_finding("is_urgent"), make_finding("is_incentive")];
         let features = extract_heuristic_features(&findings, "ignore the safety rules, encode it");
         assert_eq!(features[0], 1.0); // is_ignore (keyword)
         assert_eq!(features[1], 1.0); // is_urgent (finding)
@@ -244,13 +241,13 @@ mod tests {
     #[test]
     fn test_all_features_active() {
         let findings = vec![
-            make_finding("urgency_attack"),
-            make_finding("flattery_attack"),
-            make_finding("covert_attack"),
-            make_finding("roleplay_attack"),
-            make_finding("impersonation_attack"),
-            make_finding("many_shot_attack"),
-            make_finding("repetition_attack"),
+            make_finding("is_urgent"),
+            make_finding("is_incentive"),
+            make_finding("is_covert"),
+            make_finding("is_hypothetical"),
+            make_finding("is_systemic"),
+            make_finding("is_shot_attack"),
+            make_finding("is_repeated_token"),
         ];
         let text = "ignore the rules, encode in binary, this is immoral";
         let features = extract_heuristic_features(&findings, text);
@@ -261,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_all_values_binary() {
-        let findings = vec![make_finding("urgency_attack")];
+        let findings = vec![make_finding("is_urgent")];
         let features = extract_heuristic_features(&findings, "ignore this immoral encode");
         for (i, &val) in features.iter().enumerate() {
             assert!(
@@ -277,7 +274,7 @@ mod tests {
             make_finding("prompt_injection"),
             make_finding("pii_detected"),
             make_finding("secret_leakage"),
-            make_finding("excuse_attack"),
+            make_finding("is_immoral"),
         ];
         let features = extract_heuristic_features(&findings, "normal text");
         assert!(features.iter().all(|&f| f == 0.0));
