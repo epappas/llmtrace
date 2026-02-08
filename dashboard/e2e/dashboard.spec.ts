@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('LLMTrace Dashboard', () => {
   
   test.beforeEach(async ({ page }) => {
+    page.on('console', msg => console.log(`[Browser]: ${msg.text()}`));
     // Navigate to the dashboard
     await page.goto('/');
   });
@@ -54,10 +55,11 @@ test.describe('LLMTrace Dashboard', () => {
       response.url().includes('/api/v1/tenants/') && response.request().method() === 'DELETE'
     );
     await deleteBtn.click();
-    await deleteResponsePromise;
+    const deleteResponse = await deleteResponsePromise;
+    expect(deleteResponse.ok()).toBeTruthy();
 
     // Give the backend a moment to finalize
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
 
     // Reload page to confirm persistence of deletion
     await page.reload();

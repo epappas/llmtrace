@@ -69,7 +69,8 @@ export default function TenantsPage() {
       console.log(`[Tenants] Delete successful, waiting for sync...`);
       // Short delay to ensure DB consistency before re-fetch
       await new Promise(resolve => setTimeout(resolve, 500));
-      await loadTenants();
+      // Force a hard reload to ensure all cache layers are cleared
+      window.location.reload();
     } catch (e) {
       console.error("[Tenants] Delete failed:", e);
       alert("Failed to delete tenant. Check console for details.");
@@ -134,7 +135,7 @@ export default function TenantsPage() {
     {
       header: "Actions",
       accessor: (t: Tenant) => (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 relative z-10">
           <Button
             variant="outline"
             size="sm"
@@ -148,8 +149,11 @@ export default function TenantsPage() {
           <Button
             variant="ghost"
             size="icon"
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
+              e.preventDefault();
+              console.log("[Tenants] Delete button clicked for", t.id);
               handleDelete(t.id);
             }}
           >

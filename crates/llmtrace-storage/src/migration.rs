@@ -57,11 +57,18 @@ pub fn sqlite_migrations() -> Vec<Migration> {
 /// Embedded PostgreSQL migrations (only available with `postgres` feature).
 #[cfg(feature = "postgres")]
 pub fn postgres_migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "initial_schema".to_string(),
-        sql: include_str!("../migrations/postgres/001_initial_schema.sql"),
-    }]
+    vec![
+        Migration {
+            version: 1,
+            description: "initial_schema".to_string(),
+            sql: include_str!("../migrations/postgres/001_initial_schema.sql"),
+        },
+        Migration {
+            version: 2,
+            description: "cascade_delete".to_string(),
+            sql: include_str!("../migrations/postgres/002_cascade_delete.sql"),
+        },
+    ]
 }
 
 // ---------------------------------------------------------------------------
