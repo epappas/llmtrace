@@ -35,14 +35,29 @@ export function Sidebar() {
         const data = await listTenants();
         setTenants(data);
         
-        const stored = localStorage.getItem("llmtrace_tenant_id");
-        if (stored && data.some(t => t.id === stored)) {
-          setSelectedTenant(stored);
-        } else if (data.length > 0) {
-          // Default to first tenant if none stored or stored is invalid
-          setSelectedTenant(data[0].id);
-          setStoredTenant(data[0].id);
-        } else {
+                const stored = localStorage.getItem("llmtrace_tenant_id");
+        
+                if (stored && data.some(t => t.id === stored)) {
+        
+                  setSelectedTenant(stored);
+        
+                } else if (!stored && data.length > 0) {
+        
+                  // Only default to first if nothing is stored
+        
+                  setSelectedTenant(data[0].id);
+        
+                  setStoredTenant(data[0].id);
+        
+                } else if (data.length > 0) {
+        
+                  // If stored is invalid, pick the first one but don't force it immediately
+        
+                  setSelectedTenant(data[0].id);
+        
+                }
+        
+         else {
           setSelectedTenant("");
           setStoredTenant(undefined);
         }

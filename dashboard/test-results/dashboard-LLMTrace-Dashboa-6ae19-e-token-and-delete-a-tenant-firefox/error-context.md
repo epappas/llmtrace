@@ -12,8 +12,17 @@
         - generic [ref=e10]: Current Tenant
         - generic [ref=e11]:
           - combobox [ref=e12] [cursor=pointer]:
+            - option "Test-Tenant-1770560362689"
+            - option "Test-Tenant-1770560361879" [selected]
+            - option "Test-Tenant-1770560279106"
+            - option "Test-Tenant-1770560277595"
+            - option "Test-Tenant-1770560276584"
+            - option "Test-Tenant-1770560095657"
+            - option "Test-Tenant-1770560094574"
+            - option "Test-Tenant-1770560093321"
+            - option "Test-Tenant-1770560030945"
             - option "Test-Tenant-1770560029798"
-            - option "Test-Tenant-1770560029118" [selected]
+            - option "Test-Tenant-1770560029118"
             - option "Test-Tenant-1770559806923"
             - option "Test-Tenant-1770559805376"
             - option "Test-Tenant-1770559804116"
@@ -75,7 +84,7 @@
             - text: New Tenant
         - generic [ref=e53]:
           - img [ref=e54]
-          - text: 26 tenants
+          - text: 35 tenants
         - table [ref=e60]:
           - rowgroup [ref=e61]:
             - row "Name ID Plan Created Actions" [ref=e62]:
@@ -90,10 +99,10 @@
               - columnheader "Actions" [ref=e71]:
                 - generic [ref=e72]: Actions
           - rowgroup [ref=e73]:
-            - row "Test-Tenant-1770560029798 a82b15ed… default 2/8/2026 Token" [ref=e74]:
-              - cell "Test-Tenant-1770560029798" [ref=e75]
-              - cell "a82b15ed…" [ref=e76]:
-                - generic [ref=e77]: a82b15ed…
+            - row "Test-Tenant-1770560362689 8c75a124… default 2/8/2026 Token" [ref=e74]:
+              - cell "Test-Tenant-1770560362689" [ref=e75]
+              - cell "8c75a124…" [ref=e76]:
+                - generic [ref=e77]: 8c75a124…
               - cell "default" [ref=e78]:
                 - generic [ref=e79]: default
               - cell "2/8/2026" [ref=e80]
@@ -104,10 +113,10 @@
                     - text: Token
                   - button [ref=e88] [cursor=pointer]:
                     - img [ref=e89]
-            - row "Test-Tenant-1770560029118 f2ee3bd3… default 2/8/2026 Token" [ref=e95]:
-              - cell "Test-Tenant-1770560029118" [ref=e96]
-              - cell "f2ee3bd3…" [ref=e97]:
-                - generic [ref=e98]: f2ee3bd3…
+            - row "Test-Tenant-1770560361879 2958c733… default 2/8/2026 Token" [ref=e95]:
+              - cell "Test-Tenant-1770560361879" [ref=e96]
+              - cell "2958c733…" [ref=e97]:
+                - generic [ref=e98]: 2958c733…
               - cell "default" [ref=e99]:
                 - generic [ref=e100]: default
               - cell "2/8/2026" [ref=e101]
@@ -118,10 +127,10 @@
                     - text: Token
                   - button [ref=e109] [cursor=pointer]:
                     - img [ref=e110]
-            - row "Test-Tenant-1770559806923 103859d6… default 2/8/2026 Token" [ref=e116]:
-              - cell "Test-Tenant-1770559806923" [ref=e117]
-              - cell "103859d6…" [ref=e118]:
-                - generic [ref=e119]: 103859d6…
+            - row "Test-Tenant-1770560279106 c84bd3ee… default 2/8/2026 Token" [ref=e116]:
+              - cell "Test-Tenant-1770560279106" [ref=e117]
+              - cell "c84bd3ee…" [ref=e118]:
+                - generic [ref=e119]: c84bd3ee…
               - cell "default" [ref=e120]:
                 - generic [ref=e121]: default
               - cell "2/8/2026" [ref=e122]
@@ -132,10 +141,10 @@
                     - text: Token
                   - button [ref=e130] [cursor=pointer]:
                     - img [ref=e131]
-            - row "Test-Tenant-1770559805376 935077dd… default 2/8/2026 Token" [ref=e137]:
-              - cell "Test-Tenant-1770559805376" [ref=e138]
-              - cell "935077dd…" [ref=e139]:
-                - generic [ref=e140]: 935077dd…
+            - row "Test-Tenant-1770560277595 e6555320… default 2/8/2026 Token" [ref=e137]:
+              - cell "Test-Tenant-1770560277595" [ref=e138]
+              - cell "e6555320…" [ref=e139]:
+                - generic [ref=e140]: e6555320…
               - cell "default" [ref=e141]:
                 - generic [ref=e142]: default
               - cell "2/8/2026" [ref=e143]
@@ -146,10 +155,10 @@
                     - text: Token
                   - button [ref=e151] [cursor=pointer]:
                     - img [ref=e152]
-            - row "Test-Tenant-1770559804116 bfa62187… default 2/8/2026 Token" [ref=e158]:
-              - cell "Test-Tenant-1770559804116" [ref=e159]
-              - cell "bfa62187…" [ref=e160]:
-                - generic [ref=e161]: bfa62187…
+            - row "Test-Tenant-1770560276584 7ca7d7ba… default 2/8/2026 Token" [ref=e158]:
+              - cell "Test-Tenant-1770560276584" [ref=e159]
+              - cell "7ca7d7ba…" [ref=e160]:
+                - generic [ref=e161]: 7ca7d7ba…
               - cell "default" [ref=e162]:
                 - generic [ref=e163]: default
               - cell "2/8/2026" [ref=e164]
@@ -160,10 +169,10 @@
                     - text: Token
                   - button [ref=e172] [cursor=pointer]:
                     - img [ref=e173]
-            - row "Test-Tenant-1770559773475 0c3f36f1… default 2/8/2026 Token" [ref=e179]:
-              - cell "Test-Tenant-1770559773475" [ref=e180]
-              - cell "0c3f36f1…" [ref=e181]:
-                - generic [ref=e182]: 0c3f36f1…
+            - row "Test-Tenant-1770560095657 dc87d230… default 2/8/2026 Token" [ref=e179]:
+              - cell "Test-Tenant-1770560095657" [ref=e180]
+              - cell "dc87d230…" [ref=e181]:
+                - generic [ref=e182]: dc87d230…
               - cell "default" [ref=e183]:
                 - generic [ref=e184]: default
               - cell "2/8/2026" [ref=e185]
@@ -174,10 +183,10 @@
                     - text: Token
                   - button [ref=e193] [cursor=pointer]:
                     - img [ref=e194]
-            - row "Test-Tenant-1770559772019 86dc6023… default 2/8/2026 Token" [ref=e200]:
-              - cell "Test-Tenant-1770559772019" [ref=e201]
-              - cell "86dc6023…" [ref=e202]:
-                - generic [ref=e203]: 86dc6023…
+            - row "Test-Tenant-1770560094574 3fa5ff58… default 2/8/2026 Token" [ref=e200]:
+              - cell "Test-Tenant-1770560094574" [ref=e201]
+              - cell "3fa5ff58…" [ref=e202]:
+                - generic [ref=e203]: 3fa5ff58…
               - cell "default" [ref=e204]:
                 - generic [ref=e205]: default
               - cell "2/8/2026" [ref=e206]
@@ -188,10 +197,10 @@
                     - text: Token
                   - button [ref=e214] [cursor=pointer]:
                     - img [ref=e215]
-            - row "Test-Tenant-1770559771184 c4c5cd94… default 2/8/2026 Token" [ref=e221]:
-              - cell "Test-Tenant-1770559771184" [ref=e222]
-              - cell "c4c5cd94…" [ref=e223]:
-                - generic [ref=e224]: c4c5cd94…
+            - row "Test-Tenant-1770560093321 2ab4b4ed… default 2/8/2026 Token" [ref=e221]:
+              - cell "Test-Tenant-1770560093321" [ref=e222]
+              - cell "2ab4b4ed…" [ref=e223]:
+                - generic [ref=e224]: 2ab4b4ed…
               - cell "default" [ref=e225]:
                 - generic [ref=e226]: default
               - cell "2/8/2026" [ref=e227]
@@ -202,10 +211,10 @@
                     - text: Token
                   - button [ref=e235] [cursor=pointer]:
                     - img [ref=e236]
-            - row "Test-Tenant-1770559708846 0748caea… default 2/8/2026 Token" [ref=e242]:
-              - cell "Test-Tenant-1770559708846" [ref=e243]
-              - cell "0748caea…" [ref=e244]:
-                - generic [ref=e245]: 0748caea…
+            - row "Test-Tenant-1770560030945 db7e2e94… default 2/8/2026 Token" [ref=e242]:
+              - cell "Test-Tenant-1770560030945" [ref=e243]
+              - cell "db7e2e94…" [ref=e244]:
+                - generic [ref=e245]: db7e2e94…
               - cell "default" [ref=e246]:
                 - generic [ref=e247]: default
               - cell "2/8/2026" [ref=e248]
@@ -216,10 +225,10 @@
                     - text: Token
                   - button [ref=e256] [cursor=pointer]:
                     - img [ref=e257]
-            - row "Test-Tenant-1770559707020 31f53b6c… default 2/8/2026 Token" [ref=e263]:
-              - cell "Test-Tenant-1770559707020" [ref=e264]
-              - cell "31f53b6c…" [ref=e265]:
-                - generic [ref=e266]: 31f53b6c…
+            - row "Test-Tenant-1770560029798 a82b15ed… default 2/8/2026 Token" [ref=e263]:
+              - cell "Test-Tenant-1770560029798" [ref=e264]
+              - cell "a82b15ed…" [ref=e265]:
+                - generic [ref=e266]: a82b15ed…
               - cell "default" [ref=e267]:
                 - generic [ref=e268]: default
               - cell "2/8/2026" [ref=e269]
@@ -230,10 +239,10 @@
                     - text: Token
                   - button [ref=e277] [cursor=pointer]:
                     - img [ref=e278]
-            - row "Test-Tenant-1770559706313 737507ce… default 2/8/2026 Token" [ref=e284]:
-              - cell "Test-Tenant-1770559706313" [ref=e285]
-              - cell "737507ce…" [ref=e286]:
-                - generic [ref=e287]: 737507ce…
+            - row "Test-Tenant-1770560029118 f2ee3bd3… default 2/8/2026 Token" [ref=e284]:
+              - cell "Test-Tenant-1770560029118" [ref=e285]
+              - cell "f2ee3bd3…" [ref=e286]:
+                - generic [ref=e287]: f2ee3bd3…
               - cell "default" [ref=e288]:
                 - generic [ref=e289]: default
               - cell "2/8/2026" [ref=e290]
@@ -244,10 +253,10 @@
                     - text: Token
                   - button [ref=e298] [cursor=pointer]:
                     - img [ref=e299]
-            - row "Test-Tenant-1770559557250 53b708ef… default 2/8/2026 Token" [ref=e305]:
-              - cell "Test-Tenant-1770559557250" [ref=e306]
-              - cell "53b708ef…" [ref=e307]:
-                - generic [ref=e308]: 53b708ef…
+            - row "Test-Tenant-1770559806923 103859d6… default 2/8/2026 Token" [ref=e305]:
+              - cell "Test-Tenant-1770559806923" [ref=e306]
+              - cell "103859d6…" [ref=e307]:
+                - generic [ref=e308]: 103859d6…
               - cell "default" [ref=e309]:
                 - generic [ref=e310]: default
               - cell "2/8/2026" [ref=e311]
@@ -258,10 +267,10 @@
                     - text: Token
                   - button [ref=e319] [cursor=pointer]:
                     - img [ref=e320]
-            - row "Test-Tenant-1770559556183 eab8e126… default 2/8/2026 Token" [ref=e326]:
-              - cell "Test-Tenant-1770559556183" [ref=e327]
-              - cell "eab8e126…" [ref=e328]:
-                - generic [ref=e329]: eab8e126…
+            - row "Test-Tenant-1770559805376 935077dd… default 2/8/2026 Token" [ref=e326]:
+              - cell "Test-Tenant-1770559805376" [ref=e327]
+              - cell "935077dd…" [ref=e328]:
+                - generic [ref=e329]: 935077dd…
               - cell "default" [ref=e330]:
                 - generic [ref=e331]: default
               - cell "2/8/2026" [ref=e332]
@@ -272,10 +281,10 @@
                     - text: Token
                   - button [ref=e340] [cursor=pointer]:
                     - img [ref=e341]
-            - row "Test-Tenant-1770559415977 b4013bf3… default 2/8/2026 Token" [ref=e347]:
-              - cell "Test-Tenant-1770559415977" [ref=e348]
-              - cell "b4013bf3…" [ref=e349]:
-                - generic [ref=e350]: b4013bf3…
+            - row "Test-Tenant-1770559804116 bfa62187… default 2/8/2026 Token" [ref=e347]:
+              - cell "Test-Tenant-1770559804116" [ref=e348]
+              - cell "bfa62187…" [ref=e349]:
+                - generic [ref=e350]: bfa62187…
               - cell "default" [ref=e351]:
                 - generic [ref=e352]: default
               - cell "2/8/2026" [ref=e353]
@@ -286,10 +295,10 @@
                     - text: Token
                   - button [ref=e361] [cursor=pointer]:
                     - img [ref=e362]
-            - row "Test-Tenant-1770559414083 2da7c950… default 2/8/2026 Token" [ref=e368]:
-              - cell "Test-Tenant-1770559414083" [ref=e369]
-              - cell "2da7c950…" [ref=e370]:
-                - generic [ref=e371]: 2da7c950…
+            - row "Test-Tenant-1770559773475 0c3f36f1… default 2/8/2026 Token" [ref=e368]:
+              - cell "Test-Tenant-1770559773475" [ref=e369]
+              - cell "0c3f36f1…" [ref=e370]:
+                - generic [ref=e371]: 0c3f36f1…
               - cell "default" [ref=e372]:
                 - generic [ref=e373]: default
               - cell "2/8/2026" [ref=e374]
@@ -300,10 +309,10 @@
                     - text: Token
                   - button [ref=e382] [cursor=pointer]:
                     - img [ref=e383]
-            - row "Test-Tenant-1770559413283 c3083561… default 2/8/2026 Token" [ref=e389]:
-              - cell "Test-Tenant-1770559413283" [ref=e390]
-              - cell "c3083561…" [ref=e391]:
-                - generic [ref=e392]: c3083561…
+            - row "Test-Tenant-1770559772019 86dc6023… default 2/8/2026 Token" [ref=e389]:
+              - cell "Test-Tenant-1770559772019" [ref=e390]
+              - cell "86dc6023…" [ref=e391]:
+                - generic [ref=e392]: 86dc6023…
               - cell "default" [ref=e393]:
                 - generic [ref=e394]: default
               - cell "2/8/2026" [ref=e395]
@@ -314,10 +323,10 @@
                     - text: Token
                   - button [ref=e403] [cursor=pointer]:
                     - img [ref=e404]
-            - row "Test-Tenant-1770559320184 b043e2aa… default 2/8/2026 Token" [ref=e410]:
-              - cell "Test-Tenant-1770559320184" [ref=e411]
-              - cell "b043e2aa…" [ref=e412]:
-                - generic [ref=e413]: b043e2aa…
+            - row "Test-Tenant-1770559771184 c4c5cd94… default 2/8/2026 Token" [ref=e410]:
+              - cell "Test-Tenant-1770559771184" [ref=e411]
+              - cell "c4c5cd94…" [ref=e412]:
+                - generic [ref=e413]: c4c5cd94…
               - cell "default" [ref=e414]:
                 - generic [ref=e415]: default
               - cell "2/8/2026" [ref=e416]
@@ -328,10 +337,10 @@
                     - text: Token
                   - button [ref=e424] [cursor=pointer]:
                     - img [ref=e425]
-            - row "Test-Tenant-1770559319110 3c7d1019… default 2/8/2026 Token" [ref=e431]:
-              - cell "Test-Tenant-1770559319110" [ref=e432]
-              - cell "3c7d1019…" [ref=e433]:
-                - generic [ref=e434]: 3c7d1019…
+            - row "Test-Tenant-1770559708846 0748caea… default 2/8/2026 Token" [ref=e431]:
+              - cell "Test-Tenant-1770559708846" [ref=e432]
+              - cell "0748caea…" [ref=e433]:
+                - generic [ref=e434]: 0748caea…
               - cell "default" [ref=e435]:
                 - generic [ref=e436]: default
               - cell "2/8/2026" [ref=e437]
@@ -342,10 +351,10 @@
                     - text: Token
                   - button [ref=e445] [cursor=pointer]:
                     - img [ref=e446]
-            - row "Test-Tenant-1770559317906 1fff3431… default 2/8/2026 Token" [ref=e452]:
-              - cell "Test-Tenant-1770559317906" [ref=e453]
-              - cell "1fff3431…" [ref=e454]:
-                - generic [ref=e455]: 1fff3431…
+            - row "Test-Tenant-1770559707020 31f53b6c… default 2/8/2026 Token" [ref=e452]:
+              - cell "Test-Tenant-1770559707020" [ref=e453]
+              - cell "31f53b6c…" [ref=e454]:
+                - generic [ref=e455]: 31f53b6c…
               - cell "default" [ref=e456]:
                 - generic [ref=e457]: default
               - cell "2/8/2026" [ref=e458]
@@ -356,10 +365,10 @@
                     - text: Token
                   - button [ref=e466] [cursor=pointer]:
                     - img [ref=e467]
-            - row "Test-Tenant-1770559177573 494644f5… default 2/8/2026 Token" [ref=e473]:
-              - cell "Test-Tenant-1770559177573" [ref=e474]
-              - cell "494644f5…" [ref=e475]:
-                - generic [ref=e476]: 494644f5…
+            - row "Test-Tenant-1770559706313 737507ce… default 2/8/2026 Token" [ref=e473]:
+              - cell "Test-Tenant-1770559706313" [ref=e474]
+              - cell "737507ce…" [ref=e475]:
+                - generic [ref=e476]: 737507ce…
               - cell "default" [ref=e477]:
                 - generic [ref=e478]: default
               - cell "2/8/2026" [ref=e479]
@@ -370,10 +379,10 @@
                     - text: Token
                   - button [ref=e487] [cursor=pointer]:
                     - img [ref=e488]
-            - row "Test-Tenant-1770559175964 26d44221… default 2/8/2026 Token" [ref=e494]:
-              - cell "Test-Tenant-1770559175964" [ref=e495]
-              - cell "26d44221…" [ref=e496]:
-                - generic [ref=e497]: 26d44221…
+            - row "Test-Tenant-1770559557250 53b708ef… default 2/8/2026 Token" [ref=e494]:
+              - cell "Test-Tenant-1770559557250" [ref=e495]
+              - cell "53b708ef…" [ref=e496]:
+                - generic [ref=e497]: 53b708ef…
               - cell "default" [ref=e498]:
                 - generic [ref=e499]: default
               - cell "2/8/2026" [ref=e500]
@@ -384,10 +393,10 @@
                     - text: Token
                   - button [ref=e508] [cursor=pointer]:
                     - img [ref=e509]
-            - row "Test-Tenant-1770559175216 c0db863e… default 2/8/2026 Token" [ref=e515]:
-              - cell "Test-Tenant-1770559175216" [ref=e516]
-              - cell "c0db863e…" [ref=e517]:
-                - generic [ref=e518]: c0db863e…
+            - row "Test-Tenant-1770559556183 eab8e126… default 2/8/2026 Token" [ref=e515]:
+              - cell "Test-Tenant-1770559556183" [ref=e516]
+              - cell "eab8e126…" [ref=e517]:
+                - generic [ref=e518]: eab8e126…
               - cell "default" [ref=e519]:
                 - generic [ref=e520]: default
               - cell "2/8/2026" [ref=e521]
@@ -398,10 +407,10 @@
                     - text: Token
                   - button [ref=e529] [cursor=pointer]:
                     - img [ref=e530]
-            - row "Test-Tenant-1770558780711 ac58c8a3… default 2/8/2026 Token" [ref=e536]:
-              - cell "Test-Tenant-1770558780711" [ref=e537]
-              - cell "ac58c8a3…" [ref=e538]:
-                - generic [ref=e539]: ac58c8a3…
+            - row "Test-Tenant-1770559415977 b4013bf3… default 2/8/2026 Token" [ref=e536]:
+              - cell "Test-Tenant-1770559415977" [ref=e537]
+              - cell "b4013bf3…" [ref=e538]:
+                - generic [ref=e539]: b4013bf3…
               - cell "default" [ref=e540]:
                 - generic [ref=e541]: default
               - cell "2/8/2026" [ref=e542]
@@ -412,10 +421,10 @@
                     - text: Token
                   - button [ref=e550] [cursor=pointer]:
                     - img [ref=e551]
-            - row "Test-Tenant-1770558779714 94cf931b… default 2/8/2026 Token" [ref=e557]:
-              - cell "Test-Tenant-1770558779714" [ref=e558]
-              - cell "94cf931b…" [ref=e559]:
-                - generic [ref=e560]: 94cf931b…
+            - row "Test-Tenant-1770559414083 2da7c950… default 2/8/2026 Token" [ref=e557]:
+              - cell "Test-Tenant-1770559414083" [ref=e558]
+              - cell "2da7c950…" [ref=e559]:
+                - generic [ref=e560]: 2da7c950…
               - cell "default" [ref=e561]:
                 - generic [ref=e562]: default
               - cell "2/8/2026" [ref=e563]
@@ -426,10 +435,10 @@
                     - text: Token
                   - button [ref=e571] [cursor=pointer]:
                     - img [ref=e572]
-            - row "Test-Tenant-1770558778535 d36856c8… default 2/8/2026 Token" [ref=e578]:
-              - cell "Test-Tenant-1770558778535" [ref=e579]
-              - cell "d36856c8…" [ref=e580]:
-                - generic [ref=e581]: d36856c8…
+            - row "Test-Tenant-1770559413283 c3083561… default 2/8/2026 Token" [ref=e578]:
+              - cell "Test-Tenant-1770559413283" [ref=e579]
+              - cell "c3083561…" [ref=e580]:
+                - generic [ref=e581]: c3083561…
               - cell "default" [ref=e582]:
                 - generic [ref=e583]: default
               - cell "2/8/2026" [ref=e584]
@@ -440,12 +449,12 @@
                     - text: Token
                   - button [ref=e592] [cursor=pointer]:
                     - img [ref=e593]
-            - row "George 68525e6c… free 2/8/2026 Token" [ref=e599]:
-              - cell "George" [ref=e600]
-              - cell "68525e6c…" [ref=e601]:
-                - generic [ref=e602]: 68525e6c…
-              - cell "free" [ref=e603]:
-                - generic [ref=e604]: free
+            - row "Test-Tenant-1770559320184 b043e2aa… default 2/8/2026 Token" [ref=e599]:
+              - cell "Test-Tenant-1770559320184" [ref=e600]
+              - cell "b043e2aa…" [ref=e601]:
+                - generic [ref=e602]: b043e2aa…
+              - cell "default" [ref=e603]:
+                - generic [ref=e604]: default
               - cell "2/8/2026" [ref=e605]
               - cell "Token" [ref=e606]:
                 - generic [ref=e607]:
@@ -454,5 +463,131 @@
                     - text: Token
                   - button [ref=e613] [cursor=pointer]:
                     - img [ref=e614]
-  - alert [ref=e620]
+            - row "Test-Tenant-1770559319110 3c7d1019… default 2/8/2026 Token" [ref=e620]:
+              - cell "Test-Tenant-1770559319110" [ref=e621]
+              - cell "3c7d1019…" [ref=e622]:
+                - generic [ref=e623]: 3c7d1019…
+              - cell "default" [ref=e624]:
+                - generic [ref=e625]: default
+              - cell "2/8/2026" [ref=e626]
+              - cell "Token" [ref=e627]:
+                - generic [ref=e628]:
+                  - button "Token" [ref=e629] [cursor=pointer]:
+                    - img [ref=e630]
+                    - text: Token
+                  - button [ref=e634] [cursor=pointer]:
+                    - img [ref=e635]
+            - row "Test-Tenant-1770559317906 1fff3431… default 2/8/2026 Token" [ref=e641]:
+              - cell "Test-Tenant-1770559317906" [ref=e642]
+              - cell "1fff3431…" [ref=e643]:
+                - generic [ref=e644]: 1fff3431…
+              - cell "default" [ref=e645]:
+                - generic [ref=e646]: default
+              - cell "2/8/2026" [ref=e647]
+              - cell "Token" [ref=e648]:
+                - generic [ref=e649]:
+                  - button "Token" [ref=e650] [cursor=pointer]:
+                    - img [ref=e651]
+                    - text: Token
+                  - button [ref=e655] [cursor=pointer]:
+                    - img [ref=e656]
+            - row "Test-Tenant-1770559177573 494644f5… default 2/8/2026 Token" [ref=e662]:
+              - cell "Test-Tenant-1770559177573" [ref=e663]
+              - cell "494644f5…" [ref=e664]:
+                - generic [ref=e665]: 494644f5…
+              - cell "default" [ref=e666]:
+                - generic [ref=e667]: default
+              - cell "2/8/2026" [ref=e668]
+              - cell "Token" [ref=e669]:
+                - generic [ref=e670]:
+                  - button "Token" [ref=e671] [cursor=pointer]:
+                    - img [ref=e672]
+                    - text: Token
+                  - button [ref=e676] [cursor=pointer]:
+                    - img [ref=e677]
+            - row "Test-Tenant-1770559175964 26d44221… default 2/8/2026 Token" [ref=e683]:
+              - cell "Test-Tenant-1770559175964" [ref=e684]
+              - cell "26d44221…" [ref=e685]:
+                - generic [ref=e686]: 26d44221…
+              - cell "default" [ref=e687]:
+                - generic [ref=e688]: default
+              - cell "2/8/2026" [ref=e689]
+              - cell "Token" [ref=e690]:
+                - generic [ref=e691]:
+                  - button "Token" [ref=e692] [cursor=pointer]:
+                    - img [ref=e693]
+                    - text: Token
+                  - button [ref=e697] [cursor=pointer]:
+                    - img [ref=e698]
+            - row "Test-Tenant-1770559175216 c0db863e… default 2/8/2026 Token" [ref=e704]:
+              - cell "Test-Tenant-1770559175216" [ref=e705]
+              - cell "c0db863e…" [ref=e706]:
+                - generic [ref=e707]: c0db863e…
+              - cell "default" [ref=e708]:
+                - generic [ref=e709]: default
+              - cell "2/8/2026" [ref=e710]
+              - cell "Token" [ref=e711]:
+                - generic [ref=e712]:
+                  - button "Token" [ref=e713] [cursor=pointer]:
+                    - img [ref=e714]
+                    - text: Token
+                  - button [ref=e718] [cursor=pointer]:
+                    - img [ref=e719]
+            - row "Test-Tenant-1770558780711 ac58c8a3… default 2/8/2026 Token" [ref=e725]:
+              - cell "Test-Tenant-1770558780711" [ref=e726]
+              - cell "ac58c8a3…" [ref=e727]:
+                - generic [ref=e728]: ac58c8a3…
+              - cell "default" [ref=e729]:
+                - generic [ref=e730]: default
+              - cell "2/8/2026" [ref=e731]
+              - cell "Token" [ref=e732]:
+                - generic [ref=e733]:
+                  - button "Token" [ref=e734] [cursor=pointer]:
+                    - img [ref=e735]
+                    - text: Token
+                  - button [ref=e739] [cursor=pointer]:
+                    - img [ref=e740]
+            - row "Test-Tenant-1770558779714 94cf931b… default 2/8/2026 Token" [ref=e746]:
+              - cell "Test-Tenant-1770558779714" [ref=e747]
+              - cell "94cf931b…" [ref=e748]:
+                - generic [ref=e749]: 94cf931b…
+              - cell "default" [ref=e750]:
+                - generic [ref=e751]: default
+              - cell "2/8/2026" [ref=e752]
+              - cell "Token" [ref=e753]:
+                - generic [ref=e754]:
+                  - button "Token" [ref=e755] [cursor=pointer]:
+                    - img [ref=e756]
+                    - text: Token
+                  - button [ref=e760] [cursor=pointer]:
+                    - img [ref=e761]
+            - row "Test-Tenant-1770558778535 d36856c8… default 2/8/2026 Token" [ref=e767]:
+              - cell "Test-Tenant-1770558778535" [ref=e768]
+              - cell "d36856c8…" [ref=e769]:
+                - generic [ref=e770]: d36856c8…
+              - cell "default" [ref=e771]:
+                - generic [ref=e772]: default
+              - cell "2/8/2026" [ref=e773]
+              - cell "Token" [ref=e774]:
+                - generic [ref=e775]:
+                  - button "Token" [ref=e776] [cursor=pointer]:
+                    - img [ref=e777]
+                    - text: Token
+                  - button [ref=e781] [cursor=pointer]:
+                    - img [ref=e782]
+            - row "George 68525e6c… free 2/8/2026 Token" [ref=e788]:
+              - cell "George" [ref=e789]
+              - cell "68525e6c…" [ref=e790]:
+                - generic [ref=e791]: 68525e6c…
+              - cell "free" [ref=e792]:
+                - generic [ref=e793]: free
+              - cell "2/8/2026" [ref=e794]
+              - cell "Token" [ref=e795]:
+                - generic [ref=e796]:
+                  - button "Token" [ref=e797] [cursor=pointer]:
+                    - img [ref=e798]
+                    - text: Token
+                  - button [ref=e802] [cursor=pointer]:
+                    - img [ref=e803]
+  - alert [ref=e809]
 ```

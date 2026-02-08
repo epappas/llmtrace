@@ -306,7 +306,8 @@ export async function getActionsSummary(
 
 /** List all tenants. */
 export async function listTenants(): Promise<Tenant[]> {
-  return apiFetch("/api/v1/tenants");
+  // Use a cache-buster to ensure we get the absolute latest state from the DB
+  return apiFetch(`/api/v1/tenants?_t=${Date.now()}`);
 }
 
 /** Get a single tenant. */

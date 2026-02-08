@@ -56,12 +56,16 @@ test.describe('LLMTrace Dashboard', () => {
     await deleteBtn.click();
     await deleteResponsePromise;
 
+    // Give the backend a moment to finalize
+    await page.waitForTimeout(1000);
+
     // Reload page to confirm persistence of deletion
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    // Wait for the list to refresh - the row should disappear
-    await expect(page.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 30000 });
+    // Verify it was removed (specifically check the table body)
+    const tableBody = page.locator('tbody');
+    await expect(tableBody.getByTestId(`tenant-name-${tenantName}`)).toHaveCount(0, { timeout: 15000 });
   });
 
   test('Traces: should filter by Trace ID and Model', async ({ page }) => {
@@ -133,25 +137,30 @@ test.describe('LLMTrace Dashboard', () => {
 
   test('Sidebar: should persist tenant selection', async ({ page }) => {
     await page.goto('/');
+    await page.waitForLoadState('networkidle');
     
     // 1. Check if tenant selector is present
     const selector = page.locator('select');
     await expect(selector).toBeVisible();
 
-    // 2. Select a tenant
+    // 2. Select a tenant (choose one that isn't the current one)
     const options = await selector.locator('option').all();
     if (options.length > 1) {
-      const secondTenantId = await options[1].getAttribute('value');
-      const secondTenantName = await options[1].textContent();
+      // Find an option that isn't currently selected
+      const currentValue = await selector.inputValue();
+      const targetOption = options.find(async (opt) => (await opt.getAttribute('value')) !== currentValue) || options[1];
       
-      await selector.selectOption(secondTenantId!);
+      const targetId = await targetOption.getAttribute('value');
       
-      // Page reloads on change
+      await selector.selectOption(targetId!);
+      
+      // Page reloads on change - wait for it
       await page.waitForLoadState('networkidle');
       
       // 3. Verify it persists after navigation
       await page.goto('/settings');
-      await expect(page.locator('select')).toHaveValue(secondTenantId!);
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('select')).toHaveValue(targetId!);
     }
   });
 

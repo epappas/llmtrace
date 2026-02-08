@@ -66,7 +66,9 @@ export default function TenantsPage() {
     try {
       console.log(`[Tenants] Deleting tenant: ${id}`);
       await deleteTenant(id);
-      console.log(`[Tenants] Delete successful, reloading list`);
+      console.log(`[Tenants] Delete successful, waiting for sync...`);
+      // Short delay to ensure DB consistency before re-fetch
+      await new Promise(resolve => setTimeout(resolve, 500));
       await loadTenants();
     } catch (e) {
       console.error("[Tenants] Delete failed:", e);
