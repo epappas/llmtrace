@@ -77,6 +77,8 @@ jobs:
     name: Coverage (llvm-cov)
     runs-on: ubuntu-latest
     needs: test
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -105,15 +107,15 @@ jobs:
         run: cargo llvm-cov --workspace --html
       - name: Upload coverage to Codecov
         # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.CODECOV_TOKEN != '' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
       - name: Skip Codecov upload (no token)
-        if: ${{ secrets.CODECOV_TOKEN == '' }}
+        if: ${{ env.CODECOV_TOKEN == '' }}
         run: echo "Skipping Codecov upload because secrets.CODECOV_TOKEN is not set. Coverage artifacts will still be uploaded."
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
