@@ -105,7 +105,8 @@ test.describe('LLMTrace Dashboard', () => {
 
     // Check the "Response" tab
     await page.getByRole('tab', { name: 'Response' }).click();
-    await expect(page.locator('.pt-4 pre').nth(1)).toBeVisible({ timeout: 10000 });
+    // Radix UI unmounts inactive tabs, so only one 'pre' should be visible/present
+    await expect(page.locator('.pt-4 pre').first()).toBeVisible({ timeout: 10000 });
     
     // Check the "Prompt" tab
     await page.getByRole('tab', { name: 'Prompt' }).click();
