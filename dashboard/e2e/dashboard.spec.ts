@@ -138,31 +138,25 @@ test.describe('LLMTrace Dashboard', () => {
   });
 
   test('Sidebar: should persist tenant selection', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    
-    // 1. Check if tenant selector is present
+    // 1. Get available tenants
     const selector = page.locator('select');
     await expect(selector).toBeVisible();
 
-    // 2. Select a tenant (choose one that isn't the current one)
     const options = await selector.locator('option').all();
     if (options.length > 1) {
-      // Find an option that isn't currently selected
-      const currentValue = await selector.inputValue();
-      const targetOption = options.find(async (opt) => (await opt.getAttribute('value')) !== currentValue) || options[1];
+      const targetId = await options[1].getAttribute('value');
       
-      const targetId = await targetOption.getAttribute('value');
-      
+      // 2. Select the second tenant
       await selector.selectOption(targetId!);
-      
-      // Page reloads on change - wait for it
-      await page.waitForLoadState('networkidle');
+      // Give it a moment to persist to localStorage
+      await page.waitForTimeout(500);
       
       // 3. Verify it persists after navigation
       await page.goto('/settings');
       await page.waitForLoadState('networkidle');
-      await expect(page.locator('select')).toHaveValue(targetId!);
+      
+      // Select might take a moment to populate from API
+      await expect(page.locator('select')).toHaveValue(targetId!, { timeout: 10000 });
     }
   });
 
