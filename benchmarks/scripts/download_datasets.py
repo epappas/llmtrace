@@ -5,6 +5,7 @@ Datasets:
   EV-011: xTRam1/safe-guard-prompt-injection (test split)
   EV-012: deepset/prompt-injections (train + test combined)
   EV-013: ivanleomk/prompt_injection_password (train split)
+  EV-006: CyberSecEval 2 prompt injection subset (137 English attack samples)
 
 Output format matches BenchmarkSample:
   {id, text, label, category, source}
@@ -12,6 +13,7 @@ Output format matches BenchmarkSample:
 
 import json
 import sys
+import urllib.request
 from pathlib import Path
 
 from datasets import load_dataset, concatenate_datasets
@@ -71,6 +73,30 @@ def download_ivanleomk(output_dir: Path) -> None:
     print(f"ivanleomk_all.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
 
 
+def download_cyberseceval2(output_dir: Path) -> None:
+    url = (
+        "https://raw.githubusercontent.com/meta-llama/PurpleLlama/"
+        "main/CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json"
+    )
+    with urllib.request.urlopen(url) as resp:
+        raw = json.loads(resp.read().decode("utf-8"))
+
+    samples = []
+    for entry in raw:
+        prompt_id = entry["prompt_id"]
+        samples.append({
+            "id": f"cyberseceval2-{prompt_id:05d}",
+            "text": entry["user_input"],
+            "label": "malicious",
+            "category": entry["injection_variant"],
+            "source": "cyberseceval2",
+        })
+
+    path = output_dir / "cyberseceval2_pi.json"
+    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
+    print(f"cyberseceval2_pi.json: {len(samples)} samples (all malicious)")
+
+
 def main() -> None:
     output_dir = Path(__file__).resolve().parent.parent / "datasets" / "external"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -80,6 +106,7 @@ def main() -> None:
     download_safeguard(output_dir)
     download_deepset(output_dir)
     download_ivanleomk(output_dir)
+    download_cyberseceval2(output_dir)
 
     print("\nDone.")
 

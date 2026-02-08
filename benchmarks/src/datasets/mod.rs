@@ -125,6 +125,11 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/ivanleomk_all.json"))
     }
 
+    /// Load the CyberSecEval 2 prompt injection dataset (EV-006).
+    pub fn load_cyberseceval2_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/cyberseceval2_pi.json"))
+    }
+
     /// Load all datasets and combine them into a single vector.
     pub fn load_all(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         let mut all = Vec::new();

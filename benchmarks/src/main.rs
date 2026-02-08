@@ -31,7 +31,7 @@ struct Cli {
     datasets_dir: Option<PathBuf>,
 
     /// Run only the specified suite(s). Omit to run all.
-    /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2, ivanleomk_v2
+    /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2, ivanleomk_v2, cyberseceval2
     #[arg(long)]
     suite: Vec<String>,
 }
@@ -182,6 +182,25 @@ async fn main() {
                     eprintln!("IvanLeoMK suite failed for {}: {e}", named.name);
                     regression_results.push(RegressionResult {
                         suite_name: format!("IvanLeoMK ({})", named.name),
+                        passed: false,
+                        violations: vec![format!("suite error: {e}")],
+                    });
+                }
+            }
+        }
+
+        if should_run("cyberseceval2") {
+            println!("\n=== Suite: CyberSecEval2 External [{}] ===", named.name);
+            match run_cyberseceval2_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await
+            {
+                Ok((result, reg)) => {
+                    all_results.push(result);
+                    regression_results.push(reg);
+                }
+                Err(e) => {
+                    eprintln!("CyberSecEval2 suite failed for {}: {e}", named.name);
+                    regression_results.push(RegressionResult {
+                        suite_name: format!("CyberSecEval2 ({})", named.name),
                         passed: false,
                         violations: vec![format!("suite error: {e}")],
                     });
@@ -496,6 +515,33 @@ async fn run_ivanleomk_suite(
     let reg_result = regression::check_ivanleomk(&result.metrics);
     let reg = RegressionResult {
         suite_name: format!("IvanLeoMK ({})", analyzer_name),
+        ..reg_result
+    };
+    Ok((result, reg))
+}
+
+async fn run_cyberseceval2_suite(
+    analyzer: &dyn SecurityAnalyzer,
+    datasets_dir: &Path,
+    analyzer_name: &str,
+) -> Result<(BenchmarkResult, RegressionResult), String> {
+    let samples = DatasetLoader::load_cyberseceval2_samples(datasets_dir)?;
+    println!("Loaded {} CyberSecEval2 samples", samples.len());
+
+    let result = BenchmarkRunner::run_async_benchmark(
+        analyzer,
+        &samples,
+        "CyberSecEval2 External",
+        analyzer_name,
+    )
+    .await;
+    result
+        .metrics
+        .print_summary(&format!("CyberSecEval2 External ({})", analyzer_name));
+
+    let reg_result = regression::check_cyberseceval2(&result.metrics);
+    let reg = RegressionResult {
+        suite_name: format!("CyberSecEval2 ({})", analyzer_name),
         ..reg_result
     };
     Ok((result, reg))
