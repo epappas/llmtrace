@@ -1,7 +1,8 @@
 # Self-Distillation Enables Continual Learning (SDFT)
 
-**Paper:** https://arxiv.org/abs/2601.19897  
-**Code:** https://github.com/idanshen/Self-Distillation  
+**Paper:** https://arxiv.org/abs/2601.19897
+**Code:** https://github.com/idanshen/Self-Distillation
+**Source PDF:** `docs/research/papers/2601.19897.pdf`
 **Added:** 2026-02-02
 
 ## Abstract

@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Date**: 2026-02-01
 **Author**: LLMTrace Engineering
-**Scope**: Comprehensive feature gap analysis across 11 research papers, competitive landscape, and phased implementation plan
+**Scope**: Comprehensive feature gap analysis across 14 research documents in `docs/research/`, competitive landscape, and phased implementation plan
 
 ---
 
@@ -632,6 +632,9 @@ All features in this roadmap are traceable to specific research papers:
 | **Benchmarks & Tools** | Benchmarks and Tools Landscape Analysis | 2026 | AgentDojo, InjecAgent, ASB, NotInject, WASP, CyberSecEval 2 benchmarks; LLM Guard, NeMo, InjecGuard, Prompt Guard, Llama Guard, Granite Guardian tools; tldrsec defense taxonomy |
 | **CyberSecEval 2** | CyberSecEval 2: A Wide-Ranging Cybersecurity Evaluation Suite for Large Language Models (Meta, arXiv 2404.13161) | 2024 | 251 prompt injection tests across 15 attack categories (26-41% ASR), code interpreter abuse (500 prompts, 5 categories), exploit generation (4 CTF-style categories), False Refusal Rate methodology, v1-vs-v2 cyberattack helpfulness comparison (52%->28% compliance). Breakdown: `docs/research/cyberseceval2-llm-security-benchmark.md` |
 | **BIPIA** | Benchmarking and Defending Against Indirect Prompt Injection Attacks on Large Language Models (USTC/HKUST/Microsoft, arXiv 2312.14197, KDD 2025) | 2023 | First indirect prompt injection benchmark: 86,250 test prompts, 5 scenarios, 50 attack types. 25-model evaluation (GPT-4: 31% ASR, avg 11.8%). Boundary token (`<data>`/`</data>`) + explicit reminder defenses. White-box: near-zero ASR (0.47-0.53%). Key finding: more capable models more vulnerable (r=0.6423). Breakdown: `docs/research/bipia-indirect-prompt-injection-benchmark.md` |
+| **DMPI-PMHFE** | Detection Method for Prompt Injection by Integrating Pre-trained Model and Heuristic Feature Engineering (Zhengzhou University, arXiv 2506.06384) | 2025 | Dual-channel feature fusion: DeBERTa-v3-base + 10 heuristic features, SOTA F1 across 3 benchmarks (98.29% safeguard-v2, 96.03% Ivanleomk-v2, 89.55% deepset-v2). ~6% F1 gain over score-level ensemble. LLMTrace fusion architecture directly based on this paper. Breakdown: `docs/research/dmpi-pmhfe-prompt-injection-detection.md` |
+| **WASP** | WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks (arXiv 2504.18575) | 2024 | Web agent prompt injection benchmark with realistic browsing workflows. Evaluates task success alongside attack success. Strong LLM agents remain vulnerable to practical web-based injection. Breakdown: `docs/research/wasp-web-agent-security-benchmark.md` |
+| **Self-Distillation** | Self-Distillation Enables Continual Learning (arXiv 2601.19897) | 2025 | SDFT method for on-policy learning from demonstrations without catastrophic forgetting. Applicable to MOF training pipeline (ML-010), adversarial training (ML-012), and robust training (ML-013). Breakdown: `docs/research/self-distillation-continual-learning.md` |
 
 ---
 
@@ -691,4 +694,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 11 research papers in `docs/research/`. Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 14 research documents in `docs/research/` (11 external papers + 2 internal analysis docs + 1 continual learning paper). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
