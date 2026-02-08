@@ -7,6 +7,7 @@
 **Published:** April 18, 2024
 **License:** Creative Commons BY 4.0
 **Code:** [github.com/meta-llama/PurpleLlama/tree/main/CybersecurityBenchmarks](https://github.com/meta-llama/PurpleLlama/tree/main/CybersecurityBenchmarks) (MIT)
+**Source PDF:** `docs/research/papers/2404.13161.pdf`
 
 ## LLMTrace Application Notes
 

@@ -7,6 +7,7 @@
 **Published:** December 21, 2023 (v4 January 27, 2025)
 **Venue:** KDD 2025 (August 3-7, Toronto)
 **Code:** [github.com/microsoft/BIPIA](https://github.com/microsoft/BIPIA)
+**Source PDF:** `docs/research/papers/2312.14197.pdf`
 
 ## LLMTrace Application Notes
 

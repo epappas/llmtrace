@@ -694,4 +694,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 14 research documents in `docs/research/` (11 external papers + 2 internal analysis docs + 1 continual learning paper). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 14 research documents in `docs/research/` (12 external papers + 2 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
