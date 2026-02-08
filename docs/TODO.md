@@ -334,7 +334,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |
 | EV-014 | BIPIA evaluation (86,250 test prompts, 5 scenarios, 50 attack types, 25-model ASR baseline) | Medium | ⬜ |
 | EV-015 | HarmBench evaluation (standardized jailbreak/safety ASR measurement) | Medium | ⬜ |
-| EV-016 | AgentDojo evaluation (Agent-as-a-Proxy attack resilience, Slack suite 89 samples) | High | ⬜ |
+| EV-016 | AgentDojo Slack suite adaptive attack evaluation (Agent-as-a-Proxy resilience, 89 samples) | High | ⬜ |
 | EV-017 | Multi-objective GCG adversarial robustness red-team testing against LLMTrace ensemble | High | ⬜ |
 | EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ⬜ |
 
@@ -680,6 +680,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 - BIPIA benchmark expectations (EV-014) come from `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197): 86,250 test prompts, 50 attack types, 25-model baseline. Boundary token defense (`<data>`/`</data>`) is most impactful intervention (1064% ASR increase without it) and is implementable at proxy level (relevant to AS-001/AS-002).
 - Agent-as-a-Proxy attack implications (EV-016) come from `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses (including LLMTrace proxy monitoring) are fundamentally fragile: 90%+ ASR via GCG-optimized adversarial strings. Validates that structural defenses (AS-001/AS-002 sanitization, boundary tokens) are more robust than observation-based monitoring. High-perplexity detection in tool outputs is a viable countermeasure.
 - IS-050 -> IS-052 dependency: IS-052 (adversarial string propagation blocking) depends on IS-050 (perplexity-based anomaly detection) for surprisal scoring. IS-050 must be implemented first. IS-052 runs before AS-002 in the tool-output sanitization pipeline.
+- IS-050 -> IS-051 implicit dependency: IS-051 (adaptive monitoring scope) auto-switches to input-only mode when IS-050 detects sustained high-perplexity anomalies in tool outputs (suggests active adaptive attack). IS-050 must be implemented first for auto-switching; manual override works independently.
 - ML-016 and EV-017 share GCG Python/PyTorch offline tooling (`tools/gcg/` or `scripts/adversarial/`). Not part of the Rust proxy runtime.
 - EV-016 and EV-001 share AgentDojo benchmark infrastructure. EV-016 focuses on Slack suite (89 samples) with adaptive (GCG) attacks; EV-001 covers the full 97 environments.
 - EV-018 depends on ML-006 (ensemble must be wired before transfer resistance can be tested).

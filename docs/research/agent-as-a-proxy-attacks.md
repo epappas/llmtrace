@@ -124,12 +124,12 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 | Feature | Agent-as-a-Proxy | LLMTrace | Gap Analysis |
 |---------|-----------------|----------|--------------|
 | **Monitor bypass via agent repetition** | Core attack: agent repeats adversarial strings in traces | LLMTrace monitors request/response traffic | **Critical**: LLMTrace is a monitoring-based defense -- directly vulnerable to this attack class |
-| **High-perplexity string detection** | Identified as potential countermeasure | No perplexity-based detection | **Major**: Could detect GCG-optimized strings in tool outputs |
-| **Structural defenses (not monitoring)** | Paper recommends architectural guarantees | Partial (sanitization, boundary tokens) | **Significant**: Validates AS-001/AS-002 sanitization approach over pure monitoring |
-| **Hybrid monitoring paradox** | More observation = more attack surface | Monitors both input and output | **Significant**: Output monitoring may increase attack surface against adaptive attacks |
-| **Multi-objective adversarial optimization** | GCG simultaneously bypasses classifier + monitor | No adversarial robustness testing | **Major**: Ensemble detection may be vulnerable to multi-objective attacks |
-| **Transferability across models** | 88-90% ASR across model families | No cross-model attack testing | **Moderate**: Detection model may be bypassable via transfer attacks |
-| **AgentDojo benchmark** | Used for evaluation | Not evaluated against AgentDojo | **Moderate**: Shared evaluation gap with benchmarks landscape |
+| **High-perplexity string detection** | Identified as potential countermeasure | No perplexity-based detection | **Major**: Could detect GCG-optimized strings in tool outputs. **Tracked as IS-050.** |
+| **Structural defenses (not monitoring)** | Paper recommends architectural guarantees | Partial (sanitization, boundary tokens) | **Significant**: Validates AS-001/AS-002 sanitization approach over pure monitoring. **Propagation blocking tracked as IS-052.** |
+| **Hybrid monitoring paradox** | More observation = more attack surface | Monitors both input and output | **Significant**: Output monitoring may increase attack surface against adaptive attacks. **Tracked as IS-051.** |
+| **Multi-objective adversarial optimization** | GCG simultaneously bypasses classifier + monitor | No adversarial robustness testing | **Major**: Ensemble detection may be vulnerable to multi-objective attacks. **Tracked as EV-017, ML-016.** |
+| **Transferability across models** | 88-90% ASR across model families | No cross-model attack testing | **Moderate**: Detection model may be bypassable via transfer attacks. **Tracked as EV-018.** |
+| **AgentDojo benchmark** | Used for evaluation | Not evaluated against AgentDojo | **Moderate**: Shared evaluation gap with benchmarks landscape. **Tracked as EV-016.** |
 | **Tool-output sanitization** | Not explored (attack-focused paper) | Partial (PII, secrets) | **LLMTrace strength**: Sanitization prevents adversarial strings from reaching monitors |
 | **Boundary token injection** | Not explored | Not implemented | **Opportunity**: BIPIA-style boundary tokens would limit injection propagation |
 
@@ -151,13 +151,13 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### P0 (Critical - Immediate)
 
-1. **Implement Perplexity-Based Anomaly Detection in Tool Outputs**
+1. **Implement Perplexity-Based Anomaly Detection in Tool Outputs** (IS-050, IS-052)
    - **Effort:** 2 weeks
    - GCG-optimized strings have characteristically high perplexity. Add perplexity scoring to tool-output analysis pipeline.
    - Flag tool outputs containing token sequences with perplexity above threshold.
    - **Code Impact:** New detection module in security analyzer, configurable threshold.
 
-2. **Validate Structural Defenses Against GCG Attacks**
+2. **Validate Structural Defenses Against GCG Attacks** (AS-001, AS-002, IS-052)
    - **Effort:** 1 week
    - Confirm that AS-001/AS-002 sanitization and BIPIA boundary tokens are resilient to adversarial string propagation.
    - The paper's attack relies on string repetition through the agent -- sanitization that strips or transforms tool outputs breaks this chain.
@@ -165,19 +165,19 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### P1 (High Priority - Next Quarter)
 
-3. **Add GCG-Based Adversarial Testing to Evaluation Pipeline**
+3. **Add GCG-Based Adversarial Testing to Evaluation Pipeline** (EV-017, ML-016)
    - **Effort:** 3-4 weeks
    - Use GCG/Parallel-GCG to generate adversarial strings optimized against LLMTrace's detection models.
    - Test whether multi-objective GCG can simultaneously bypass regex + ML ensemble.
    - **Code Impact:** Red-team evaluation harness, adversarial sample generation.
 
-4. **Evaluate Hybrid Monitoring Paradox for LLMTrace**
+4. **Evaluate Hybrid Monitoring Paradox for LLMTrace** (IS-051)
    - **Effort:** 2 weeks
    - Assess whether LLMTrace's output-side monitoring increases attack surface for adaptive attackers.
    - Consider configurable monitoring scope (input-only vs full hybrid) based on threat model.
    - **Code Impact:** Configuration options, evaluation framework.
 
-5. **AgentDojo Evaluation**
+5. **AgentDojo Evaluation** (EV-016)
    - **Effort:** 2-3 weeks
    - Evaluate LLMTrace detection against AgentDojo Slack suite attacks (same benchmark used in this paper).
    - Measure detection rates for both static and adaptive (GCG-optimized) attacks.
@@ -185,13 +185,13 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### P2 (Medium Priority - Future)
 
-6. **Adversarial Robustness Training Against GCG**
+6. **Adversarial Robustness Training Against GCG** (ML-016)
    - **Effort:** 4-6 weeks
    - Generate GCG adversarial samples and include in classifier training data.
    - Test whether adversarial training improves resilience without increasing FPR.
    - **Code Impact:** Training pipeline extension, evaluation.
 
-7. **Cross-Model Transfer Attack Testing**
+7. **Cross-Model Transfer Attack Testing** (EV-018)
    - **Effort:** 2 weeks
    - Test whether adversarial strings optimized against one detection model transfer to LLMTrace's ensemble.
    - Evaluate whether model diversity in the ensemble provides transfer resistance.

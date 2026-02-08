@@ -3,7 +3,7 @@
 **Version**: 1.0
 **Date**: 2026-02-01
 **Author**: LLMTrace Engineering
-**Scope**: Comprehensive feature gap analysis across 15 research documents in `docs/research/`, competitive landscape, and phased implementation plan
+**Scope**: Comprehensive feature gap analysis across 16 research documents in `docs/research/`, competitive landscape, and phased implementation plan
 
 ---
 
@@ -478,7 +478,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | EV-013 | **Ivanleomk-v2 evaluation** — 610 external validation samples from `ivanleomk/prompt_injection_password` | SoA Report (DMPI-PMHFE) | P1 | Low | ❌ Missing |
 | EV-014 | **BIPIA evaluation** — indirect prompt injection benchmark: 86,250 test prompts across 5 scenarios (email QA, web QA, table QA, summarization, code QA), 50 attack types (30 text + 20 code). 25-model ASR baseline available. | BIPIA Breakdown, Benchmarks, Indirect Injection Firewalls | P1 | Medium | ❌ Missing |
 | EV-015 | **HarmBench evaluation** — standardized jailbreak/safety ASR measurement across violence, illegal activity, hate speech categories | Benchmarks, Bypassing Guardrails, SoA Report | P1 | Medium | ❌ Missing |
-| EV-016 | **AgentDojo evaluation** — Agent-as-a-Proxy attack resilience on Slack suite (89 samples after filtering). Measure detection rate for both static and GCG-optimized adaptive attacks. | Agent-as-a-Proxy, Benchmarks | P0 | High | ❌ Missing |
+| EV-016 | **AgentDojo Slack suite adaptive attack evaluation** — Agent-as-a-Proxy attack resilience on Slack suite (89 samples after filtering). Measure detection rate for both static and GCG-optimized adaptive attacks. | Agent-as-a-Proxy, Benchmarks | P0 | High | ❌ Missing |
 | EV-017 | **Multi-objective GCG adversarial robustness testing** — generate adversarial strings optimized to simultaneously bypass LLMTrace's regex + ML ensemble using multi-objective GCG. Red-team evaluation. | Agent-as-a-Proxy | P1 | High | ❌ Missing |
 | EV-018 | **Cross-model transfer attack resistance** — test whether adversarial strings optimized against one detection model (e.g., DeBERTa) transfer to bypass LLMTrace's full ensemble. Evaluate ensemble diversity as transfer resistance. | Agent-as-a-Proxy, Bypassing Guardrails | P1 | Medium | ❌ Missing |
 
@@ -540,12 +540,16 @@ Focus: Agent security, model diversification, advanced detection.
 | Week | Feature IDs | Description | Effort |
 |------|------------|-------------|--------|
 | 7-9 | AS-001, AS-002 | **Tool-boundary firewalling** — input minimiser + output sanitiser | High |
+| 7-9 | IS-050, IS-052 | **Perplexity-based anomaly detection** + adversarial string propagation blocking in tool outputs (Agent-as-a-Proxy defense) | Medium |
 | 7-9 | ML-002, ML-003, ML-006 | **Model ensemble diversification** — InjecGuard + Meta Prompt Guard | Medium |
 | 9-11 | AS-010, AS-015 | **Action-Selector pattern enforcement** + action-type rate limiting | Medium |
+| 9-11 | EV-016 | **AgentDojo Slack suite adaptive attack evaluation** — Agent-as-a-Proxy resilience testing | High |
 | 10-12 | ML-001, ML-014 | **Joint fusion training pipeline** with curated dataset (blocked by DMPI-001–006; see §3.4.1a) | High |
 | 11-13 | ML-010, ML-012 | **MOF training** + adversarial training integration | High |
 | 12-14 | AS-020, AS-021, AS-023 | **Multi-agent defense** — coordinator + guard + second opinion | High |
 | 14-16 | AS-030, AS-035 | **MCP protocol monitoring** + Toxic Agent Flow defense | High |
+| 14-16 | IS-051, ML-016 | **Adaptive monitoring scope** + GCG adversarial sample generation (Python/PyTorch offline tooling) | High |
+| 16-18 | EV-017, EV-018 | **GCG adversarial robustness testing** + cross-model transfer attack resistance | High |
 | 16-18 | OS-001, OS-003, ML-005 | **HaluGate-style token-level hallucination detection** | High |
 
 **Phase 2 Target Metrics:**
@@ -649,6 +653,7 @@ All features in this roadmap are traceable to specific research papers:
 | **WASP** | WASP: Benchmarking Web Agent Security Against Prompt Injection Attacks (arXiv 2504.18575) | 2024 | Web agent prompt injection benchmark with realistic browsing workflows. Evaluates task success alongside attack success. Strong LLM agents remain vulnerable to practical web-based injection. Breakdown: `docs/research/wasp-web-agent-security-benchmark.md` |
 | **Self-Distillation** | Self-Distillation Enables Continual Learning (arXiv 2601.19897) | 2025 | SDFT method for on-policy learning from demonstrations without catastrophic forgetting. Applicable to MOF training pipeline (ML-010), adversarial training (ML-012), and robust training (ML-013). Breakdown: `docs/research/self-distillation-continual-learning.md` |
 | **Agent-as-a-Proxy** | Bypassing AI Control Protocols via Agent-as-a-Proxy Attacks (arXiv 2602.05066) | 2026 | Demonstrates monitoring-based defenses are fundamentally fragile: 90%+ ASR against AlignmentCheck/LlamaFirewall/Extract-and-Evaluate. Hybrid monitoring paradox (more observation = more attack surface). No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability. Validates structural defenses (sanitization, boundary tokens) over monitoring. Breakdown: `docs/research/agent-as-a-proxy-attacks.md` |
+| **Defense Pipeline Design** | LLMTrace Defense Pipeline Design | 2026 | Internal architecture doc: staged defense pipeline with 5 core capabilities (hook points, detector/guard plugin interface, policy engine, PII-safe data model, metrics/tracing). Defines policy actions (allow/block/redact/rewrite/confirm/downgrade/disable). Source for SA-001 policy language requirements. File: `docs/research/llmtrace-defense-pipeline-design.md` |
 
 ---
 
@@ -711,4 +716,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 15 research documents in `docs/research/` (13 external papers + 2 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 16 research documents in `docs/research/` (13 external papers + 3 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
