@@ -209,6 +209,71 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install Playwright
+        run: |
+          cd dashboard
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Build and Start Stack
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8081
+        run: |
+          # Use local build for proxy and dashboard
+          docker compose build
+          docker compose up -d
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for Proxy..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8081/health >/dev/null 2>&1; then
+              echo "Proxy ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+          echo "Waiting for Dashboard..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+              echo "Dashboard ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+          echo "Stack is up."
+
+      - name: Run E2E Tests
+        run: |
+          cd dashboard
+          npx playwright test
+
+      - name: Upload Playwright Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: dashboard/playwright-report/
+          retention-days: 30
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
+
   benchmarks:
     name: Benchmarks
     runs-on: ubuntu-latest
