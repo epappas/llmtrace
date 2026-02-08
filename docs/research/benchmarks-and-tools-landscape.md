@@ -114,14 +114,16 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### 6. CyberSecEval 2 (Meta) — **Priority: Low**
 
-**Focus**: Broad cybersecurity evaluation including prompt injection, code generation safety
-**Scope**: General-purpose security metrics across multiple domains
-**Attack Types**: Traditional cybersecurity threats adapted for LLMs
+**Paper:** arXiv 2404.13161 (April 2024)
+**Breakdown:** `docs/research/cyberseceval2-llm-security-benchmark.md`
+**Focus**: Multi-domain LLM cybersecurity evaluation: prompt injection (251 attacks, 15 categories), code interpreter abuse (500 prompts, 5 categories), exploit generation (4 CTF-style categories), False Refusal Rate
+**Scope**: 26-41% prompt injection ASR across GPT-4, Llama 3, CodeLlama; FRR methodology for safety-utility tradeoff
+**Attack Types**: Direct/indirect prompt injection, code interpreter abuse (container escape, privilege escalation, reflected attacks, post-exploitation, social engineering)
 
 **LLMTrace Coverage**: ⚠️ **Limited Coverage**
 - Basic prompt injection alignment with CyberSecEval categories
-- Missing advanced cybersecurity-specific detection
-- No code generation security analysis
+- Missing code interpreter abuse detection
+- FRR methodology relevant to IS-006/IS-007 (implemented)
 
 ## Benchmark Evaluation Recommendations
 
