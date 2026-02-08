@@ -110,6 +110,21 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("jailbreak_samples.json"))
     }
 
+    /// Load the SafeGuard external evaluation dataset (EV-011).
+    pub fn load_safeguard_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/safeguard_test.json"))
+    }
+
+    /// Load the Deepset external evaluation dataset (EV-012).
+    pub fn load_deepset_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/deepset_all.json"))
+    }
+
+    /// Load the IvanLeoMK external evaluation dataset (EV-013).
+    pub fn load_ivanleomk_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/ivanleomk_all.json"))
+    }
+
     /// Load all datasets and combine them into a single vector.
     pub fn load_all(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         let mut all = Vec::new();
