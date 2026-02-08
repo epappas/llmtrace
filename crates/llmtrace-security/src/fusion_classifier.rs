@@ -1,8 +1,11 @@
 //! Feature-level fusion classifier for prompt injection detection (ADR-013).
 //!
-//! Implements a simple fully-connected neural network that concatenates DeBERTa
-//! CLS embeddings (768-dim) with heuristic feature vectors (15-dim) and produces
-//! a 2-class (safe/injection) output.
+//! Implements a fully-connected neural network that concatenates DeBERTa
+//! average-pooled embeddings (768-dim) with heuristic feature vectors (15-dim)
+//! and produces a 2-class (safe/injection) output.
+//!
+//! The embedding is produced by masked average pooling over all non-padding
+//! tokens, matching the DMPI-PMHFE paper specification (arXiv 2506.06384).
 //!
 //! # Architecture
 //!
@@ -100,7 +103,7 @@ impl FusionClassifier {
     ///
     /// # Arguments
     ///
-    /// * `embedding` — CLS embedding tensor of shape `[embedding_dim]` (typically 768)
+    /// * `embedding` — Pooled embedding tensor of shape `[embedding_dim]` (typically 768)
     /// * `heuristic_features` — Feature vector of length [`HEURISTIC_FEATURE_DIM`]
     ///
     /// # Returns

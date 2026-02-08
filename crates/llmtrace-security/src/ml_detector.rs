@@ -105,25 +105,66 @@ impl ClassificationModel {
     }
 }
 
-/// Model used for extracting the CLS embedding vector (before the classifier head).
+/// Pooling strategy for extracting a fixed-size embedding from transformer hidden states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PoolingStrategy {
+    /// Extract the CLS token at position 0 (legacy behaviour).
+    /// Retained for backward compatibility and A/B testing.
+    #[allow(dead_code)]
+    Cls,
+    /// Average pool over all non-padding tokens, weighted by attention mask.
+    /// This matches the DMPI-PMHFE paper specification (arXiv 2506.06384).
+    MeanPool,
+}
+
+/// Compute masked average pooling over the sequence dimension.
+///
+/// `hidden_states` has shape `[batch, seq_len, hidden_size]`.
+/// `attention_mask` has shape `[batch, seq_len]` with `1` for real tokens and `0` for padding.
+///
+/// Returns a tensor of shape `[batch, hidden_size]`.
+fn masked_mean_pool(
+    hidden_states: &Tensor,
+    attention_mask: &Tensor,
+) -> candle_core::Result<Tensor> {
+    let mask_f32 = attention_mask.to_dtype(DType::F32)?;
+    // [batch, seq_len] -> [batch, seq_len, 1] -> broadcast to [batch, seq_len, hidden_size]
+    let mask_3d = mask_f32.unsqueeze(2)?.broadcast_as(hidden_states.shape())?;
+    let masked = hidden_states.broadcast_mul(&mask_3d)?;
+    let summed = masked.sum(1)?;
+    // Count valid tokens: sum mask along seq dim -> [batch, 1] -> broadcast to [batch, hidden_size]
+    let counts = mask_f32
+        .sum(1)?
+        .unsqueeze(1)?
+        .broadcast_as(summed.shape())?;
+    // Clamp to avoid division by zero (at least one real token always exists after tokenization)
+    let counts = (counts + 1e-9)?;
+    summed.broadcast_div(&counts)
+}
+
+/// Model used for extracting embeddings (before the classifier head).
 ///
 /// This mirrors the base model architecture without the final classification
 /// layer, enabling extraction of the 768-dim (or pooler-hidden-size) embedding.
 pub(crate) enum EmbeddingModel {
-    /// BERT base model — forward returns hidden states, CLS at position 0.
-    Bert(Box<BertModel>),
-    /// DeBERTa v2 base model + context pooler — forward returns encoder output,
-    /// pooler extracts the CLS token with a dense + activation layer.
+    /// BERT base model.
+    Bert {
+        model: Box<BertModel>,
+        strategy: PoolingStrategy,
+    },
+    /// DeBERTa v2 base model. The `pooler` is only loaded for `Cls` strategy.
     DebertaV2 {
         model: Box<DebertaV2Model>,
-        pooler: Box<DebertaV2ContextPooler>,
+        pooler: Option<Box<DebertaV2ContextPooler>>,
+        strategy: PoolingStrategy,
     },
 }
 
 impl EmbeddingModel {
-    /// Extract the pooled CLS embedding from the input.
+    /// Extract a pooled embedding from the input.
     ///
     /// Returns a 1-D tensor of shape `[hidden_size]` (typically 768).
+    /// The pooling method depends on the `PoolingStrategy` stored in each variant.
     fn extract_embedding(
         &self,
         input_ids: &Tensor,
@@ -131,20 +172,38 @@ impl EmbeddingModel {
         attention_mask: &Tensor,
     ) -> candle_core::Result<Tensor> {
         match self {
-            Self::Bert(model) => {
+            Self::Bert { model, strategy } => {
                 let hidden = model.forward(input_ids, token_type_ids, Some(attention_mask))?;
-                // CLS token is at position 0 → shape [1, hidden_size] → squeeze to [hidden_size]
-                hidden.i((.., 0))?.squeeze(0)
+                match strategy {
+                    PoolingStrategy::Cls => hidden.i((.., 0))?.squeeze(0),
+                    PoolingStrategy::MeanPool => {
+                        masked_mean_pool(&hidden, attention_mask)?.squeeze(0)
+                    }
+                }
             }
-            Self::DebertaV2 { model, pooler } => {
+            Self::DebertaV2 {
+                model,
+                pooler,
+                strategy,
+            } => {
                 let encoder_output = model.forward(
                     input_ids,
                     Some(token_type_ids.clone()),
                     Some(attention_mask.clone()),
                 )?;
-                // Pooler takes CLS token (position 0), applies dense + activation
-                let pooled = pooler.forward(&encoder_output)?;
-                pooled.squeeze(0)
+                match strategy {
+                    PoolingStrategy::Cls => {
+                        let p = pooler.as_ref().ok_or_else(|| {
+                            candle_core::Error::Msg(
+                                "DebertaV2 Cls strategy requires a loaded pooler".into(),
+                            )
+                        })?;
+                        p.forward(&encoder_output)?.squeeze(0)
+                    }
+                    PoolingStrategy::MeanPool => {
+                        masked_mean_pool(&encoder_output, attention_mask)?.squeeze(0)
+                    }
+                }
             }
         }
     }
@@ -163,7 +222,10 @@ pub(crate) struct LoadedModel {
 }
 
 impl LoadedModel {
-    /// Extract the CLS embedding vector from text.
+    /// Extract the pooled embedding vector from text.
+    ///
+    /// Uses the `PoolingStrategy` configured on the underlying `EmbeddingModel`
+    /// (default: `MeanPool` per DMPI-PMHFE paper).
     ///
     /// Returns a 1-D tensor of shape `[hidden_size]` (typically 768).
     /// Returns `None` if the embedding model was not loaded (fusion disabled).
@@ -312,8 +374,8 @@ impl MLSecurityAnalyzer {
     /// Create a new ML security analyzer with optional fusion embedding support.
     ///
     /// When `fusion_enabled` is `true`, the base model is loaded alongside the
-    /// classification model to enable CLS embedding extraction for feature-level
-    /// fusion (ADR-013).
+    /// classification model to enable embedding extraction (average pooling by
+    /// default, per DMPI-PMHFE) for feature-level fusion (ADR-013).
     pub async fn with_fusion(config: &MLSecurityConfig, fusion_enabled: bool) -> Result<Self> {
         let fallback = RegexSecurityAnalyzer::new()?;
 
@@ -456,11 +518,13 @@ impl MLSecurityAnalyzer {
         let (classification_model, id2label_map) =
             Self::build_model(model_type, &config_json, vb.clone())?;
 
-        // Optionally build the embedding model for feature-level fusion
+        // Optionally build the embedding model for feature-level fusion.
+        // Default to MeanPool per DMPI-PMHFE paper specification.
+        let pooling_strategy = PoolingStrategy::MeanPool;
         let embedding_model = if fusion_enabled {
-            match Self::build_embedding_model(model_type, &config_json, vb) {
+            match Self::build_embedding_model(model_type, &config_json, vb, pooling_strategy) {
                 Ok(emb) => {
-                    tracing::info!("Fusion embedding model loaded successfully");
+                    tracing::info!(strategy = ?pooling_strategy, "Fusion embedding model loaded");
                     Some(emb)
                 }
                 Err(e) => {
@@ -557,10 +621,14 @@ impl MLSecurityAnalyzer {
 
     /// Build the embedding model (base model without classifier head) for
     /// feature-level fusion (ADR-013).
+    ///
+    /// When `strategy` is `MeanPool`, the DeBERTa context pooler is not loaded
+    /// because average pooling is computed directly from encoder hidden states.
     fn build_embedding_model(
         model_type: &str,
         config_json: &serde_json::Value,
         vb: VarBuilder,
+        strategy: PoolingStrategy,
     ) -> Result<EmbeddingModel> {
         match model_type {
             "deberta-v2" => {
@@ -575,13 +643,22 @@ impl MLSecurityAnalyzer {
                     LLMTraceError::Security(format!("Failed to load DeBERTa embedding model: {e}"))
                 })?;
 
-                let pooler = DebertaV2ContextPooler::load(vb, &config).map_err(|e| {
-                    LLMTraceError::Security(format!("Failed to load DeBERTa context pooler: {e}"))
-                })?;
+                let pooler = match strategy {
+                    PoolingStrategy::Cls => {
+                        let p = DebertaV2ContextPooler::load(vb, &config).map_err(|e| {
+                            LLMTraceError::Security(format!(
+                                "Failed to load DeBERTa context pooler: {e}"
+                            ))
+                        })?;
+                        Some(Box::new(p))
+                    }
+                    PoolingStrategy::MeanPool => None,
+                };
 
                 Ok(EmbeddingModel::DebertaV2 {
                     model: Box::new(model),
-                    pooler: Box::new(pooler),
+                    pooler,
+                    strategy,
                 })
             }
             _ => {
@@ -596,7 +673,10 @@ impl MLSecurityAnalyzer {
                     LLMTraceError::Security(format!("Failed to load BERT embedding model: {e}"))
                 })?;
 
-                Ok(EmbeddingModel::Bert(Box::new(model)))
+                Ok(EmbeddingModel::Bert {
+                    model: Box::new(model),
+                    strategy,
+                })
             }
         }
     }
@@ -959,5 +1039,91 @@ mod tests {
         let map = extract_id2label(&json);
         assert_eq!(map.get(&0), Some(&"benign".to_string()));
         assert_eq!(map.get(&1), Some(&"malicious".to_string()));
+    }
+
+    // -- masked_mean_pool --------------------------------------------------
+
+    #[test]
+    fn test_masked_mean_pool_shape() {
+        let device = Device::Cpu;
+        let batch = 1;
+        let seq_len = 10;
+        let hidden_size = 768;
+
+        let hidden = Tensor::ones((batch, seq_len, hidden_size), DType::F32, &device).unwrap();
+        let mask = Tensor::ones((batch, seq_len), DType::U32, &device).unwrap();
+
+        let pooled = masked_mean_pool(&hidden, &mask).unwrap();
+        assert_eq!(pooled.dims(), &[batch, hidden_size]);
+    }
+
+    #[test]
+    fn test_masked_mean_pool_uniform_values() {
+        let device = Device::Cpu;
+        let batch = 1;
+        let seq_len = 5;
+        let hidden_size = 4;
+
+        // All hidden values are 3.0, all tokens valid
+        let hidden = (Tensor::ones((batch, seq_len, hidden_size), DType::F32, &device).unwrap()
+            * 3.0)
+            .unwrap();
+        let mask = Tensor::ones((batch, seq_len), DType::U32, &device).unwrap();
+
+        let pooled = masked_mean_pool(&hidden, &mask).unwrap();
+        let values: Vec<f32> = pooled.squeeze(0).unwrap().to_vec1().unwrap();
+
+        for v in &values {
+            assert!((*v - 3.0).abs() < 1e-5, "Expected 3.0, got {v}");
+        }
+    }
+
+    #[test]
+    fn test_masked_mean_pool_respects_mask() {
+        let device = Device::Cpu;
+        let hidden_size = 2;
+
+        // 3 tokens: [1,1], [2,2], [3,3]. Mask out the third token.
+        let hidden_data: Vec<f32> = vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0];
+        let hidden = Tensor::from_vec(hidden_data, (1, 3, hidden_size), &device).unwrap();
+        let mask = Tensor::from_vec(vec![1u32, 1, 0], (1, 3), &device).unwrap();
+
+        let pooled = masked_mean_pool(&hidden, &mask).unwrap();
+        let values: Vec<f32> = pooled.squeeze(0).unwrap().to_vec1().unwrap();
+
+        // Average of [1,1] and [2,2] = [1.5, 1.5], token [3,3] excluded
+        for v in &values {
+            assert!((*v - 1.5).abs() < 1e-5, "Expected 1.5, got {v}");
+        }
+    }
+
+    #[test]
+    fn test_masked_mean_pool_single_valid_token() {
+        let device = Device::Cpu;
+        let hidden_size = 3;
+
+        // 4 tokens, only the second is valid
+        let hidden_data: Vec<f32> = vec![
+            0.0, 0.0, 0.0, // token 0 (masked)
+            5.0, 10.0, 15.0, // token 1 (valid)
+            0.0, 0.0, 0.0, // token 2 (masked)
+            0.0, 0.0, 0.0, // token 3 (masked)
+        ];
+        let hidden = Tensor::from_vec(hidden_data, (1, 4, hidden_size), &device).unwrap();
+        let mask = Tensor::from_vec(vec![0u32, 1, 0, 0], (1, 4), &device).unwrap();
+
+        let pooled = masked_mean_pool(&hidden, &mask).unwrap();
+        let values: Vec<f32> = pooled.squeeze(0).unwrap().to_vec1().unwrap();
+
+        assert!((values[0] - 5.0).abs() < 1e-5);
+        assert!((values[1] - 10.0).abs() < 1e-5);
+        assert!((values[2] - 15.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_pooling_strategy_equality() {
+        assert_eq!(PoolingStrategy::MeanPool, PoolingStrategy::MeanPool);
+        assert_eq!(PoolingStrategy::Cls, PoolingStrategy::Cls);
+        assert_ne!(PoolingStrategy::MeanPool, PoolingStrategy::Cls);
     }
 }

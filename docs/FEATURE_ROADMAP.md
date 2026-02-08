@@ -37,7 +37,7 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 - **Rust-native performance**: <1ms regex analysis, ~50-100ms ML inference — faster than any Python framework
 - **True transparent proxy**: Zero-code integration deployment model
 - **Streaming security**: Real-time SSE analysis with output-side monitoring and early stopping
-- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa CLS embedding concatenated with 15-dim heuristic vector through 3-layer FC classifier (random weights). **Note:** 6 architectural deviations from DMPI-PMHFE paper remain (DMPI-001–DMPI-006): CLS pooling instead of average pooling, 3 FC layers instead of 2, 15 mixed features instead of 10 binary, repetition threshold >10 instead of >=3, 3 missing paper features, non-paper feature names. See section 3.4.1.
+- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa average-pooled embedding concatenated with 15-dim heuristic vector through 3-layer FC classifier (random weights). **Note:** 5 architectural deviations from DMPI-PMHFE paper remain (DMPI-002–DMPI-006): 3 FC layers instead of 2, 15 mixed features instead of 10 binary, repetition threshold >10 instead of >=3, 3 missing paper features, non-paper feature names. DMPI-001 (average pooling) resolved. See section 3.4.1.
 - **Comprehensive input security**: 40+ regex patterns covering 8 attack categories (flattery, urgency, roleplay, impersonation, covert, excuse, many-shot, repetition)
 - **Unicode normalisation**: NFKC + zero-width stripping + homoglyph mapping (Cyrillic, Greek)
 - **Output safety**: Toxicity detection (BERT-based + keyword fallback), hallucination detection (cross-encoder + heuristic fallback)
@@ -73,7 +73,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 |-----------|--------|-------------|
 | Prompt injection detection (regex) | `lib.rs` | 40+ patterns across system override, role injection, delimiter injection |
 | Prompt injection detection (ML) | `ml_detector.rs` | DeBERTa-v3-base (`protectai/deberta-v3-base-prompt-injection-v2`) |
-| Feature-level fusion | `fusion_classifier.rs` | 783-dim input (768 DeBERTa CLS + 15 heuristic) → FC(256) → FC(64) → FC(2). **Deviates from paper:** uses CLS pooling (not average), 3 FC layers (not 2), input dim 783 (not 778). See DMPI-001, DMPI-002. |
+| Feature-level fusion | `fusion_classifier.rs` | 783-dim input (768 DeBERTa average-pooled + 15 heuristic) → FC(256) → FC(64) → FC(2). **Deviates from paper:** 3 FC layers (not 2), input dim 783 (not 778). DMPI-001 (pooling) resolved. See DMPI-002. |
 | Heuristic feature extraction | `feature_extraction.rs` | 15-dim vector: 8 binary attack categories + 7 numeric features. **Deviates from paper:** paper specifies 10 binary features with different names and keyword sets. See DMPI-003, DMPI-005, DMPI-006. |
 | Flattery/incentive detection | `lib.rs` | 5 patterns: best_ai, reward, capable_ai, so_smart, tip |
 | Urgency detection | `lib.rs` | 4 patterns: emergency, lives_depend, respond_immediately, time_sensitive |
@@ -152,7 +152,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 
 **Implementation Notes:**
 - IS-001: The MOF strategy involves: (1) standard training on curated dataset, (2) token-wise bias detection — feed each vocabulary token individually and identify those predicted as "attack", (3) generate 1000 benign samples using combinations of 1-3 biased tokens via LLM, (4) retrain from scratch on combined data. InjecGuard achieved 87.32% over-defense accuracy vs ProtectAIv2's 56.64% (+54.17% improvement).
-- IS-006: PromptShield (Jacob et al., ACM CODASPY 2025) showed that at 0.1% FPR, Meta PromptGuard detects only 9.4% of attacks. PromptShield achieved 65.3% TPR at 0.1% FPR.
+- IS-006: PromptShield (Jacob et al., ACM CODASPY 2025) showed that at 0.1% FPR, Meta PromptGuard detects only 9.4% of attacks. PromptShield achieved 65.3% TPR at 0.1% FPR. CyberSecEval 2 (arXiv 2404.13161) also introduces a False Refusal Rate (FRR) methodology using borderline cybersecurity-related prompts; most models achieved <15% FRR while CodeLlama-70B showed 70% FRR. See `docs/research/cyberseceval2-llm-security-benchmark.md`.
 
 #### 3.1.2 Advanced Prompt Injection Detection
 
@@ -363,7 +363,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
-| DMPI-001 | **Average pooling instead of CLS token** — `ml_detector.rs:137` (BERT: `hidden.i((.., 0))`) and `ml_detector.rs:146` (DeBERTa: `DebertaV2ContextPooler` extracts position 0) both use CLS token. Paper requires average pooling over all token embeddings to aggregate full-sequence information. | DMPI-PMHFE | P1 | Medium | ❌ Missing |
+| DMPI-001 | **Average pooling instead of CLS token** — Implemented `masked_mean_pool()` with `PoolingStrategy` enum (Cls/MeanPool). Both BERT and DeBERTa paths now default to attention-mask-aware average pooling. See `docs/architecture/DMPI_001_AVERAGE_POOLING.md`. | DMPI-PMHFE | P1 | Medium | :white_check_mark: Done |
 | DMPI-002 | **2 FC layers instead of 3** — `fusion_classifier.rs:33-43` implements `fc1(783->256)->ReLU->fc2(256->64)->ReLU->fc3(64->2)->SoftMax`. Paper specifies `Concat->FC(H)->ReLU->FC(2)->SoftMax` (2 FC layers). Input dim becomes 778 (768+10) once DMPI-003 is also applied. | DMPI-PMHFE | P1 | Medium | ❌ Missing |
 | DMPI-003 | **10 binary features instead of 15 mixed** — `feature_extraction.rs:34` sets `HEURISTIC_FEATURE_DIM=15` (8 binary + 7 numeric). Paper specifies exactly 10 binary (0/1) features. Indices 8-14 (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent. Missing paper features `is_ignore` and `is_format_manipulation` must be added. `excuse_attack` (index 5) must be replaced with `is_immoral`. | DMPI-PMHFE | P1 | High | ❌ Missing |
 | DMPI-004 | **Repetition threshold >=3 instead of >10** — `lib.rs:1115` (word-level) and `lib.rs:1159` (phrase-level) both use hardcoded `> 10`. Paper specifies `>= 3` based on sensitivity analysis. Common-words exclusion list may need expansion at the lower threshold. | DMPI-PMHFE | P1 | Low | ❌ Missing |
@@ -459,7 +459,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | EV-003 | **InjecAgent evaluation** — indirect injection in agents, 8 defense mechanisms | Benchmarks | P1 | Medium | ❌ Missing |
 | EV-004 | **Agent Security Bench (ASB) evaluation** — comprehensive multi-domain agent security | Benchmarks | P2 | Medium | ❌ Missing |
 | EV-005 | **WASP evaluation** — web agent security benchmark | Benchmarks | P2 | Medium | ❌ Missing |
-| EV-006 | **CyberSecEval 2 evaluation** — 251 attack samples from Meta | SoA Report | P2 | Low | ❌ Missing |
+| EV-006 | **CyberSecEval 2 evaluation** — 251 prompt injection attack samples (per DMPI-PMHFE [28]); full paper also covers code interpreter abuse (500 prompts), exploit generation, and FRR | SoA Report, CyberSecEval 2 Breakdown | P2 | Low | ❌ Missing |
 | EV-007 | **MLCommons AILuminate Jailbreak Benchmark** — industry-standard jailbreak evaluation | SoA Report | P2 | Medium | ❌ Missing |
 | EV-008 | **HPI_ATTACK_DATASET evaluation** — 55 unique attacks, 8 categories, 400 instances | Multi-Agent Defense | P1 | Low | ❌ Missing |
 | EV-009 | **Automated benchmark runner** — CI-integrated evaluation pipeline | All papers | P1 | Medium | ❌ Missing |
@@ -471,6 +471,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 **Audit Notes (Literature Alignment):**
 - Benchmark suite expectations (AgentDojo, ASB, InjecAgent, WASP, etc.): `docs/research/benchmarks-and-tools-landscape.md`.
 - WASP benchmark specifics: `docs/research/wasp-web-agent-security-benchmark.md`.
+- CyberSecEval 2 benchmark details (EV-006): `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 prompt injection sample count is cross-referenced from DMPI-PMHFE (arXiv 2506.06384, Table reference [28]). The paper also introduces FRR methodology relevant to IS-006/IS-007.
 
 ---
 
@@ -567,7 +568,7 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 | **Prompt injection** | ✅ Ensemble | ✅ MOF-trained | ✅ DeBERTa | ✅ Proprietary | ✅ LLM-based | ✅ PromptGuard2 | ✅ Policy-driven | ✅ LLM-based |
 | **Over-defense mitigation** | ❌ | ✅ MOF | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
 | **Jailbreak detection** | ✅ Dedicated | ⚠️ General | ⚠️ General | ✅ | ✅ | ✅ PromptGuard2 | ✅ | ✅ |
-| **Feature-level fusion** | ⚠️ (random weights; 6 architectural deviations from DMPI-PMHFE — see §3.4.1a) | ❌ | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
+| **Feature-level fusion** | ⚠️ (random weights; 5 architectural deviations from DMPI-PMHFE remain — see §3.4.1a) | ❌ | ❌ | Unknown | ❌ | ❌ | ❌ | ❌ |
 | **Unicode normalisation** | ✅ Comprehensive | ❌ | ❌ | Unknown | ❌ | ❌ | Unknown | ❌ |
 | **Toxicity detection** | ✅ BERT + fallback | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ |
 | **Hallucination detection** | ✅ Cross-encoder | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -594,7 +595,7 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 ### 5.2 LLMTrace Unique Differentiators
 
 1. **Only Rust-native LLM security proxy** — performance advantage is structural
-2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, but 6 architectural deviations (DMPI-001–006) must be resolved before trained weights can match paper SOTA (see §3.4.1a)
+2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, but 5 architectural deviations (DMPI-002–006) must be resolved before trained weights can match paper SOTA; DMPI-001 (average pooling) resolved (see §3.4.1a)
 3. **Only system combining streaming analysis + early stopping + output safety** — no competitor has all three
 4. **Only system with integrated cost control + security** — single deployment for both concerns
 5. **Most comprehensive Unicode normalisation** — 30+ homoglyph mappings + 18 zero-width chars
@@ -625,6 +626,7 @@ All features in this roadmap are traceable to specific research papers:
 | **Multi-Agent Defense** | A Multi-Agent LLM Defense Pipeline Against Prompt Injection Attacks | 2024 | Coordinator + Guard architecture, 0% ASR across 400 attacks (8 categories), HPI_ATTACK_DATASET |
 | **Protocol Exploits** | From Prompt Injections to Protocol Exploits: Threats in LLM-Powered AI Agents Workflows | 2025 | 30+ attack techniques across 4 domains, MCP/A2A/ANP vulnerabilities, multimodal attacks, composite backdoors (100% ASR), MINJA memory poisoning |
 | **Benchmarks & Tools** | Benchmarks and Tools Landscape Analysis | 2026 | AgentDojo, InjecAgent, ASB, NotInject, WASP, CyberSecEval 2 benchmarks; LLM Guard, NeMo, InjecGuard, Prompt Guard, Llama Guard, Granite Guardian tools; tldrsec defense taxonomy |
+| **CyberSecEval 2** | CyberSecEval 2: A Wide-Ranging Cybersecurity Evaluation Suite for Large Language Models (Meta, arXiv 2404.13161) | 2024 | 251 prompt injection tests across 15 attack categories (26-41% ASR), code interpreter abuse (500 prompts, 5 categories), exploit generation (4 CTF-style categories), False Refusal Rate methodology, v1-vs-v2 cyberattack helpfulness comparison (52%->28% compliance). Breakdown: `docs/research/cyberseceval2-llm-security-benchmark.md` |
 
 ---
 
@@ -662,6 +664,8 @@ All features in this roadmap are traceable to specific research papers:
 | "Important Messages" header | High ASR | Tool Result Parsing | ⚠️ Partial | Medium |
 | Multi-turn persistence | Variable | Multi-Agent Defense | ❌ No defense | High |
 | Braille encoding bypass | Bypasses GPT-4o sanitizer | Indirect Injection Firewalls | ❌ No defense | Medium |
+| Prompt injection (direct, 15 categories) | 26-41% ASR (model-dependent) | CyberSecEval 2 | ⚠️ Partial (ensemble detection) | Medium |
+| Code interpreter abuse (5 categories) | 13-47% compliance (model-dependent) | CyberSecEval 2 | ❌ No defense | Medium |
 
 ## Appendix C: Model Comparison for Ensemble
 
@@ -679,4 +683,4 @@ All features in this roadmap are traceable to specific research papers:
 
 ---
 
-*This document covers findings from all 9 research papers in `docs/research/`. Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*
+*This document covers findings from all 10 research papers in `docs/research/`. Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*

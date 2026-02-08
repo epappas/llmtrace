@@ -261,7 +261,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| DMPI-001 | **Average pooling instead of CLS token** — `ml_detector.rs:137` (BERT: `hidden.i((.., 0))`) and `ml_detector.rs:146` (DeBERTa: `DebertaV2ContextPooler` extracts position 0) both use CLS token. Paper requires average pooling over all token embeddings (`hidden.mean(1)?.squeeze(0)?`). CLS captures sentence-level representation from position 0; average pooling aggregates information from the full sequence, producing fundamentally different embedding semantics. | Medium | ⬜ |
+| DMPI-001 | **Average pooling instead of CLS token** — Implemented `masked_mean_pool()` in `ml_detector.rs`. Added `PoolingStrategy` enum (Cls/MeanPool), defaulting to MeanPool. BERT and DeBERTa paths both use attention-mask-aware average pooling over all non-padding tokens, matching paper spec. `DebertaV2ContextPooler` is now optional (only loaded for Cls strategy). Architecture doc: `docs/architecture/DMPI_001_AVERAGE_POOLING.md`. | Medium | :white_check_mark: |
 | DMPI-002 | **2 FC layers instead of 3** — `fusion_classifier.rs:33-34,41-43` defines `fc1(783->256)->ReLU->fc2(256->64)->ReLU->fc3(64->2)->SoftMax`. Paper specifies exactly 2 FC layers: `Concat->FC(H)->ReLU->FC(2)->SoftMax`. Remove `HIDDEN_2` and `fc3`; collapse to `fc1(input->H)->ReLU->fc2(H->2)->SoftMax`. Input dim changes from 783 to 778 once DMPI-003 is also applied (768 + 10 = 778). | Medium | ⬜ |
 | DMPI-003 | **10 binary features instead of 15 mixed** — `feature_extraction.rs:34` sets `HEURISTIC_FEATURE_DIM=15` (8 binary + 7 numeric). Paper specifies exactly 10 binary (0/1) features. Indices 8-14 (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent and must be removed. Missing paper features `is_ignore` and `is_format_manipulation` must be added as binary indices. `excuse_attack` (index 5) must be replaced with `is_immoral`. See DMPI-005 for keyword details. | High | ⬜ |
 | DMPI-004 | **Repetition threshold >=3 instead of >10** — `lib.rs:1115` (word-level) and `lib.rs:1159` (phrase-level) both use hardcoded `> 10` (effectively >=11). Paper specifies `>= 3` repetitions based on sensitivity analysis. Extract into a named constant `REPETITION_THRESHOLD: u32 = 3` and change conditions to `>= REPETITION_THRESHOLD`. The common-words exclusion list at `lib.rs:1117-1124` may need expansion since the lower threshold increases false-positive surface for common words. | Low | ⬜ |
@@ -321,7 +321,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-003 | InjecAgent evaluation | Medium | ⬜ |
 | EV-004 | ASB evaluation | Medium | ⬜ |
 | EV-005 | WASP evaluation | Medium | ⬜ |
-| EV-006 | CyberSecEval 2 evaluation (251 samples) | Medium | ⬜ |
+| EV-006 | CyberSecEval 2 prompt injection evaluation (251 attack samples per DMPI-PMHFE [28]) | Medium | ⬜ |
 | EV-007 | MLCommons AILuminate jailbreak benchmark | Medium | ⬜ |
 | EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ⬜ |
 | EV-009 | Automated CI-integrated benchmark runner | Medium | ⬜ |
@@ -667,6 +667,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 - Adversarial robustness expectations come from `docs/research/bypassing-llm-guardrails-evasion.md`.
 - Over-defense mitigation expectations come from `docs/research/injecguard-over-defense-mitigation.md`.
 - Benchmark coverage expectations come from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
+- CyberSecEval 2 benchmark expectations (EV-006) come from `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 attack sample count is sourced from DMPI-PMHFE (arXiv 2506.06384) which used the CyberSecEval 2 prompt injection dataset; the full paper covers additional suites (500 code interpreter abuse prompts, exploit generation, FRR).
 - DMPI-001–DMPI-006 (Loop 12a) are blocking prerequisites for ML-001 (Loop 15). The fusion classifier cannot be trained against the paper's architecture until pooling, layer count, feature vector, thresholds, and feature naming all match the DMPI-PMHFE specification. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for the authoritative paper breakdown.
 - DMPI-003 and DMPI-005 are coupled: fixing the feature vector dimension (10 binary) requires adding the 3 missing paper features (is_ignore, is_format_manipulation, is_immoral) and removing the 7 extra numeric features.
 - DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.

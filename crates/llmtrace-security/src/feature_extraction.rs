@@ -2,7 +2,7 @@
 //!
 //! Builds a fixed-size numeric feature vector from regex/heuristic analysis
 //! results and raw text properties. This vector is concatenated with the
-//! DeBERTa CLS embedding to form the input to the fusion classifier.
+//! DeBERTa average-pooled embedding to form the input to the fusion classifier.
 //!
 //! # Feature Vector Layout (15 dimensions)
 //!
