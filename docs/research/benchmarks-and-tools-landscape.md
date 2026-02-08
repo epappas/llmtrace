@@ -29,6 +29,7 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 | **NotInject** | Over-defense evaluation | InjecGuard | 2024 | ❌ Not evaluated | **High** |
 | **WASP** | Web agent security | arXiv:2504.18575 | 2024 | ❌ Not evaluated | **Medium** |
 | **CyberSecEval 2** | Defense effectiveness | Meta | 2024 | ⚠️ Limited coverage | **Low** |
+| **BIPIA** | Indirect prompt injection benchmark | USTC/HKUST/Microsoft (KDD 2025) | 2023 | ⚠️ Partial detection | **High** |
 
 ### 1. AgentDojo (NeurIPS 2024) — **Priority: High**
 
@@ -124,6 +125,20 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 - Basic prompt injection alignment with CyberSecEval categories
 - Missing code interpreter abuse detection
 - FRR methodology relevant to IS-006/IS-007 (implemented)
+
+### 7. BIPIA (USTC/HKUST/Microsoft, KDD 2025) — **Priority: High**
+
+**Paper:** arXiv 2312.14197 (December 2023, v4 January 2025)
+**Breakdown:** `docs/research/bipia-indirect-prompt-injection-benchmark.md`
+**Focus**: First systematic indirect prompt injection benchmark: 86,250 test prompts across 5 application scenarios, 50 attack types (30 text + 20 code), 25-model vulnerability baseline
+**Scope**: GPT-4 highest ASR at 31%, average 11.8%. More capable models are more vulnerable (r=0.6423). Proposes boundary token (`<data>`/`</data>`) and explicit reminder defenses achievable at proxy level.
+**Attack Types**: Indirect injection via email QA, web QA, table QA, summarization, code QA; task-irrelevant, task-relevant, and targeted text attacks; passive and active code attacks
+
+**LLMTrace Coverage**: ⚠️ **Partial Detection**
+- Basic indirect injection detection via DeBERTa model
+- Missing boundary token injection defense (proxy-level, highest-impact intervention per ablation: 1064% ASR increase without it)
+- No explicit reminder injection or multi-turn dialogue restructuring
+- No position-aware detection weighting (end-of-content injections most effective)
 
 ## Benchmark Evaluation Recommendations
 
