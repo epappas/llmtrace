@@ -163,27 +163,25 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
    - The paper's attack relies on string repetition through the agent -- sanitization that strips or transforms tool outputs breaks this chain.
    - **Code Impact:** Red-team testing, no code changes if sanitization is effective.
 
-### P1 (High Priority - Next Quarter)
-
-3. **Add GCG-Based Adversarial Testing to Evaluation Pipeline** (EV-017, ML-016)
-   - **Effort:** 3-4 weeks
-   - Use GCG/Parallel-GCG to generate adversarial strings optimized against LLMTrace's detection models.
-   - Test whether multi-objective GCG can simultaneously bypass regex + ML ensemble.
-   - **Code Impact:** Red-team evaluation harness, adversarial sample generation.
-
-4. **Evaluate Hybrid Monitoring Paradox for LLMTrace** (IS-051)
-   - **Effort:** 2 weeks
-   - Assess whether LLMTrace's output-side monitoring increases attack surface for adaptive attackers.
-   - Consider configurable monitoring scope (input-only vs full hybrid) based on threat model.
-   - **Code Impact:** Configuration options, evaluation framework.
-
-5. **AgentDojo Evaluation** (EV-016)
+3. **AgentDojo Slack Suite Adaptive Attack Evaluation** (EV-016)
    - **Effort:** 2-3 weeks
    - Evaluate LLMTrace detection against AgentDojo Slack suite attacks (same benchmark used in this paper).
    - Measure detection rates for both static and adaptive (GCG-optimized) attacks.
    - **Code Impact:** Test harness in `tests/benchmarks/`.
 
-### P2 (Medium Priority - Future)
+### P1 (High Priority - Next Quarter)
+
+4. **Add GCG-Based Adversarial Testing to Evaluation Pipeline** (EV-017, ML-016)
+   - **Effort:** 3-4 weeks
+   - Use GCG/Parallel-GCG to generate adversarial strings optimized against LLMTrace's detection models.
+   - Test whether multi-objective GCG can simultaneously bypass regex + ML ensemble.
+   - **Code Impact:** Red-team evaluation harness, adversarial sample generation.
+
+5. **Evaluate Hybrid Monitoring Paradox for LLMTrace** (IS-051)
+   - **Effort:** 2 weeks
+   - Assess whether LLMTrace's output-side monitoring increases attack surface for adaptive attackers.
+   - Consider configurable monitoring scope (input-only vs full hybrid) based on threat model.
+   - **Code Impact:** Configuration options, evaluation framework.
 
 6. **Adversarial Robustness Training Against GCG** (ML-016)
    - **Effort:** 4-6 weeks

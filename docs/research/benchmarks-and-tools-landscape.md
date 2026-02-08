@@ -151,6 +151,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 **LLMTrace Coverage**: ⚠️ **Directly Vulnerable**
 - LLMTrace is a monitoring-based defense -- the exact category this paper attacks
 - No perplexity-based anomaly detection for GCG-optimized strings (tracked as IS-050, IS-052)
+- Hybrid monitoring paradox: output monitoring increases attack surface for adaptive attacks; no configurable monitoring scope (tracked as IS-051)
 - Structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) are validated as more robust
 - No adversarial robustness testing against multi-objective GCG (tracked as EV-016, EV-017, EV-018, ML-016)
 
