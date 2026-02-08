@@ -858,17 +858,15 @@ mod tests {
                     } else {
                         current_entity = Some((stripped.to_string(), tok_start, tok_end));
                     }
-                } else {
-                    if let Some((etype, start, end)) = current_entity.take() {
-                        let entity_text = text[start..end].to_string();
-                        if !entity_text.trim().is_empty() {
-                            entities.push(NerEntity {
-                                text: entity_text.trim().to_string(),
-                                entity_type: etype,
-                                start,
-                                end,
-                            });
-                        }
+                } else if let Some((etype, start, end)) = current_entity.take() {
+                    let entity_text = text[start..end].to_string();
+                    if !entity_text.trim().is_empty() {
+                        entities.push(NerEntity {
+                            text: entity_text.trim().to_string(),
+                            entity_type: etype,
+                            start,
+                            end,
+                        });
                     }
                 }
             }

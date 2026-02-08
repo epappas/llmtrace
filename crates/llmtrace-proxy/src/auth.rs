@@ -812,7 +812,7 @@ mod tests {
 
         // Revoke via admin
         let app = auth_router(Arc::clone(&state));
-        let req = Request::delete(&format!("/api/v1/auth/keys/{}", key_record.id))
+        let req = Request::delete(format!("/api/v1/auth/keys/{}", key_record.id))
             .header("authorization", "Bearer admin-secret")
             .body(Body::empty())
             .unwrap();

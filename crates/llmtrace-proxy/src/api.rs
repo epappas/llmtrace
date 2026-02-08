@@ -992,7 +992,7 @@ mod tests {
         state.storage.traces.store_trace(&trace).await.unwrap();
 
         let app = api_router(state);
-        let req = Request::get(&format!("/api/v1/traces/{trace_id}"))
+        let req = Request::get(format!("/api/v1/traces/{trace_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1012,7 +1012,7 @@ mod tests {
         let missing_id = Uuid::new_v4();
 
         let app = api_router(state);
-        let req = Request::get(&format!("/api/v1/traces/{missing_id}"))
+        let req = Request::get(format!("/api/v1/traces/{missing_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1033,7 +1033,7 @@ mod tests {
         // Query with a different tenant
         let other_tid = TenantId::new();
         let app = api_router(state);
-        let req = Request::get(&format!("/api/v1/traces/{trace_id}"))
+        let req = Request::get(format!("/api/v1/traces/{trace_id}"))
             .header("x-llmtrace-tenant-id", other_tid.0.to_string())
             .body(Body::empty())
             .unwrap();
@@ -1214,7 +1214,7 @@ mod tests {
         state.storage.traces.store_trace(&trace).await.unwrap();
 
         let app = api_router(state);
-        let req = Request::get(&format!("/api/v1/spans/{span_id}"))
+        let req = Request::get(format!("/api/v1/spans/{span_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1233,7 +1233,7 @@ mod tests {
         let missing_id = Uuid::new_v4();
 
         let app = api_router(state);
-        let req = Request::get(&format!("/api/v1/spans/{missing_id}"))
+        let req = Request::get(format!("/api/v1/spans/{missing_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1570,7 +1570,7 @@ mod tests {
             "success": true,
         });
 
-        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+        let req = Request::post(format!("/api/v1/traces/{trace_id}/actions"))
             .header("x-llmtrace-tenant-id", &hdr)
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -1599,7 +1599,7 @@ mod tests {
             "name": "test",
         });
 
-        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+        let req = Request::post(format!("/api/v1/traces/{trace_id}/actions"))
             .header("x-llmtrace-tenant-id", &hdr)
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -1620,7 +1620,7 @@ mod tests {
             "name": "test",
         });
 
-        let req = Request::post(&format!("/api/v1/traces/{}/actions", Uuid::new_v4()))
+        let req = Request::post(format!("/api/v1/traces/{}/actions", Uuid::new_v4()))
             .header("x-llmtrace-tenant-id", &hdr)
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
@@ -1651,7 +1651,7 @@ mod tests {
             "exit_code": 0,
         });
 
-        let req = Request::post(&format!("/api/v1/traces/{trace_id}/actions"))
+        let req = Request::post(format!("/api/v1/traces/{trace_id}/actions"))
             .header("x-llmtrace-tenant-id", &hdr)
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))

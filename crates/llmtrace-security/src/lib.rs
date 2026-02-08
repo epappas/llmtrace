@@ -3963,8 +3963,7 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
     #[tokio::test]
     async fn test_detects_repetition_word() {
         let a = RegexSecurityAnalyzer::new().unwrap();
-        let prompt = std::iter::repeat("override")
-            .take(15)
+        let prompt = std::iter::repeat_n("override", 15)
             .collect::<Vec<_>>()
             .join(" ");
         let findings = a.analyze_request(&prompt, &test_context()).await.unwrap();
@@ -4027,8 +4026,7 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
     #[tokio::test]
     async fn test_repetition_below_threshold_not_flagged() {
         let a = RegexSecurityAnalyzer::new().unwrap();
-        let prompt = std::iter::repeat("override")
-            .take(8)
+        let prompt = std::iter::repeat_n("override", 8)
             .collect::<Vec<_>>()
             .join(" ");
         let findings = a.analyze_request(&prompt, &test_context()).await.unwrap();
@@ -4163,8 +4161,7 @@ Q: A\nA: B\nQ: C\nA: D\nQ: E\nA: F\nQ: G";
     #[tokio::test]
     async fn test_repetition_findings_have_count_metadata() {
         let a = RegexSecurityAnalyzer::new().unwrap();
-        let prompt = std::iter::repeat("jailbreak")
-            .take(15)
+        let prompt = std::iter::repeat_n("jailbreak", 15)
             .collect::<Vec<_>>()
             .join(" ");
         let findings = a.analyze_request(&prompt, &test_context()).await.unwrap();

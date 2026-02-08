@@ -858,9 +858,11 @@ mod tests {
 
     #[test]
     fn test_rapid_action_detection() {
-        let mut config = CorrelationConfig::default();
-        config.rapid_action_threshold = Duration::from_millis(500);
-        config.rapid_action_count = 5;
+        let config = CorrelationConfig {
+            rapid_action_threshold: Duration::from_millis(500),
+            rapid_action_count: 5,
+            ..Default::default()
+        };
         let mut correlator = ActionCorrelator::new(config);
 
         let base = Instant::now();
@@ -888,9 +890,11 @@ mod tests {
 
     #[test]
     fn test_rapid_action_not_triggered_for_slow_actions() {
-        let mut config = CorrelationConfig::default();
-        config.rapid_action_threshold = Duration::from_millis(100);
-        config.rapid_action_count = 3;
+        let config = CorrelationConfig {
+            rapid_action_threshold: Duration::from_millis(100),
+            rapid_action_count: 3,
+            ..Default::default()
+        };
         let mut correlator = ActionCorrelator::new(config);
 
         let base = Instant::now();
@@ -1015,8 +1019,10 @@ mod tests {
 
     #[test]
     fn test_session_cleanup_expired() {
-        let mut config = CorrelationConfig::default();
-        config.session_timeout = Duration::from_millis(50);
+        let config = CorrelationConfig {
+            session_timeout: Duration::from_millis(50),
+            ..Default::default()
+        };
         let mut correlator = ActionCorrelator::new(config);
 
         let a1 = make_action(AgentActionType::ToolCall, "tool_a", "expired_session", 0.1);
@@ -1045,8 +1051,10 @@ mod tests {
 
     #[test]
     fn test_max_history_enforcement() {
-        let mut config = CorrelationConfig::default();
-        config.max_history_per_session = 5;
+        let config = CorrelationConfig {
+            max_history_per_session: 5,
+            ..Default::default()
+        };
         let mut correlator = ActionCorrelator::new(config);
 
         for i in 0..10 {
@@ -1086,8 +1094,10 @@ mod tests {
             confidence: 0.7,
         };
 
-        let mut config = CorrelationConfig::default();
-        config.patterns = vec![pattern];
+        let config = CorrelationConfig {
+            patterns: vec![pattern],
+            ..Default::default()
+        };
         let mut correlator = ActionCorrelator::new(config);
         let now = Instant::now();
 

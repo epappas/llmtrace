@@ -1049,7 +1049,7 @@ mod tests {
 
         for s in strategies {
             let agg = ResultAggregator::new(s.clone());
-            let out = agg.aggregate(&[result.clone()]);
+            let out = agg.aggregate(std::slice::from_ref(&result));
             assert_eq!(out.threat_category, ThreatCategory::CodeExecution);
             assert_eq!(out.severity, SecuritySeverity::Critical);
         }
@@ -1066,7 +1066,7 @@ mod tests {
 
         // threshold 0.7 -> should be ignored as benign
         let agg_high = ResultAggregator::new(AggregationStrategy::Cascade).with_threshold(0.7);
-        let out_high = agg_high.aggregate(&[result.clone()]);
+        let out_high = agg_high.aggregate(std::slice::from_ref(&result));
         assert_eq!(out_high.threat_category, ThreatCategory::Benign);
 
         // threshold 0.5 -> should be detected
@@ -1116,7 +1116,7 @@ mod tests {
 
         for strategy in strategies_and_expected {
             let agg = ResultAggregator::new(strategy.clone());
-            let out = agg.aggregate(&[result.clone()]);
+            let out = agg.aggregate(std::slice::from_ref(&result));
             assert_eq!(out.strategy_used, strategy);
         }
     }

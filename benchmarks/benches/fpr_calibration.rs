@@ -56,13 +56,13 @@ fn bench_fpr_calibration(c: &mut Criterion) {
     let calibrator = ThresholdCalibrator::with_targets(FprTarget::standard_targets());
 
     // Print report once before benchmarking.
-    let report = calibrator.calibrate_all(&[dataset.clone()]);
+    let report = calibrator.calibrate_all(std::slice::from_ref(&dataset));
     eprintln!("{}", report);
     let _ = std::io::Write::flush(&mut std::io::stderr());
 
     c.bench_function("fpr_calibration_report", |b| {
         b.iter(|| {
-            let _ = calibrator.calibrate_all(&[dataset.clone()]);
+            let _ = calibrator.calibrate_all(std::slice::from_ref(&dataset));
         })
     });
 }

@@ -880,7 +880,7 @@ mod tests {
 
         // Retrieve the completed report
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -939,7 +939,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -993,7 +993,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1046,7 +1046,7 @@ mod tests {
         let (_, hdr) = tenant_header();
 
         let app = compliance_router(state);
-        let req = Request::get(&format!("/api/v1/reports/{}", Uuid::new_v4()))
+        let req = Request::get(format!("/api/v1/reports/{}", Uuid::new_v4()))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1083,7 +1083,7 @@ mod tests {
 
         // Tenant 2 should not be able to see tenant 1's report
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr2)
             .body(Body::empty())
             .unwrap();
@@ -1093,7 +1093,7 @@ mod tests {
 
         // Tenant 1 can see their own report
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr1)
             .body(Body::empty())
             .unwrap();
@@ -1129,7 +1129,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();
@@ -1185,7 +1185,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         let app = compliance_router(Arc::clone(&state));
-        let req = Request::get(&format!("/api/v1/reports/{report_id}"))
+        let req = Request::get(format!("/api/v1/reports/{report_id}"))
             .header("x-llmtrace-tenant-id", &hdr)
             .body(Body::empty())
             .unwrap();

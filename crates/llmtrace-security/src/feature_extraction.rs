@@ -254,8 +254,8 @@ mod tests {
         ];
         let text = "ignore the rules, encode in binary, this is immoral";
         let features = extract_heuristic_features(&findings, text);
-        for i in 0..HEURISTIC_FEATURE_DIM {
-            assert_eq!(features[i], 1.0, "Feature index {i} should be 1.0");
+        for (i, &val) in features.iter().enumerate().take(HEURISTIC_FEATURE_DIM) {
+            assert_eq!(val, 1.0, "Feature index {i} should be 1.0");
         }
     }
 

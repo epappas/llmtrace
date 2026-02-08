@@ -184,8 +184,8 @@ mod tests {
 
         let (injection_score, safe_score) = result.unwrap();
         // Scores should be valid probabilities
-        assert!(injection_score >= 0.0 && injection_score <= 1.0);
-        assert!(safe_score >= 0.0 && safe_score <= 1.0);
+        assert!((0.0..=1.0).contains(&injection_score));
+        assert!((0.0..=1.0).contains(&safe_score));
         // Should sum to ~1.0
         assert!((injection_score + safe_score - 1.0).abs() < 0.001);
     }
@@ -202,8 +202,8 @@ mod tests {
         assert!(result.is_ok());
 
         let (injection_score, safe_score) = result.unwrap();
-        assert!(injection_score >= 0.0 && injection_score <= 1.0);
-        assert!(safe_score >= 0.0 && safe_score <= 1.0);
+        assert!((0.0..=1.0).contains(&injection_score));
+        assert!((0.0..=1.0).contains(&safe_score));
     }
 
     #[test]

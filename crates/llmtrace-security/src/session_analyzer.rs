@@ -592,9 +592,11 @@ mod tests {
 
     #[test]
     fn escalation_detected_when_risk_increases_repeatedly() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.escalation_threshold = 0.3;
-        config.max_escalation_count = 3;
+        let config = SessionAnalyzerConfig {
+            escalation_threshold: 0.3,
+            max_escalation_count: 3,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         // 5 turns with steadily increasing risk (each +0.4 delta)
@@ -640,9 +642,11 @@ mod tests {
 
     #[test]
     fn escalation_count_below_threshold_does_not_alert() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.max_escalation_count = 3;
-        config.escalation_threshold = 0.3;
+        let config = SessionAnalyzerConfig {
+            max_escalation_count: 3,
+            escalation_threshold: 0.3,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         // Only 2 escalation steps -- below the threshold of >3
@@ -668,8 +672,10 @@ mod tests {
 
     #[test]
     fn cumulative_risk_exceeded_alert_fires() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.cumulative_risk_threshold = 1.0;
+        let config = SessionAnalyzerConfig {
+            cumulative_risk_threshold: 1.0,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "a", None, 0.6, vec![]);
@@ -685,8 +691,10 @@ mod tests {
 
     #[test]
     fn cumulative_risk_below_threshold_no_alert() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.cumulative_risk_threshold = 5.0;
+        let config = SessionAnalyzerConfig {
+            cumulative_risk_threshold: 5.0,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "a", None, 0.1, vec![]);
@@ -789,8 +797,10 @@ mod tests {
 
     #[test]
     fn topic_shift_detected_on_abrupt_change_with_risk() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.topic_shift_sensitivity = 0.5;
+        let config = SessionAnalyzerConfig {
+            topic_shift_sensitivity: 0.5,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event(
@@ -829,8 +839,10 @@ mod tests {
 
     #[test]
     fn no_topic_shift_when_risk_is_zero() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.topic_shift_sensitivity = 0.3;
+        let config = SessionAnalyzerConfig {
+            topic_shift_sensitivity: 0.3,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event(
@@ -856,9 +868,10 @@ mod tests {
 
     #[test]
     fn cleanup_removes_expired_sessions() {
-        let mut config = SessionAnalyzerConfig::default();
-        // Use a zero-duration age so everything expires immediately.
-        config.max_session_age = Duration::from_nanos(0);
+        let config = SessionAnalyzerConfig {
+            max_session_age: Duration::from_nanos(0),
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "hi", None, 0.0, vec![]);
@@ -874,8 +887,10 @@ mod tests {
 
     #[test]
     fn cleanup_keeps_active_sessions() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.max_session_age = Duration::from_secs(3600);
+        let config = SessionAnalyzerConfig {
+            max_session_age: Duration::from_secs(3600),
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "hi", None, 0.0, vec![]);
@@ -888,8 +903,10 @@ mod tests {
 
     #[test]
     fn max_events_enforced() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.max_events_per_session = 3;
+        let config = SessionAnalyzerConfig {
+            max_events_per_session: 3,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "a", None, 0.0, vec![]);
@@ -927,9 +944,11 @@ mod tests {
 
     #[test]
     fn to_security_findings_generates_escalation_finding() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.max_escalation_count = 1;
-        config.escalation_threshold = 0.2;
+        let config = SessionAnalyzerConfig {
+            max_escalation_count: 1,
+            escalation_threshold: 0.2,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "a", None, 0.0, vec![]);
@@ -962,8 +981,10 @@ mod tests {
 
     #[test]
     fn to_security_findings_generates_topic_shift_finding() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.topic_shift_sensitivity = 0.5;
+        let config = SessionAnalyzerConfig {
+            topic_shift_sensitivity: 0.5,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event(
@@ -992,8 +1013,10 @@ mod tests {
 
     #[test]
     fn to_security_findings_generates_cumulative_risk_finding() {
-        let mut config = SessionAnalyzerConfig::default();
-        config.cumulative_risk_threshold = 1.0;
+        let config = SessionAnalyzerConfig {
+            cumulative_risk_threshold: 1.0,
+            ..Default::default()
+        };
         let mut analyzer = SessionAnalyzer::new(config);
 
         analyzer.record_event("s1", "a", None, 0.6, vec![]);

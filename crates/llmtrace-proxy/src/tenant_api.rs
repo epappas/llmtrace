@@ -554,7 +554,7 @@ mod tests {
         state.metadata().create_tenant(&tenant).await.unwrap();
 
         let app = tenant_router(state);
-        let req = Request::get(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::get(format!("/api/v1/tenants/{}", tenant.id.0))
             .body(Body::empty())
             .unwrap();
 
@@ -570,7 +570,7 @@ mod tests {
         let state = test_state().await;
         let app = tenant_router(state);
 
-        let req = Request::get(&format!("/api/v1/tenants/{}", Uuid::new_v4()))
+        let req = Request::get(format!("/api/v1/tenants/{}", Uuid::new_v4()))
             .body(Body::empty())
             .unwrap();
 
@@ -594,7 +594,7 @@ mod tests {
 
         let app = tenant_router(state);
         let body = serde_json::json!({ "name": "New Name" });
-        let req = Request::put(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::put(format!("/api/v1/tenants/{}", tenant.id.0))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
@@ -624,7 +624,7 @@ mod tests {
             "plan": "enterprise",
             "config": { "rate_limit": 1000 }
         });
-        let req = Request::put(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::put(format!("/api/v1/tenants/{}", tenant.id.0))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
@@ -644,7 +644,7 @@ mod tests {
         let app = tenant_router(state);
 
         let body = serde_json::json!({ "name": "Ghost" });
-        let req = Request::put(&format!("/api/v1/tenants/{}", Uuid::new_v4()))
+        let req = Request::put(format!("/api/v1/tenants/{}", Uuid::new_v4()))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
@@ -668,7 +668,7 @@ mod tests {
         state.metadata().create_tenant(&tenant).await.unwrap();
 
         let app = tenant_router(Arc::clone(&state));
-        let req = Request::delete(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::delete(format!("/api/v1/tenants/{}", tenant.id.0))
             .body(Body::empty())
             .unwrap();
 
@@ -685,7 +685,7 @@ mod tests {
         let state = test_state().await;
         let app = tenant_router(state);
 
-        let req = Request::delete(&format!("/api/v1/tenants/{}", Uuid::new_v4()))
+        let req = Request::delete(format!("/api/v1/tenants/{}", Uuid::new_v4()))
             .body(Body::empty())
             .unwrap();
 
@@ -736,7 +736,7 @@ mod tests {
 
         let app = tenant_router(Arc::clone(&state));
         let body = serde_json::json!({ "name": "After Update" });
-        let req = Request::put(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::put(format!("/api/v1/tenants/{}", tenant.id.0))
             .header("content-type", "application/json")
             .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
@@ -767,7 +767,7 @@ mod tests {
         state.metadata().create_tenant(&tenant).await.unwrap();
 
         let app = tenant_router(Arc::clone(&state));
-        let req = Request::delete(&format!("/api/v1/tenants/{}", tenant.id.0))
+        let req = Request::delete(format!("/api/v1/tenants/{}", tenant.id.0))
             .body(Body::empty())
             .unwrap();
 

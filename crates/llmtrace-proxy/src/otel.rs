@@ -1152,10 +1152,10 @@ mod tests {
         let v = OtlpJsonAnyValue {
             string_value: None,
             int_value: None,
-            double_value: Some(3.14),
+            double_value: Some(std::f64::consts::PI),
             bool_value: None,
         };
-        assert_eq!(any_value_as_string(&v), Some("3.14".to_string()));
+        assert_eq!(any_value_as_string(&v), Some(std::f64::consts::PI.to_string()));
 
         let v = OtlpJsonAnyValue {
             string_value: None,
@@ -1331,8 +1331,8 @@ mod tests {
             Some(&"test-service".to_string())
         );
         // gen_ai attributes should NOT be in tags
-        assert!(parsed.tags.get("gen_ai.system").is_none());
-        assert!(parsed.tags.get("gen_ai.request.model").is_none());
+        assert!(!parsed.tags.contains_key("gen_ai.system"));
+        assert!(!parsed.tags.contains_key("gen_ai.request.model"));
     }
 
     #[test]
