@@ -104,13 +104,17 @@ jobs:
       - name: Generate HTML report
         run: cargo llvm-cov --workspace --html
       - name: Upload coverage to Codecov
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+      - name: Skip Codecov upload (no token)
+        if: ${{ secrets.CODECOV_TOKEN == '' }}
+        run: echo "Skipping Codecov upload because secrets.CODECOV_TOKEN is not set. Coverage artifacts will still be uploaded."
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -233,6 +237,25 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8081
         run: |
+          # `compose.yaml` binds `./config.yaml` into the proxy container. Ensure the
+          # file exists in CI to avoid Docker interpreting it as a directory.
+          cat > config.yaml <<'YAML'
+          listen_addr: "0.0.0.0:8081"
+          upstream_url: "http://example.com"
+
+          storage:
+            profile: "production"
+            auto_migrate: true
+            clickhouse_url: "http://clickhouse:8123"
+            clickhouse_database: "llmtrace"
+            postgres_url: "postgres://llmtrace:llmtrace@postgres:5432/llmtrace"
+            redis_url: "redis://redis:6379"
+
+          logging:
+            level: "info"
+            format: "text"
+          YAML
+
           # Use local build for proxy and dashboard
           docker compose build
           docker compose up -d
