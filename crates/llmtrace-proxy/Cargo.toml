@@ -41,6 +41,7 @@ hex = "0.4"
 sha2 = "0.10"
 rand = "0.8"
 axum = "0.7"
+tower-http = { version = "0.6", features = ["cors"] }
 hyper = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde_yaml = "0.9"

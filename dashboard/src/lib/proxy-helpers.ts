@@ -10,9 +10,12 @@ export async function proxyGet(
   req: NextRequest,
   backendPath: string,
 ): Promise<NextResponse> {
+  console.log(`[Proxy] GET request to ${backendPath}. BACKEND_URL is ${BACKEND_URL}`);
   const url = new URL(backendPath, BACKEND_URL);
   // Forward query params
   req.nextUrl.searchParams.forEach((v, k) => url.searchParams.set(k, v));
+  
+  console.log(`[Proxy] Fetching from upstream: ${url.toString()}`);
 
   const headers: Record<string, string> = {};
   const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
@@ -27,7 +30,8 @@ export async function proxyGet(
       status: res.status,
       headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
     });
-  } catch {
+  } catch (e) {
+    console.error("Proxy error:", e);
     return NextResponse.json(
       { error: { message: "Backend unavailable", type: "proxy_error" } },
       { status: 502 },
@@ -67,7 +71,8 @@ export async function proxyMutate(
       status: res.status,
       headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
     });
-  } catch {
+  } catch (e) {
+    console.error("Proxy error:", e);
     return NextResponse.json(
       { error: { message: "Backend unavailable", type: "proxy_error" } },
       { status: 502 },

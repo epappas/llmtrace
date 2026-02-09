@@ -18,7 +18,13 @@ import { StatCard } from "@/components/stat-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable } from "@/components/data-table";
-import type { TraceSpan, PaginatedResponse } from "@/lib/api";
+import {
+  type TraceSpan,
+  type PaginatedResponse,
+  listSecurityFindings,
+  listTenants,
+  findActiveTenant,
+} from "@/lib/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
   Critical: "#dc2626",
@@ -35,8 +41,9 @@ export default function SecurityPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch("/api/proxy/security/findings?limit=100");
-        setFindings(await res.json());
+        const tenantId = await findActiveTenant();
+        const data = await listSecurityFindings({ limit: 100 }, tenantId);
+        setFindings(data);
       } catch {
         /* ignore */
       } finally {

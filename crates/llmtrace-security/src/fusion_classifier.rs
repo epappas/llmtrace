@@ -345,8 +345,7 @@ mod tests {
             lr: 0.1,
             ..Default::default()
         };
-        let mut opt =
-            candle_nn::AdamW::new(varmap.all_vars(), params).unwrap();
+        let mut opt = candle_nn::AdamW::new(varmap.all_vars(), params).unwrap();
         opt.backward_step(&loss).unwrap();
 
         // After the step, the loss on the same input must have changed,

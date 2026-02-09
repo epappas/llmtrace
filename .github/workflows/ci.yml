@@ -77,6 +77,8 @@ jobs:
     name: Coverage (llvm-cov)
     runs-on: ubuntu-latest
     needs: test
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -103,14 +105,101 @@ jobs:
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       - name: Generate HTML report
         run: cargo llvm-cov --workspace --html
+      - name: Write Coverage Summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          html_index = Path("target/llvm-cov/html/index.html")
+
+          def write(msg: str) -> None:
+              # Append (don't clobber other summaries in the same job).
+              with summary_path.open("a", encoding="utf-8") as f:
+                  f.write(msg)
+
+          def fmt_row(label: str, pct: str, frac: str) -> str:
+              return f"| {label} | {pct} | {frac} |"
+
+          if not html_index.exists():
+              write("## Coverage (llvm-cov)\n\nNo HTML report found.\n")
+              raise SystemExit(0)
+
+          try:
+              html = html_index.read_text(encoding="utf-8", errors="ignore")
+              m = re.search(
+                  r"<tr class='light-row-bold'>.*?<pre>Totals</pre>.*?</tr>",
+                  html,
+                  flags=re.S,
+              )
+              if not m:
+                  write("## Coverage (llvm-cov)\n\nFailed to locate totals row in HTML report.\n")
+                  raise SystemExit(0)
+
+              row = m.group(0)
+              cells = re.findall(r"<pre>\\s*([^<]+?)\\s*</pre>", row)
+              # Typically: ["Totals", func, line, region, branch]. Some llvm-cov HTML
+              # builds omit branch totals, so handle 3-metric totals rows too.
+              metrics = (cells[1:] + ["?"] * 4)[:4]
+              func, line, region, branch = metrics
+
+              created = ""
+              m2 = re.search(r"Created:\\s*([^<]+)</h4>", html)
+              if m2:
+                  created = m2.group(1).strip()
+          except SystemExit:
+              raise
+          except Exception as e:
+              # Never fail the coverage job because the summary parser broke.
+              write(f"## Coverage (llvm-cov)\n\nFailed to parse coverage HTML summary: `{e}`\n")
+              write(
+                  "\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n"
+              )
+              raise SystemExit(0)
+
+          def split_metric(s: str):
+              s = s.strip()
+              m = re.match(r"([0-9]+\\.[0-9]+%)\\s*\\(([^)]+)\\)", s)
+              if not m:
+                  return s, ""
+              return m.group(1), m.group(2)
+          
+          func_pct, func_frac = split_metric(func)
+          line_pct, line_frac = split_metric(line)
+          region_pct, region_frac = split_metric(region)
+          branch_pct, branch_frac = split_metric(branch)
+          
+          parts = []
+          parts.append("## Coverage (llvm-cov)\n")
+          if created:
+            parts.append(f"_Report created: {created}_\n\n")
+          parts.append("| Metric | % | Covered/Total |\n")
+          parts.append("|---|---:|---:|\n")
+          parts.append(fmt_row("Function", func_pct, func_frac) + "\n")
+          parts.append(fmt_row("Line", line_pct, line_frac) + "\n")
+          parts.append(fmt_row("Region", region_pct, region_frac) + "\n")
+          parts.append(fmt_row("Branch", branch_pct, branch_frac if branch_frac else "") + "\n")
+          parts.append(
+              "\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n"
+          )
+
+          write("".join(parts))
+          PY
       - name: Upload coverage to Codecov
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
+      - name: Skip Codecov upload (no token)
+        if: ${{ env.CODECOV_TOKEN == '' }}
+        run: echo "Skipping Codecov upload because secrets.CODECOV_TOKEN is not set. Coverage artifacts will still be uploaded."
       - name: Upload coverage artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -209,6 +298,205 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: integration
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install Playwright
+        run: |
+          cd dashboard
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Build and Start Stack
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8081
+        run: |
+          # `compose.yaml` binds `./config.yaml` into the proxy container. Ensure the
+          # file exists in CI to avoid Docker interpreting it as a directory.
+          cat > config.yaml <<'YAML'
+          listen_addr: "0.0.0.0:8081"
+          upstream_url: "http://example.com"
+          timeout_ms: 30000
+          connection_timeout_ms: 5000
+          max_connections: 1000
+          enable_tls: false
+          enable_security_analysis: true
+          enable_trace_storage: true
+          enable_streaming: true
+          max_request_size_bytes: 52428800
+          security_analysis_timeout_ms: 5000
+          trace_storage_timeout_ms: 10000
+
+          rate_limiting:
+            enabled: true
+            requests_per_second: 100
+            burst_size: 200
+            window_seconds: 60
+
+          circuit_breaker:
+            enabled: true
+            failure_threshold: 10
+            recovery_timeout_ms: 30000
+            half_open_max_calls: 3
+
+          health_check:
+            enabled: true
+            path: "/health"
+            interval_seconds: 10
+            timeout_ms: 5000
+            retries: 3
+
+          storage:
+            profile: "production"
+            auto_migrate: true
+            clickhouse_url: "http://clickhouse:8123"
+            clickhouse_database: "llmtrace"
+            postgres_url: "postgres://llmtrace:llmtrace@postgres:5432/llmtrace"
+            redis_url: "redis://redis:6379"
+
+          logging:
+            level: "info"
+            format: "text"
+          YAML
+
+          # Use local build for proxy and dashboard
+          docker compose build
+          docker compose up -d
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for Proxy..."
+          proxy_ready=0
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8081/health >/dev/null 2>&1; then
+              echo "Proxy ready after ${i}s"
+              proxy_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$proxy_ready" -ne 1 ]; then
+            echo "Proxy did not become ready in time"
+            docker compose ps
+            docker compose logs llmtrace-proxy || true
+            exit 1
+          fi
+          echo "Waiting for Dashboard..."
+          dashboard_ready=0
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+              echo "Dashboard ready after ${i}s"
+              dashboard_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$dashboard_ready" -ne 1 ]; then
+            echo "Dashboard did not become ready in time"
+            docker compose ps
+            docker compose logs dashboard || true
+            exit 1
+          fi
+          echo "Stack is up."
+
+      - name: Run E2E Tests
+        env:
+          LLMTRACE_PROXY_URL: http://127.0.0.1:8081
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+        run: |
+          cd dashboard
+          # Ensure `playwright-results.json` is valid JSON (don't mix reporter output).
+          npx playwright test --reporter=json > ../playwright-results.json
+
+      - name: Write E2E Summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          report = Path("playwright-results.json")
+
+          def write(msg: str) -> None:
+              with summary_path.open("a", encoding="utf-8") as f:
+                  f.write(msg)
+
+          if not report.exists():
+              write("## E2E (Playwright)\n\nNo `playwright-results.json` found.\n")
+              raise SystemExit(0)
+
+          try:
+              data = json.loads(report.read_text(encoding="utf-8", errors="ignore") or "{}")
+          except Exception as e:
+              # Never fail the E2E job due to summary parsing.
+              write("## E2E (Playwright)\n\n")
+              write(f"Failed to parse `playwright-results.json`: `{e}`\n")
+              write("\nArtifacts: `playwright-report` contains raw Playwright outputs.\n")
+              raise SystemExit(0)
+          
+          def walk(obj):
+            if isinstance(obj, dict):
+              yield obj
+              for v in obj.values():
+                yield from walk(v)
+            elif isinstance(obj, list):
+              for it in obj:
+                yield from walk(it)
+          
+          # Count test outcomes by scanning all dicts with a `status` key.
+          counts = {"passed": 0, "failed": 0, "skipped": 0, "timedOut": 0, "interrupted": 0, "flaky": 0}
+          for o in walk(data):
+            status = o.get("status")
+            if status in counts:
+              counts[status] += 1
+          
+          total = sum(counts.values())
+          duration_ms = data.get("stats", {}).get("duration")
+          duration = f"{duration_ms/1000:.1f}s" if isinstance(duration_ms, (int, float)) else ""
+          
+          lines = []
+          lines.append("## E2E (Playwright)\\n\\n")
+          if duration:
+            lines.append(f"_Duration: {duration}_\\n\\n")
+          lines.append("| Outcome | Count |\\n")
+          lines.append("|---|---:|\\n")
+          for k in ["passed", "failed", "skipped", "flaky", "timedOut", "interrupted"]:
+            lines.append(f"| {k} | {counts[k]} |\\n")
+          lines.append(f"| total | {total} |\\n")
+          lines.append("\\nArtifacts: `playwright-report`.\\n")
+          
+          with summary_path.open("a", encoding="utf-8") as f:
+            f.write("".join(lines))
+          PY
+
+      - name: Upload Playwright Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-results.json
+            dashboard/test-results/
+            dashboard/playwright-report/
+          retention-days: 30
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
+
   benchmarks:
     name: Benchmarks
     runs-on: ubuntu-latest
@@ -296,7 +584,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: llmtrace-proxy:scan
           format: sarif
@@ -305,7 +593,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-results.sarif

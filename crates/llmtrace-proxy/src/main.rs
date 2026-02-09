@@ -21,6 +21,7 @@ use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 // ---------------------------------------------------------------------------
@@ -400,9 +401,28 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 async fn build_security_analyzer(
     config: &ProxyConfig,
 ) -> anyhow::Result<(Arc<dyn SecurityAnalyzer>, MlModelStatus)> {
+    // Optional runtime overrides (useful for local stacks and CI).
+    // These do not modify the loaded config; they only affect analyzer wiring.
+    let mut ml_enabled = config.security_analysis.ml_enabled;
+    let mut ml_preload = config.security_analysis.ml_preload;
+    if let Ok(v) = std::env::var("LLMTRACE_ML_ENABLED") {
+        let v = v.to_lowercase();
+        ml_enabled = !(v == "0" || v == "false" || v == "no");
+        if !ml_enabled {
+            tracing::info!("LLMTRACE_ML_ENABLED disabled ML security analysis");
+        }
+    }
+    if let Ok(v) = std::env::var("LLMTRACE_ML_PRELOAD") {
+        let v = v.to_lowercase();
+        ml_preload = !(v == "0" || v == "false" || v == "no");
+        if !ml_preload {
+            tracing::info!("LLMTRACE_ML_PRELOAD disabled ML model preloading");
+        }
+    }
+
     #[cfg(feature = "ml")]
     {
-        if config.security_analysis.ml_enabled && config.security_analysis.ml_preload {
+        if ml_enabled && ml_preload {
             info!("Pre-loading ML models at startup (ml_preload=true)");
             let load_start = std::time::Instant::now();
 
@@ -484,7 +504,7 @@ async fn build_security_analyzer(
                     ))
                 }
             }
-        } else if config.security_analysis.ml_enabled {
+        } else if ml_enabled {
             // ML enabled but preload disabled — will load on first request
             info!("ML enabled but ml_preload=false — models will load on first request");
             let regex = RegexSecurityAnalyzer::new()
@@ -517,6 +537,11 @@ async fn build_security_analyzer(
 
 /// Build the axum [`Router`] with all routes.
 fn build_router(state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(health_handler))
         .route("/metrics", get(llmtrace_proxy::metrics::metrics_handler))
@@ -596,6 +621,7 @@ fn build_router(state: Arc<AppState>) -> Router {
             Arc::clone(&state),
             llmtrace_proxy::auth::auth_middleware,
         ))
+        .layer(cors)
         .with_state(state)
 }
 

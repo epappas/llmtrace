@@ -203,13 +203,18 @@ pub async fn proxy_handler(
     let path = uri.path().to_string();
     let query = uri.query().map(|q| q.to_string());
     let headers = req.headers().clone();
-    let tenant_id = resolve_tenant(&headers);
+
+    // Use authenticated tenant if available, otherwise fall back to header resolution
+    let (tenant_id, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
+
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
     // Auto-create tenant on first request (best-effort, non-blocking).
-    {
+    // Only auto-create if an API key was used, or if a specific tenant header was provided.
+    // This prevents random scanner traffic from creating junk tenants.
+    if _api_key.is_some() || headers.contains_key("x-llmtrace-tenant-id") {
         let state_ac = Arc::clone(&state);
         let api_key_prefix = _api_key
             .as_deref()

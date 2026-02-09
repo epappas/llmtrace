@@ -3,21 +3,24 @@ import { proxyGet, proxyMutate } from "@/lib/proxy-helpers";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  return proxyGet(req, `/api/v1/tenants/${params.id}`);
+  const { id } = await params;
+  return proxyGet(req, `/api/v1/tenants/${id}`);
 }
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  return proxyMutate(req, `/api/v1/tenants/${params.id}`, "PUT");
+  const { id } = await params;
+  return proxyMutate(req, `/api/v1/tenants/${id}`, "PUT");
 }
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  return proxyMutate(req, `/api/v1/tenants/${params.id}`, "DELETE");
+  const { id } = await params;
+  return proxyMutate(req, `/api/v1/tenants/${id}`, "DELETE");
 }
