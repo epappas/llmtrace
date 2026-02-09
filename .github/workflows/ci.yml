@@ -112,40 +112,60 @@ jobs:
           import os
           import re
           from pathlib import Path
-          
+
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           html_index = Path("target/llvm-cov/html/index.html")
-          lcov = Path("lcov.info")
-          
+
+          def write(msg: str) -> None:
+              # Append (don't clobber other summaries in the same job).
+              with summary_path.open("a", encoding="utf-8") as f:
+                  f.write(msg)
+
           def fmt_row(label: str, pct: str, frac: str) -> str:
-            return f"| {label} | {pct} | {frac} |"
-          
+              return f"| {label} | {pct} | {frac} |"
+
           if not html_index.exists():
-            summary_path.write_text("## Coverage (llvm-cov)\n\nNo HTML report found.\n")
-            raise SystemExit(0)
-          
-          html = html_index.read_text(encoding="utf-8", errors="ignore")
-          m = re.search(r"<tr class='light-row-bold'>.*?<pre>Totals</pre>.*?</tr>", html, flags=re.S)
-          if not m:
-            summary_path.write_text("## Coverage (llvm-cov)\n\nFailed to locate totals row in HTML report.\n")
-            raise SystemExit(0)
-          
-          row = m.group(0)
-          cells = re.findall(r"<pre>\\s*([^<]+?)\\s*</pre>", row)
-          # cells = ["Totals", func, line, region, branch]
-          func, line, region, branch = (cells + ["?", "?", "?", "?"])[1:5]
-          
-          created = ""
-          m2 = re.search(r"Created:\\s*([^<]+)</h4>", html)
-          if m2:
-            created = m2.group(1).strip()
-          
+              write("## Coverage (llvm-cov)\n\nNo HTML report found.\n")
+              raise SystemExit(0)
+
+          try:
+              html = html_index.read_text(encoding="utf-8", errors="ignore")
+              m = re.search(
+                  r"<tr class='light-row-bold'>.*?<pre>Totals</pre>.*?</tr>",
+                  html,
+                  flags=re.S,
+              )
+              if not m:
+                  write("## Coverage (llvm-cov)\n\nFailed to locate totals row in HTML report.\n")
+                  raise SystemExit(0)
+
+              row = m.group(0)
+              cells = re.findall(r"<pre>\\s*([^<]+?)\\s*</pre>", row)
+              # Typically: ["Totals", func, line, region, branch]. Some llvm-cov HTML
+              # builds omit branch totals, so handle 3-metric totals rows too.
+              metrics = (cells[1:] + ["?"] * 4)[:4]
+              func, line, region, branch = metrics
+
+              created = ""
+              m2 = re.search(r"Created:\\s*([^<]+)</h4>", html)
+              if m2:
+                  created = m2.group(1).strip()
+          except SystemExit:
+              raise
+          except Exception as e:
+              # Never fail the coverage job because the summary parser broke.
+              write(f"## Coverage (llvm-cov)\n\nFailed to parse coverage HTML summary: `{e}`\n")
+              write(
+                  "\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n"
+              )
+              raise SystemExit(0)
+
           def split_metric(s: str):
-            s = s.strip()
-            m = re.match(r"([0-9]+\\.[0-9]+%)\\s*\\(([^)]+)\\)", s)
-            if not m:
-              return s, ""
-            return m.group(1), m.group(2)
+              s = s.strip()
+              m = re.match(r"([0-9]+\\.[0-9]+%)\\s*\\(([^)]+)\\)", s)
+              if not m:
+                  return s, ""
+              return m.group(1), m.group(2)
           
           func_pct, func_frac = split_metric(func)
           line_pct, line_frac = split_metric(line)
@@ -161,15 +181,12 @@ jobs:
           parts.append(fmt_row("Function", func_pct, func_frac) + "\n")
           parts.append(fmt_row("Line", line_pct, line_frac) + "\n")
           parts.append(fmt_row("Region", region_pct, region_frac) + "\n")
-          if branch_frac:
-            parts.append(fmt_row("Branch", branch_pct, branch_frac) + "\n")
-          else:
-            parts.append(fmt_row("Branch", branch_pct, "") + "\n")
-          parts.append("\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n")
-          
-          # Append (don't clobber other summaries in the same job).
-          with summary_path.open("a", encoding="utf-8") as f:
-            f.write("".join(parts))
+          parts.append(fmt_row("Branch", branch_pct, branch_frac if branch_frac else "") + "\n")
+          parts.append(
+              "\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n"
+          )
+
+          write("".join(parts))
           PY
       - name: Upload coverage to Codecov
         # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
@@ -399,8 +416,8 @@ jobs:
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
         run: |
           cd dashboard
-          # Write JSON results for a human-readable summary even if tests fail.
-          npx playwright test --reporter=json,line > ../playwright-results.json
+          # Ensure `playwright-results.json` is valid JSON (don't mix reporter output).
+          npx playwright test --reporter=json > ../playwright-results.json
 
       - name: Write E2E Summary
         if: always()
@@ -409,16 +426,26 @@ jobs:
           import json
           import os
           from pathlib import Path
-          
+
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           report = Path("playwright-results.json")
-          
+
+          def write(msg: str) -> None:
+              with summary_path.open("a", encoding="utf-8") as f:
+                  f.write(msg)
+
           if not report.exists():
-            with summary_path.open("a", encoding="utf-8") as f:
-              f.write("## E2E (Playwright)\\n\\nNo `playwright-results.json` found.\\n")
-            raise SystemExit(0)
-          
-          data = json.loads(report.read_text(encoding="utf-8", errors="ignore") or "{}")
+              write("## E2E (Playwright)\n\nNo `playwright-results.json` found.\n")
+              raise SystemExit(0)
+
+          try:
+              data = json.loads(report.read_text(encoding="utf-8", errors="ignore") or "{}")
+          except Exception as e:
+              # Never fail the E2E job due to summary parsing.
+              write("## E2E (Playwright)\n\n")
+              write(f"Failed to parse `playwright-results.json`: `{e}`\n")
+              write("\nArtifacts: `playwright-report` contains raw Playwright outputs.\n")
+              raise SystemExit(0)
           
           def walk(obj):
             if isinstance(obj, dict):
@@ -460,7 +487,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: dashboard/playwright-report/
+          path: |
+            playwright-results.json
+            dashboard/test-results/
+            dashboard/playwright-report/
           retention-days: 30
 
       - name: Stop stack
