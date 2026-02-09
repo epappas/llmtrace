@@ -110,19 +110,30 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("jailbreak_samples.json"))
     }
 
-    /// Load the SafeGuard external evaluation dataset (EV-011).
+    /// Load the SafeGuard external evaluation dataset (EV-011, test split).
+    /// The test split is already entirely English, so no v2 filtered variant exists.
     pub fn load_safeguard_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/safeguard_test.json"))
     }
 
-    /// Load the Deepset external evaluation dataset (EV-012).
+    /// Load the Deepset external evaluation dataset (EV-012, v1: all languages).
     pub fn load_deepset_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/deepset_all.json"))
     }
 
-    /// Load the IvanLeoMK external evaluation dataset (EV-013).
+    /// Load the Deepset v2 dataset (EV-012, English-only, 355 samples).
+    pub fn load_deepset_v2_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/deepset_v2.json"))
+    }
+
+    /// Load the IvanLeoMK external evaluation dataset (EV-013, v1: all languages).
     pub fn load_ivanleomk_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/ivanleomk_all.json"))
+    }
+
+    /// Load the IvanLeoMK v2 dataset (EV-013, English-only, 610 samples).
+    pub fn load_ivanleomk_v2_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/ivanleomk_v2.json"))
     }
 
     /// Load the CyberSecEval 2 prompt injection dataset (EV-006).
@@ -153,6 +164,11 @@ impl DatasetLoader {
     /// Load the BIPIA indirect prompt injection dataset (EV-014).
     pub fn load_bipia_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/bipia_indirect.json"))
+    }
+
+    /// Load the curated training dataset (ML-014).
+    pub fn load_training_dataset(path: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(path)
     }
 
     /// Load all datasets and combine them into a single vector.
@@ -200,6 +216,42 @@ impl DatasetLoader {
             .filter(|s| s.difficulty == Some(difficulty))
             .collect()
     }
+}
+
+/// Statistics for a training dataset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrainingDatasetStats {
+    pub total: usize,
+    pub benign: usize,
+    pub malicious: usize,
+}
+
+/// Validate training dataset: non-empty, has both classes, returns stats.
+pub fn validate_training_dataset(
+    samples: &[BenchmarkSample],
+) -> Result<TrainingDatasetStats, String> {
+    if samples.is_empty() {
+        return Err("Training dataset is empty".to_string());
+    }
+
+    let benign = samples.iter().filter(|s| s.label == Label::Benign).count();
+    let malicious = samples
+        .iter()
+        .filter(|s| s.label == Label::Malicious)
+        .count();
+
+    if benign == 0 {
+        return Err("Training dataset has no benign samples".to_string());
+    }
+    if malicious == 0 {
+        return Err("Training dataset has no malicious samples".to_string());
+    }
+
+    Ok(TrainingDatasetStats {
+        total: samples.len(),
+        benign,
+        malicious,
+    })
 }
 
 /// Validate NotInject dataset size, labels, and difficulty-tier distribution.

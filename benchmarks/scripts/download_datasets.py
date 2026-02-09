@@ -26,6 +26,21 @@ from pathlib import Path
 
 from datasets import load_dataset, concatenate_datasets
 
+# Pinned commit SHAs for reproducibility (fetched 2026-02-08).
+_COMMITS = {
+    # GitHub repos
+    "PurpleLlama": "31a82e49871c6457c9dfa559f69b7f811666aa30",
+    "HarmBench": "8e1604d1171fe8a48d8febecd22f600e462bdcdd",
+    "ailuminate": "769cc2be9d20c8d4fb26ce53b68865ed41dfb8e2",
+    "InjecAgent": "f19c9f2c79a41046eb13c03c51a24c567a8ffa07",
+    "ASB": "eac7bcf38c116f42b46e6d480e56e599b99e73c2",
+    "BIPIA": "a004b69ec0dd446e0afd461d98cb5e96e120a5d0",
+    # HuggingFace datasets
+    "safeguard_hf": "a3a877d608f37b7d20d9945671902df895ecdb46",
+    "deepset_hf": "4f61ecb038e9c3fb77e21034b22511b523772cdd",
+    "ivanleomk_hf": "07858746d34ad8c6a5dad1d94b02ba75aec844e5",
+}
+
 
 def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
     return {
@@ -37,56 +52,59 @@ def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
     }
 
 
-def download_safeguard(output_dir: Path) -> None:
-    ds = load_dataset("xTRam1/safe-guard-prompt-injection", split="test")
+def _download_hf_dataset(
+    output_dir: Path,
+    hf_name: str,
+    splits: list[str],
+    source_label: str,
+    output_filename: str,
+    commit_key: str,
+) -> None:
+    """Download a HuggingFace dataset, convert to BenchmarkSample JSON, and write."""
+    datasets_list = [
+        load_dataset(hf_name, split=s, revision=_COMMITS[commit_key])
+        for s in splits
+    ]
+    ds = concatenate_datasets(datasets_list) if len(datasets_list) > 1 else datasets_list[0]
     samples = [
-        convert_sample(i, row["text"], row["label"], "safeguard")
+        convert_sample(i, row["text"], row["label"], source_label)
         for i, row in enumerate(ds)
     ]
-    path = output_dir / "safeguard_test.json"
+    path = output_dir / output_filename
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
 
     benign = sum(1 for s in samples if s["label"] == "benign")
     malicious = len(samples) - benign
-    print(f"safeguard_test.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+    print(f"{output_filename}: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+
+
+def download_safeguard(output_dir: Path) -> None:
+    _download_hf_dataset(
+        output_dir, "xTRam1/safe-guard-prompt-injection",
+        ["test"], "safeguard", "safeguard_test.json", "safeguard_hf",
+    )
 
 
 def download_deepset(output_dir: Path) -> None:
-    ds_train = load_dataset("deepset/prompt-injections", split="train")
-    ds_test = load_dataset("deepset/prompt-injections", split="test")
-    ds = concatenate_datasets([ds_train, ds_test])
-    samples = [
-        convert_sample(i, row["text"], row["label"], "deepset")
-        for i, row in enumerate(ds)
-    ]
-    path = output_dir / "deepset_all.json"
-    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
-
-    benign = sum(1 for s in samples if s["label"] == "benign")
-    malicious = len(samples) - benign
-    print(f"deepset_all.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+    _download_hf_dataset(
+        output_dir, "deepset/prompt-injections",
+        ["train", "test"], "deepset", "deepset_all.json", "deepset_hf",
+    )
 
 
 def download_ivanleomk(output_dir: Path) -> None:
-    ds = load_dataset("ivanleomk/prompt_injection_password", split="train")
-    samples = [
-        convert_sample(i, row["text"], row["label"], "ivanleomk")
-        for i, row in enumerate(ds)
-    ]
-    path = output_dir / "ivanleomk_all.json"
-    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
-
-    benign = sum(1 for s in samples if s["label"] == "benign")
-    malicious = len(samples) - benign
-    print(f"ivanleomk_all.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+    _download_hf_dataset(
+        output_dir, "ivanleomk/prompt_injection_password",
+        ["train"], "ivanleomk", "ivanleomk_all.json", "ivanleomk_hf",
+    )
 
 
 def download_cyberseceval2(output_dir: Path) -> None:
     url = (
         "https://raw.githubusercontent.com/meta-llama/PurpleLlama/"
-        "main/CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json"
+        f"{_COMMITS['PurpleLlama']}/CybersecurityBenchmarks/datasets/prompt_injection/prompt_injection.json"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         raw = json.loads(resp.read().decode("utf-8"))
 
     samples = []
@@ -109,9 +127,9 @@ def download_harmbench(output_dir: Path) -> None:
     """EV-015: HarmBench harmful behaviors (CSV from centerforaisafety/HarmBench)."""
     url = (
         "https://raw.githubusercontent.com/centerforaisafety/HarmBench/"
-        "main/data/behavior_datasets/harmbench_behaviors_text_all.csv"
+        f"{_COMMITS['HarmBench']}/data/behavior_datasets/harmbench_behaviors_text_all.csv"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         text = resp.read().decode("utf-8")
 
     reader = csv.DictReader(io.StringIO(text))
@@ -138,9 +156,9 @@ def download_ailuminate(output_dir: Path) -> None:
     """EV-007: MLCommons AILuminate demo prompts (CSV from mlcommons/ailuminate)."""
     url = (
         "https://raw.githubusercontent.com/mlcommons/ailuminate/"
-        "main/airr_official_1.0_demo_en_us_prompt_set_release.csv"
+        f"{_COMMITS['ailuminate']}/airr_official_1.0_demo_en_us_prompt_set_release.csv"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         text = resp.read().decode("utf-8")
 
     reader = csv.DictReader(io.StringIO(text))
@@ -166,7 +184,7 @@ def download_ailuminate(output_dir: Path) -> None:
 def download_injecagent(output_dir: Path) -> None:
     """EV-003: InjecAgent indirect prompt injection test cases."""
     base_url = (
-        "https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/main/data/"
+        f"https://raw.githubusercontent.com/uiuc-kang-lab/InjecAgent/{_COMMITS['InjecAgent']}/data/"
     )
     files = [
         "test_cases_dh_base.json",
@@ -179,7 +197,7 @@ def download_injecagent(output_dir: Path) -> None:
     idx = 0
     for fname in files:
         url = base_url + fname
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             cases = json.loads(resp.read().decode("utf-8"))
 
         variant = fname.replace("test_cases_", "").replace(".json", "")
@@ -206,9 +224,9 @@ def download_asb(output_dir: Path) -> None:
     """EV-004: Agent Security Bench attack tools (JSONL from agiresearch/ASB)."""
     url = (
         "https://raw.githubusercontent.com/agiresearch/ASB/"
-        "main/data/all_attack_tools.jsonl"
+        f"{_COMMITS['ASB']}/data/all_attack_tools.jsonl"
     )
-    with urllib.request.urlopen(url) as resp:
+    with urllib.request.urlopen(url, timeout=30) as resp:
         lines = resp.read().decode("utf-8").strip().split("\n")
 
     samples = []
@@ -239,12 +257,12 @@ def download_bipia(output_dir: Path) -> None:
     """
     random.seed(42)
 
-    base_url = "https://raw.githubusercontent.com/microsoft/BIPIA/main/benchmark/"
+    base_url = f"https://raw.githubusercontent.com/microsoft/BIPIA/{_COMMITS['BIPIA']}/benchmark/"
 
     contexts: list[dict] = []
     for task in ["email", "code", "table"]:
         url = base_url + f"{task}/test.jsonl"
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             lines = resp.read().decode("utf-8").strip().split("\n")
         for line in lines:
             entry = json.loads(line)
@@ -264,7 +282,7 @@ def download_bipia(output_dir: Path) -> None:
     attacks: list[dict] = []
     for attack_file in ["text_attack_test.json", "code_attack_test.json"]:
         url = base_url + attack_file
-        with urllib.request.urlopen(url) as resp:
+        with urllib.request.urlopen(url, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         for category, prompts in data.items():
             for prompt in prompts:
@@ -310,17 +328,33 @@ def main() -> None:
 
     print(f"Output directory: {output_dir}\n")
 
-    download_safeguard(output_dir)
-    download_deepset(output_dir)
-    download_ivanleomk(output_dir)
-    download_cyberseceval2(output_dir)
-    download_harmbench(output_dir)
-    download_ailuminate(output_dir)
-    download_injecagent(output_dir)
-    download_asb(output_dir)
-    download_bipia(output_dir)
+    downloaders: list[tuple[str, callable]] = [
+        ("SafeGuard", download_safeguard),
+        ("Deepset", download_deepset),
+        ("IvanLeoMK", download_ivanleomk),
+        ("CyberSecEval2", download_cyberseceval2),
+        ("HarmBench", download_harmbench),
+        ("AILuminate", download_ailuminate),
+        ("InjecAgent", download_injecagent),
+        ("ASB", download_asb),
+        ("BIPIA", download_bipia),
+    ]
 
-    print("\nDone.")
+    failures: list[str] = []
+    for name, fn in downloaders:
+        try:
+            fn(output_dir)
+        except Exception as e:
+            failures.append(f"{name}: {e}")
+            print(f"ERROR: {name} download failed: {e}", file=sys.stderr)
+
+    passed = len(downloaders) - len(failures)
+    print(f"\nDone: {passed}/{len(downloaders)} datasets downloaded successfully.")
+    if failures:
+        print(f"Failed ({len(failures)}):", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

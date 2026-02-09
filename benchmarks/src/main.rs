@@ -10,8 +10,8 @@
 //!   cargo run --bin benchmarks -- --suite standard --suite encoding
 
 use clap::Parser;
-use llmtrace_benchmarks::datasets::DatasetLoader;
-use llmtrace_benchmarks::metrics::tpr_at_fpr;
+use llmtrace_benchmarks::datasets::{BenchmarkSample, DatasetLoader};
+use llmtrace_benchmarks::metrics::{tpr_at_fpr, BenchmarkMetrics};
 use llmtrace_benchmarks::regression;
 use llmtrace_benchmarks::regression::RegressionResult;
 use llmtrace_benchmarks::runners::cyberseceval2;
@@ -46,6 +46,81 @@ struct NamedAnalyzer {
     name: &'static str,
     analyzer: Box<dyn SecurityAnalyzer>,
 }
+
+/// Configuration for a dataset suite that follows the standard load-run-check pattern.
+struct ExternalSuiteConfig {
+    suite_key: &'static str,
+    display_name: &'static str,
+    benchmark_name: &'static str,
+    loader: fn(&Path) -> Result<Vec<BenchmarkSample>, String>,
+    regression_checker: fn(&BenchmarkMetrics) -> RegressionResult,
+}
+
+const EXTERNAL_SUITES: &[ExternalSuiteConfig] = &[
+    ExternalSuiteConfig {
+        suite_key: "encoding",
+        display_name: "Encoding Evasion",
+        benchmark_name: "Encoding Evasion",
+        loader: DatasetLoader::load_encoding_evasion,
+        regression_checker: regression::check_encoding,
+    },
+    ExternalSuiteConfig {
+        suite_key: "safeguard_v2",
+        display_name: "SafeGuard",
+        benchmark_name: "SafeGuard External",
+        loader: DatasetLoader::load_safeguard_samples,
+        regression_checker: regression::check_safeguard,
+    },
+    ExternalSuiteConfig {
+        suite_key: "deepset_v2",
+        display_name: "Deepset v2",
+        benchmark_name: "Deepset v2 External",
+        loader: DatasetLoader::load_deepset_v2_samples,
+        regression_checker: regression::check_deepset,
+    },
+    ExternalSuiteConfig {
+        suite_key: "ivanleomk_v2",
+        display_name: "IvanLeoMK v2",
+        benchmark_name: "IvanLeoMK v2 External",
+        loader: DatasetLoader::load_ivanleomk_v2_samples,
+        regression_checker: regression::check_ivanleomk,
+    },
+    ExternalSuiteConfig {
+        suite_key: "harmbench",
+        display_name: "HarmBench",
+        benchmark_name: "HarmBench External",
+        loader: DatasetLoader::load_harmbench_samples,
+        regression_checker: regression::check_harmbench,
+    },
+    ExternalSuiteConfig {
+        suite_key: "ailuminate",
+        display_name: "AILuminate",
+        benchmark_name: "AILuminate External",
+        loader: DatasetLoader::load_ailuminate_samples,
+        regression_checker: regression::check_ailuminate,
+    },
+    ExternalSuiteConfig {
+        suite_key: "injecagent",
+        display_name: "InjecAgent",
+        benchmark_name: "InjecAgent External",
+        loader: DatasetLoader::load_injecagent_samples,
+        regression_checker: regression::check_injecagent,
+    },
+    ExternalSuiteConfig {
+        suite_key: "asb",
+        display_name: "ASB",
+        benchmark_name: "ASB External",
+        loader: DatasetLoader::load_asb_samples,
+        regression_checker: regression::check_asb,
+    },
+    ExternalSuiteConfig {
+        suite_key: "bipia",
+        display_name: "BIPIA",
+        benchmark_name: "BIPIA External",
+        loader: DatasetLoader::load_bipia_samples,
+        regression_checker: regression::check_bipia,
+    },
+];
 
 #[tokio::main]
 async fn main() {
@@ -93,29 +168,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("Standard suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("Standard ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("encoding") {
-            println!("\n=== Suite: Encoding Evasion [{}] ===", named.name);
-            match run_encoding_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("Encoding suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("Encoding Evasion ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("Standard ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -128,11 +184,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("NotInject suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("NotInject 3D ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("NotInject 3D ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -145,65 +200,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("FPR Calibration suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("FPR Calibration ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("safeguard_v2") {
-            println!("\n=== Suite: SafeGuard External [{}] ===", named.name);
-            match run_safeguard_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("SafeGuard suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("SafeGuard ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("deepset_v2") {
-            println!("\n=== Suite: Deepset External [{}] ===", named.name);
-            match run_deepset_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("Deepset suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("Deepset ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("ivanleomk_v2") {
-            println!("\n=== Suite: IvanLeoMK External [{}] ===", named.name);
-            match run_ivanleomk_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("IvanLeoMK suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("IvanLeoMK ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("FPR Calibration ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -218,101 +218,38 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("CyberSecEval2 suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("CyberSecEval2 ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("CyberSecEval2 ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
 
-        if should_run("harmbench") {
-            println!("\n=== Suite: HarmBench External [{}] ===", named.name);
-            match run_harmbench_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
+        for config in EXTERNAL_SUITES {
+            if !should_run(config.suite_key) {
+                continue;
+            }
+            println!(
+                "\n=== Suite: {} [{}] ===",
+                config.benchmark_name, named.name
+            );
+            match run_external_suite(config, named.analyzer.as_ref(), &datasets_dir, named.name)
+                .await
+            {
                 Ok((result, reg)) => {
                     all_results.push(result);
                     regression_results.push(reg);
                 }
                 Err(e) => {
-                    eprintln!("HarmBench suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("HarmBench ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("ailuminate") {
-            println!("\n=== Suite: AILuminate External [{}] ===", named.name);
-            match run_ailuminate_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("AILuminate suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("AILuminate ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("injecagent") {
-            println!("\n=== Suite: InjecAgent External [{}] ===", named.name);
-            match run_injecagent_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("InjecAgent suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("InjecAgent ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("asb") {
-            println!("\n=== Suite: ASB External [{}] ===", named.name);
-            match run_asb_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("ASB suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("ASB ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
-                }
-            }
-        }
-
-        if should_run("bipia") {
-            println!("\n=== Suite: BIPIA External [{}] ===", named.name);
-            match run_bipia_suite(named.analyzer.as_ref(), &datasets_dir, named.name).await {
-                Ok((result, reg)) => {
-                    all_results.push(result);
-                    regression_results.push(reg);
-                }
-                Err(e) => {
-                    eprintln!("BIPIA suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("BIPIA ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    eprintln!(
+                        "{} suite failed for {}: {e}",
+                        config.display_name, named.name
+                    );
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("{} ({})", config.display_name, named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -320,17 +257,16 @@ async fn main() {
 
     if !all_results.is_empty() {
         BenchmarkRunner::print_paper_table(&all_results);
-    }
 
-    if !all_results.is_empty() {
-        std::fs::create_dir_all(&cli.output_dir).unwrap_or_else(|e| {
+        if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
             eprintln!("Warning: could not create output dir: {e}");
-        });
-        let json_path = cli.output_dir.join("benchmark_results.json");
-        if let Err(e) = BenchmarkRunner::save_results(&all_results, &json_path) {
-            eprintln!("Failed to save results: {e}");
         } else {
-            println!("\nResults saved to {}", json_path.display());
+            let json_path = cli.output_dir.join("benchmark_results.json");
+            if let Err(e) = BenchmarkRunner::save_results(&all_results, &json_path) {
+                eprintln!("Failed to save results: {e}");
+            } else {
+                println!("\nResults saved to {}", json_path.display());
+            }
         }
     }
 
@@ -477,29 +413,6 @@ async fn run_standard_suite(
     Ok((result, reg))
 }
 
-async fn run_encoding_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_encoding_evasion(datasets_dir)?;
-    println!("Loaded {} samples", samples.len());
-
-    let result =
-        BenchmarkRunner::run_async_benchmark(analyzer, &samples, "Encoding Evasion", analyzer_name)
-            .await;
-    result
-        .metrics
-        .print_summary(&format!("Encoding Evasion ({})", analyzer_name));
-
-    let reg_result = regression::check_encoding(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("Encoding Evasion ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
 async fn run_notinject_suite(
     analyzer: &dyn SecurityAnalyzer,
     datasets_dir: &Path,
@@ -570,83 +483,6 @@ async fn run_fpr_suite(
     Ok(reg)
 }
 
-async fn run_safeguard_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_safeguard_samples(datasets_dir)?;
-    println!("Loaded {} SafeGuard samples", samples.len());
-
-    let result = BenchmarkRunner::run_async_benchmark(
-        analyzer,
-        &samples,
-        "SafeGuard External",
-        analyzer_name,
-    )
-    .await;
-    result
-        .metrics
-        .print_summary(&format!("SafeGuard External ({})", analyzer_name));
-
-    let reg_result = regression::check_safeguard(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("SafeGuard ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_deepset_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_deepset_samples(datasets_dir)?;
-    println!("Loaded {} Deepset samples", samples.len());
-
-    let result =
-        BenchmarkRunner::run_async_benchmark(analyzer, &samples, "Deepset External", analyzer_name)
-            .await;
-    result
-        .metrics
-        .print_summary(&format!("Deepset External ({})", analyzer_name));
-
-    let reg_result = regression::check_deepset(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("Deepset ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_ivanleomk_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_ivanleomk_samples(datasets_dir)?;
-    println!("Loaded {} IvanLeoMK samples", samples.len());
-
-    let result = BenchmarkRunner::run_async_benchmark(
-        analyzer,
-        &samples,
-        "IvanLeoMK External",
-        analyzer_name,
-    )
-    .await;
-    result
-        .metrics
-        .print_summary(&format!("IvanLeoMK External ({})", analyzer_name));
-
-    let reg_result = regression::check_ivanleomk(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("IvanLeoMK ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
 async fn run_cyberseceval2_suite(
     analyzer: &dyn SecurityAnalyzer,
     datasets_dir: &Path,
@@ -680,128 +516,29 @@ async fn run_cyberseceval2_suite(
     Ok((result, reg))
 }
 
-async fn run_harmbench_suite(
+async fn run_external_suite(
+    config: &ExternalSuiteConfig,
     analyzer: &dyn SecurityAnalyzer,
     datasets_dir: &Path,
     analyzer_name: &str,
 ) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_harmbench_samples(datasets_dir)?;
-    println!("Loaded {} HarmBench samples", samples.len());
+    let samples = (config.loader)(datasets_dir)?;
+    println!("Loaded {} {} samples", samples.len(), config.display_name);
 
     let result = BenchmarkRunner::run_async_benchmark(
         analyzer,
         &samples,
-        "HarmBench External",
+        config.benchmark_name,
         analyzer_name,
     )
     .await;
     result
         .metrics
-        .print_summary(&format!("HarmBench External ({})", analyzer_name));
+        .print_summary(&format!("{} ({})", config.benchmark_name, analyzer_name));
 
-    let reg_result = regression::check_harmbench(&result.metrics);
+    let reg_result = (config.regression_checker)(&result.metrics);
     let reg = RegressionResult {
-        suite_name: format!("HarmBench ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_ailuminate_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_ailuminate_samples(datasets_dir)?;
-    println!("Loaded {} AILuminate samples", samples.len());
-
-    let result = BenchmarkRunner::run_async_benchmark(
-        analyzer,
-        &samples,
-        "AILuminate External",
-        analyzer_name,
-    )
-    .await;
-    result
-        .metrics
-        .print_summary(&format!("AILuminate External ({})", analyzer_name));
-
-    let reg_result = regression::check_ailuminate(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("AILuminate ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_injecagent_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_injecagent_samples(datasets_dir)?;
-    println!("Loaded {} InjecAgent samples", samples.len());
-
-    let result = BenchmarkRunner::run_async_benchmark(
-        analyzer,
-        &samples,
-        "InjecAgent External",
-        analyzer_name,
-    )
-    .await;
-    result
-        .metrics
-        .print_summary(&format!("InjecAgent External ({})", analyzer_name));
-
-    let reg_result = regression::check_injecagent(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("InjecAgent ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_asb_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_asb_samples(datasets_dir)?;
-    println!("Loaded {} ASB samples", samples.len());
-
-    let result =
-        BenchmarkRunner::run_async_benchmark(analyzer, &samples, "ASB External", analyzer_name)
-            .await;
-    result
-        .metrics
-        .print_summary(&format!("ASB External ({})", analyzer_name));
-
-    let reg_result = regression::check_asb(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("ASB ({})", analyzer_name),
-        ..reg_result
-    };
-    Ok((result, reg))
-}
-
-async fn run_bipia_suite(
-    analyzer: &dyn SecurityAnalyzer,
-    datasets_dir: &Path,
-    analyzer_name: &str,
-) -> Result<(BenchmarkResult, RegressionResult), String> {
-    let samples = DatasetLoader::load_bipia_samples(datasets_dir)?;
-    println!("Loaded {} BIPIA samples", samples.len());
-
-    let result =
-        BenchmarkRunner::run_async_benchmark(analyzer, &samples, "BIPIA External", analyzer_name)
-            .await;
-    result
-        .metrics
-        .print_summary(&format!("BIPIA External ({})", analyzer_name));
-
-    let reg_result = regression::check_bipia(&result.metrics);
-    let reg = RegressionResult {
-        suite_name: format!("BIPIA ({})", analyzer_name),
+        suite_name: format!("{} ({})", config.display_name, analyzer_name),
         ..reg_result
     };
     Ok((result, reg))
