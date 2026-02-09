@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build
 # ---------------------------------------------------------------------------
-FROM rust:1.93-alpine AS builder
+FROM rust:alpine AS builder
 
 RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static build-base protobuf-dev
 
@@ -42,20 +42,20 @@ RUN cargo build --release --bin llmtrace-proxy 2>/dev/null || true
 COPY crates/ crates/
 COPY benchmarks/ benchmarks/
 RUN touch crates/llmtrace-core/src/lib.rs \
-          crates/llmtrace-storage/src/lib.rs \
-          crates/llmtrace-security/src/lib.rs \
-          crates/llmtrace-proxy/src/main.rs \
-          crates/llmtrace-proxy/src/lib.rs \
-          crates/llmtrace-sdk/src/lib.rs \
-          crates/llmtrace-python/src/lib.rs \
-          benchmarks/src/lib.rs
+    crates/llmtrace-storage/src/lib.rs \
+    crates/llmtrace-security/src/lib.rs \
+    crates/llmtrace-proxy/src/main.rs \
+    crates/llmtrace-proxy/src/lib.rs \
+    crates/llmtrace-sdk/src/lib.rs \
+    crates/llmtrace-python/src/lib.rs \
+    benchmarks/src/lib.rs
 
 RUN cargo build --release --bin llmtrace-proxy
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
 # ---------------------------------------------------------------------------
-FROM alpine:3.20 AS runtime
+FROM alpine:latest AS runtime
 
 RUN apk add --no-cache ca-certificates tini
 

@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Install dependencies
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS deps
+FROM node:latest AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
@@ -19,7 +19,7 @@ RUN npm ci --prefer-offline 2>/dev/null || npm install
 # ---------------------------------------------------------------------------
 # Stage 2: Build
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:latest AS builder
 WORKDIR /app
 
 ARG NEXT_PUBLIC_API_URL
@@ -35,7 +35,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 3: Production runtime
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM node:latest AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
