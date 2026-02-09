@@ -30,10 +30,10 @@ pub const DEFAULT_EMBEDDING_DIM: usize = 768;
 pub const FUSION_INPUT_DIM: usize = DEFAULT_EMBEDDING_DIM + HEURISTIC_FEATURE_DIM;
 
 /// Number of output classes (safe, injection).
-pub const NUM_CLASSES: usize = 2;
+pub(crate) const NUM_CLASSES: usize = 2;
 
 /// Hidden layer dimension.
-pub const HIDDEN_1: usize = 256;
+pub(crate) const HIDDEN_1: usize = 256;
 
 /// Feature-level fusion classifier.
 ///
@@ -102,7 +102,6 @@ impl FusionClassifier {
     ///
     /// `(injection_score, safe_score)` — softmax probabilities for each class.
     pub fn predict(&self, embedding: &Tensor, heuristic_features: &[f32]) -> Result<(f64, f64)> {
-        // Build heuristic feature tensor
         let heuristic_tensor = Tensor::new(heuristic_features, &self.device).map_err(|e| {
             LLMTraceError::Security(format!("Failed to create heuristic tensor: {e}"))
         })?;
@@ -117,15 +116,7 @@ impl FusionClassifier {
             LLMTraceError::Security(format!("Failed to unsqueeze fusion input: {e}"))
         })?;
 
-        // Forward pass: fc1 → ReLU → fc2
-        let h1 = candle_nn::Module::forward(&self.fc1, &input)
-            .map_err(|e| LLMTraceError::Security(format!("Fusion fc1 forward failed: {e}")))?;
-        let h1 = h1
-            .relu()
-            .map_err(|e| LLMTraceError::Security(format!("Fusion ReLU failed: {e}")))?;
-
-        let logits = candle_nn::Module::forward(&self.fc2, &h1)
-            .map_err(|e| LLMTraceError::Security(format!("Fusion fc2 forward failed: {e}")))?;
+        let logits = self.forward_logits(&input)?;
 
         // Softmax → probabilities
         let probs = candle_nn::ops::softmax(&logits, candle_core::D::Minus1)
@@ -331,5 +322,44 @@ mod tests {
         // 1D tensor (missing batch dim)
         let no_batch = Tensor::zeros(FUSION_INPUT_DIM, DType::F32, &device).unwrap();
         assert!(classifier.forward_logits(&no_batch).is_err());
+    }
+
+    #[test]
+    fn test_gradient_flow_through_forward_logits() {
+        let device = Device::Cpu;
+        let varmap = VarMap::new();
+        let classifier = FusionClassifier::new_trainable(&varmap, &device).unwrap();
+
+        let input = Tensor::ones((2, FUSION_INPUT_DIM), DType::F32, &device).unwrap();
+        let labels = Tensor::new(&[0u32, 1u32], &device).unwrap();
+
+        // Compute initial loss.
+        let logits = classifier.forward_logits(&input).unwrap();
+        let loss = candle_nn::loss::cross_entropy(&logits, &labels).unwrap();
+        let loss_before: f32 = loss.to_scalar().unwrap();
+        assert!(loss_before.is_finite(), "Initial loss must be finite");
+
+        // One optimizer step -- if gradients don't flow, backward_step errors.
+        use candle_nn::Optimizer;
+        let params = candle_nn::ParamsAdamW {
+            lr: 0.1,
+            ..Default::default()
+        };
+        let mut opt =
+            candle_nn::AdamW::new(varmap.all_vars(), params).unwrap();
+        opt.backward_step(&loss).unwrap();
+
+        // After the step, the loss on the same input must have changed,
+        // proving that weights were updated via gradient flow.
+        let logits_after = classifier.forward_logits(&input).unwrap();
+        let loss_after: f32 = candle_nn::loss::cross_entropy(&logits_after, &labels)
+            .unwrap()
+            .to_scalar()
+            .unwrap();
+        assert!(loss_after.is_finite(), "Post-step loss must be finite");
+        assert!(
+            (loss_before - loss_after).abs() > 1e-8,
+            "Weights did not change after backward step (loss_before={loss_before}, loss_after={loss_after})"
+        );
     }
 }

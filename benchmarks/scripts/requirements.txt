@@ -1,0 +1,5 @@
+# Pinned dependencies for dataset download scripts.
+# These versions were used to generate the committed dataset files.
+# Changing versions may alter langdetect filtering results.
+datasets==4.5.0
+langdetect==1.0.9

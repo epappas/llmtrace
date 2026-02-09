@@ -36,6 +36,15 @@ impl RegressionResult {
             violations,
         }
     }
+
+    /// Create a failed result from a suite-level error (load failure, etc.).
+    pub fn suite_error(suite_name: &str, err: &str) -> Self {
+        Self {
+            suite_name: suite_name.to_string(),
+            passed: false,
+            violations: vec![format!("suite error: {err}")],
+        }
+    }
 }
 
 // -- Threshold constants (based on regex analyzer baselines with ~5% margin) --
@@ -66,8 +75,8 @@ const FPR_CALIBRATION_MIN_TPR_AT_1PCT: f64 = 0.05;
 // External dataset thresholds -- conservative initial values.
 //
 // EV-011 (SafeGuard): evaluated against the full test split (2060 samples, all English).
-// EV-012 (Deepset):   evaluated against v2 English-only subset (~354 samples).
-// EV-013 (IvanLeoMK): evaluated against v2 English-only subset (~611 samples).
+// EV-012 (Deepset):   evaluated against v2 English-only subset (355 samples).
+// EV-013 (IvanLeoMK): evaluated against v2 English-only subset (610 samples).
 //
 // These are intentionally low initial gates. Recalibrate after establishing
 // v2 baselines with the target analyzer configuration.

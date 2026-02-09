@@ -121,7 +121,7 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/deepset_all.json"))
     }
 
-    /// Load the Deepset v2 dataset (EV-012, English-only, ~354 samples).
+    /// Load the Deepset v2 dataset (EV-012, English-only, 355 samples).
     pub fn load_deepset_v2_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/deepset_v2.json"))
     }
@@ -131,7 +131,7 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/ivanleomk_all.json"))
     }
 
-    /// Load the IvanLeoMK v2 dataset (EV-013, English-only, ~611 samples).
+    /// Load the IvanLeoMK v2 dataset (EV-013, English-only, 610 samples).
     pub fn load_ivanleomk_v2_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/ivanleomk_v2.json"))
     }

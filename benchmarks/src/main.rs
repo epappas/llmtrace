@@ -73,15 +73,15 @@ const EXTERNAL_SUITES: &[ExternalSuiteConfig] = &[
     },
     ExternalSuiteConfig {
         suite_key: "deepset_v2",
-        display_name: "Deepset",
-        benchmark_name: "Deepset External",
+        display_name: "Deepset v2",
+        benchmark_name: "Deepset v2 External",
         loader: DatasetLoader::load_deepset_v2_samples,
         regression_checker: regression::check_deepset,
     },
     ExternalSuiteConfig {
         suite_key: "ivanleomk_v2",
-        display_name: "IvanLeoMK",
-        benchmark_name: "IvanLeoMK External",
+        display_name: "IvanLeoMK v2",
+        benchmark_name: "IvanLeoMK v2 External",
         loader: DatasetLoader::load_ivanleomk_v2_samples,
         regression_checker: regression::check_ivanleomk,
     },
@@ -168,11 +168,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("Standard suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("Standard ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("Standard ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -185,11 +184,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("NotInject suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("NotInject 3D ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("NotInject 3D ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -202,11 +200,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("FPR Calibration suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("FPR Calibration ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("FPR Calibration ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -221,11 +218,10 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("CyberSecEval2 suite failed for {}: {e}", named.name);
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("CyberSecEval2 ({})", named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("CyberSecEval2 ({})", named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -250,11 +246,10 @@ async fn main() {
                         "{} suite failed for {}: {e}",
                         config.display_name, named.name
                     );
-                    regression_results.push(RegressionResult {
-                        suite_name: format!("{} ({})", config.display_name, named.name),
-                        passed: false,
-                        violations: vec![format!("suite error: {e}")],
-                    });
+                    regression_results.push(RegressionResult::suite_error(
+                        &format!("{} ({})", config.display_name, named.name),
+                        &e,
+                    ));
                 }
             }
         }
@@ -262,17 +257,16 @@ async fn main() {
 
     if !all_results.is_empty() {
         BenchmarkRunner::print_paper_table(&all_results);
-    }
 
-    if !all_results.is_empty() {
-        std::fs::create_dir_all(&cli.output_dir).unwrap_or_else(|e| {
+        if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
             eprintln!("Warning: could not create output dir: {e}");
-        });
-        let json_path = cli.output_dir.join("benchmark_results.json");
-        if let Err(e) = BenchmarkRunner::save_results(&all_results, &json_path) {
-            eprintln!("Failed to save results: {e}");
         } else {
-            println!("\nResults saved to {}", json_path.display());
+            let json_path = cli.output_dir.join("benchmark_results.json");
+            if let Err(e) = BenchmarkRunner::save_results(&all_results, &json_path) {
+                eprintln!("Failed to save results: {e}");
+            } else {
+                println!("\nResults saved to {}", json_path.display());
+            }
         }
     }
 

@@ -52,64 +52,51 @@ def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
     }
 
 
-def download_safeguard(output_dir: Path) -> None:
-    ds = load_dataset(
-        "xTRam1/safe-guard-prompt-injection",
-        split="test",
-        revision=_COMMITS["safeguard_hf"],
-    )
+def _download_hf_dataset(
+    output_dir: Path,
+    hf_name: str,
+    splits: list[str],
+    source_label: str,
+    output_filename: str,
+    commit_key: str,
+) -> None:
+    """Download a HuggingFace dataset, convert to BenchmarkSample JSON, and write."""
+    datasets_list = [
+        load_dataset(hf_name, split=s, revision=_COMMITS[commit_key])
+        for s in splits
+    ]
+    ds = concatenate_datasets(datasets_list) if len(datasets_list) > 1 else datasets_list[0]
     samples = [
-        convert_sample(i, row["text"], row["label"], "safeguard")
+        convert_sample(i, row["text"], row["label"], source_label)
         for i, row in enumerate(ds)
     ]
-    path = output_dir / "safeguard_test.json"
+    path = output_dir / output_filename
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
 
     benign = sum(1 for s in samples if s["label"] == "benign")
     malicious = len(samples) - benign
-    print(f"safeguard_test.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+    print(f"{output_filename}: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+
+
+def download_safeguard(output_dir: Path) -> None:
+    _download_hf_dataset(
+        output_dir, "xTRam1/safe-guard-prompt-injection",
+        ["test"], "safeguard", "safeguard_test.json", "safeguard_hf",
+    )
 
 
 def download_deepset(output_dir: Path) -> None:
-    ds_train = load_dataset(
-        "deepset/prompt-injections",
-        split="train",
-        revision=_COMMITS["deepset_hf"],
+    _download_hf_dataset(
+        output_dir, "deepset/prompt-injections",
+        ["train", "test"], "deepset", "deepset_all.json", "deepset_hf",
     )
-    ds_test = load_dataset(
-        "deepset/prompt-injections",
-        split="test",
-        revision=_COMMITS["deepset_hf"],
-    )
-    ds = concatenate_datasets([ds_train, ds_test])
-    samples = [
-        convert_sample(i, row["text"], row["label"], "deepset")
-        for i, row in enumerate(ds)
-    ]
-    path = output_dir / "deepset_all.json"
-    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
-
-    benign = sum(1 for s in samples if s["label"] == "benign")
-    malicious = len(samples) - benign
-    print(f"deepset_all.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
 
 
 def download_ivanleomk(output_dir: Path) -> None:
-    ds = load_dataset(
-        "ivanleomk/prompt_injection_password",
-        split="train",
-        revision=_COMMITS["ivanleomk_hf"],
+    _download_hf_dataset(
+        output_dir, "ivanleomk/prompt_injection_password",
+        ["train"], "ivanleomk", "ivanleomk_all.json", "ivanleomk_hf",
     )
-    samples = [
-        convert_sample(i, row["text"], row["label"], "ivanleomk")
-        for i, row in enumerate(ds)
-    ]
-    path = output_dir / "ivanleomk_all.json"
-    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
-
-    benign = sum(1 for s in samples if s["label"] == "benign")
-    malicious = len(samples) - benign
-    print(f"ivanleomk_all.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
 
 
 def download_cyberseceval2(output_dir: Path) -> None:
@@ -341,17 +328,33 @@ def main() -> None:
 
     print(f"Output directory: {output_dir}\n")
 
-    download_safeguard(output_dir)
-    download_deepset(output_dir)
-    download_ivanleomk(output_dir)
-    download_cyberseceval2(output_dir)
-    download_harmbench(output_dir)
-    download_ailuminate(output_dir)
-    download_injecagent(output_dir)
-    download_asb(output_dir)
-    download_bipia(output_dir)
+    downloaders: list[tuple[str, callable]] = [
+        ("SafeGuard", download_safeguard),
+        ("Deepset", download_deepset),
+        ("IvanLeoMK", download_ivanleomk),
+        ("CyberSecEval2", download_cyberseceval2),
+        ("HarmBench", download_harmbench),
+        ("AILuminate", download_ailuminate),
+        ("InjecAgent", download_injecagent),
+        ("ASB", download_asb),
+        ("BIPIA", download_bipia),
+    ]
 
-    print("\nDone.")
+    failures: list[str] = []
+    for name, fn in downloaders:
+        try:
+            fn(output_dir)
+        except Exception as e:
+            failures.append(f"{name}: {e}")
+            print(f"ERROR: {name} download failed: {e}", file=sys.stderr)
+
+    passed = len(downloaders) - len(failures)
+    print(f"\nDone: {passed}/{len(downloaders)} datasets downloaded successfully.")
+    if failures:
+        print(f"Failed ({len(failures)}):", file=sys.stderr)
+        for f in failures:
+            print(f"  - {f}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
