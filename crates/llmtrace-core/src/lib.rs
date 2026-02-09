@@ -1565,9 +1565,9 @@ impl Default for ShutdownConfig {
 ///
 /// # Memory requirements
 ///
-/// Each DeBERTa model requires ~400-600 MB of RAM. When both `ml_enabled` and
-/// `injecguard_enabled` are `true`, expect ~800 MB-1.2 GB total for the two
-/// model instances. Plan host memory accordingly.
+/// Each DeBERTa model requires ~400-600 MB of RAM. When `ml_enabled`,
+/// `injecguard_enabled`, and `piguard_enabled` are all `true`, expect
+/// ~1.2-1.8 GB total for three model instances. Plan host memory accordingly.
 ///
 /// # Example (YAML)
 ///
@@ -1644,9 +1644,21 @@ pub struct SecurityAnalysisConfig {
     /// HuggingFace model ID for the InjecGuard model.
     #[serde(default = "default_injecguard_model")]
     pub injecguard_model: String,
-    /// Confidence threshold for InjecGuard detection (0.0–1.0).
+    /// Confidence threshold for InjecGuard detection (0.0-1.0).
     #[serde(default = "default_injecguard_threshold")]
     pub injecguard_threshold: f64,
+    /// Enable PIGuard as an additional injection detector in the Ensemble.
+    ///
+    /// PIGuard uses DeBERTa + MOF (Mitigating Over-defense for Free) training
+    /// to reduce trigger-word false positives. Adds ~400-600 MB memory.
+    #[serde(default)]
+    pub piguard_enabled: bool,
+    /// HuggingFace model ID for the PIGuard model.
+    #[serde(default = "default_piguard_model")]
+    pub piguard_model: String,
+    /// Confidence threshold for PIGuard detection (0.0-1.0).
+    #[serde(default = "default_piguard_threshold")]
+    pub piguard_threshold: f64,
 }
 
 fn default_ml_enabled() -> bool {
@@ -1693,6 +1705,14 @@ fn default_injecguard_threshold() -> f64 {
     0.85
 }
 
+fn default_piguard_model() -> String {
+    "leolee99/PIGuard".to_string()
+}
+
+fn default_piguard_threshold() -> f64 {
+    0.85
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -1711,6 +1731,9 @@ impl Default for SecurityAnalysisConfig {
             injecguard_enabled: false,
             injecguard_model: default_injecguard_model(),
             injecguard_threshold: default_injecguard_threshold(),
+            piguard_enabled: false,
+            piguard_model: default_piguard_model(),
+            piguard_threshold: default_piguard_threshold(),
         }
     }
 }
@@ -2703,6 +2726,9 @@ mod tests {
                 injecguard_enabled: false,
                 injecguard_model: default_injecguard_model(),
                 injecguard_threshold: default_injecguard_threshold(),
+                piguard_enabled: false,
+                piguard_model: default_piguard_model(),
+                piguard_threshold: default_piguard_threshold(),
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -3200,6 +3226,9 @@ mod tests {
             injecguard_enabled: false,
             injecguard_model: default_injecguard_model(),
             injecguard_threshold: default_injecguard_threshold(),
+            piguard_enabled: false,
+            piguard_model: default_piguard_model(),
+            piguard_threshold: default_piguard_threshold(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

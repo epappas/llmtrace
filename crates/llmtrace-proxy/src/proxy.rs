@@ -42,6 +42,8 @@ pub enum MlModelStatus {
         ner: bool,
         /// Whether the InjecGuard model is available.
         injecguard: bool,
+        /// Whether the PIGuard model is available.
+        piguard: bool,
         /// Time taken to load models in milliseconds.
         load_time_ms: u64,
     },
@@ -638,7 +640,9 @@ pub async fn proxy_handler(
         let security_start = std::time::Instant::now();
         let mut security_findings = run_security_analysis(&state_bg, &captured).await;
         let security_ms = security_start.elapsed().as_millis() as u64;
-        state_bg.metrics.record_detector_latency("ensemble", security_ms);
+        state_bg
+            .metrics
+            .record_detector_latency("ensemble", security_ms);
 
         // Merge in any findings detected during streaming (early warning layer).
         // These have already been alerted on mid-stream; now we persist them
@@ -1013,17 +1017,24 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             prompt_injection,
             ner,
             injecguard,
+            piguard,
             load_time_ms,
         } => {
             // Count injection detectors active for majority voting:
-            // regex (always) + prompt_injection + injecguard
-            let injection_detectors = 1 + (*prompt_injection as u8) + (*injecguard as u8);
-            let voting_mode = if injection_detectors >= 3 { "majority" } else { "union" };
+            // regex (always) + prompt_injection + injecguard + piguard
+            let injection_detectors =
+                1 + (*prompt_injection as u8) + (*injecguard as u8) + (*piguard as u8);
+            let voting_mode = if injection_detectors >= 3 {
+                "majority"
+            } else {
+                "union"
+            };
             serde_json::json!({
                 "status": "loaded",
                 "prompt_injection_model": prompt_injection,
                 "ner_model": ner,
                 "injecguard_model": injecguard,
+                "piguard_model": piguard,
                 "load_time_ms": load_time_ms,
                 "injection_detector_count": injection_detectors,
                 "voting_mode": voting_mode,

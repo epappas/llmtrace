@@ -97,6 +97,8 @@ pub mod ner_detector;
 #[cfg(feature = "ml")]
 pub mod output_analyzer;
 #[cfg(feature = "ml")]
+pub mod piguard;
+#[cfg(feature = "ml")]
 pub mod prompt_guard;
 #[cfg(feature = "ml")]
 pub mod thresholds;
@@ -130,6 +132,8 @@ pub use multi_model_ensemble::{
 pub use ner_detector::{NerConfig, NerDetector};
 #[cfg(feature = "ml")]
 pub use output_analyzer::{OutputAnalysisResult, OutputAnalyzer};
+#[cfg(feature = "ml")]
+pub use piguard::{PIGuardAnalyzer, PIGuardConfig};
 #[cfg(feature = "ml")]
 pub use prompt_guard::{
     PromptGuardAnalyzer, PromptGuardConfig, PromptGuardResult, PromptGuardVariant,

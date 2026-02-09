@@ -22,6 +22,7 @@ use crate::fusion_classifier::FusionClassifier;
 use crate::injecguard::{InjecGuardAnalyzer, InjecGuardConfig};
 use crate::ml_detector::MLSecurityAnalyzer;
 use crate::ner_detector::{NerConfig, NerDetector};
+use crate::piguard::{PIGuardAnalyzer, PIGuardConfig};
 use crate::thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
 use crate::RegexSecurityAnalyzer;
 
@@ -60,6 +61,8 @@ pub struct EnsembleSecurityAnalyzer {
     /// Wrapped in `Arc` so `spawn_blocking` can run inference on the
     /// tokio blocking pool concurrently with ML inference.
     injecguard: Option<Arc<InjecGuardAnalyzer>>,
+    /// PIGuard model for injection detection with reduced over-defense (ML-004).
+    piguard: Option<Arc<PIGuardAnalyzer>>,
     /// Feature-level fusion classifier (ADR-013).
     /// When `Some`, the ensemble uses feature-level fusion instead of
     /// score-level combination.
@@ -100,6 +103,7 @@ impl EnsembleSecurityAnalyzer {
             ml,
             ner: None,
             injecguard: None,
+            piguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -132,6 +136,7 @@ impl EnsembleSecurityAnalyzer {
             ml,
             ner,
             injecguard: None,
+            piguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -177,6 +182,62 @@ impl EnsembleSecurityAnalyzer {
             ml,
             ner,
             injecguard,
+            piguard: None,
+            fusion_classifier: None,
+            fusion_threshold: ml_config.threshold,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
+        })
+    }
+
+    /// Create a new ensemble analyzer with ML, NER, InjecGuard, and PIGuard (ML-004).
+    ///
+    /// Enables majority voting for injection findings across all loaded detectors.
+    /// Each model degrades gracefully on load failure.
+    pub async fn with_piguard(
+        ml_config: &super::MLSecurityConfig,
+        ner_config: Option<&NerConfig>,
+        ig_config: Option<&InjecGuardConfig>,
+        pg_config: Option<&PIGuardConfig>,
+    ) -> Result<Self> {
+        let regex = RegexSecurityAnalyzer::new()?;
+        let ml = MLSecurityAnalyzer::new(ml_config).await?;
+        let ner = match ner_config {
+            Some(cfg) => NerDetector::new(cfg).await?,
+            None => None,
+        };
+        let injecguard = match ig_config {
+            Some(cfg) => {
+                let ig = InjecGuardAnalyzer::new(cfg).await?;
+                if ig.is_model_loaded() {
+                    Some(Arc::new(ig))
+                } else {
+                    tracing::warn!("InjecGuard model not loaded, disabling in ensemble");
+                    None
+                }
+            }
+            None => None,
+        };
+        let piguard = match pg_config {
+            Some(cfg) => {
+                let pg = PIGuardAnalyzer::new(cfg).await?;
+                if pg.is_model_loaded() {
+                    Some(Arc::new(pg))
+                } else {
+                    tracing::warn!("PIGuard model not loaded, disabling in ensemble");
+                    None
+                }
+            }
+            None => None,
+        };
+        Ok(Self {
+            regex,
+            ml,
+            ner,
+            injecguard,
+            piguard,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -259,6 +320,7 @@ impl EnsembleSecurityAnalyzer {
             ml,
             ner,
             injecguard: None,
+            piguard: None,
             fusion_classifier,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -279,6 +341,7 @@ impl EnsembleSecurityAnalyzer {
             ml: MLSecurityAnalyzer::new_fallback_only(0.8),
             ner: None,
             injecguard: None,
+            piguard: None,
             fusion_classifier: None,
             fusion_threshold: 0.8,
             thresholds: ResolvedThresholds::default(),
@@ -304,6 +367,12 @@ impl EnsembleSecurityAnalyzer {
     #[must_use]
     pub fn is_injecguard_active(&self) -> bool {
         self.injecguard.is_some()
+    }
+
+    /// Returns `true` if the PIGuard model is loaded and contributing to voting.
+    #[must_use]
+    pub fn is_piguard_active(&self) -> bool {
+        self.piguard.is_some()
     }
 
     /// Returns `true` if feature-level fusion is active (ADR-013).
@@ -408,13 +477,31 @@ impl EnsembleSecurityAnalyzer {
         })
     }
 
-    /// Build ballots, await InjecGuard, log diagnostics, and run majority voting.
+    /// Spawn PIGuard inference on the tokio blocking pool.
+    fn spawn_piguard(
+        &self,
+        text: &str,
+        location: &'static str,
+    ) -> Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>> {
+        self.piguard.as_ref().map(|pg| {
+            let pg = Arc::clone(pg);
+            let text = text.to_string();
+            tokio::task::spawn_blocking(move || {
+                let start = Instant::now();
+                let findings = pg.classify_text(&text, location);
+                (findings, start.elapsed().as_millis() as u64)
+            })
+        })
+    }
+
+    /// Build ballots, await InjecGuard/PIGuard, log diagnostics, and run majority voting.
     async fn collect_and_vote(
         &self,
         regex_findings: Vec<SecurityFinding>,
         regex_ms: u64,
         ml_result: Option<(Vec<SecurityFinding>, u64)>,
         ig_handle: Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>>,
+        pg_handle: Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>>,
     ) -> Result<Vec<SecurityFinding>> {
         let mut ballots = vec![InjectionBallot {
             name: "regex",
@@ -442,7 +529,27 @@ impl EnsembleSecurityAnalyzer {
             });
         }
 
-        log_voting_diagnostics(&ballots, &DetectorTiming { regex_ms, ml_ms, ig_ms });
+        let mut pg_ms = None;
+        if let Some(handle) = pg_handle {
+            let (pg_result, latency) = handle
+                .await
+                .map_err(|e| LLMTraceError::Security(format!("PIGuard task panicked: {e}")))?;
+            pg_ms = Some(latency);
+            ballots.push(InjectionBallot {
+                name: "piguard",
+                findings: pg_result?,
+            });
+        }
+
+        log_voting_diagnostics(
+            &ballots,
+            &DetectorTiming {
+                regex_ms,
+                ml_ms,
+                ig_ms,
+                pg_ms,
+            },
+        );
         Ok(combine_with_voting(ballots))
     }
 
@@ -557,12 +664,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         let regex_findings = self.regex.analyze_request(prompt, context).await?;
         let regex_ms = regex_start.elapsed().as_millis() as u64;
 
+        let has_ml_detectors =
+            self.ml.is_model_loaded() || self.injecguard.is_some() || self.piguard.is_some();
+
         let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(prompt, &regex_findings, "request.prompt")?
-        } else if self.ml.is_model_loaded() || self.injecguard.is_some() {
-            // Majority voting path (ML-006)
+        } else if has_ml_detectors {
+            // Majority voting path (ML-006 / ML-004)
             let ig_handle = self.spawn_injecguard(prompt, "request.prompt");
+            let pg_handle = self.spawn_piguard(prompt, "request.prompt");
             let ml_result = if self.ml.is_model_loaded() {
                 let ml_start = Instant::now();
                 let ml_findings = self.ml.analyze_request(prompt, context).await?;
@@ -570,7 +681,7 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             } else {
                 None
             };
-            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle)
+            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle, pg_handle)
                 .await?
         } else {
             regex_findings
@@ -600,12 +711,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         let regex_findings = self.regex.analyze_response(response, context).await?;
         let regex_ms = regex_start.elapsed().as_millis() as u64;
 
+        let has_ml_detectors =
+            self.ml.is_model_loaded() || self.injecguard.is_some() || self.piguard.is_some();
+
         let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(response, &regex_findings, "response.content")?
-        } else if self.ml.is_model_loaded() || self.injecguard.is_some() {
-            // Majority voting path (ML-006)
+        } else if has_ml_detectors {
+            // Majority voting path (ML-006 / ML-004)
             let ig_handle = self.spawn_injecguard(response, "response.content");
+            let pg_handle = self.spawn_piguard(response, "response.content");
             let ml_result = if self.ml.is_model_loaded() {
                 let ml_start = Instant::now();
                 let ml_findings = self.ml.analyze_response(response, context).await?;
@@ -613,7 +728,7 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             } else {
                 None
             };
-            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle)
+            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle, pg_handle)
                 .await?
         } else {
             regex_findings
@@ -652,6 +767,9 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         if self.injecguard.is_some() {
             types.push("injecguard_injection".to_string());
         }
+        if self.piguard.is_some() {
+            types.push("piguard_injection".to_string());
+        }
         if self.ner.is_some() {
             // NER produces pii_detected findings (same type as regex PII)
             // but with ner-specific metadata. No new type needed.
@@ -664,6 +782,9 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         self.ml.health_check().await?;
         if let Some(ref ig) = self.injecguard {
             ig.health_check().await?;
+        }
+        if let Some(ref pg) = self.piguard {
+            pg.health_check().await?;
         }
         Ok(())
     }
@@ -683,6 +804,7 @@ fn is_injection_finding(finding: &SecurityFinding) -> bool {
             | "encoding_attack"
             | "ml_prompt_injection"
             | "injecguard_injection"
+            | "piguard_injection"
             | "fusion_prompt_injection"
     )
 }
@@ -735,12 +857,21 @@ struct DetectorTiming {
     regex_ms: u64,
     ml_ms: Option<u64>,
     ig_ms: Option<u64>,
+    pg_ms: Option<u64>,
 }
 
 /// Log voting diagnostics: per-detector latency and disagreement warnings.
 fn log_voting_diagnostics(ballots: &[InjectionBallot], timing: &DetectorTiming) {
-    let detected: Vec<&str> = ballots.iter().filter(|b| b.has_injection()).map(|b| b.name).collect();
-    let not_detected: Vec<&str> = ballots.iter().filter(|b| !b.has_injection()).map(|b| b.name).collect();
+    let detected: Vec<&str> = ballots
+        .iter()
+        .filter(|b| b.has_injection())
+        .map(|b| b.name)
+        .collect();
+    let not_detected: Vec<&str> = ballots
+        .iter()
+        .filter(|b| !b.has_injection())
+        .map(|b| b.name)
+        .collect();
 
     let unanimous = not_detected.is_empty() || detected.is_empty();
     if !unanimous && ballots.len() > 1 {
@@ -750,6 +881,7 @@ fn log_voting_diagnostics(ballots: &[InjectionBallot], timing: &DetectorTiming) 
             regex_ms = timing.regex_ms,
             ml_ms = ?timing.ml_ms,
             ig_ms = ?timing.ig_ms,
+            pg_ms = ?timing.pg_ms,
             "Injection detector disagreement"
         );
     } else {
@@ -758,6 +890,7 @@ fn log_voting_diagnostics(ballots: &[InjectionBallot], timing: &DetectorTiming) 
             regex_ms = timing.regex_ms,
             ml_ms = ?timing.ml_ms,
             ig_ms = ?timing.ig_ms,
+            pg_ms = ?timing.pg_ms,
             "Ensemble voting complete"
         );
     }
@@ -858,10 +991,8 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
                 }
                 out.metadata
                     .insert("voting_result".to_string(), "majority".to_string());
-                out.metadata.insert(
-                    "agreeing_detectors".to_string(),
-                    names_str.clone(),
-                );
+                out.metadata
+                    .insert("agreeing_detectors".to_string(), names_str.clone());
                 out.metadata
                     .insert("ensemble_agreement".to_string(), "true".to_string());
             } else {
@@ -1538,9 +1669,17 @@ mod tests {
                 f.metadata.get("voting_result"),
                 Some(&"majority".to_string())
             );
-            assert!(f.metadata.get("agreeing_detectors").unwrap().contains("regex"));
+            assert!(f
+                .metadata
+                .get("agreeing_detectors")
+                .unwrap()
+                .contains("regex"));
             assert!(f.metadata.get("agreeing_detectors").unwrap().contains("ml"));
-            assert!(f.metadata.get("agreeing_detectors").unwrap().contains("injecguard"));
+            assert!(f
+                .metadata
+                .get("agreeing_detectors")
+                .unwrap()
+                .contains("injecguard"));
             // All boosted by +0.1
             assert!(f.confidence_score > 0.85);
         }
@@ -1568,7 +1707,9 @@ mod tests {
         // 2/3 >= 2 (majority), so injection findings pass
         assert_eq!(result.len(), 2);
         assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
-        assert!(result.iter().any(|f| f.finding_type == "ml_prompt_injection"));
+        assert!(result
+            .iter()
+            .any(|f| f.finding_type == "ml_prompt_injection"));
     }
 
     #[test]
@@ -1615,7 +1756,9 @@ mod tests {
 
         assert_eq!(result.len(), 2);
         assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
-        assert!(result.iter().any(|f| f.finding_type == "injecguard_injection"));
+        assert!(result
+            .iter()
+            .any(|f| f.finding_type == "injecguard_injection"));
     }
 
     #[test]
@@ -1746,12 +1889,124 @@ mod tests {
             },
         ];
         let result = combine_with_voting(ballots);
-        assert!(result.is_empty(), "Regex-only FP should be suppressed with N=3 voting");
+        assert!(
+            result.is_empty(),
+            "Regex-only FP should be suppressed with N=3 voting"
+        );
     }
 
     #[test]
     fn test_injecguard_accessor() {
         let ensemble = EnsembleSecurityAnalyzer::regex_only();
         assert!(!ensemble.is_injecguard_active());
+    }
+
+    #[test]
+    fn test_piguard_accessor() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        assert!(!ensemble.is_piguard_active());
+    }
+
+    #[test]
+    fn test_voting_four_detectors_majority() {
+        // N=4, majority=3. 3/4 agree passes.
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
+            },
+            InjectionBallot {
+                name: "piguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // 3/4 >= 3 (majority), injection findings pass with boost
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
+        assert!(result
+            .iter()
+            .any(|f| f.finding_type == "ml_prompt_injection"));
+        assert!(result
+            .iter()
+            .any(|f| f.finding_type == "injecguard_injection"));
+        for f in &result {
+            assert_eq!(
+                f.metadata.get("voting_result"),
+                Some(&"majority".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_voting_four_detectors_minority_suppressed() {
+        // N=4, majority=3. Only 2/4 agree: suppressed.
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: Vec::new(),
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
+            },
+            InjectionBallot {
+                name: "piguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+        assert!(result.is_empty(), "2/4 < 3 majority: should suppress");
+    }
+
+    #[test]
+    fn test_voting_four_detectors_all_agree() {
+        // N=4, all 4 agree
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
+            },
+            InjectionBallot {
+                name: "piguard",
+                findings: vec![make_injection_finding("piguard_injection", 0.92)],
+            },
+        ];
+        let result = combine_with_voting(ballots);
+        assert_eq!(result.len(), 4);
+        for f in &result {
+            assert!(is_injection_finding(f));
+            assert_eq!(
+                f.metadata.get("voting_result"),
+                Some(&"majority".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_piguard_finding_type_is_injection() {
+        let finding = make_injection_finding("piguard_injection", 0.9);
+        assert!(is_injection_finding(&finding));
     }
 }
