@@ -153,23 +153,23 @@ jobs:
           branch_pct, branch_frac = split_metric(branch)
           
           parts = []
-          parts.append("## Coverage (llvm-cov)\\n")
+          parts.append("## Coverage (llvm-cov)\n")
           if created:
-            parts.append(f"_Report created: {created}_\\n\\n")
-          parts.append("| Metric | % | Covered/Total |\\n")
-          parts.append("|---|---:|---:|\\n")
-          parts.append(fmt_row("Function", func_pct, func_frac) + "\\n")
-          parts.append(fmt_row("Line", line_pct, line_frac) + "\\n")
-          parts.append(fmt_row("Region", region_pct, region_frac) + "\\n")
+            parts.append(f"_Report created: {created}_\n\n")
+          parts.append("| Metric | % | Covered/Total |\n")
+          parts.append("|---|---:|---:|\n")
+          parts.append(fmt_row("Function", func_pct, func_frac) + "\n")
+          parts.append(fmt_row("Line", line_pct, line_frac) + "\n")
+          parts.append(fmt_row("Region", region_pct, region_frac) + "\n")
           if branch_frac:
-            parts.append(fmt_row("Branch", branch_pct, branch_frac) + "\\n")
+            parts.append(fmt_row("Branch", branch_pct, branch_frac) + "\n")
           else:
-            parts.append(fmt_row("Branch", branch_pct, "") + "\\n")
-          parts.append(\"\\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\\n\")
+            parts.append(fmt_row("Branch", branch_pct, "") + "\n")
+          parts.append("\nArtifacts: `coverage-report` contains `lcov.info` and `target/llvm-cov/html/index.html`.\n")
           
           # Append (don't clobber other summaries in the same job).
-          with summary_path.open(\"a\", encoding=\"utf-8\") as f:
-            f.write(\"\".join(parts))
+          with summary_path.open("a", encoding="utf-8") as f:
+            f.write("".join(parts))
           PY
       - name: Upload coverage to Codecov
         # If CODECOV_TOKEN isn't configured, keep CI green and rely on artifacts.
