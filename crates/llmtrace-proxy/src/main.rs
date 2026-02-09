@@ -441,6 +441,16 @@ async fn build_security_analyzer(
                 None
             };
 
+            let ig_config = if config.security_analysis.injecguard_enabled {
+                Some(llmtrace_security::InjecGuardConfig {
+                    model_id: config.security_analysis.injecguard_model.clone(),
+                    threshold: config.security_analysis.injecguard_threshold,
+                    cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                })
+            } else {
+                None
+            };
+
             // Apply download timeout
             let timeout = std::time::Duration::from_secs(
                 config.security_analysis.ml_download_timeout_seconds,
@@ -448,9 +458,10 @@ async fn build_security_analyzer(
 
             match tokio::time::timeout(
                 timeout,
-                llmtrace_security::EnsembleSecurityAnalyzer::with_ner(
+                llmtrace_security::EnsembleSecurityAnalyzer::with_injecguard(
                     &ml_config,
                     ner_config.as_ref(),
+                    ig_config.as_ref(),
                 ),
             )
             .await
@@ -459,15 +470,24 @@ async fn build_security_analyzer(
                     let load_time_ms = load_start.elapsed().as_millis() as u64;
                     let pi_loaded = ensemble.is_ml_active();
                     let ner_loaded = ensemble.is_ner_active();
+                    let ig_loaded = ensemble.is_injecguard_active();
+                    // DeBERTa models ~500 MB each, NER (BERT-base) ~400 MB
+                    let deberta_count = [pi_loaded, ig_loaded].iter().filter(|&&v| v).count();
+                    let ner_mb = if ner_loaded { 400 } else { 0 };
+                    let estimated_mb = deberta_count * 500 + ner_mb;
+                    let total_models = deberta_count + (ner_loaded as usize);
                     info!(
                         prompt_injection_loaded = pi_loaded,
                         ner_loaded = ner_loaded,
+                        injecguard_loaded = ig_loaded,
                         load_time_ms = load_time_ms,
-                        "ML models pre-loaded at startup"
+                        estimated_memory_mb = estimated_mb,
+                        "ML models pre-loaded at startup (~{estimated_mb} MB for {total_models} model(s))"
                     );
                     let status = MlModelStatus::Loaded {
                         prompt_injection: pi_loaded,
                         ner: ner_loaded,
+                        injecguard: ig_loaded,
                         load_time_ms,
                     };
                     Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))

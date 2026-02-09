@@ -59,6 +59,9 @@ pub struct Metrics {
     /// Anomalies detected, labelled by anomaly type.
     pub anomalies_total: IntCounterVec,
 
+    /// Per-detector security analysis latency, labelled by detector name.
+    pub security_detector_latency_seconds: HistogramVec,
+
     /// Currently active connections / in-flight proxy requests.
     pub active_connections: IntGauge,
 }
@@ -161,6 +164,19 @@ impl Metrics {
             .register(Box::new(anomalies_total.clone()))
             .expect("register anomalies_total");
 
+        let security_detector_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_security_detector_latency_seconds",
+                "Per-detector security analysis latency in seconds",
+            )
+            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]),
+            &["detector"],
+        )
+        .expect("metric: security_detector_latency_seconds");
+        registry
+            .register(Box::new(security_detector_latency_seconds.clone()))
+            .expect("register security_detector_latency_seconds");
+
         let active_connections = IntGauge::new(
             "llmtrace_active_connections",
             "Currently active proxy connections",
@@ -190,6 +206,7 @@ impl Metrics {
             storage_operations_total,
             cost_usd_total,
             anomalies_total,
+            security_detector_latency_seconds,
             active_connections,
         }
     }
@@ -281,6 +298,14 @@ impl Metrics {
                 .with_label_values(&[tenant, model])
                 .inc_by(micro_usd);
         }
+    }
+
+    /// Record per-detector security analysis latency.
+    pub fn record_detector_latency(&self, detector: &str, duration_ms: u64) {
+        let secs = duration_ms as f64 / 1000.0;
+        self.security_detector_latency_seconds
+            .with_label_values(&[detector])
+            .observe(secs);
     }
 
     /// Record detected anomalies.

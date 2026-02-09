@@ -311,6 +311,33 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
         Err(e) => eprintln!("Warning: EnsembleSecurityAnalyzer init failed (skipping): {e}"),
     }
 
+    // Ensemble + InjecGuard: majority voting with 3 detectors (ML-006).
+    match llmtrace_security::EnsembleSecurityAnalyzer::with_injecguard(
+        &llmtrace_security::MLSecurityConfig::default(),
+        None,
+        Some(&llmtrace_security::InjecGuardConfig::default()),
+    )
+    .await
+    {
+        Ok(a) => {
+            let ml_active = a.is_ml_active();
+            let ig_active = a.is_injecguard_active();
+            println!(
+                "Ensemble+IG: ml_active={}, injecguard_active={}",
+                ml_active, ig_active
+            );
+            if ml_active || ig_active {
+                analyzers.push(NamedAnalyzer {
+                    name: "Ensemble+IG",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: Ensemble+IG has no ML models active, skipping");
+            }
+        }
+        Err(e) => eprintln!("Warning: Ensemble+IG init failed (skipping): {e}"),
+    }
+
     // Standalone ML analyzers below are for comparison only.
     match llmtrace_security::PromptGuardAnalyzer::new(
         &llmtrace_security::PromptGuardConfig::default(),

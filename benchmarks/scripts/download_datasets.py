@@ -22,6 +22,7 @@ import json
 import random
 import sys
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from datasets import load_dataset, concatenate_datasets
@@ -40,6 +41,28 @@ _COMMITS = {
     "deepset_hf": "4f61ecb038e9c3fb77e21034b22511b523772cdd",
     "ivanleomk_hf": "07858746d34ad8c6a5dad1d94b02ba75aec844e5",
 }
+
+# Expected sample counts for integrity verification (pinned to commit SHAs above).
+# If these assertions fail, upstream data changed or a commit SHA was updated.
+_EXPECTED_COUNTS = {
+    "safeguard_test.json": 2060,
+    "deepset_all.json": 662,
+    "ivanleomk_all.json": 917,
+    "cyberseceval2_pi.json": 251,
+    "harmbench_behaviors.json": 400,
+    "ailuminate_demo.json": 1200,
+    "injecagent_attacks.json": 2108,
+    "asb_attacks.json": 400,
+    "bipia_indirect.json": 400,
+}
+
+
+def _assert_count(filename: str, actual: int) -> None:
+    expected = _EXPECTED_COUNTS[filename]
+    assert actual == expected, (
+        f"{filename}: expected {expected} samples, got {actual}. "
+        f"Upstream data or commit SHA may have changed."
+    )
 
 
 def convert_sample(idx: int, text: str, label: int, source: str) -> dict:
@@ -70,6 +93,7 @@ def _download_hf_dataset(
         convert_sample(i, row["text"], row["label"], source_label)
         for i, row in enumerate(ds)
     ]
+    _assert_count(output_filename, len(samples))
     path = output_dir / output_filename
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
 
@@ -118,6 +142,7 @@ def download_cyberseceval2(output_dir: Path) -> None:
             "source": "cyberseceval2",
         })
 
+    _assert_count("cyberseceval2_pi.json", len(samples))
     path = output_dir / "cyberseceval2_pi.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     print(f"cyberseceval2_pi.json: {len(samples)} samples (all malicious)")
@@ -147,6 +172,7 @@ def download_harmbench(output_dir: Path) -> None:
             "source": "harmbench",
         })
 
+    _assert_count("harmbench_behaviors.json", len(samples))
     path = output_dir / "harmbench_behaviors.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     print(f"harmbench_behaviors.json: {len(samples)} samples (all malicious)")
@@ -176,6 +202,7 @@ def download_ailuminate(output_dir: Path) -> None:
             "source": "ailuminate",
         })
 
+    _assert_count("ailuminate_demo.json", len(samples))
     path = output_dir / "ailuminate_demo.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     print(f"ailuminate_demo.json: {len(samples)} samples (all malicious)")
@@ -215,6 +242,7 @@ def download_injecagent(output_dir: Path) -> None:
             })
             idx += 1
 
+    _assert_count("injecagent_attacks.json", len(samples))
     path = output_dir / "injecagent_attacks.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     print(f"injecagent_attacks.json: {len(samples)} samples (all malicious)")
@@ -244,6 +272,7 @@ def download_asb(output_dir: Path) -> None:
             "source": "asb",
         })
 
+    _assert_count("asb_attacks.json", len(samples))
     path = output_dir / "asb_attacks.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
     print(f"asb_attacks.json: {len(samples)} samples (all malicious)")
@@ -314,6 +343,7 @@ def download_bipia(output_dir: Path) -> None:
             "source": "bipia",
         })
 
+    _assert_count("bipia_indirect.json", len(samples))
     path = output_dir / "bipia_indirect.json"
     path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
 
@@ -328,7 +358,7 @@ def main() -> None:
 
     print(f"Output directory: {output_dir}\n")
 
-    downloaders: list[tuple[str, callable]] = [
+    downloaders: list[tuple[str, Callable[[Path], None]]] = [
         ("SafeGuard", download_safeguard),
         ("Deepset", download_deepset),
         ("IvanLeoMK", download_ivanleomk),

@@ -40,6 +40,8 @@ pub enum MlModelStatus {
         prompt_injection: bool,
         /// Whether the NER model is available.
         ner: bool,
+        /// Whether the InjecGuard model is available.
+        injecguard: bool,
         /// Time taken to load models in milliseconds.
         load_time_ms: u64,
     },
@@ -633,7 +635,10 @@ pub async fn proxy_handler(
         }
 
         // --- Security analysis first, so findings can be persisted with the trace ---
+        let security_start = std::time::Instant::now();
         let mut security_findings = run_security_analysis(&state_bg, &captured).await;
+        let security_ms = security_start.elapsed().as_millis() as u64;
+        state_bg.metrics.record_detector_latency("ensemble", security_ms);
 
         // Merge in any findings detected during streaming (early warning layer).
         // These have already been alerted on mid-stream; now we persist them
@@ -809,12 +814,19 @@ async fn run_security_analysis(
         parameters: std::collections::HashMap::new(),
     };
 
-    let mut all_findings = match state
-        .security
-        .analyze_interaction(&captured.prompt_text, &captured.response_text, &context)
-        .await
-    {
-        Ok(findings) => {
+    let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
+    let analysis_result = tokio::time::timeout(
+        timeout,
+        state.security.analyze_interaction(
+            &captured.prompt_text,
+            &captured.response_text,
+            &context,
+        ),
+    )
+    .await;
+
+    let mut all_findings = match analysis_result {
+        Ok(Ok(findings)) => {
             state.security_breaker.record_success().await;
             let cb_state = state.security_breaker.state().await;
             state
@@ -831,13 +843,26 @@ async fn run_security_analysis(
             }
             findings
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             state.security_breaker.record_failure().await;
             let cb_state = state.security_breaker.state().await;
             state
                 .metrics
                 .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             error!(trace_id = %captured.trace_id, "Security analysis failed: {}", e);
+            Vec::new()
+        }
+        Err(_elapsed) => {
+            state.security_breaker.record_failure().await;
+            let cb_state = state.security_breaker.state().await;
+            state
+                .metrics
+                .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
+            warn!(
+                trace_id = %captured.trace_id,
+                timeout_ms = state.config.security_analysis_timeout_ms,
+                "Security analysis timed out"
+            );
             Vec::new()
         }
     };
@@ -987,13 +1012,23 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
         MlModelStatus::Loaded {
             prompt_injection,
             ner,
+            injecguard,
             load_time_ms,
-        } => serde_json::json!({
-            "status": "loaded",
-            "prompt_injection_model": prompt_injection,
-            "ner_model": ner,
-            "load_time_ms": load_time_ms,
-        }),
+        } => {
+            // Count injection detectors active for majority voting:
+            // regex (always) + prompt_injection + injecguard
+            let injection_detectors = 1 + (*prompt_injection as u8) + (*injecguard as u8);
+            let voting_mode = if injection_detectors >= 3 { "majority" } else { "union" };
+            serde_json::json!({
+                "status": "loaded",
+                "prompt_injection_model": prompt_injection,
+                "ner_model": ner,
+                "injecguard_model": injecguard,
+                "load_time_ms": load_time_ms,
+                "injection_detector_count": injection_detectors,
+                "voting_mode": voting_mode,
+            })
+        }
         MlModelStatus::Failed { error } => serde_json::json!({
             "status": "failed",
             "error": error,

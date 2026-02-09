@@ -423,7 +423,7 @@ impl InjecGuardAnalyzer {
     }
 
     /// Classify text and produce findings.
-    fn classify_text(&self, text: &str, location: &str) -> Result<Vec<SecurityFinding>> {
+    pub(crate) fn classify_text(&self, text: &str, location: &str) -> Result<Vec<SecurityFinding>> {
         if text.is_empty() {
             return Ok(Vec::new());
         }

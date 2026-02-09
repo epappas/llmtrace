@@ -1563,6 +1563,12 @@ impl Default for ShutdownConfig {
 /// which HuggingFace model to use, the confidence threshold, and the local
 /// model cache directory.
 ///
+/// # Memory requirements
+///
+/// Each DeBERTa model requires ~400-600 MB of RAM. When both `ml_enabled` and
+/// `injecguard_enabled` are `true`, expect ~800 MB-1.2 GB total for the two
+/// model instances. Plan host memory accordingly.
+///
 /// # Example (YAML)
 ///
 /// ```yaml
@@ -1628,6 +1634,19 @@ pub struct SecurityAnalysisConfig {
     /// Confidence threshold for jailbreak detection (0.0–1.0).
     #[serde(default = "default_jailbreak_threshold")]
     pub jailbreak_threshold: f32,
+    /// Enable InjecGuard as a third injection detector in the Ensemble.
+    ///
+    /// When `true`, the ensemble uses majority voting (regex + ML + InjecGuard)
+    /// to suppress false positives from individual detectors.
+    /// Adds ~400-600 MB memory for the InjecGuard DeBERTa-v3 model.
+    #[serde(default)]
+    pub injecguard_enabled: bool,
+    /// HuggingFace model ID for the InjecGuard model.
+    #[serde(default = "default_injecguard_model")]
+    pub injecguard_model: String,
+    /// Confidence threshold for InjecGuard detection (0.0–1.0).
+    #[serde(default = "default_injecguard_threshold")]
+    pub injecguard_threshold: f64,
 }
 
 fn default_ml_enabled() -> bool {
@@ -1666,6 +1685,14 @@ fn default_jailbreak_threshold() -> f32 {
     0.7
 }
 
+fn default_injecguard_model() -> String {
+    "leolee99/InjecGuard".to_string()
+}
+
+fn default_injecguard_threshold() -> f64 {
+    0.85
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -1681,6 +1708,9 @@ impl Default for SecurityAnalysisConfig {
             fusion_model_path: None,
             jailbreak_enabled: default_jailbreak_enabled(),
             jailbreak_threshold: default_jailbreak_threshold(),
+            injecguard_enabled: false,
+            injecguard_model: default_injecguard_model(),
+            injecguard_threshold: default_injecguard_threshold(),
         }
     }
 }
@@ -2670,6 +2700,9 @@ mod tests {
                 fusion_model_path: None,
                 jailbreak_enabled: true,
                 jailbreak_threshold: 0.7,
+                injecguard_enabled: false,
+                injecguard_model: default_injecguard_model(),
+                injecguard_threshold: default_injecguard_threshold(),
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -3164,6 +3197,9 @@ mod tests {
             fusion_model_path: None,
             jailbreak_enabled: true,
             jailbreak_threshold: 0.7,
+            injecguard_enabled: false,
+            injecguard_model: default_injecguard_model(),
+            injecguard_threshold: default_injecguard_threshold(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

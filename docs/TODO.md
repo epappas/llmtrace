@@ -201,7 +201,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 |----|---------|-----------|--------|
 | ML-002 | InjecGuard model integration | Medium | ✅ `10a2369` |
 | ML-003 | Meta Prompt Guard 2 integration (86M + 22M) | Medium | ✅ `10a2369` |
-| ML-006 | Multi-model ensemble voting with diverse architectures — framework only, no default diverse set wired | Medium | 🔄 |
+| ML-006 | Multi-model ensemble voting with diverse architectures — InjecGuard wired as 3rd detector, majority voting replaces union merge | Medium | ✅ |
 | ML-004 | PIGuard model integration | Medium | ⬜ |
 | ML-007 | Model hot-swapping without proxy restart | Medium | ⬜ |
 
@@ -329,9 +329,9 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-007 | MLCommons AILuminate jailbreak benchmark (1200 demo prompts) | Medium | ✅ |
 | EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ❌ (dataset not publicly released) |
 | EV-009 | Automated CI-integrated benchmark runner | Medium | ✅ `b15f4f0` |
-| EV-011 | safeguard-v2 evaluation (1300 samples) | Low | ⬜ |
-| EV-012 | deepset-v2 evaluation (354 samples) | Low | ⬜ |
-| EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ⬜ |
+| EV-011 | safeguard-v2 evaluation (2060 samples) | Low | ✅ |
+| EV-012 | deepset-v2 evaluation (355 samples) | Low | ✅ |
+| EV-013 | Ivanleomk-v2 evaluation (610 samples) | Low | ✅ |
 | EV-014 | BIPIA evaluation (400 samples: 200 benign + 200 indirect injection, 3 scenarios) | Medium | ✅ |
 | EV-015 | HarmBench evaluation (400 harmful behaviors, jailbreak/safety ASR) | Medium | ✅ |
 | EV-016 | AgentDojo Slack suite adaptive attack evaluation (Agent-as-a-Proxy resilience, 89 samples) | High | ⬜ |
@@ -385,21 +385,21 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
 | RL14-01 | ClickHouse TraceRepository implementation | High | ✅ |
-| RL14-02 | Feature-gated ClickHouse tests | High | 🔄 |
+| RL14-02 | Feature-gated ClickHouse tests | High | ✅ |
 
 ### Loop R15 — PostgreSQL MetadataRepository
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
 | RL15-01 | Postgres MetadataRepository + migrations | High | ✅ |
-| RL15-02 | Postgres integration tests | High | ⬜ |
+| RL15-02 | Postgres integration tests | High | ✅ |
 
 ### Loop R16 — Redis CacheLayer
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
 | RL16-01 | Redis CacheLayer implementation | Medium | ✅ |
-| RL16-02 | Cache TTL and invalidation tests | Medium | ⬜ |
+| RL16-02 | Cache TTL and invalidation tests | Medium | ✅ |
 
 ### Loop R17 — Data Retention & Purging
 
@@ -516,8 +516,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| RL22-01 | CI workflow (fmt/clippy/test) | Medium | ⬜ |
-| RL22-02 | Release workflow + image scan | Medium | ⬜ |
+| RL22-01 | CI workflow (fmt/clippy/test) | Medium | ✅ |
+| RL22-02 | Release workflow + image scan | Medium | ✅ |
 
 ### Loop R23 — RBAC & Auth
 
@@ -601,8 +601,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| RL34-01 | Slack/PagerDuty/Email channels | High | 🔄 |
-| RL34-02 | Escalation + deduplication tests | High | 🔄 |
+| RL34-01 | Slack (Block Kit) + PagerDuty (Events API v2) done; Email channel TODO | High | 🔄 |
+| RL34-02 | Deduplication done; escalation stub only (no full escalation policy engine) | High | 🔄 |
 
 ### Loop R35 — Externalize Pricing + OWASP Tests
 
@@ -631,7 +631,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
 | RL38-01 | Migration tooling + CLI | High | ✅ |
-| RL38-02 | Migration tests | Medium | 🔄 |
+| RL38-02 | Migration tests | Medium | ✅ |
 
 ### Loop R39 — Secrets Hardening + Startup Probe
 
@@ -643,8 +643,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| RL40-01 | Compose-based integration tests in CI | High | ⬜ |
-| RL40-02 | Container scanning in release | Medium | ⬜ |
+| RL40-01 | Compose-based integration tests in CI | High | ✅ |
+| RL40-02 | Container scanning in release | Medium | ✅ |
 
 ### Loop R41 — Per-tenant Rate Limiting + Compliance Persistence
 

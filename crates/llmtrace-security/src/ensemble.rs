@@ -8,6 +8,9 @@
 //!
 //! This module is only available when the `ml` feature is enabled.
 
+use std::sync::Arc;
+use std::time::Instant;
+
 use async_trait::async_trait;
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
@@ -16,6 +19,7 @@ use llmtrace_core::{
 use crate::feature_extraction::extract_heuristic_features;
 use crate::fpr_calibration::{CalibrationReport, FprTarget};
 use crate::fusion_classifier::FusionClassifier;
+use crate::injecguard::{InjecGuardAnalyzer, InjecGuardConfig};
 use crate::ml_detector::MLSecurityAnalyzer;
 use crate::ner_detector::{NerConfig, NerDetector};
 use crate::thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
@@ -52,6 +56,10 @@ pub struct EnsembleSecurityAnalyzer {
     regex: RegexSecurityAnalyzer,
     ml: MLSecurityAnalyzer,
     ner: Option<NerDetector>,
+    /// InjecGuard model for injection detection (ML-006).
+    /// Wrapped in `Arc` so `spawn_blocking` can run inference on the
+    /// tokio blocking pool concurrently with ML inference.
+    injecguard: Option<Arc<InjecGuardAnalyzer>>,
     /// Feature-level fusion classifier (ADR-013).
     /// When `Some`, the ensemble uses feature-level fusion instead of
     /// score-level combination.
@@ -91,6 +99,7 @@ impl EnsembleSecurityAnalyzer {
             regex,
             ml,
             ner: None,
+            injecguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -122,6 +131,52 @@ impl EnsembleSecurityAnalyzer {
             regex,
             ml,
             ner,
+            injecguard: None,
+            fusion_classifier: None,
+            fusion_threshold: ml_config.threshold,
+            thresholds: ResolvedThresholds::default(),
+            over_defence_enabled: false,
+            allow_security_research: false,
+            fp_tracker: FalsePositiveTracker::default(),
+        })
+    }
+
+    /// Create a new ensemble analyzer with ML, NER, and InjecGuard (ML-006).
+    ///
+    /// Enables majority voting for injection findings when InjecGuard loads
+    /// successfully. NER and InjecGuard degrade gracefully on load failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the regex analyzer fails to initialise.
+    pub async fn with_injecguard(
+        ml_config: &super::MLSecurityConfig,
+        ner_config: Option<&NerConfig>,
+        ig_config: Option<&InjecGuardConfig>,
+    ) -> Result<Self> {
+        let regex = RegexSecurityAnalyzer::new()?;
+        let ml = MLSecurityAnalyzer::new(ml_config).await?;
+        let ner = match ner_config {
+            Some(cfg) => NerDetector::new(cfg).await?,
+            None => None,
+        };
+        let injecguard = match ig_config {
+            Some(cfg) => {
+                let ig = InjecGuardAnalyzer::new(cfg).await?;
+                if ig.is_model_loaded() {
+                    Some(Arc::new(ig))
+                } else {
+                    tracing::warn!("InjecGuard model not loaded, disabling in ensemble");
+                    None
+                }
+            }
+            None => None,
+        };
+        Ok(Self {
+            regex,
+            ml,
+            ner,
+            injecguard,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -203,6 +258,7 @@ impl EnsembleSecurityAnalyzer {
             regex,
             ml,
             ner,
+            injecguard: None,
             fusion_classifier,
             fusion_threshold: ml_config.threshold,
             thresholds: ResolvedThresholds::default(),
@@ -222,6 +278,7 @@ impl EnsembleSecurityAnalyzer {
             regex: RegexSecurityAnalyzer::default(),
             ml: MLSecurityAnalyzer::new_fallback_only(0.8),
             ner: None,
+            injecguard: None,
             fusion_classifier: None,
             fusion_threshold: 0.8,
             thresholds: ResolvedThresholds::default(),
@@ -241,6 +298,12 @@ impl EnsembleSecurityAnalyzer {
     #[must_use]
     pub fn is_ner_active(&self) -> bool {
         self.ner.is_some()
+    }
+
+    /// Returns `true` if the InjecGuard model is loaded and contributing to voting.
+    #[must_use]
+    pub fn is_injecguard_active(&self) -> bool {
+        self.injecguard.is_some()
     }
 
     /// Returns `true` if feature-level fusion is active (ADR-013).
@@ -323,6 +386,64 @@ impl EnsembleSecurityAnalyzer {
     pub fn with_fpr_calibration(mut self, report: &CalibrationReport, target: &FprTarget) -> Self {
         self.thresholds = report.to_resolved_thresholds(target, &self.thresholds);
         self
+    }
+
+    /// Spawn InjecGuard inference on the tokio blocking pool.
+    ///
+    /// Returns `None` when InjecGuard is not loaded. The returned handle
+    /// yields `(Result<findings>, latency_ms)`.
+    fn spawn_injecguard(
+        &self,
+        text: &str,
+        location: &'static str,
+    ) -> Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>> {
+        self.injecguard.as_ref().map(|ig| {
+            let ig = Arc::clone(ig);
+            let text = text.to_string();
+            tokio::task::spawn_blocking(move || {
+                let start = Instant::now();
+                let findings = ig.classify_text(&text, location);
+                (findings, start.elapsed().as_millis() as u64)
+            })
+        })
+    }
+
+    /// Build ballots, await InjecGuard, log diagnostics, and run majority voting.
+    async fn collect_and_vote(
+        &self,
+        regex_findings: Vec<SecurityFinding>,
+        regex_ms: u64,
+        ml_result: Option<(Vec<SecurityFinding>, u64)>,
+        ig_handle: Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>>,
+    ) -> Result<Vec<SecurityFinding>> {
+        let mut ballots = vec![InjectionBallot {
+            name: "regex",
+            findings: regex_findings,
+        }];
+
+        let mut ml_ms = None;
+        if let Some((ml_findings, latency)) = ml_result {
+            ml_ms = Some(latency);
+            ballots.push(InjectionBallot {
+                name: "ml",
+                findings: ml_findings,
+            });
+        }
+
+        let mut ig_ms = None;
+        if let Some(handle) = ig_handle {
+            let (ig_result, latency) = handle
+                .await
+                .map_err(|e| LLMTraceError::Security(format!("InjecGuard task panicked: {e}")))?;
+            ig_ms = Some(latency);
+            ballots.push(InjectionBallot {
+                name: "injecguard",
+                findings: ig_result?,
+            });
+        }
+
+        log_voting_diagnostics(&ballots, &DetectorTiming { regex_ms, ml_ms, ig_ms });
+        Ok(combine_with_voting(ballots))
     }
 
     /// Feature-level fusion analysis path (ADR-013).
@@ -432,15 +553,25 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         prompt: &str,
         context: &AnalysisContext,
     ) -> Result<Vec<SecurityFinding>> {
+        let regex_start = Instant::now();
         let regex_findings = self.regex.analyze_request(prompt, context).await?;
+        let regex_ms = regex_start.elapsed().as_millis() as u64;
 
         let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(prompt, &regex_findings, "request.prompt")?
-        } else if self.ml.is_model_loaded() {
-            // Score-level combination path (existing)
-            let ml_findings = self.ml.analyze_request(prompt, context).await?;
-            combine_findings(regex_findings, ml_findings)
+        } else if self.ml.is_model_loaded() || self.injecguard.is_some() {
+            // Majority voting path (ML-006)
+            let ig_handle = self.spawn_injecguard(prompt, "request.prompt");
+            let ml_result = if self.ml.is_model_loaded() {
+                let ml_start = Instant::now();
+                let ml_findings = self.ml.analyze_request(prompt, context).await?;
+                Some((ml_findings, ml_start.elapsed().as_millis() as u64))
+            } else {
+                None
+            };
+            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle)
+                .await?
         } else {
             regex_findings
         };
@@ -465,15 +596,25 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         response: &str,
         context: &AnalysisContext,
     ) -> Result<Vec<SecurityFinding>> {
+        let regex_start = Instant::now();
         let regex_findings = self.regex.analyze_response(response, context).await?;
+        let regex_ms = regex_start.elapsed().as_millis() as u64;
 
         let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(response, &regex_findings, "response.content")?
-        } else if self.ml.is_model_loaded() {
-            // Score-level combination path (existing)
-            let ml_findings = self.ml.analyze_response(response, context).await?;
-            combine_findings(regex_findings, ml_findings)
+        } else if self.ml.is_model_loaded() || self.injecguard.is_some() {
+            // Majority voting path (ML-006)
+            let ig_handle = self.spawn_injecguard(response, "response.content");
+            let ml_result = if self.ml.is_model_loaded() {
+                let ml_start = Instant::now();
+                let ml_findings = self.ml.analyze_response(response, context).await?;
+                Some((ml_findings, ml_start.elapsed().as_millis() as u64))
+            } else {
+                None
+            };
+            self.collect_and_vote(regex_findings, regex_ms, ml_result, ig_handle)
+                .await?
         } else {
             regex_findings
         };
@@ -508,6 +649,9 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         if self.fusion_classifier.is_some() {
             types.push("fusion_prompt_injection".to_string());
         }
+        if self.injecguard.is_some() {
+            types.push("injecguard_injection".to_string());
+        }
         if self.ner.is_some() {
             // NER produces pii_detected findings (same type as regex PII)
             // but with ner-specific metadata. No new type needed.
@@ -518,6 +662,9 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
     async fn health_check(&self) -> Result<()> {
         self.regex.health_check().await?;
         self.ml.health_check().await?;
+        if let Some(ref ig) = self.injecguard {
+            ig.health_check().await?;
+        }
         Ok(())
     }
 }
@@ -535,6 +682,8 @@ fn is_injection_finding(finding: &SecurityFinding) -> bool {
             | "jailbreak"
             | "encoding_attack"
             | "ml_prompt_injection"
+            | "injecguard_injection"
+            | "fusion_prompt_injection"
     )
 }
 
@@ -581,58 +730,149 @@ pub(crate) fn merge_pii_findings(
     existing
 }
 
-/// Combine findings from regex and ML analyzers.
-///
-/// When both detect injection, the regex findings get a confidence boost and
-/// the highest severity from either is used. ML findings that have no regex
-/// counterpart (or vice-versa) are included unchanged.
-pub(crate) fn combine_findings(
-    mut regex_findings: Vec<SecurityFinding>,
-    ml_findings: Vec<SecurityFinding>,
-) -> Vec<SecurityFinding> {
-    let regex_has_injection = regex_findings.iter().any(is_injection_finding);
-    let ml_has_injection = ml_findings.iter().any(is_injection_finding);
+/// Per-detector latency captured during a voting round.
+struct DetectorTiming {
+    regex_ms: u64,
+    ml_ms: Option<u64>,
+    ig_ms: Option<u64>,
+}
 
-    if regex_has_injection && ml_has_injection {
-        // Both agree — boost regex injection findings and apply max severity from ML
-        let ml_max_severity = ml_findings
-            .iter()
-            .filter(|f| is_injection_finding(f))
-            .map(|f| &f.severity)
-            .max()
-            .cloned()
-            .unwrap_or(SecuritySeverity::Medium);
+/// Log voting diagnostics: per-detector latency and disagreement warnings.
+fn log_voting_diagnostics(ballots: &[InjectionBallot], timing: &DetectorTiming) {
+    let detected: Vec<&str> = ballots.iter().filter(|b| b.has_injection()).map(|b| b.name).collect();
+    let not_detected: Vec<&str> = ballots.iter().filter(|b| !b.has_injection()).map(|b| b.name).collect();
 
-        for finding in &mut regex_findings {
-            if is_injection_finding(finding) {
-                finding.confidence_score = (finding.confidence_score + AGREEMENT_BOOST).min(1.0);
-                finding
-                    .metadata
-                    .insert("ensemble_agreement".to_string(), "true".to_string());
-                if ml_max_severity > finding.severity {
-                    finding.severity = ml_max_severity.clone();
-                }
-            }
-        }
-
-        // Add ML-specific findings (non-injection ones) and ML injection finding
-        // with boosted confidence
-        for mut ml_finding in ml_findings {
-            if is_injection_finding(&ml_finding) {
-                ml_finding.confidence_score =
-                    (ml_finding.confidence_score + AGREEMENT_BOOST).min(1.0);
-                ml_finding
-                    .metadata
-                    .insert("ensemble_agreement".to_string(), "true".to_string());
-            }
-            regex_findings.push(ml_finding);
-        }
+    let unanimous = not_detected.is_empty() || detected.is_empty();
+    if !unanimous && ballots.len() > 1 {
+        tracing::info!(
+            ?detected,
+            ?not_detected,
+            regex_ms = timing.regex_ms,
+            ml_ms = ?timing.ml_ms,
+            ig_ms = ?timing.ig_ms,
+            "Injection detector disagreement"
+        );
     } else {
-        // No agreement — include all findings as-is
-        regex_findings.extend(ml_findings);
+        tracing::debug!(
+            ?detected,
+            regex_ms = timing.regex_ms,
+            ml_ms = ?timing.ml_ms,
+            ig_ms = ?timing.ig_ms,
+            "Ensemble voting complete"
+        );
+    }
+}
+
+/// A ballot from a single injection detector for majority voting.
+struct InjectionBallot {
+    name: &'static str,
+    findings: Vec<SecurityFinding>,
+}
+
+impl InjectionBallot {
+    fn has_injection(&self) -> bool {
+        self.findings.iter().any(is_injection_finding)
     }
 
-    regex_findings
+    fn injection_findings(&self) -> impl Iterator<Item = &SecurityFinding> {
+        self.findings.iter().filter(|f| is_injection_finding(f))
+    }
+}
+
+/// Combine findings from regex and ML analyzers.
+///
+/// Delegates to [`combine_with_voting`] with a two-element ballot vec,
+/// preserving backward-compatible behavior while using the voting path.
+#[cfg(test)]
+fn combine_findings(
+    regex_findings: Vec<SecurityFinding>,
+    ml_findings: Vec<SecurityFinding>,
+) -> Vec<SecurityFinding> {
+    let ballots = vec![
+        InjectionBallot {
+            name: "regex",
+            findings: regex_findings,
+        },
+        InjectionBallot {
+            name: "ml",
+            findings: ml_findings,
+        },
+    ];
+    combine_with_voting(ballots)
+}
+
+/// Combine findings from multiple detectors using majority voting (ML-006).
+///
+/// 1. Non-injection findings from all ballots always pass through.
+/// 2. Count how many ballots contain injection findings (agree_count).
+/// 3. Compute majority threshold:
+///    - N>=3: true majority (N/2+1), e.g. 2/3 needed
+///    - N<=2: any detector sufficient (backward compatible with union merge)
+/// 4. If agree_count >= majority: include injection findings from agreeing
+///    ballots. Multi-detector agreement applies +0.1 confidence boost,
+///    max severity escalation, and voting metadata.
+/// 5. If agree_count < majority: suppress all injection findings.
+fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
+    let n = ballots.len();
+    assert!(n >= 1, "At least one ballot required");
+
+    // N>=3: true majority voting; N<=2: any detector triggers (union merge)
+    let majority = if n >= 3 { n / 2 + 1 } else { 1 };
+
+    // Collect non-injection findings from all ballots
+    let mut result: Vec<SecurityFinding> = ballots
+        .iter()
+        .flat_map(|b| b.findings.iter())
+        .filter(|f| !is_injection_finding(f))
+        .cloned()
+        .collect();
+
+    // Count agreeing detectors
+    let agreeing: Vec<&InjectionBallot> = ballots.iter().filter(|b| b.has_injection()).collect();
+    let agree_count = agreeing.len();
+
+    if agree_count < majority {
+        return result;
+    }
+
+    // Only boost confidence when multiple detectors independently agree
+    let multi_agreement = agree_count > 1;
+    let agreeing_names: Vec<&str> = agreeing.iter().map(|b| b.name).collect();
+    let names_str = agreeing_names.join(",");
+
+    let max_severity = agreeing
+        .iter()
+        .flat_map(|b| b.injection_findings())
+        .map(|f| &f.severity)
+        .max()
+        .cloned()
+        .unwrap_or(SecuritySeverity::Medium);
+
+    for ballot in &agreeing {
+        for finding in ballot.injection_findings() {
+            let mut out = finding.clone();
+            if multi_agreement {
+                out.confidence_score = (out.confidence_score + AGREEMENT_BOOST).min(1.0);
+                if max_severity > out.severity {
+                    out.severity = max_severity.clone();
+                }
+                out.metadata
+                    .insert("voting_result".to_string(), "majority".to_string());
+                out.metadata.insert(
+                    "agreeing_detectors".to_string(),
+                    names_str.clone(),
+                );
+                out.metadata
+                    .insert("ensemble_agreement".to_string(), "true".to_string());
+            } else {
+                out.metadata
+                    .insert("voting_result".to_string(), "single_detector".to_string());
+            }
+            result.push(out);
+        }
+    }
+
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -754,7 +994,8 @@ mod tests {
     }
 
     #[test]
-    fn test_combine_regex_only_findings() {
+    fn test_combine_regex_only_injection_passes_through() {
+        // With N=2, majority=1. Regex-only detection passes through (no boost).
         let regex_findings = vec![SecurityFinding::new(
             SecuritySeverity::High,
             "prompt_injection".to_string(),
@@ -763,11 +1004,19 @@ mod tests {
         )];
         let result = combine_findings(regex_findings, Vec::new());
         assert_eq!(result.len(), 1);
+        assert_eq!(result[0].finding_type, "prompt_injection");
+        // Single detector: no boost, no ensemble_agreement
         assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
+        assert!(!result[0].metadata.contains_key("ensemble_agreement"));
+        assert_eq!(
+            result[0].metadata.get("voting_result"),
+            Some(&"single_detector".to_string())
+        );
     }
 
     #[test]
-    fn test_combine_ml_only_findings() {
+    fn test_combine_ml_only_injection_passes_through() {
+        // With N=2, majority=1. ML-only detection passes through (no boost).
         let ml_findings = vec![SecurityFinding::new(
             SecuritySeverity::High,
             "ml_prompt_injection".to_string(),
@@ -777,6 +1026,8 @@ mod tests {
         let result = combine_findings(Vec::new(), ml_findings);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].finding_type, "ml_prompt_injection");
+        assert!((result[0].confidence_score - 0.9).abs() < f64::EPSILON);
+        assert!(!result[0].metadata.contains_key("ensemble_agreement"));
     }
 
     #[test]
@@ -795,14 +1046,13 @@ mod tests {
         )];
         let result = combine_findings(regex_findings, ml_findings);
 
-        // Should have both findings
+        // Both injection findings included (2/2 majority)
         assert_eq!(result.len(), 2);
 
         let regex_finding = result
             .iter()
             .find(|f| f.finding_type == "prompt_injection")
             .unwrap();
-        // Confidence should be boosted
         assert!(
             (regex_finding.confidence_score - 0.95).abs() < f64::EPSILON,
             "Expected 0.95, got {}",
@@ -811,6 +1061,10 @@ mod tests {
         assert_eq!(
             regex_finding.metadata.get("ensemble_agreement"),
             Some(&"true".to_string())
+        );
+        assert_eq!(
+            regex_finding.metadata.get("voting_result"),
+            Some(&"majority".to_string())
         );
 
         let ml_finding = result
@@ -898,7 +1152,7 @@ mod tests {
         )];
         let result = combine_findings(regex_findings, ml_findings);
 
-        // Should have all 3 findings
+        // PII (non-injection) + 2 injection findings from agreeing ballots
         assert_eq!(result.len(), 3);
         assert!(result.iter().any(|f| f.finding_type == "pii_detected"));
 
@@ -1236,5 +1490,268 @@ mod tests {
         );
         // Non-calibrated categories should remain at defaults
         assert!((t.jailbreak - 0.75).abs() < f64::EPSILON);
+    }
+
+    // -- Majority voting tests (ML-006) -----------------------------------
+
+    fn make_injection_finding(finding_type: &str, score: f64) -> SecurityFinding {
+        SecurityFinding::new(
+            SecuritySeverity::High,
+            finding_type.to_string(),
+            format!("{finding_type} detected"),
+            score,
+        )
+    }
+
+    fn make_pii_finding() -> SecurityFinding {
+        SecurityFinding::new(
+            SecuritySeverity::Medium,
+            "pii_detected".to_string(),
+            "PII found".to_string(),
+            0.9,
+        )
+    }
+
+    #[test]
+    fn test_voting_three_agree() {
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.92)],
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // All 3 injection findings included and boosted
+        assert_eq!(result.len(), 3);
+        for f in &result {
+            assert!(is_injection_finding(f));
+            assert_eq!(
+                f.metadata.get("voting_result"),
+                Some(&"majority".to_string())
+            );
+            assert!(f.metadata.get("agreeing_detectors").unwrap().contains("regex"));
+            assert!(f.metadata.get("agreeing_detectors").unwrap().contains("ml"));
+            assert!(f.metadata.get("agreeing_detectors").unwrap().contains("injecguard"));
+            // All boosted by +0.1
+            assert!(f.confidence_score > 0.85);
+        }
+    }
+
+    #[test]
+    fn test_voting_majority_two_of_three() {
+        // 2/3 agree (regex + ml), injecguard does not detect
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // 2/3 >= 2 (majority), so injection findings pass
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
+        assert!(result.iter().any(|f| f.finding_type == "ml_prompt_injection"));
+    }
+
+    #[test]
+    fn test_voting_minority_suppressed() {
+        // 1/3 regex-only false positive is suppressed; PII preserved
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![
+                    make_injection_finding("prompt_injection", 0.85),
+                    make_pii_finding(),
+                ],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: Vec::new(),
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // Injection suppressed (1/3 < 2), PII preserved
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].finding_type, "pii_detected");
+    }
+
+    #[test]
+    fn test_voting_two_detectors_both_agree() {
+        // N=2, majority=2, both agree
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.92)],
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
+        assert!(result.iter().any(|f| f.finding_type == "injecguard_injection"));
+    }
+
+    #[test]
+    fn test_voting_two_detectors_disagree_passes_through() {
+        // N=2, majority=1. Single-detector finding passes through (no boost).
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].finding_type, "prompt_injection");
+        // No boost for single-detector detection
+        assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
+        assert!(!result[0].metadata.contains_key("ensemble_agreement"));
+        assert_eq!(
+            result[0].metadata.get("voting_result"),
+            Some(&"single_detector".to_string())
+        );
+    }
+
+    #[test]
+    fn test_voting_single_detector_passthrough() {
+        // N=1, majority=1, single detector passes through without boost
+        let ballots = vec![InjectionBallot {
+            name: "regex",
+            findings: vec![make_injection_finding("prompt_injection", 0.85)],
+        }];
+        let result = combine_with_voting(ballots);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].finding_type, "prompt_injection");
+        // No boost for single detector (P2 fix)
+        assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
+        assert!(!result[0].metadata.contains_key("ensemble_agreement"));
+        assert_eq!(
+            result[0].metadata.get("voting_result"),
+            Some(&"single_detector".to_string())
+        );
+    }
+
+    #[test]
+    fn test_voting_non_injection_always_preserved() {
+        // Non-injection findings survive regardless of voting outcome
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![
+                    make_pii_finding(),
+                    SecurityFinding::new(
+                        SecuritySeverity::Medium,
+                        "data_leakage".to_string(),
+                        "API key detected".to_string(),
+                        0.95,
+                    ),
+                ],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: Vec::new(),
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // Both non-injection findings preserved
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().any(|f| f.finding_type == "pii_detected"));
+        assert!(result.iter().any(|f| f.finding_type == "data_leakage"));
+    }
+
+    #[test]
+    fn test_voting_max_severity_applied() {
+        // When agreeing, max severity from all agreeing detectors is applied
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.70)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: vec![SecurityFinding::new(
+                    SecuritySeverity::Critical,
+                    "ml_prompt_injection".to_string(),
+                    "ML detected".to_string(),
+                    0.98,
+                )],
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: vec![make_injection_finding("injecguard_injection", 0.90)],
+            },
+        ];
+        let result = combine_with_voting(ballots);
+
+        // All findings should have Critical severity (max)
+        for f in &result {
+            assert_eq!(f.severity, SecuritySeverity::Critical);
+        }
+    }
+
+    #[test]
+    fn test_voting_three_detectors_minority_regex_only_suppressed() {
+        // N=3, majority=2. Regex-only FP (1/3 < 2) is suppressed.
+        // This is the primary FP reduction scenario for ML-006.
+        let ballots = vec![
+            InjectionBallot {
+                name: "regex",
+                findings: vec![make_injection_finding("prompt_injection", 0.85)],
+            },
+            InjectionBallot {
+                name: "ml",
+                findings: Vec::new(),
+            },
+            InjectionBallot {
+                name: "injecguard",
+                findings: Vec::new(),
+            },
+        ];
+        let result = combine_with_voting(ballots);
+        assert!(result.is_empty(), "Regex-only FP should be suppressed with N=3 voting");
+    }
+
+    #[test]
+    fn test_injecguard_accessor() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        assert!(!ensemble.is_injecguard_active());
     }
 }
