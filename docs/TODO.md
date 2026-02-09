@@ -202,7 +202,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | ML-002 | InjecGuard model integration | Medium | ✅ `10a2369` |
 | ML-003 | Meta Prompt Guard 2 integration (86M + 22M) | Medium | ✅ `10a2369` |
 | ML-006 | Multi-model ensemble voting with diverse architectures — InjecGuard wired as 3rd detector, majority voting replaces union merge | Medium | ✅ |
-| ML-004 | PIGuard model integration | Medium | ⬜ |
+| ML-004 | PIGuard model integration | Medium | ✅ |
 | ML-007 | Model hot-swapping without proxy restart | Medium | ⬜ |
 
 ### Loop 9 — Action-Selector Pattern Enforcement
@@ -336,7 +336,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-015 | HarmBench evaluation (400 harmful behaviors, jailbreak/safety ASR) | Medium | ✅ |
 | EV-016 | AgentDojo Slack suite adaptive attack evaluation (Agent-as-a-Proxy resilience, 89 samples) | High | ⬜ |
 | EV-017 | Multi-objective GCG adversarial robustness red-team testing against LLMTrace ensemble | High | ⬜ |
-| EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ⬜ |
+| EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ✅ |
 
 ---
 
