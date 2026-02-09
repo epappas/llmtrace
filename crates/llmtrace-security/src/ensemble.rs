@@ -517,28 +517,35 @@ impl EnsembleSecurityAnalyzer {
             });
         }
 
+        // Collect IG and PG results, then merge into a single "deberta_pair"
+        // ballot. Both models are DeBERTa-based and highly correlated, so they
+        // share one vote slot. OR logic: either detecting = group votes yes.
+        // The ballot is always added when at least one model is active, even
+        // with empty findings -- an empty ballot is a "no injection" vote.
+        let ig_active = ig_handle.is_some();
         let mut ig_ms = None;
+        let mut ig_findings = Vec::new();
         if let Some(handle) = ig_handle {
             let (ig_result, latency) = handle
                 .await
                 .map_err(|e| LLMTraceError::Security(format!("InjecGuard task panicked: {e}")))?;
             ig_ms = Some(latency);
-            ballots.push(InjectionBallot {
-                name: "injecguard",
-                findings: ig_result?,
-            });
+            ig_findings = ig_result?;
         }
 
+        let pg_active = pg_handle.is_some();
         let mut pg_ms = None;
+        let mut pg_findings = Vec::new();
         if let Some(handle) = pg_handle {
             let (pg_result, latency) = handle
                 .await
                 .map_err(|e| LLMTraceError::Security(format!("PIGuard task panicked: {e}")))?;
             pg_ms = Some(latency);
-            ballots.push(InjectionBallot {
-                name: "piguard",
-                findings: pg_result?,
-            });
+            pg_findings = pg_result?;
+        }
+
+        if ig_active || pg_active {
+            ballots.push(merge_deberta_pair(ig_findings, pg_findings));
         }
 
         log_voting_diagnostics(
@@ -893,6 +900,79 @@ fn log_voting_diagnostics(ballots: &[InjectionBallot], timing: &DetectorTiming) 
             pg_ms = ?timing.pg_ms,
             "Ensemble voting complete"
         );
+    }
+}
+
+/// Merge InjecGuard and PIGuard findings into a single "deberta_pair" ballot.
+///
+/// Both models are DeBERTa-based with correlated detection patterns, so they
+/// share one vote slot instead of inflating the ballot count. OR logic: if
+/// either detects injection, the group votes yes. When both detect, findings
+/// are deduplicated by keeping the higher-confidence finding per location.
+fn merge_deberta_pair(
+    ig_findings: Vec<SecurityFinding>,
+    pg_findings: Vec<SecurityFinding>,
+) -> InjectionBallot {
+    let mut merged: Vec<SecurityFinding> = Vec::new();
+
+    // Index PG findings by location for dedup
+    let pg_by_location: std::collections::HashMap<String, &SecurityFinding> = pg_findings
+        .iter()
+        .filter(|f| is_injection_finding(f))
+        .map(|f| {
+            let loc = f
+                .metadata
+                .get("location")
+                .cloned()
+                .unwrap_or_default();
+            (loc, f)
+        })
+        .collect();
+
+    let mut seen_locations = std::collections::HashSet::new();
+
+    // Add IG injection findings, preferring higher confidence when PG overlaps
+    for ig in ig_findings.iter().filter(|f| is_injection_finding(f)) {
+        let loc = ig
+            .metadata
+            .get("location")
+            .cloned()
+            .unwrap_or_default();
+        if let Some(pg) = pg_by_location.get(&loc) {
+            if pg.confidence_score > ig.confidence_score {
+                merged.push((*pg).clone());
+            } else {
+                merged.push(ig.clone());
+            }
+        } else {
+            merged.push(ig.clone());
+        }
+        seen_locations.insert(loc);
+    }
+
+    // Add PG injection findings not already covered by IG
+    for pg in pg_findings.iter().filter(|f| is_injection_finding(f)) {
+        let loc = pg
+            .metadata
+            .get("location")
+            .cloned()
+            .unwrap_or_default();
+        if !seen_locations.contains(&loc) {
+            merged.push(pg.clone());
+        }
+    }
+
+    // Non-injection findings pass through from both
+    merged.extend(
+        ig_findings
+            .into_iter()
+            .chain(pg_findings)
+            .filter(|f| !is_injection_finding(f)),
+    );
+
+    InjectionBallot {
+        name: "deberta_pair",
+        findings: merged,
     }
 }
 
@@ -1908,8 +1988,46 @@ mod tests {
     }
 
     #[test]
-    fn test_voting_four_detectors_majority() {
-        // N=4, majority=3. 3/4 agree passes.
+    fn test_merge_deberta_pair_ig_only() {
+        let ig = vec![make_injection_finding("injecguard_injection", 0.88)];
+        let pg = Vec::new();
+        let ballot = merge_deberta_pair(ig, pg);
+        assert_eq!(ballot.name, "deberta_pair");
+        assert!(ballot.has_injection());
+        assert_eq!(ballot.findings.len(), 1);
+        assert_eq!(ballot.findings[0].finding_type, "injecguard_injection");
+    }
+
+    #[test]
+    fn test_merge_deberta_pair_pg_only() {
+        let ig = Vec::new();
+        let pg = vec![make_injection_finding("piguard_injection", 0.92)];
+        let ballot = merge_deberta_pair(ig, pg);
+        assert!(ballot.has_injection());
+        assert_eq!(ballot.findings.len(), 1);
+        assert_eq!(ballot.findings[0].finding_type, "piguard_injection");
+    }
+
+    #[test]
+    fn test_merge_deberta_pair_both_detect_keeps_higher_confidence() {
+        let ig = vec![make_injection_finding("injecguard_injection", 0.88)];
+        let pg = vec![make_injection_finding("piguard_injection", 0.95)];
+        let ballot = merge_deberta_pair(ig, pg);
+        // Both share same location (empty default), so dedup keeps higher confidence
+        assert_eq!(ballot.findings.len(), 1);
+        assert!((ballot.findings[0].confidence_score - 0.95).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_merge_deberta_pair_neither_detects() {
+        let ballot = merge_deberta_pair(Vec::new(), Vec::new());
+        assert!(!ballot.has_injection());
+        assert!(ballot.findings.is_empty());
+    }
+
+    #[test]
+    fn test_voting_with_deberta_pair_all_three_groups_agree() {
+        // N=3 groups (regex, ml, deberta_pair). All agree = 3/3 majority.
         let ballots = vec![
             InjectionBallot {
                 name: "regex",
@@ -1919,27 +2037,16 @@ mod tests {
                 name: "ml",
                 findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
             },
-            InjectionBallot {
-                name: "injecguard",
-                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
-            },
-            InjectionBallot {
-                name: "piguard",
-                findings: Vec::new(),
-            },
+            merge_deberta_pair(
+                vec![make_injection_finding("injecguard_injection", 0.88)],
+                vec![make_injection_finding("piguard_injection", 0.92)],
+            ),
         ];
         let result = combine_with_voting(ballots);
-
-        // 3/4 >= 3 (majority), injection findings pass with boost
-        assert_eq!(result.len(), 3);
-        assert!(result.iter().any(|f| f.finding_type == "prompt_injection"));
-        assert!(result
-            .iter()
-            .any(|f| f.finding_type == "ml_prompt_injection"));
-        assert!(result
-            .iter()
-            .any(|f| f.finding_type == "injecguard_injection"));
-        for f in &result {
+        // 3/3 >= 2 majority, findings pass with boost
+        let injection_count = result.iter().filter(|f| is_injection_finding(f)).count();
+        assert_eq!(injection_count, 3); // regex + ml + best of deberta_pair
+        for f in result.iter().filter(|f| is_injection_finding(f)) {
             assert_eq!(
                 f.metadata.get("voting_result"),
                 Some(&"majority".to_string())
@@ -1948,8 +2055,9 @@ mod tests {
     }
 
     #[test]
-    fn test_voting_four_detectors_minority_suppressed() {
-        // N=4, majority=3. Only 2/4 agree: suppressed.
+    fn test_voting_with_deberta_pair_pg_rescues_missed_ig() {
+        // Key scenario: IG misses but PG catches. Group still votes yes.
+        // N=3 (regex, ml, deberta_pair). regex + deberta_pair = 2/3 majority.
         let ballots = vec![
             InjectionBallot {
                 name: "regex",
@@ -1959,22 +2067,20 @@ mod tests {
                 name: "ml",
                 findings: Vec::new(),
             },
-            InjectionBallot {
-                name: "injecguard",
-                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
-            },
-            InjectionBallot {
-                name: "piguard",
-                findings: Vec::new(),
-            },
+            merge_deberta_pair(
+                Vec::new(), // IG misses
+                vec![make_injection_finding("piguard_injection", 0.90)], // PG catches
+            ),
         ];
         let result = combine_with_voting(ballots);
-        assert!(result.is_empty(), "2/4 < 3 majority: should suppress");
+        // 2/3 >= 2 majority: passes (was suppressed under old 4-ballot scheme)
+        let injection_count = result.iter().filter(|f| is_injection_finding(f)).count();
+        assert_eq!(injection_count, 2);
     }
 
     #[test]
-    fn test_voting_four_detectors_all_agree() {
-        // N=4, all 4 agree
+    fn test_voting_with_deberta_pair_regex_only_still_suppressed() {
+        // N=3 (regex, ml, deberta_pair). regex only = 1/3 < majority.
         let ballots = vec![
             InjectionBallot {
                 name: "regex",
@@ -1982,26 +2088,15 @@ mod tests {
             },
             InjectionBallot {
                 name: "ml",
-                findings: vec![make_injection_finding("ml_prompt_injection", 0.90)],
+                findings: Vec::new(),
             },
-            InjectionBallot {
-                name: "injecguard",
-                findings: vec![make_injection_finding("injecguard_injection", 0.88)],
-            },
-            InjectionBallot {
-                name: "piguard",
-                findings: vec![make_injection_finding("piguard_injection", 0.92)],
-            },
+            merge_deberta_pair(Vec::new(), Vec::new()),
         ];
         let result = combine_with_voting(ballots);
-        assert_eq!(result.len(), 4);
-        for f in &result {
-            assert!(is_injection_finding(f));
-            assert_eq!(
-                f.metadata.get("voting_result"),
-                Some(&"majority".to_string())
-            );
-        }
+        assert!(
+            result.is_empty(),
+            "Regex-only FP still suppressed with grouped voting"
+        );
     }
 
     #[test]
