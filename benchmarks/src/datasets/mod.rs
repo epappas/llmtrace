@@ -166,6 +166,13 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/bipia_indirect.json"))
     }
 
+    /// Load the transfer attack resistance dataset (EV-018).
+    pub fn load_transfer_attack_samples(
+        datasets_dir: &Path,
+    ) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/transfer_attack_samples.json"))
+    }
+
     /// Load the curated training dataset (ML-014).
     pub fn load_training_dataset(path: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(path)

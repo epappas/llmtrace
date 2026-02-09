@@ -33,7 +33,8 @@ struct Cli {
 
     /// Run only the specified suite(s). Omit to run all.
     /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2,
-    /// ivanleomk_v2, cyberseceval2, harmbench, ailuminate, injecagent, asb, bipia
+    /// ivanleomk_v2, cyberseceval2, harmbench, ailuminate, injecagent, asb, bipia,
+    /// transfer_attack
     #[arg(long)]
     suite: Vec<String>,
 
@@ -119,6 +120,13 @@ const EXTERNAL_SUITES: &[ExternalSuiteConfig] = &[
         benchmark_name: "BIPIA External",
         loader: DatasetLoader::load_bipia_samples,
         regression_checker: regression::check_bipia,
+    },
+    ExternalSuiteConfig {
+        suite_key: "transfer_attack",
+        display_name: "Transfer Attack",
+        benchmark_name: "Transfer Attack (EV-018)",
+        loader: DatasetLoader::load_transfer_attack_samples,
+        regression_checker: regression::check_transfer_attack,
     },
 ];
 
@@ -377,6 +385,53 @@ async fn build_analyzers() -> Vec<NamedAnalyzer> {
             }
         }
         Err(e) => eprintln!("Warning: InjecGuardAnalyzer init failed (skipping): {e}"),
+    }
+
+    // Ensemble + InjecGuard + PIGuard: majority voting with 4 detectors (ML-004).
+    match llmtrace_security::EnsembleSecurityAnalyzer::with_piguard(
+        &llmtrace_security::MLSecurityConfig::default(),
+        None,
+        Some(&llmtrace_security::InjecGuardConfig::default()),
+        Some(&llmtrace_security::PIGuardConfig::default()),
+    )
+    .await
+    {
+        Ok(a) => {
+            let ml_active = a.is_ml_active();
+            let ig_active = a.is_injecguard_active();
+            let pg_active = a.is_piguard_active();
+            println!(
+                "Ensemble+IG+PG: ml_active={}, injecguard_active={}, piguard_active={}",
+                ml_active, ig_active, pg_active
+            );
+            if ml_active || ig_active || pg_active {
+                analyzers.push(NamedAnalyzer {
+                    name: "Ensemble+IG+PG",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: Ensemble+IG+PG has no ML models active, skipping");
+            }
+        }
+        Err(e) => eprintln!("Warning: Ensemble+IG+PG init failed (skipping): {e}"),
+    }
+
+    // Standalone PIGuard analyzer (for comparison).
+    match llmtrace_security::PIGuardAnalyzer::new(&llmtrace_security::PIGuardConfig::default())
+        .await
+    {
+        Ok(a) => {
+            println!("PIGuard: model_loaded={}", a.is_model_loaded());
+            if a.is_model_loaded() {
+                analyzers.push(NamedAnalyzer {
+                    name: "PIGuard",
+                    analyzer: Box::new(a),
+                });
+            } else {
+                eprintln!("Warning: PIGuard model not loaded, skipping (would duplicate Regex)");
+            }
+        }
+        Err(e) => eprintln!("Warning: PIGuardAnalyzer init failed (skipping): {e}"),
     }
 
     match llmtrace_security::MLSecurityAnalyzer::new(
