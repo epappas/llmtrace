@@ -41,6 +41,12 @@ struct Cli {
     /// Fail immediately if no ML analyzer could load its model.
     #[arg(long)]
     require_ml: bool,
+
+    /// Run only the specified analyzer(s). Omit to run all.
+    /// Valid values: regex, ensemble, ensemble_ig, ensemble_ig_pg,
+    /// promptguard, injecguard, piguard, mlsecurity
+    #[arg(long)]
+    analyzer: Vec<String>,
 }
 
 struct NamedAnalyzer {
@@ -145,7 +151,7 @@ async fn main() {
         .datasets_dir
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets"));
 
-    let analyzers = build_analyzers().await;
+    let analyzers = build_analyzers(&cli.analyzer).await;
 
     let has_ml = analyzers.iter().any(|a| a.name != "Regex");
     if cli.require_ml && !has_ml {
@@ -286,171 +292,195 @@ async fn main() {
     }
 }
 
-async fn build_analyzers() -> Vec<NamedAnalyzer> {
+async fn build_analyzers(filter: &[String]) -> Vec<NamedAnalyzer> {
     let mut analyzers: Vec<NamedAnalyzer> = Vec::new();
+    let run_all = filter.is_empty();
+    let want = |key: &str| run_all || filter.iter().any(|f| f.eq_ignore_ascii_case(key));
 
-    let regex = llmtrace_security::RegexSecurityAnalyzer::new()
-        .expect("Failed to create RegexSecurityAnalyzer");
-    analyzers.push(NamedAnalyzer {
-        name: "Regex",
-        analyzer: Box::new(regex),
-    });
+    if want("regex") {
+        let regex = llmtrace_security::RegexSecurityAnalyzer::new()
+            .expect("Failed to create RegexSecurityAnalyzer");
+        analyzers.push(NamedAnalyzer {
+            name: "Regex",
+            analyzer: Box::new(regex),
+        });
+    }
 
     // Ensemble is the default/recommended analyzer: regex + ML fusion.
-    match llmtrace_security::EnsembleSecurityAnalyzer::new(
-        &llmtrace_security::MLSecurityConfig::default(),
-    )
-    .await
-    {
-        Ok(a) => {
-            println!(
-                "Ensemble (recommended default): ml_active={}",
-                a.is_ml_active()
-            );
-            if a.is_ml_active() {
-                analyzers.push(NamedAnalyzer {
-                    name: "Ensemble",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: Ensemble ML not active (model not loaded), skipping (would duplicate Regex)");
+    if want("ensemble") {
+        match llmtrace_security::EnsembleSecurityAnalyzer::new(
+            &llmtrace_security::MLSecurityConfig::default(),
+        )
+        .await
+        {
+            Ok(a) => {
+                println!(
+                    "Ensemble (recommended default): ml_active={}",
+                    a.is_ml_active()
+                );
+                if a.is_ml_active() {
+                    analyzers.push(NamedAnalyzer {
+                        name: "Ensemble",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!("Warning: Ensemble ML not active (model not loaded), skipping (would duplicate Regex)");
+                }
             }
+            Err(e) => eprintln!("Warning: EnsembleSecurityAnalyzer init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: EnsembleSecurityAnalyzer init failed (skipping): {e}"),
     }
 
     // Ensemble + InjecGuard: majority voting with 3 detectors (ML-006).
-    match llmtrace_security::EnsembleSecurityAnalyzer::with_injecguard(
-        &llmtrace_security::MLSecurityConfig::default(),
-        None,
-        Some(&llmtrace_security::InjecGuardConfig::default()),
-    )
-    .await
-    {
-        Ok(a) => {
-            let ml_active = a.is_ml_active();
-            let ig_active = a.is_injecguard_active();
-            println!(
-                "Ensemble+IG: ml_active={}, injecguard_active={}",
-                ml_active, ig_active
-            );
-            if ml_active || ig_active {
-                analyzers.push(NamedAnalyzer {
-                    name: "Ensemble+IG",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: Ensemble+IG has no ML models active, skipping");
+    if want("ensemble_ig") {
+        match llmtrace_security::EnsembleSecurityAnalyzer::with_injecguard(
+            &llmtrace_security::MLSecurityConfig::default(),
+            None,
+            Some(&llmtrace_security::InjecGuardConfig::default()),
+        )
+        .await
+        {
+            Ok(a) => {
+                let ml_active = a.is_ml_active();
+                let ig_active = a.is_injecguard_active();
+                println!(
+                    "Ensemble+IG: ml_active={}, injecguard_active={}",
+                    ml_active, ig_active
+                );
+                if ml_active || ig_active {
+                    analyzers.push(NamedAnalyzer {
+                        name: "Ensemble+IG",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!("Warning: Ensemble+IG has no ML models active, skipping");
+                }
             }
+            Err(e) => eprintln!("Warning: Ensemble+IG init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: Ensemble+IG init failed (skipping): {e}"),
     }
 
     // Standalone ML analyzers below are for comparison only.
-    match llmtrace_security::PromptGuardAnalyzer::new(
-        &llmtrace_security::PromptGuardConfig::default(),
-    )
-    .await
-    {
-        Ok(a) => {
-            println!("PromptGuard: model_loaded={}", a.is_model_loaded());
-            if a.is_model_loaded() {
-                analyzers.push(NamedAnalyzer {
-                    name: "PromptGuard",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!(
-                    "Warning: PromptGuard model not loaded, skipping (would duplicate Regex)"
-                );
+    if want("promptguard") {
+        match llmtrace_security::PromptGuardAnalyzer::new(
+            &llmtrace_security::PromptGuardConfig::default(),
+        )
+        .await
+        {
+            Ok(a) => {
+                println!("PromptGuard: model_loaded={}", a.is_model_loaded());
+                if a.is_model_loaded() {
+                    analyzers.push(NamedAnalyzer {
+                        name: "PromptGuard",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!(
+                        "Warning: PromptGuard model not loaded, skipping (would duplicate Regex)"
+                    );
+                }
             }
+            Err(e) => eprintln!("Warning: PromptGuardAnalyzer init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: PromptGuardAnalyzer init failed (skipping): {e}"),
     }
 
-    match llmtrace_security::InjecGuardAnalyzer::new(
-        &llmtrace_security::InjecGuardConfig::default(),
-    )
-    .await
-    {
-        Ok(a) => {
-            println!("InjecGuard: model_loaded={}", a.is_model_loaded());
-            if a.is_model_loaded() {
-                analyzers.push(NamedAnalyzer {
-                    name: "InjecGuard",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: InjecGuard model not loaded, skipping (would duplicate Regex)");
+    if want("injecguard") {
+        match llmtrace_security::InjecGuardAnalyzer::new(
+            &llmtrace_security::InjecGuardConfig::default(),
+        )
+        .await
+        {
+            Ok(a) => {
+                println!("InjecGuard: model_loaded={}", a.is_model_loaded());
+                if a.is_model_loaded() {
+                    analyzers.push(NamedAnalyzer {
+                        name: "InjecGuard",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!(
+                        "Warning: InjecGuard model not loaded, skipping (would duplicate Regex)"
+                    );
+                }
             }
+            Err(e) => eprintln!("Warning: InjecGuardAnalyzer init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: InjecGuardAnalyzer init failed (skipping): {e}"),
     }
 
     // Ensemble + InjecGuard + PIGuard: majority voting with 4 detectors (ML-004).
-    match llmtrace_security::EnsembleSecurityAnalyzer::with_piguard(
-        &llmtrace_security::MLSecurityConfig::default(),
-        None,
-        Some(&llmtrace_security::InjecGuardConfig::default()),
-        Some(&llmtrace_security::PIGuardConfig::default()),
-    )
-    .await
-    {
-        Ok(a) => {
-            let ml_active = a.is_ml_active();
-            let ig_active = a.is_injecguard_active();
-            let pg_active = a.is_piguard_active();
-            println!(
-                "Ensemble+IG+PG: ml_active={}, injecguard_active={}, piguard_active={}",
-                ml_active, ig_active, pg_active
-            );
-            if ml_active || ig_active || pg_active {
-                analyzers.push(NamedAnalyzer {
-                    name: "Ensemble+IG+PG",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: Ensemble+IG+PG has no ML models active, skipping");
+    if want("ensemble_ig_pg") {
+        match llmtrace_security::EnsembleSecurityAnalyzer::with_piguard(
+            &llmtrace_security::MLSecurityConfig::default(),
+            None,
+            Some(&llmtrace_security::InjecGuardConfig::default()),
+            Some(&llmtrace_security::PIGuardConfig::default()),
+        )
+        .await
+        {
+            Ok(a) => {
+                let ml_active = a.is_ml_active();
+                let ig_active = a.is_injecguard_active();
+                let pg_active = a.is_piguard_active();
+                println!(
+                    "Ensemble+IG+PG: ml_active={}, injecguard_active={}, piguard_active={}",
+                    ml_active, ig_active, pg_active
+                );
+                if ml_active || ig_active || pg_active {
+                    analyzers.push(NamedAnalyzer {
+                        name: "Ensemble+IG+PG",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!("Warning: Ensemble+IG+PG has no ML models active, skipping");
+                }
             }
+            Err(e) => eprintln!("Warning: Ensemble+IG+PG init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: Ensemble+IG+PG init failed (skipping): {e}"),
     }
 
     // Standalone PIGuard analyzer (for comparison).
-    match llmtrace_security::PIGuardAnalyzer::new(&llmtrace_security::PIGuardConfig::default())
-        .await
-    {
-        Ok(a) => {
-            println!("PIGuard: model_loaded={}", a.is_model_loaded());
-            if a.is_model_loaded() {
-                analyzers.push(NamedAnalyzer {
-                    name: "PIGuard",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: PIGuard model not loaded, skipping (would duplicate Regex)");
+    if want("piguard") {
+        match llmtrace_security::PIGuardAnalyzer::new(&llmtrace_security::PIGuardConfig::default())
+            .await
+        {
+            Ok(a) => {
+                println!("PIGuard: model_loaded={}", a.is_model_loaded());
+                if a.is_model_loaded() {
+                    analyzers.push(NamedAnalyzer {
+                        name: "PIGuard",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!(
+                        "Warning: PIGuard model not loaded, skipping (would duplicate Regex)"
+                    );
+                }
             }
+            Err(e) => eprintln!("Warning: PIGuardAnalyzer init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: PIGuardAnalyzer init failed (skipping): {e}"),
     }
 
-    match llmtrace_security::MLSecurityAnalyzer::new(
-        &llmtrace_security::MLSecurityConfig::default(),
-    )
-    .await
-    {
-        Ok(a) => {
-            println!("MLSecurity: model_loaded={}", a.is_model_loaded());
-            if a.is_model_loaded() {
-                analyzers.push(NamedAnalyzer {
-                    name: "MLSecurity",
-                    analyzer: Box::new(a),
-                });
-            } else {
-                eprintln!("Warning: MLSecurity model not loaded, skipping (would duplicate Regex)");
+    if want("mlsecurity") {
+        match llmtrace_security::MLSecurityAnalyzer::new(
+            &llmtrace_security::MLSecurityConfig::default(),
+        )
+        .await
+        {
+            Ok(a) => {
+                println!("MLSecurity: model_loaded={}", a.is_model_loaded());
+                if a.is_model_loaded() {
+                    analyzers.push(NamedAnalyzer {
+                        name: "MLSecurity",
+                        analyzer: Box::new(a),
+                    });
+                } else {
+                    eprintln!(
+                        "Warning: MLSecurity model not loaded, skipping (would duplicate Regex)"
+                    );
+                }
             }
+            Err(e) => eprintln!("Warning: MLSecurityAnalyzer init failed (skipping): {e}"),
         }
-        Err(e) => eprintln!("Warning: MLSecurityAnalyzer init failed (skipping): {e}"),
     }
 
     analyzers

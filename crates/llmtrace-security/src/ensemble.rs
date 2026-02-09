@@ -920,11 +920,7 @@ fn merge_deberta_pair(
         .iter()
         .filter(|f| is_injection_finding(f))
         .map(|f| {
-            let loc = f
-                .metadata
-                .get("location")
-                .cloned()
-                .unwrap_or_default();
+            let loc = f.metadata.get("location").cloned().unwrap_or_default();
             (loc, f)
         })
         .collect();
@@ -933,11 +929,7 @@ fn merge_deberta_pair(
 
     // Add IG injection findings, preferring higher confidence when PG overlaps
     for ig in ig_findings.iter().filter(|f| is_injection_finding(f)) {
-        let loc = ig
-            .metadata
-            .get("location")
-            .cloned()
-            .unwrap_or_default();
+        let loc = ig.metadata.get("location").cloned().unwrap_or_default();
         if let Some(pg) = pg_by_location.get(&loc) {
             if pg.confidence_score > ig.confidence_score {
                 merged.push((*pg).clone());
@@ -952,11 +944,7 @@ fn merge_deberta_pair(
 
     // Add PG injection findings not already covered by IG
     for pg in pg_findings.iter().filter(|f| is_injection_finding(f)) {
-        let loc = pg
-            .metadata
-            .get("location")
-            .cloned()
-            .unwrap_or_default();
+        let loc = pg.metadata.get("location").cloned().unwrap_or_default();
         if !seen_locations.contains(&loc) {
             merged.push(pg.clone());
         }
@@ -2068,7 +2056,7 @@ mod tests {
                 findings: Vec::new(),
             },
             merge_deberta_pair(
-                Vec::new(), // IG misses
+                Vec::new(),                                              // IG misses
                 vec![make_injection_finding("piguard_injection", 0.90)], // PG catches
             ),
         ];
