@@ -4,6 +4,9 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
+/** Default tenant ID (nil UUID) used as a fallback for the "default" tenant. */
+export const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000";
+
 // ---------------------------------------------------------------------------
 // Core types (mirror Rust API responses)
 // ---------------------------------------------------------------------------
@@ -260,10 +263,14 @@ export async function getStats(tenantId?: string): Promise<StorageStats> {
 export async function getGlobalStats(): Promise<StorageStats> {
   try {
     const tenants = await listTenants();
-    const statsPromises = tenants.map(t => getStats(t.id).catch(() => null));
+    console.log(`[API] getGlobalStats: Found ${tenants.length} tenants`);
+    const statsPromises = tenants.map(t => getStats(t.id).catch(err => {
+      console.warn(`[API] Failed to fetch stats for tenant ${t.id}:`, err);
+      return null;
+    }));
     const allStats = await Promise.all(statsPromises);
     
-    return allStats.reduce((acc: StorageStats, s) => {
+    const aggregated = allStats.reduce((acc: StorageStats, s) => {
       if (!s) return acc;
       return {
         ...acc,
@@ -272,8 +279,11 @@ export async function getGlobalStats(): Promise<StorageStats> {
         total_cost_usd: acc.total_cost_usd + s.total_cost_usd,
       };
     }, { total_traces: 0, total_spans: 0, total_cost_usd: 0 });
+
+    console.log("[API] getGlobalStats result:", aggregated);
+    return aggregated;
   } catch (e) {
-    console.error("Failed to fetch global stats:", e);
+    console.error("[API] Failed to fetch global stats:", e);
     return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
   }
 }
@@ -367,7 +377,10 @@ export async function healthCheck(): Promise<{ status: string }> {
 export async function findActiveTenant(): Promise<string | undefined> {
   try {
     const tenants = await listTenants();
+    console.log(`[API] findActiveTenant: Found ${tenants.length} tenants`);
+    
     if (tenants.length === 0) {
+      console.warn("[API] No tenants found in the database.");
       setStoredTenant(undefined);
       return undefined;
     }
@@ -376,32 +389,38 @@ export async function findActiveTenant(): Promise<string | undefined> {
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("llmtrace_tenant_id");
       if (stored && tenants.some(t => t.id === stored)) {
+        console.log(`[API] Using stored tenant ID: ${stored}`);
         return stored;
       }
     }
 
-    // Fetch stats for all tenants in parallel
+    // Fetch stats for all tenants in parallel to find the one with the most activity
     const statsPromises = tenants.map(t => 
       getStats(t.id).then(s => ({ 
         id: t.id, 
         count: s.total_traces, 
         newest: s.newest_trace ? new Date(s.newest_trace).getTime() : 0 
-      })).catch(() => ({ id: t.id, count: 0, newest: 0 }))
+      })).catch(err => {
+        console.warn(`[API] Error fetching stats for tenant ${t.id}:`, err);
+        return { id: t.id, count: 0, newest: 0 };
+      })
     );
     
     const results = await Promise.all(statsPromises);
     // Sort by newest trace first, then by count
     results.sort((a, b) => b.newest - a.newest || b.count - a.count);
     
-    const activeId = results[0]?.id;
+    const activeId = results[0]?.id || DEFAULT_TENANT_ID;
+    console.log(`[API] Identified most active tenant: ${activeId}`);
+
     // Only set stored tenant if none is currently selected
-    if (activeId && !localStorage.getItem("llmtrace_tenant_id")) {
+    if (activeId && typeof window !== "undefined" && !localStorage.getItem("llmtrace_tenant_id")) {
       setStoredTenant(activeId);
     }
     return activeId;
   } catch (e) {
-    console.error("Failed to find active tenant:", e);
-    return undefined;
+    console.error("[API] findActiveTenant failed:", e);
+    return DEFAULT_TENANT_ID;
   }
 }
 

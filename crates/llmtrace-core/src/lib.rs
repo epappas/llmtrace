@@ -34,7 +34,7 @@ impl TenantId {
 
 impl Default for TenantId {
     fn default() -> Self {
-        Self::new()
+        Self(Uuid::nil())
     }
 }
 

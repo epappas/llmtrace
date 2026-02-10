@@ -150,21 +150,21 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 
 /// Extract tenant ID from a custom `X-LLMTrace-Tenant-ID` header, or
 /// derive one deterministically from the API key.
-pub(crate) fn resolve_tenant(headers: &HeaderMap) -> TenantId {
+pub(crate) fn resolve_tenant(headers: &HeaderMap) -> Option<TenantId> {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
         if let Ok(s) = raw.to_str() {
             if let Ok(uuid) = Uuid::parse_str(s) {
-                return TenantId(uuid);
+                return Some(TenantId(uuid));
             }
         }
     }
-    // Fallback: derive from API key hash or generate a default
+    // Fallback: derive from API key hash
     if let Some(key) = extract_api_key(headers) {
         // Deterministic UUID v5 from the API key
         let ns = Uuid::NAMESPACE_URL;
-        return TenantId(Uuid::new_v5(&ns, key.as_bytes()));
+        return Some(TenantId(Uuid::new_v5(&ns, key.as_bytes())));
     }
-    TenantId::default()
+    None
 }
 
 /// Concatenate all chat message contents into a single string for analysis.
@@ -183,6 +183,21 @@ fn build_upstream_url(config: &ProxyConfig, path: &str, query: Option<&str>) -> 
         Some(q) => format!("{base}{path}?{q}"),
         None => format!("{base}{path}"),
     }
+}
+
+/// Build a JSON error response.
+fn api_error(status: StatusCode, message: &str) -> Response<Body> {
+    let body = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": "api_error"
+        }
+    });
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +224,19 @@ pub async fn proxy_handler(
     let headers = req.headers().clone();
 
     // Use authenticated tenant if available, otherwise fall back to header resolution
-    let (tenant_id, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
+    let (tenant_id_opt, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
+
+    // Reject requests without a valid tenant identifier (prevents Ghost Tenants)
+    let tenant_id = match tenant_id_opt {
+        Some(id) => id,
+        None => {
+            state.metrics.active_connections.dec();
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "Missing tenant identifier. Please provide X-LLMTrace-Tenant-ID header or a valid API key.",
+            );
+        }
+    };
 
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);
@@ -1194,7 +1221,7 @@ mod tests {
             "x-llmtrace-tenant-id",
             tenant_uuid.to_string().parse().unwrap(),
         );
-        let tenant = resolve_tenant(&headers);
+        let tenant = resolve_tenant(&headers).unwrap();
         assert_eq!(tenant.0, tenant_uuid);
     }
 
@@ -1202,7 +1229,7 @@ mod tests {
     fn test_resolve_tenant_from_api_key() {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer sk-my-key".parse().unwrap());
-        let tenant = resolve_tenant(&headers);
+        let tenant = resolve_tenant(&headers).unwrap();
         // Should produce a deterministic UUID v5
         let expected = Uuid::new_v5(&Uuid::NAMESPACE_URL, b"sk-my-key");
         assert_eq!(tenant.0, expected);
@@ -1212,8 +1239,8 @@ mod tests {
     fn test_resolve_tenant_fallback() {
         let headers = HeaderMap::new();
         let tenant = resolve_tenant(&headers);
-        // Should produce a valid (non-nil) UUID
-        assert_ne!(tenant.0, Uuid::nil());
+        // Should be None when no header or key is present
+        assert!(tenant.is_none());
     }
 
     #[test]

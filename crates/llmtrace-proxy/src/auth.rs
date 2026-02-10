@@ -89,7 +89,7 @@ pub async fn auth_middleware(
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
     if !state.config.auth.enabled {
-        let tenant_id = crate::proxy::resolve_tenant(req.headers());
+        let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
         let ctx = AuthContext {
             tenant_id,
             role: ApiKeyRole::Admin,
@@ -99,8 +99,18 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // Allow health endpoint without auth
-    if req.uri().path() == "/health" {
+    // Allow health endpoint and tenant listing (for dashboard discovery) without auth
+    let path = req.uri().path();
+    let method = req.method();
+    if path == "/health" || (path == "/api/v1/tenants" && method == axum::http::Method::GET) {
+        // Still try to resolve tenant from header if provided, for downstream context
+        let tenant_id = resolve_tenant_from_header(req.headers()).unwrap_or_default();
+        let ctx = AuthContext {
+            tenant_id,
+            role: ApiKeyRole::Viewer, // Default to viewer for unauthenticated discovery
+            key_id: None,
+        };
+        req.extensions_mut().insert(ctx);
         return next.run(req).await;
     }
 
@@ -121,7 +131,7 @@ pub async fn auth_middleware(
     if let Some(ref admin_key) = state.config.auth.admin_key {
         if token == admin_key.as_str() {
             // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
-            let tenant_id = resolve_tenant_from_header(headers);
+            let tenant_id = resolve_tenant_from_header(headers).unwrap_or_default();
             let ctx = AuthContext {
                 tenant_id,
                 role: ApiKeyRole::Admin,
@@ -163,9 +173,9 @@ pub async fn auth_middleware(
 pub fn resolve_authenticated_tenant(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
-) -> (TenantId, Option<ApiKeyRole>) {
+) -> (Option<TenantId>, Option<ApiKeyRole>) {
     if let Some(ctx) = extensions.get::<AuthContext>() {
-        (ctx.tenant_id, Some(ctx.role))
+        (Some(ctx.tenant_id), Some(ctx.role))
     } else {
         (crate::proxy::resolve_tenant(headers), None)
     }
@@ -339,7 +349,11 @@ pub async fn list_api_keys(State(state): State<Arc<AppState>>, req: Request<Body
         return err;
     }
 
-    let (tenant_id, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let (tenant_id_opt, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let tenant_id = match tenant_id_opt {
+        Some(id) => id,
+        None => return auth_error(StatusCode::BAD_REQUEST, "Missing tenant identifier"),
+    };
 
     match state.metadata().list_api_keys(tenant_id).await {
         Ok(keys) => Json(keys).into_response(),
@@ -360,7 +374,11 @@ pub async fn revoke_api_key(
         return err;
     }
 
-    let (tenant_id, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let (tenant_id_opt, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let tenant_id = match tenant_id_opt {
+        Some(id) => id,
+        None => return auth_error(StatusCode::BAD_REQUEST, "Missing tenant identifier"),
+    };
 
     match state.metadata().revoke_api_key(key_id).await {
         Ok(true) => {
@@ -398,15 +416,15 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// Extract tenant ID from the `X-LLMTrace-Tenant-ID` header.
-fn resolve_tenant_from_header(headers: &HeaderMap) -> TenantId {
+fn resolve_tenant_from_header(headers: &HeaderMap) -> Option<TenantId> {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
         if let Ok(s) = raw.to_str() {
             if let Ok(uuid) = Uuid::parse_str(s) {
-                return TenantId(uuid);
+                return Some(TenantId(uuid));
             }
         }
     }
-    TenantId::default()
+    None
 }
 
 /// Build a JSON authentication error response.
@@ -522,14 +540,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         let uuid = Uuid::new_v4();
         headers.insert("x-llmtrace-tenant-id", uuid.to_string().parse().unwrap());
-        assert_eq!(resolve_tenant_from_header(&headers).0, uuid);
+        assert_eq!(resolve_tenant_from_header(&headers).unwrap().0, uuid);
     }
 
     #[test]
     fn test_resolve_tenant_from_header_missing() {
         let headers = HeaderMap::new();
         let tenant = resolve_tenant_from_header(&headers);
-        assert_ne!(tenant.0, Uuid::nil());
+        assert!(tenant.is_none());
     }
 
     #[test]
