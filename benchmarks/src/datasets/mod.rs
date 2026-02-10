@@ -173,6 +173,23 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/transfer_attack_samples.json"))
     }
 
+    /// Load the HPI attack approximation dataset (EV-008).
+    pub fn load_hpi_approx_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/hpi_attack_approx.json"))
+    }
+
+    /// Load the Tensor Trust attack dataset (EV-019).
+    pub fn load_tensor_trust_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/tensor_trust_attacks.json"))
+    }
+
+    // EV-020 (Harelix): blocked -- dataset deleted from HuggingFace.
+
+    /// Load the Jackhhao jailbreak-classification dataset (EV-021).
+    pub fn load_jackhhao_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/jackhhao_jailbreak.json"))
+    }
+
     /// Load the curated training dataset (ML-014).
     pub fn load_training_dataset(path: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(path)

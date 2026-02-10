@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["datasets", "huggingface-hub"]
+# ///
 """Download external evaluation datasets from HuggingFace and convert to BenchmarkSample JSON.
 
 Datasets:
@@ -40,6 +44,10 @@ _COMMITS = {
     "safeguard_hf": "a3a877d608f37b7d20d9945671902df895ecdb46",
     "deepset_hf": "4f61ecb038e9c3fb77e21034b22511b523772cdd",
     "ivanleomk_hf": "07858746d34ad8c6a5dad1d94b02ba75aec844e5",
+    "tensor_trust_hf": "4de2b2fe01ba0cb6fbf7cbb9f1a3fabaf8157372",
+    # Harelix dataset deleted from HuggingFace (EV-020 blocked).
+    # "harelix_hf": "4bb1d6df694c08bddc71c6eba20ca80b109ee30c",
+    "jackhhao_hf": "2f2ceeb39658696fd3f462403562b6eea5306287",
 }
 
 # Expected sample counts for integrity verification (pinned to commit SHAs above).
@@ -54,6 +62,9 @@ _EXPECTED_COUNTS = {
     "injecagent_attacks.json": 2108,
     "asb_attacks.json": 400,
     "bipia_indirect.json": 400,
+    "tensor_trust_attacks.json": 1000,
+    # "harelix_mixed.json": 1174,  # EV-020 blocked: dataset deleted from HuggingFace
+    "jackhhao_jailbreak.json": 1306,
 }
 
 
@@ -352,6 +363,81 @@ def download_bipia(output_dir: Path) -> None:
     print(f"bipia_indirect.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
 
 
+def download_tensor_trust(output_dir: Path) -> None:
+    """EV-019: Tensor Trust prompt hijacking/extraction attacks (sampled 1000).
+
+    Loads hijacking (776) and extraction (570) robustness benchmark files,
+    tags each with its category, then samples 1000 from the combined pool.
+    """
+    random.seed(42)
+    revision = _COMMITS["tensor_trust_hf"]
+
+    hijack_ds = load_dataset(
+        "qxcv/tensor-trust",
+        data_files="benchmarks/hijacking-robustness/v1/hijacking_robustness_dataset.jsonl",
+        split="train",
+        revision=revision,
+    )
+    extract_ds = load_dataset(
+        "qxcv/tensor-trust",
+        data_files="benchmarks/extraction-robustness/v1/extraction_robustness_dataset.jsonl",
+        split="train",
+        revision=revision,
+    )
+
+    pool: list[tuple[str, str]] = []
+    for row in hijack_ds:
+        pool.append((row["attack"], "prompt_hijacking"))
+    for row in extract_ds:
+        pool.append((row["attack"], "prompt_extraction"))
+
+    random.shuffle(pool)
+    selected = pool[:1000]
+
+    samples = []
+    for i, (text, category) in enumerate(selected):
+        samples.append({
+            "id": f"tensor_trust-{i:05d}",
+            "text": text,
+            "label": "malicious",
+            "category": category,
+            "source": "tensor_trust",
+        })
+
+    _assert_count("tensor_trust_attacks.json", len(samples))
+    path = output_dir / "tensor_trust_attacks.json"
+    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
+    print(f"tensor_trust_attacks.json: {len(samples)} samples (all malicious)")
+
+
+def download_jackhhao(output_dir: Path) -> None:
+    """EV-021: Jackhhao jailbreak-classification (balanced benign/jailbreak)."""
+    revision = _COMMITS["jackhhao_hf"]
+    ds = concatenate_datasets([
+        load_dataset("jackhhao/jailbreak-classification", split="train", revision=revision),
+        load_dataset("jackhhao/jailbreak-classification", split="test", revision=revision),
+    ])
+    samples = []
+    for i, row in enumerate(ds):
+        prompt_type = row.get("type", "").strip().lower()
+        is_malicious = prompt_type == "jailbreak"
+        samples.append({
+            "id": f"jackhhao-{i:05d}",
+            "text": row["prompt"],
+            "label": "malicious" if is_malicious else "benign",
+            "category": "jailbreak" if is_malicious else "benign",
+            "source": "jackhhao",
+        })
+
+    _assert_count("jackhhao_jailbreak.json", len(samples))
+    path = output_dir / "jackhhao_jailbreak.json"
+    path.write_text(json.dumps(samples, indent=2, ensure_ascii=False))
+
+    benign = sum(1 for s in samples if s["label"] == "benign")
+    malicious = len(samples) - benign
+    print(f"jackhhao_jailbreak.json: {len(samples)} samples ({benign} benign, {malicious} malicious)")
+
+
 def main() -> None:
     output_dir = Path(__file__).resolve().parent.parent / "datasets" / "external"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -368,6 +454,9 @@ def main() -> None:
         ("InjecAgent", download_injecagent),
         ("ASB", download_asb),
         ("BIPIA", download_bipia),
+        ("Tensor Trust", download_tensor_trust),
+        # Harelix: EV-020 blocked -- dataset deleted from HuggingFace.
+        ("Jackhhao", download_jackhhao),
     ]
 
     failures: list[str] = []

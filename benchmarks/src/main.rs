@@ -34,7 +34,7 @@ struct Cli {
     /// Run only the specified suite(s). Omit to run all.
     /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2,
     /// ivanleomk_v2, cyberseceval2, harmbench, ailuminate, injecagent, asb, bipia,
-    /// transfer_attack
+    /// transfer_attack, hpi_approx, tensor_trust, jackhhao
     #[arg(long)]
     suite: Vec<String>,
 
@@ -133,6 +133,28 @@ const EXTERNAL_SUITES: &[ExternalSuiteConfig] = &[
         benchmark_name: "Transfer Attack (EV-018)",
         loader: DatasetLoader::load_transfer_attack_samples,
         regression_checker: regression::check_transfer_attack,
+    },
+    ExternalSuiteConfig {
+        suite_key: "hpi_approx",
+        display_name: "HPI Approx",
+        benchmark_name: "HPI Approx (EV-008)",
+        loader: DatasetLoader::load_hpi_approx_samples,
+        regression_checker: regression::check_hpi_approx,
+    },
+    ExternalSuiteConfig {
+        suite_key: "tensor_trust",
+        display_name: "Tensor Trust",
+        benchmark_name: "Tensor Trust (EV-019)",
+        loader: DatasetLoader::load_tensor_trust_samples,
+        regression_checker: regression::check_tensor_trust,
+    },
+    // EV-020 (Harelix): blocked -- dataset deleted from HuggingFace.
+    ExternalSuiteConfig {
+        suite_key: "jackhhao",
+        display_name: "Jackhhao Jailbreak",
+        benchmark_name: "Jackhhao Jailbreak (EV-021)",
+        loader: DatasetLoader::load_jackhhao_samples,
+        regression_checker: regression::check_jackhhao,
     },
 ];
 

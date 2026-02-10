@@ -327,7 +327,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-005 | WASP evaluation | Medium | ⬜ (requires live web environment) |
 | EV-006 | CyberSecEval 2 prompt injection evaluation (251 attack samples per DMPI-PMHFE [28]) | Medium | ✅ `7ce0cf9` |
 | EV-007 | MLCommons AILuminate jailbreak benchmark (1200 demo prompts) | Medium | ✅ |
-| EV-008 | HPI_ATTACK_DATASET evaluation (400 instances) | Low | ❌ (dataset not publicly released) |
+| EV-008 | HPI attack approximation (55 instances, 8-category taxonomy from arXiv:2509.14285) | Low | ✅ (best-effort 55-attack approximation) |
 | EV-009 | Automated CI-integrated benchmark runner | Medium | ✅ `b15f4f0` |
 | EV-011 | safeguard-v2 evaluation (2060 samples) | Low | ✅ |
 | EV-012 | deepset-v2 evaluation (355 samples) | Low | ✅ |
@@ -337,6 +337,9 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-016 | AgentDojo Slack suite adaptive attack evaluation (Agent-as-a-Proxy resilience, 89 samples) | High | ⬜ |
 | EV-017 | Multi-objective GCG adversarial robustness red-team testing against LLMTrace ensemble | High | ⬜ |
 | EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ✅ |
+| EV-019 | Tensor Trust prompt hijacking/extraction evaluation (1000 sampled attacks) | Low | ✅ |
+| EV-020 | Harelix mixed-techniques evaluation (1174 samples, tri-class) | Low | ❌ (dataset deleted from HuggingFace) |
+| EV-021 | Jackhhao jailbreak-classification over-defense test (1306 samples, balanced) | Low | ✅ |
 
 ---
 
