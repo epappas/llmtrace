@@ -9,11 +9,43 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use utoipa::{ToSchema, IntoParams}; // Add IntoParams
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Identity types
-// ---------------------------------------------------------------------------
+impl<'s> ToSchema<'s> for Uuid {
+    fn schema() -> utoipa::openapi::schema::Schema {
+        use utoipa::openapi::schema::{SchemaFormat, SchemaType};
+        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
+            schema_type: Some(SchemaType::String),
+            format: Some(SchemaFormat::Uuid),
+            ..Default::default()
+        })
+    }
+}
+
+impl<'s> ToSchema<'s> for chrono::DateTime<Utc> {
+    fn schema() -> utoipa::openapi::schema::Schema {
+        use utoipa::openapi::schema::{SchemaFormat, SchemaType};
+        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
+            schema_type: Some(SchemaType::String),
+            format: Some(SchemaFormat::DateTime),
+            ..Default::default()
+        })
+    }
+}
+
+impl<'s> ToSchema<'s> for serde_json::Value {
+    fn schema() -> utoipa::openapi::schema::Schema {
+        use utoipa::openapi::schema::SchemaType;
+        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
+            schema_type: Some(SchemaType::Object),
+            // Or use SchemaType::Any if you want to allow any JSON type
+            // format: Some(SchemaFormat::Custom("json".to_string())),
+            ..Default::default()
+        })
+    }
+}
+
 
 /// Unique identifier for a tenant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -43,7 +75,7 @@ impl Default for TenantId {
 // ---------------------------------------------------------------------------
 
 /// Role for API key-based access control.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiKeyRole {
     /// Full access: manage tenants, keys, read/write traces.
@@ -95,7 +127,7 @@ impl std::str::FromStr for ApiKeyRole {
 }
 
 /// A stored API key record (the plaintext key is never persisted).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyRecord {
     /// Unique identifier for this key.
     pub id: Uuid,
@@ -117,7 +149,7 @@ pub struct ApiKeyRecord {
 }
 
 /// Authenticated context injected by the auth middleware.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub struct AuthContext {
     /// Tenant the caller is authenticated as.
     pub tenant_id: TenantId,
@@ -132,7 +164,7 @@ pub struct AuthContext {
 // ---------------------------------------------------------------------------
 
 /// Severity level for security findings.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 pub enum SecuritySeverity {
     /// Informational — no immediate action needed.
     Info,
@@ -174,7 +206,7 @@ impl std::str::FromStr for SecuritySeverity {
 }
 
 /// A security finding detected during analysis.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SecurityFinding {
     /// Unique identifier for this finding.
     pub id: Uuid,
@@ -245,7 +277,7 @@ impl SecurityFinding {
 // ---------------------------------------------------------------------------
 
 /// Supported LLM providers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum LLMProvider {
     OpenAI,
     Anthropic,
@@ -263,7 +295,7 @@ pub enum LLMProvider {
 // ---------------------------------------------------------------------------
 
 /// A single span within a trace representing a portion of an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TraceSpan {
     /// Unique identifier for the trace this span belongs to.
     pub trace_id: Uuid,
@@ -682,7 +714,7 @@ pub struct TraceEvent {
 // ---------------------------------------------------------------------------
 
 /// A tenant in the system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Tenant {
     /// Unique tenant identifier.
     pub id: TenantId,
@@ -695,11 +727,12 @@ pub struct Tenant {
     /// When the tenant was created.
     pub created_at: DateTime<Utc>,
     /// Arbitrary tenant-level configuration.
+    #[schema(value_type = HashMap<String, String>)]
     pub config: serde_json::Value,
 }
 
 /// Monitoring scope for a tenant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MonitoringScope {
     /// Monitor both inputs and outputs.
@@ -735,13 +768,15 @@ impl std::str::FromStr for MonitoringScope {
 }
 
 /// Per-tenant configuration for security thresholds and feature flags.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TenantConfig {
     /// Tenant this configuration belongs to.
     pub tenant_id: TenantId,
     /// Security severity thresholds (e.g., "alert_min_score" → 80.0).
+    #[schema(value_type = HashMap<String, f64>)]
     pub security_thresholds: HashMap<String, f64>,
     /// Feature flags (e.g., "enable_pii_detection" → true).
+    #[schema(value_type = HashMap<String, bool>)]
     pub feature_flags: HashMap<String, bool>,
     /// Monitoring scope for this tenant.
     pub monitoring_scope: MonitoringScope,
@@ -752,7 +787,7 @@ pub struct TenantConfig {
 }
 
 /// An audit log entry recording a tenant-scoped action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditEvent {
     /// Unique event identifier.
     pub id: Uuid,
@@ -765,6 +800,7 @@ pub struct AuditEvent {
     /// What resource was affected.
     pub resource: String,
     /// Arbitrary event data.
+    #[schema(value_type = HashMap<String, String>)]
     pub data: serde_json::Value,
     /// When the event occurred.
     pub timestamp: DateTime<Utc>,
@@ -774,7 +810,7 @@ pub struct AuditEvent {
 ///
 /// Contains all data needed to persist and retrieve a compliance report
 /// from the metadata repository.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ComplianceReportRecord {
     /// Unique report identifier.
     pub id: Uuid,
@@ -793,19 +829,22 @@ pub struct ComplianceReportRecord {
     /// When the report generation completed (if finished).
     pub completed_at: Option<DateTime<Utc>>,
     /// Report content as JSON (populated when status is "completed").
+    #[schema(value_type = HashMap<String, String>)]
     pub content: Option<serde_json::Value>,
     /// Error message (populated when status is "failed").
     pub error: Option<String>,
 }
 
 /// Query parameters for listing compliance reports.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub struct ReportQuery {
     /// Tenant to query reports for.
     pub tenant_id: TenantId,
     /// Maximum number of results.
+    #[schema(default = 50)]
     pub limit: Option<u32>,
     /// Number of results to skip (for pagination).
+    #[schema(default = 0)]
     pub offset: Option<u32>,
 }
 
@@ -833,7 +872,7 @@ impl ReportQuery {
 }
 
 /// Query parameters for filtering audit events.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub struct AuditQuery {
     /// Tenant to query audit events for.
     pub tenant_id: TenantId,
@@ -844,8 +883,10 @@ pub struct AuditQuery {
     /// End time for the query range.
     pub end_time: Option<DateTime<Utc>>,
     /// Maximum number of results.
+    #[schema(default = 50)]
     pub limit: Option<u32>,
     /// Number of results to skip (for pagination).
+    #[schema(default = 0)]
     pub offset: Option<u32>,
 }
 
