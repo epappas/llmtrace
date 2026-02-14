@@ -90,12 +90,13 @@ impl MetadataRepository for PostgresMetadataRepository {
     }
 
     async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>> {
-        let row =
-            sqlx::query("SELECT id, name, api_token, plan, created_at, config FROM tenants WHERE id = $1")
-                .bind(id.0)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| LLMTraceError::Storage(format!("Failed to get tenant: {e}")))?;
+        let row = sqlx::query(
+            "SELECT id, name, api_token, plan, created_at, config FROM tenants WHERE id = $1",
+        )
+        .bind(id.0)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to get tenant: {e}")))?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -104,7 +105,9 @@ impl MetadataRepository for PostgresMetadataRepository {
         Ok(Some(Tenant {
             id: TenantId(row.get::<Uuid, _>("id")),
             name: row.get("name"),
-            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+            api_token: row
+                .get::<Option<String>, _>("api_token")
+                .unwrap_or_default(),
             plan: row.get("plan"),
             created_at: row.get("created_at"),
             config: row.get("config"),
@@ -126,7 +129,9 @@ impl MetadataRepository for PostgresMetadataRepository {
         Ok(Some(Tenant {
             id: TenantId(row.get::<Uuid, _>("id")),
             name: row.get("name"),
-            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+            api_token: row
+                .get::<Option<String>, _>("api_token")
+                .unwrap_or_default(),
             plan: row.get("plan"),
             created_at: row.get("created_at"),
             config: row.get("config"),
@@ -134,16 +139,17 @@ impl MetadataRepository for PostgresMetadataRepository {
     }
 
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
-        let result =
-            sqlx::query("UPDATE tenants SET name = $1, plan = $2, config = $3, api_token = $4 WHERE id = $5")
-                .bind(&tenant.name)
-                .bind(&tenant.plan)
-                .bind(&tenant.config)
-                .bind(&tenant.api_token)
-                .bind(tenant.id.0)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| LLMTraceError::Storage(format!("Failed to update tenant: {e}")))?;
+        let result = sqlx::query(
+            "UPDATE tenants SET name = $1, plan = $2, config = $3, api_token = $4 WHERE id = $5",
+        )
+        .bind(&tenant.name)
+        .bind(&tenant.plan)
+        .bind(&tenant.config)
+        .bind(&tenant.api_token)
+        .bind(tenant.id.0)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to update tenant: {e}")))?;
 
         if result.rows_affected() == 0 {
             return Err(LLMTraceError::InvalidTenant {
@@ -166,7 +172,9 @@ impl MetadataRepository for PostgresMetadataRepository {
             .map(|row| Tenant {
                 id: TenantId(row.get::<Uuid, _>("id")),
                 name: row.get("name"),
-                api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+                api_token: row
+                    .get::<Option<String>, _>("api_token")
+                    .unwrap_or_default(),
                 plan: row.get("plan"),
                 created_at: row.get("created_at"),
                 config: row.get("config"),
@@ -209,9 +217,9 @@ impl MetadataRepository for PostgresMetadataRepository {
             })?;
         let feature_flags: HashMap<String, bool> = serde_json::from_value(flags_json)
             .map_err(|e| LLMTraceError::Storage(format!("Invalid feature_flags JSON: {e}")))?;
-        let monitoring_scope: llmtrace_core::MonitoringScope = monitoring_scope_str.parse().map_err(|e| {
-            LLMTraceError::Storage(format!("Invalid monitoring_scope value: {e}"))
-        })?;
+        let monitoring_scope: llmtrace_core::MonitoringScope = monitoring_scope_str
+            .parse()
+            .map_err(|e| LLMTraceError::Storage(format!("Invalid monitoring_scope value: {e}")))?;
 
         Ok(Some(TenantConfig {
             tenant_id: TenantId(row.get::<Uuid, _>("tenant_id")),

@@ -344,7 +344,9 @@ pub async fn get_current_tenant_token(
     Extension(auth): Extension<AuthContext>,
 ) -> Response {
     match state.metadata().get_tenant(auth.tenant_id).await {
-        Ok(Some(tenant)) => Json(serde_json::json!({ "api_token": tenant.api_token })).into_response(),
+        Ok(Some(tenant)) => {
+            Json(serde_json::json!({ "api_token": tenant.api_token })).into_response()
+        }
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -360,7 +362,9 @@ pub async fn get_tenant_token(
         return err;
     }
     match state.metadata().get_tenant(TenantId(id)).await {
-        Ok(Some(tenant)) => Json(serde_json::json!({ "api_token": tenant.api_token })).into_response(),
+        Ok(Some(tenant)) => {
+            Json(serde_json::json!({ "api_token": tenant.api_token })).into_response()
+        }
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }

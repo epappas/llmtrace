@@ -245,8 +245,14 @@ pub async fn proxy_handler(
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
     // Fetch tenant configuration (best-effort)
-    let tenant_config = state.metadata().get_tenant_config(tenant_id).await.ok().flatten();
-    let monitoring_scope = tenant_config.as_ref()
+    let tenant_config = state
+        .metadata()
+        .get_tenant_config(tenant_id)
+        .await
+        .ok()
+        .flatten();
+    let monitoring_scope = tenant_config
+        .as_ref()
         .map(|c| c.monitoring_scope)
         .unwrap_or(llmtrace_core::MonitoringScope::Hybrid);
 
@@ -478,21 +484,23 @@ pub async fn proxy_handler(
         // Initialise the streaming security monitor (only for SSE streams
         // when streaming analysis is enabled).
         // Respect monitoring_scope: disable if OutputOnly.
-        let mut streaming_monitor = if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
-            StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
-        } else {
-            None
-        };
+        let mut streaming_monitor =
+            if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
+                StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
+            } else {
+                None
+            };
         // Initialise the streaming output monitor for response-side analysis (R7).
         // Respect monitoring_scope: disable if InputOnly.
-        let mut output_monitor = if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
-            StreamingOutputMonitor::new(
-                &state_bg.config.streaming_analysis,
-                &state_bg.config.output_safety,
-            )
-        } else {
-            None
-        };
+        let mut output_monitor =
+            if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
+                StreamingOutputMonitor::new(
+                    &state_bg.config.streaming_analysis,
+                    &state_bg.config.output_safety,
+                )
+            } else {
+                None
+            };
         let mut raw_collected = Vec::new();
         let mut ttft_ms: Option<u64> = None;
 
@@ -864,7 +872,7 @@ async fn run_security_analysis(
     };
 
     let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
-    
+
     // Respect monitoring_scope: pass empty string for parts we shouldn't monitor
     let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
         ""
@@ -879,11 +887,9 @@ async fn run_security_analysis(
 
     let analysis_result = tokio::time::timeout(
         timeout,
-        state.security.analyze_interaction(
-            prompt,
-            response,
-            &context,
-        ),
+        state
+            .security
+            .analyze_interaction(prompt, response, &context),
     )
     .await;
 
@@ -931,9 +937,9 @@ async fn run_security_analysis(
 
     // --- Output safety analysis (R6) ---
     // Respect monitoring_scope: skip if InputOnly.
-    if state.config.output_safety.enabled 
-        && !captured.response_text.is_empty() 
-        && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly 
+    if state.config.output_safety.enabled
+        && !captured.response_text.is_empty()
+        && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly
     {
         let output_analyzer =
             llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);

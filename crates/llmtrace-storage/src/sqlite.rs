@@ -772,7 +772,9 @@ impl MetadataRepository for SqliteMetadataRepository {
         Ok(Some(Tenant {
             id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
             name: row.get("name"),
-            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+            api_token: row
+                .get::<Option<String>, _>("api_token")
+                .unwrap_or_default(),
             plan: row.get("plan"),
             created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
             config,
@@ -797,7 +799,9 @@ impl MetadataRepository for SqliteMetadataRepository {
         Ok(Some(Tenant {
             id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
             name: row.get("name"),
-            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+            api_token: row
+                .get::<Option<String>, _>("api_token")
+                .unwrap_or_default(),
             plan: row.get("plan"),
             created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
             config,
@@ -808,16 +812,17 @@ impl MetadataRepository for SqliteMetadataRepository {
         let config_json = serde_json::to_string(&tenant.config)
             .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
 
-        let result =
-            sqlx::query("UPDATE tenants SET name = ?1, plan = ?2, config = ?3, api_token = ?4 WHERE id = ?5")
-                .bind(&tenant.name)
-                .bind(&tenant.plan)
-                .bind(&config_json)
-                .bind(&tenant.api_token)
-                .bind(tenant.id.0.to_string())
-                .execute(&self.pool)
-                .await
-                .map_err(|e| LLMTraceError::Storage(format!("Failed to update tenant: {e}")))?;
+        let result = sqlx::query(
+            "UPDATE tenants SET name = ?1, plan = ?2, config = ?3, api_token = ?4 WHERE id = ?5",
+        )
+        .bind(&tenant.name)
+        .bind(&tenant.plan)
+        .bind(&config_json)
+        .bind(&tenant.api_token)
+        .bind(tenant.id.0.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to update tenant: {e}")))?;
 
         if result.rows_affected() == 0 {
             return Err(LLMTraceError::InvalidTenant {
@@ -842,7 +847,9 @@ impl MetadataRepository for SqliteMetadataRepository {
                 Ok(Tenant {
                     id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
                     name: row.get("name"),
-                    api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+                    api_token: row
+                        .get::<Option<String>, _>("api_token")
+                        .unwrap_or_default(),
                     plan: row.get("plan"),
                     created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
                     config,

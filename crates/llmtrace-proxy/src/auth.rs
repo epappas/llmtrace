@@ -126,7 +126,10 @@ pub async fn auth_middleware(
     let headers = req.headers();
 
     // 1. Try X-LLMTrace-Token header (preferred for proxy traffic)
-    if let Some(token) = headers.get("x-llmtrace-token").and_then(|v| v.to_str().ok()) {
+    if let Some(token) = headers
+        .get("x-llmtrace-token")
+        .and_then(|v| v.to_str().ok())
+    {
         match state.metadata().get_tenant_by_token(token).await {
             Ok(Some(tenant)) => {
                 let ctx = AuthContext {

@@ -635,7 +635,6 @@ fn build_router(state: Arc<AppState>) -> Router {
                             "/api/v1/tenants/:id/token",
                             get(llmtrace_proxy::tenant_api::get_tenant_token),
                         )
-        
         .route(
             "/api/v1/tenants/:id",
             get(llmtrace_proxy::tenant_api::get_tenant)
