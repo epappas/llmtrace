@@ -246,6 +246,11 @@ export default function CompliancePage() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ComplianceReport | null>(null);
 
+  // Form state
+  const [reportType, setReportType] = useState<ReportType>("soc2");
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+
   const tenantId = typeof window !== "undefined" 
     ? localStorage.getItem("llmtrace_tenant_id") || DEFAULT_TENANT_ID 
     : DEFAULT_TENANT_ID;
@@ -267,21 +272,15 @@ export default function CompliancePage() {
   }, [tenantId]);
 
   async function handleGenerate() {
-    const periodStartInput = (document.querySelector('input[type="date"]:first-of-type') as HTMLInputElement)?.value;
-    const periodEndInput = (document.querySelector('input[type="date"]:last-of-type') as HTMLInputElement)?.value;
-
-    if (!periodStartInput || !periodEndInput) {
+    if (!periodStart || !periodEnd) {
       alert("Please select both start and end dates");
       return;
     }
     setSaving(true);
     try {
-      const start = new Date(periodStartInput).toISOString();
-      const end = new Date(periodEndInput).toISOString();
-      const typeSelect = document.querySelector('select[name="report_type"]') as HTMLSelectElement;
-      const type = typeSelect.value as ReportType;
-      
-      await generateReport(type, start, end, tenantId);
+      const start = new Date(periodStart).toISOString();
+      const end = new Date(periodEnd).toISOString();
+      await generateReport(reportType, start, end, tenantId);
       setShowGenerate(false);
       await loadReports();
     } catch (e) {
@@ -407,6 +406,8 @@ export default function CompliancePage() {
               <label className="text-xs font-bold uppercase text-muted-foreground">Report Standard</label>
               <select 
                 name="report_type"
+                value={reportType}
+                onChange={(e) => setReportType(e.target.value as ReportType)}
                 className="w-56 h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
               >
                 <option value="soc2">SOC2 Audit Trail</option>
@@ -418,6 +419,8 @@ export default function CompliancePage() {
               <label className="text-xs font-bold uppercase text-muted-foreground">Period Start</label>
               <input 
                 type="date" 
+                value={periodStart}
+                onChange={(e) => setPeriodStart(e.target.value)}
                 className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
               />
             </div>
@@ -425,6 +428,8 @@ export default function CompliancePage() {
               <label className="text-xs font-bold uppercase text-muted-foreground">Period End</label>
               <input 
                 type="date" 
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
                 className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
               />
             </div>
