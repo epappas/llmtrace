@@ -57,6 +57,8 @@ tokio-util = "0.7"
 tonic = "0.14"
 tonic-prost = "0.14"
 prometheus = "0.14"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14"
