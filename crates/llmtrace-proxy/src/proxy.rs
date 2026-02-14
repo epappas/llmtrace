@@ -226,15 +226,12 @@ pub async fn proxy_handler(
     // Use authenticated tenant if available, otherwise fall back to header resolution
     let (tenant_id_opt, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
 
-    // Reject requests without a valid tenant identifier (prevents Ghost Tenants)
+    // Resolve tenant ID, falling back to "Unknown" for unauthenticated traffic
     let tenant_id = match tenant_id_opt {
-        Some(id) => id,
-        None => {
-            state.metrics.active_connections.dec();
-            return api_error(
-                StatusCode::BAD_REQUEST,
-                "Missing tenant identifier. Please provide X-LLMTrace-Tenant-ID header or a valid API key.",
-            );
+        Some(id) if !id.0.is_nil() => id,
+        _ => {
+            // Use a deterministic UUID for the "Unknown" tenant
+            TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
         }
     };
 
@@ -242,20 +239,29 @@ pub async fn proxy_handler(
     let agent_id = extract_agent_id(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
+    // Fetch tenant configuration (best-effort)
+    let tenant_config = state.metadata().get_tenant_config(tenant_id).await.ok().flatten();
+    let monitoring_scope = tenant_config.as_ref()
+        .map(|c| c.monitoring_scope)
+        .unwrap_or(llmtrace_core::MonitoringScope::Hybrid);
+
     // Auto-create tenant on first request (best-effort, non-blocking).
-    // Only auto-create if an API key was used, or if a specific tenant header was provided.
-    // This prevents random scanner traffic from creating junk tenants.
-    if _api_key.is_some() || headers.contains_key("x-llmtrace-tenant-id") {
+    // Always auto-create for proxied traffic if it doesn't exist.
+    {
         let state_ac = Arc::clone(&state);
-        let api_key_prefix = _api_key
-            .as_deref()
-            .map(|k| {
-                let prefix_len = k.len().min(8);
-                format!("key-{}", &k[..prefix_len])
-            })
-            .unwrap_or_else(|| format!("auto-{}", tenant_id.0));
+        let name = if tenant_id_opt.is_some() {
+            _api_key
+                .as_deref()
+                .map(|k| {
+                    let prefix_len = k.len().min(8);
+                    format!("key-{}", &k[..prefix_len])
+                })
+                .unwrap_or_else(|| format!("tenant-{}", tenant_id.0))
+        } else {
+            "Unknown".to_string()
+        };
         tokio::spawn(async move {
-            crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &api_key_prefix).await;
+            crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &name).await;
         });
     }
 
@@ -450,6 +456,7 @@ pub async fn proxy_handler(
     let model_name_bg = model_name.clone();
     let provider_bg = detected_provider;
     let agent_id_bg = agent_id;
+    let scope_bg = monitoring_scope;
     let task_guard = state.shutdown.track_task();
     tokio::spawn(async move {
         // Hold the task guard for the lifetime of this background task so the
@@ -464,13 +471,15 @@ pub async fn proxy_handler(
         };
         // Initialise the streaming security monitor (only for SSE streams
         // when streaming analysis is enabled).
-        let mut streaming_monitor = if is_streaming {
+        // Respect monitoring_scope: disable if OutputOnly.
+        let mut streaming_monitor = if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
             StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
         } else {
             None
         };
         // Initialise the streaming output monitor for response-side analysis (R7).
-        let mut output_monitor = if is_streaming {
+        // Respect monitoring_scope: disable if InputOnly.
+        let mut output_monitor = if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
             StreamingOutputMonitor::new(
                 &state_bg.config.streaming_analysis,
                 &state_bg.config.output_safety,
@@ -646,6 +655,7 @@ pub async fn proxy_handler(
             completion_tokens,
             total_tokens,
             agent_actions: auto_actions,
+            monitoring_scope: scope_bg,
         };
 
         // --- Async spend recording for cost caps ---
@@ -816,6 +826,8 @@ struct CapturedInteraction {
     total_tokens: Option<u32>,
     /// Agent actions auto-parsed from the LLM response (tool calls).
     agent_actions: Vec<AgentAction>,
+    /// Monitoring scope for this tenant.
+    monitoring_scope: llmtrace_core::MonitoringScope,
 }
 
 /// Run security analysis and return findings.
@@ -846,11 +858,24 @@ async fn run_security_analysis(
     };
 
     let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
+    
+    // Respect monitoring_scope: pass empty string for parts we shouldn't monitor
+    let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
+        ""
+    } else {
+        &captured.prompt_text
+    };
+    let response = if captured.monitoring_scope == llmtrace_core::MonitoringScope::InputOnly {
+        ""
+    } else {
+        &captured.response_text
+    };
+
     let analysis_result = tokio::time::timeout(
         timeout,
         state.security.analyze_interaction(
-            &captured.prompt_text,
-            &captured.response_text,
+            prompt,
+            response,
             &context,
         ),
     )

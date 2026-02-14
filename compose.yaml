@@ -110,7 +110,7 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8081}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://192.168.1.107:8081}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
@@ -119,7 +119,9 @@ services:
       # ClickHouse URL for direct operations (deletion)
       CLICKHOUSE_URL: "http://clickhouse:8123"
       # Client-side URL (browser → proxy)
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8081}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://192.168.1.107:8081}
+      # Listen on all interfaces
+      HOSTNAME: "0.0.0.0"
     depends_on:
       - llmtrace-proxy
     restart: unless-stopped

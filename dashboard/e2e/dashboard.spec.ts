@@ -76,12 +76,22 @@ test.describe('LLMTrace Dashboard', () => {
     // Verify it appeared in the list
     await expect(page.getByTestId(`tenant-name-${tenantName}`)).toBeVisible({ timeout: 15000 });
 
-    // 2. Generate Token
-    const row = page.locator('tr', { has: page.getByTestId(`tenant-name-${tenantName}`) });
-    await row.getByRole('button', { name: 'Token' }).click();
-    await expect(page.getByText('Token Generated')).toBeVisible({ timeout: 10000 });
+    // 2. Automated Token Generation: verify token card appeared immediately after creation
+    await expect(page.getByTestId('new-token-title')).toBeVisible({ timeout: 10000 });
+    
+    // Dismiss the token card
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(page.getByTestId('new-token-title')).not.toBeVisible();
 
-    // 3. Delete Tenant (Explicit test of UI deletion)
+    // 3. Manual Token Management: verify clicking "Token" opens management view
+    const row = page.locator('tr', { has: page.getByTestId(`tenant-name-${tenantName}`) });
+    await row.getByTestId('manage-token-button').click();
+    // Wait for the management card to be rendered after state update
+    await expect(page.getByTestId('manage-tokens-title')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('manage-tokens-title')).not.toBeVisible();
+
+    // 4. Delete Tenant (Explicit test of UI deletion)
     page.on('dialog', dialog => dialog.accept());
     const deleteBtn = row.locator('button').last();
     await deleteBtn.click();

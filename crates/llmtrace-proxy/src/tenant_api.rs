@@ -33,6 +33,18 @@ pub struct CreateTenantRequest {
     pub config: serde_json::Value,
 }
 
+/// Response body for `POST /api/v1/tenants`.
+#[derive(Debug, Serialize)]
+pub struct CreateTenantResponse {
+    /// The created tenant metadata.
+    #[serde(flatten)]
+    pub tenant: Tenant,
+    /// The plaintext API key (only returned once on creation).
+    pub api_key: Option<String>,
+    /// The unique API token for this tenant.
+    pub api_token: String,
+}
+
 /// Request body for `PUT /api/v1/tenants/:id`.
 #[derive(Debug, Deserialize)]
 pub struct UpdateTenantRequest {
@@ -149,9 +161,12 @@ pub async fn create_tenant(
         return api_error(StatusCode::BAD_REQUEST, "Tenant name must not be empty");
     }
 
+    let (api_token, _) = crate::auth::generate_api_key(); // Reusing the same generator for tokens
+
     let tenant = Tenant {
         id: TenantId::new(),
         name: body.name.clone(),
+        api_token: api_token.clone(),
         plan: body.plan.clone(),
         created_at: Utc::now(),
         config: body.config.clone(),
@@ -167,7 +182,52 @@ pub async fn create_tenant(
                 serde_json::json!({ "name": tenant.name, "plan": tenant.plan }),
             )
             .await;
-            (StatusCode::CREATED, Json(tenant)).into_response()
+
+            // Automatically create a default API key for the new tenant
+            let (plaintext, hash) = crate::auth::generate_api_key();
+            let prefix = crate::auth::key_prefix(&plaintext);
+            let key_record = llmtrace_core::ApiKeyRecord {
+                id: Uuid::new_v4(),
+                tenant_id: tenant.id,
+                name: "Default Key".to_string(),
+                key_hash: hash,
+                key_prefix: prefix.clone(),
+                role: llmtrace_core::ApiKeyRole::Admin,
+                created_at: Utc::now(),
+                revoked_at: None,
+            };
+
+            if let Err(e) = state.metadata().create_api_key(&key_record).await {
+                tracing::error!(tenant_id = %tenant.id, "Failed to auto-generate API key: {e}");
+                // Return tenant without key if key generation fails
+                let resp = CreateTenantResponse {
+                    tenant,
+                    api_key: None,
+                    api_token,
+                };
+                (StatusCode::CREATED, Json(resp)).into_response()
+            } else {
+                record_audit(
+                    &state,
+                    tenant.id,
+                    "api_key_created",
+                    &format!("api_key:{}", key_record.id),
+                    serde_json::json!({
+                        "key_id": key_record.id.to_string(),
+                        "key_prefix": prefix,
+                        "role": "admin",
+                        "note": "auto-generated on tenant creation"
+                    }),
+                )
+                .await;
+
+                let resp = CreateTenantResponse {
+                    tenant,
+                    api_key: Some(plaintext),
+                    api_token,
+                };
+                (StatusCode::CREATED, Json(resp)).into_response()
+            }
         }
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -226,6 +286,7 @@ pub async fn update_tenant(
     let updated = Tenant {
         id: existing.id,
         name: body.name.unwrap_or(existing.name),
+        api_token: existing.api_token,
         plan: body.plan.unwrap_or(existing.plan),
         created_at: existing.created_at,
         config: body.config.unwrap_or(existing.config),
@@ -281,6 +342,55 @@ pub async fn delete_tenant(
     }
 }
 
+/// `GET /api/v1/tenants/current/token` — get the API token for the currently authenticated tenant.
+pub async fn get_current_tenant_token(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    match state.metadata().get_tenant(auth.tenant_id).await {
+        Ok(Some(tenant)) => Json(serde_json::json!({ "api_token": tenant.api_token })).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// `POST /api/v1/tenants/:id/token/reset` — regenerate the API token for a tenant.
+pub async fn reset_tenant_token(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
+    let tenant_id = TenantId(id);
+
+    // Fetch existing tenant
+    let mut tenant = match state.metadata().get_tenant(tenant_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return api_error(StatusCode::NOT_FOUND, "Tenant not found"),
+        Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
+
+    let (new_token, _) = crate::auth::generate_api_key();
+    tenant.api_token = new_token.clone();
+
+    match state.metadata().update_tenant(&tenant).await {
+        Ok(()) => {
+            record_audit(
+                &state,
+                tenant_id,
+                "tenant_token_reset",
+                &format!("tenant:{tenant_id}"),
+                serde_json::json!({ "note": "API token regenerated" }),
+            )
+            .await;
+            Json(serde_json::json!({ "api_token": new_token })).into_response()
+        }
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Auto-create tenant helper (used by proxy.rs)
 // ---------------------------------------------------------------------------
@@ -291,6 +401,11 @@ pub async fn delete_tenant(
 /// created with the given `name` and `"default"` plan. Errors are logged
 /// but not propagated — this is best-effort to avoid blocking the proxy.
 pub async fn ensure_tenant_exists(state: &Arc<AppState>, tenant_id: TenantId, name: &str) {
+    // Don't auto-create the Nil/Default tenant in the database
+    if tenant_id.0.is_nil() {
+        return;
+    }
+
     // Fast path: check if the tenant already exists
     match state.metadata().get_tenant(tenant_id).await {
         Ok(Some(_)) => return, // already exists
@@ -304,9 +419,12 @@ pub async fn ensure_tenant_exists(state: &Arc<AppState>, tenant_id: TenantId, na
         }
     }
 
+    let (api_token, _) = crate::auth::generate_api_key();
+
     let tenant = Tenant {
         id: tenant_id,
         name: name.to_string(),
+        api_token,
         plan: "default".to_string(),
         created_at: Utc::now(),
         config: serde_json::json!({}),
@@ -434,6 +552,8 @@ mod tests {
         assert_eq!(json["name"], "Acme Corp");
         assert_eq!(json["plan"], "pro");
         assert!(json["id"].is_string());
+        assert!(json["api_key"].is_string());
+        assert!(json["api_key"].as_str().unwrap().starts_with("llmt_"));
     }
 
     #[tokio::test]
@@ -515,6 +635,7 @@ mod tests {
         let t1 = Tenant {
             id: TenantId::new(),
             name: "Alpha".to_string(),
+            api_token: "token-1".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -522,6 +643,7 @@ mod tests {
         let t2 = Tenant {
             id: TenantId::new(),
             name: "Beta".to_string(),
+            api_token: "token-2".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -547,6 +669,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Get Me".to_string(),
+            api_token: "token-get".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -586,6 +709,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Old Name".to_string(),
+            api_token: "token-old".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -613,6 +737,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Org".to_string(),
+            api_token: "token-org".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -728,6 +853,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Before Update".to_string(),
+            api_token: "token-audit-update".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -760,6 +886,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Will Be Deleted".to_string(),
+            api_token: "token-audit-delete".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -809,6 +936,7 @@ mod tests {
             .expect("tenant should have been auto-created");
         assert_eq!(tenant.name, "auto-test");
         assert_eq!(tenant.plan, "default");
+        assert!(!tenant.api_token.is_empty());
 
         // Check audit event was recorded
         let events = state
@@ -826,6 +954,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Already Here".to_string(),
+            api_token: "token-already".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

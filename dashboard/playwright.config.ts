@@ -22,6 +22,11 @@ export default defineConfig({
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
+    
+    // Pass environment variables to the browser context
+    extraHTTPHeaders: {
+      'x-test-mode': 'true',
+    },
   },
 
   /* Configure projects for major browsers */

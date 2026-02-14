@@ -115,6 +115,9 @@ export default function OverviewPage() {
     value,
   }));
 
+  const anomalies = findings?.data?.flatMap(s => s.security_findings || [])
+    .filter(f => f.finding_type.startsWith("anomaly_")) || [];
+
   if (error) {
     return (
       <div className="space-y-6">
@@ -136,32 +139,50 @@ export default function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Overview</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Overview</h1>
+        {anomalies.length > 0 && (
+          <Badge variant="destructive" className="animate-pulse gap-1 px-3 py-1 text-sm">
+            <AlertTriangle className="h-4 w-4" />
+            {anomalies.length} Anomalies Detected
+          </Badge>
+        )}
+      </div>
 
       {/* Stat cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard
           title="Global Transactions"
           value={globalStats?.total_traces ?? "—"}
-          description="Total across all tenants"
+          description="Across all tenants"
           icon={Activity}
+        />
+        <StatCard
+          title="Global Security Findings"
+          value={globalStats?.total_findings ?? "—"}
+          description="Total risks detected"
+          icon={Shield}
+        />
+        <StatCard
+          title="Global Costs"
+          value={
+            globalStats?.total_cost_usd != null
+              ? `$${globalStats.total_cost_usd.toFixed(2)}`
+              : "—"
+          }
+          description="Cluster-wide spend"
+          icon={DollarSign}
         />
         <StatCard
           title="Total Traces"
           value={stats?.total_traces ?? "—"}
-          description="Selected tenant traces"
-          icon={Activity}
-        />
-        <StatCard
-          title="Total Spans"
-          value={stats?.total_spans ?? "—"}
-          description="Individual LLM calls"
+          description="Selected tenant"
           icon={Activity}
         />
         <StatCard
           title="Security Findings"
           value={findings?.total ?? "—"}
-          description="Spans with findings"
+          description="Selected tenant"
           icon={Shield}
         />
         <StatCard
@@ -171,7 +192,7 @@ export default function OverviewPage() {
               ? `$${stats.total_cost_usd.toFixed(2)}`
               : "—"
           }
-          description="Estimated spend"
+          description="Selected tenant"
           icon={DollarSign}
         />
       </div>

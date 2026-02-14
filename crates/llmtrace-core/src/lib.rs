@@ -688,12 +688,50 @@ pub struct Tenant {
     pub id: TenantId,
     /// Human-readable tenant name.
     pub name: String,
+    /// Unique API token for proxy traffic.
+    pub api_token: String,
     /// Subscription plan (e.g., "free", "pro", "enterprise").
     pub plan: String,
     /// When the tenant was created.
     pub created_at: DateTime<Utc>,
     /// Arbitrary tenant-level configuration.
     pub config: serde_json::Value,
+}
+
+/// Monitoring scope for a tenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitoringScope {
+    /// Monitor both inputs and outputs.
+    #[default]
+    Hybrid,
+    /// Monitor only inputs.
+    InputOnly,
+    /// Monitor only outputs.
+    OutputOnly,
+}
+
+impl std::fmt::Display for MonitoringScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hybrid => write!(f, "hybrid"),
+            Self::InputOnly => write!(f, "input_only"),
+            Self::OutputOnly => write!(f, "output_only"),
+        }
+    }
+}
+
+impl std::str::FromStr for MonitoringScope {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "hybrid" => Ok(Self::Hybrid),
+            "input_only" => Ok(Self::InputOnly),
+            "output_only" => Ok(Self::OutputOnly),
+            _ => Err(format!("unknown monitoring scope: {s}")),
+        }
+    }
 }
 
 /// Per-tenant configuration for security thresholds and feature flags.
@@ -705,6 +743,12 @@ pub struct TenantConfig {
     pub security_thresholds: HashMap<String, f64>,
     /// Feature flags (e.g., "enable_pii_detection" → true).
     pub feature_flags: HashMap<String, bool>,
+    /// Monitoring scope for this tenant.
+    pub monitoring_scope: MonitoringScope,
+    /// Rate limit in requests per minute (optional).
+    pub rate_limit_rpm: Option<u32>,
+    /// Monthly budget in USD (optional).
+    pub monthly_budget: Option<f64>,
 }
 
 /// An audit log entry recording a tenant-scoped action.
@@ -2136,6 +2180,9 @@ pub trait MetadataRepository: Send + Sync {
     /// Get a tenant by ID.
     async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>>;
 
+    /// Get a tenant by their API token.
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>>;
+
     /// Update an existing tenant.
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()>;
 
@@ -2833,6 +2880,9 @@ mod tests {
             tenant_id: TenantId::new(),
             security_thresholds: thresholds,
             feature_flags: flags,
+            monitoring_scope: MonitoringScope::Hybrid,
+            rate_limit_rpm: None,
+            monthly_budget: None,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

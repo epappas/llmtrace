@@ -336,6 +336,11 @@ impl MetadataRepository for InMemoryMetadataRepository {
         Ok(tenants.iter().find(|t| t.id == id).cloned())
     }
 
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>> {
+        let tenants = self.tenants.read().await;
+        Ok(tenants.iter().find(|t| t.api_token == token).cloned())
+    }
+
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
         let mut tenants = self.tenants.write().await;
         if let Some(existing) = tenants.iter_mut().find(|t| t.id == tenant.id) {

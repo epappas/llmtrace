@@ -739,10 +739,11 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
 
         sqlx::query(
-            "INSERT INTO tenants (id, name, plan, created_at, config) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO tenants (id, name, api_token, plan, created_at, config) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .bind(tenant.id.0.to_string())
         .bind(&tenant.name)
+        .bind(&tenant.api_token)
         .bind(&tenant.plan)
         .bind(tenant.created_at.to_rfc3339())
         .bind(&config_json)
@@ -771,6 +772,32 @@ impl MetadataRepository for SqliteMetadataRepository {
         Ok(Some(Tenant {
             id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
             name: row.get("name"),
+            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
+            plan: row.get("plan"),
+            created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
+            config,
+        }))
+    }
+
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>> {
+        let row = sqlx::query("SELECT * FROM tenants WHERE api_token = ?1")
+            .bind(token)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get tenant by token: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let config_str: String = row.get("config");
+        let config: serde_json::Value = serde_json::from_str(&config_str)
+            .map_err(|e| LLMTraceError::Storage(format!("Invalid tenant config JSON: {e}")))?;
+
+        Ok(Some(Tenant {
+            id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
+            name: row.get("name"),
+            api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
             plan: row.get("plan"),
             created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
             config,
@@ -782,10 +809,11 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
 
         let result =
-            sqlx::query("UPDATE tenants SET name = ?1, plan = ?2, config = ?3 WHERE id = ?4")
+            sqlx::query("UPDATE tenants SET name = ?1, plan = ?2, config = ?3, api_token = ?4 WHERE id = ?5")
                 .bind(&tenant.name)
                 .bind(&tenant.plan)
                 .bind(&config_json)
+                .bind(&tenant.api_token)
                 .bind(tenant.id.0.to_string())
                 .execute(&self.pool)
                 .await
@@ -814,6 +842,7 @@ impl MetadataRepository for SqliteMetadataRepository {
                 Ok(Tenant {
                     id: TenantId(parse_uuid(&row.get::<String, _>("id"))?),
                     name: row.get("name"),
+                    api_token: row.get::<Option<String>, _>("api_token").unwrap_or_default(),
                     plan: row.get("plan"),
                     created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
                     config,
@@ -844,6 +873,9 @@ impl MetadataRepository for SqliteMetadataRepository {
 
         let thresholds_str: String = row.get("security_thresholds");
         let flags_str: String = row.get("feature_flags");
+        let monitoring_scope_str: String = row.get("monitoring_scope");
+        let rate_limit_rpm: Option<i32> = row.get("rate_limit_rpm");
+        let monthly_budget: Option<f64> = row.get("monthly_budget");
 
         Ok(Some(TenantConfig {
             tenant_id: TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?),
@@ -852,6 +884,11 @@ impl MetadataRepository for SqliteMetadataRepository {
             })?,
             feature_flags: serde_json::from_str(&flags_str)
                 .map_err(|e| LLMTraceError::Storage(format!("Invalid feature_flags JSON: {e}")))?,
+            monitoring_scope: monitoring_scope_str.parse().map_err(|e| {
+                LLMTraceError::Storage(format!("Invalid monitoring_scope value: {e}"))
+            })?,
+            rate_limit_rpm: rate_limit_rpm.map(|v| v as u32),
+            monthly_budget,
         }))
     }
 
@@ -862,15 +899,21 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize feature_flags: {e}")))?;
 
         sqlx::query(
-            "INSERT INTO tenant_configs (tenant_id, security_thresholds, feature_flags)
-             VALUES (?1, ?2, ?3)
+            "INSERT INTO tenant_configs (tenant_id, security_thresholds, feature_flags, monitoring_scope, rate_limit_rpm, monthly_budget)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(tenant_id) DO UPDATE SET
                 security_thresholds = excluded.security_thresholds,
-                feature_flags = excluded.feature_flags",
+                feature_flags = excluded.feature_flags,
+                monitoring_scope = excluded.monitoring_scope,
+                rate_limit_rpm = excluded.rate_limit_rpm,
+                monthly_budget = excluded.monthly_budget",
         )
         .bind(config.tenant_id.0.to_string())
         .bind(&thresholds_json)
         .bind(&flags_json)
+        .bind(config.monitoring_scope.to_string())
+        .bind(config.rate_limit_rpm.map(|v| v as i32))
+        .bind(config.monthly_budget)
         .execute(&self.pool)
         .await
         .map_err(|e| LLMTraceError::Storage(format!("Failed to upsert tenant config: {e}")))?;
@@ -1731,6 +1774,9 @@ mod tests {
             tenant_id,
             security_thresholds: thresholds,
             feature_flags: flags,
+            monitoring_scope: llmtrace_core::MonitoringScope::Hybrid,
+            rate_limit_rpm: None,
+            monthly_budget: None,
         };
         repo.upsert_tenant_config(&config).await.unwrap();
 
