@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use utoipa::ToSchema;
 use uuid::Uuid;
-use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Identity types
@@ -37,7 +36,7 @@ impl TenantId {
 
 impl Default for TenantId {
     fn default() -> Self {
-        Self(Uuid::nil())
+        Self::new()
     }
 }
 
@@ -101,6 +100,7 @@ impl std::str::FromStr for ApiKeyRole {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyRecord {
     /// Unique identifier for this key.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant this key belongs to.
     pub tenant_id: TenantId,
@@ -548,12 +548,16 @@ pub struct AgentAction {
     #[serde(default = "default_true")]
     pub success: bool,
     /// Exit code (for command executions).
+    #[serde(default)]
     pub exit_code: Option<i32>,
     /// HTTP method (for web access).
+    #[serde(default)]
     pub http_method: Option<String>,
     /// HTTP status code (for web access).
+    #[serde(default)]
     pub http_status: Option<u16>,
     /// File operation type: "read", "write", "delete" (for file access).
+    #[serde(default)]
     pub file_operation: Option<String>,
     /// When the action occurred.
     #[schema(value_type = String, format = "date-time")]
@@ -716,52 +720,16 @@ pub struct Tenant {
     pub config: serde_json::Value,
 }
 
-/// Monitoring scope for a tenant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MonitoringScope {
-    /// Monitor both inputs and outputs.
-    #[default]
-    Hybrid,
-    /// Monitor only inputs.
-    InputOnly,
-    /// Monitor only outputs.
-    OutputOnly,
-}
-
-impl std::fmt::Display for MonitoringScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Hybrid => write!(f, "hybrid"),
-            Self::InputOnly => write!(f, "input_only"),
-            Self::OutputOnly => write!(f, "output_only"),
-        }
-    }
-}
-
-impl std::str::FromStr for MonitoringScope {
-    type Err = String;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "hybrid" => Ok(Self::Hybrid),
-            "input_only" => Ok(Self::InputOnly),
-            "output_only" => Ok(Self::OutputOnly),
-            _ => Err(format!("unknown monitoring scope: {s}")),
-        }
-    }
-}
-
 /// Per-tenant configuration for security thresholds and feature flags.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TenantConfig {
     /// Tenant this configuration belongs to.
     pub tenant_id: TenantId,
     /// Security severity thresholds (e.g., "alert_min_score" → 80.0).
-    #[schema(value_type = HashMap<String, f64>)]
+    #[schema(value_type = Object)]
     pub security_thresholds: HashMap<String, f64>,
     /// Feature flags (e.g., "enable_pii_detection" → true).
-    #[schema(value_type = HashMap<String, bool>)]
+    #[schema(value_type = Object)]
     pub feature_flags: HashMap<String, bool>,
     /// Monitoring scope for this tenant.
     pub monitoring_scope: MonitoringScope,
@@ -833,10 +801,8 @@ pub struct ReportQuery {
     /// Tenant to query reports for.
     pub tenant_id: TenantId,
     /// Maximum number of results.
-    #[schema(default = 50)]
     pub limit: Option<u32>,
     /// Number of results to skip (for pagination).
-    #[schema(default = 0)]
     pub offset: Option<u32>,
 }
 
@@ -876,12 +842,9 @@ pub struct AuditQuery {
     /// End time for the query range.
     #[schema(value_type = String, format = "date-time")]
     pub end_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
     /// Maximum number of results.
-    #[schema(default = 50)]
     pub limit: Option<u32>,
     /// Number of results to skip (for pagination).
-    #[schema(default = 0)]
     pub offset: Option<u32>,
 }
 
@@ -2216,9 +2179,6 @@ pub trait MetadataRepository: Send + Sync {
     /// Get a tenant by ID.
     async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>>;
 
-    /// Get a tenant by their API token.
-    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>>;
-
     /// Update an existing tenant.
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()>;
 
@@ -2916,9 +2876,6 @@ mod tests {
             tenant_id: TenantId::new(),
             security_thresholds: thresholds,
             feature_flags: flags,
-            monitoring_scope: MonitoringScope::Hybrid,
-            rate_limit_rpm: None,
-            monthly_budget: None,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
