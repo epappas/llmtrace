@@ -667,11 +667,11 @@ fn build_router(state: Arc<AppState>) -> Router {
         // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))
         // Auth middleware — applied to all routes (skips /health internally)
-        .layer(cors)
         .layer(middleware::from_fn_with_state(
             Arc::clone(&state),
             llmtrace_proxy::auth::auth_middleware,
         ))
+        .layer(cors)
         .with_state(state)
 }
 

@@ -86,6 +86,11 @@ pub async fn auth_middleware(
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
+    // Always allow OPTIONS requests for CORS preflights
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
     if !state.config.auth.enabled {
