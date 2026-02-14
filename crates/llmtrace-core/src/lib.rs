@@ -9,46 +9,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use utoipa::{ToSchema, IntoParams}; // Add IntoParams
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-impl<'s> ToSchema<'s> for Uuid {
-    fn schema() -> utoipa::openapi::schema::Schema {
-        use utoipa::openapi::schema::{SchemaFormat, SchemaType};
-        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
-            schema_type: Some(SchemaType::String),
-            format: Some(SchemaFormat::Uuid),
-            ..Default::default()
-        })
-    }
-}
-
-impl<'s> ToSchema<'s> for chrono::DateTime<Utc> {
-    fn schema() -> utoipa::openapi::schema::Schema {
-        use utoipa::openapi::schema::{SchemaFormat, SchemaType};
-        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
-            schema_type: Some(SchemaType::String),
-            format: Some(SchemaFormat::DateTime),
-            ..Default::default()
-        })
-    }
-}
-
-impl<'s> ToSchema<'s> for serde_json::Value {
-    fn schema() -> utoipa::openapi::schema::Schema {
-        use utoipa::openapi::schema::SchemaType;
-        utoipa::openapi::schema::Schema::Object(utoipa::openapi::schema::SchemaObject {
-            schema_type: Some(SchemaType::Object),
-            // Or use SchemaType::Any if you want to allow any JSON type
-            // format: Some(SchemaFormat::Custom("json".to_string())),
-            ..Default::default()
-        })
-    }
-}
-
+// ---------------------------------------------------------------------------
+// Identity types
+// ---------------------------------------------------------------------------
 
 /// Unique identifier for a tenant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[schema(value_type = String, format = "uuid")]
 pub struct TenantId(pub Uuid);
 
 impl std::fmt::Display for TenantId {
@@ -143,13 +114,15 @@ pub struct ApiKeyRecord {
     /// Role granted by this key.
     pub role: ApiKeyRole,
     /// When the key was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// When the key was revoked (`None` if still active).
+    #[schema(value_type = String, format = "date-time")]
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
 /// Authenticated context injected by the auth middleware.
-#[derive(Debug, Clone, ToSchema)]
+#[derive(Debug, Clone)]
 pub struct AuthContext {
     /// Tenant the caller is authenticated as.
     pub tenant_id: TenantId,
@@ -209,6 +182,7 @@ impl std::str::FromStr for SecuritySeverity {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SecurityFinding {
     /// Unique identifier for this finding.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Severity level of the finding.
     pub severity: SecuritySeverity,
@@ -217,12 +191,14 @@ pub struct SecurityFinding {
     /// Human-readable description of the finding.
     pub description: String,
     /// When the finding was detected.
+    #[schema(value_type = String, format = "date-time")]
     pub detected_at: DateTime<Utc>,
     /// Confidence score (0.0 to 1.0).
     pub confidence_score: f64,
     /// Location where the issue was found (e.g., "request.messages[0]", "response.content").
     pub location: Option<String>,
     /// Additional metadata about the finding.
+    #[schema(value_type = HashMap<String, String>)]
     pub metadata: HashMap<String, String>,
     /// Whether this finding requires immediate alerting.
     pub requires_alert: bool,
@@ -298,18 +274,23 @@ pub enum LLMProvider {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TraceSpan {
     /// Unique identifier for the trace this span belongs to.
+    #[schema(value_type = String, format = "uuid")]
     pub trace_id: Uuid,
     /// Unique identifier for this span.
+    #[schema(value_type = String, format = "uuid")]
     pub span_id: Uuid,
     /// Parent span ID if this is a child span.
+    #[schema(value_type = String, format = "uuid")]
     pub parent_span_id: Option<Uuid>,
     /// Tenant this span belongs to.
     pub tenant_id: TenantId,
     /// Name of the operation (e.g., "chat_completion", "embedding", "prompt_analysis").
     pub operation_name: String,
     /// When the span started.
+    #[schema(value_type = String, format = "date-time")]
     pub start_time: DateTime<Utc>,
     /// When the span ended (None if still in progress).
+    #[schema(value_type = String, format = "date-time")]
     pub end_time: Option<DateTime<Utc>>,
     /// LLM provider used for this span.
     pub provider: LLMProvider,
@@ -517,7 +498,7 @@ impl TraceSpan {
 pub const AGENT_ACTION_RESULT_MAX_BYTES: usize = 4096;
 
 /// Type of agent action observed during an LLM interaction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentActionType {
     /// LLM tool/function call (e.g. OpenAI `tool_calls`, Anthropic `tool_use`).
@@ -545,9 +526,10 @@ impl std::fmt::Display for AgentActionType {
 }
 
 /// A single agent action captured during or after an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentAction {
     /// Unique identifier for this action.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Type of action.
     pub action_type: AgentActionType,
@@ -566,21 +548,18 @@ pub struct AgentAction {
     #[serde(default = "default_true")]
     pub success: bool,
     /// Exit code (for command executions).
-    #[serde(default)]
     pub exit_code: Option<i32>,
     /// HTTP method (for web access).
-    #[serde(default)]
     pub http_method: Option<String>,
     /// HTTP status code (for web access).
-    #[serde(default)]
     pub http_status: Option<u16>,
     /// File operation type: "read", "write", "delete" (for file access).
-    #[serde(default)]
     pub file_operation: Option<String>,
     /// When the action occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
     /// Additional metadata.
-    #[serde(default)]
+    #[schema(value_type = HashMap<String, String>)]
     pub metadata: HashMap<String, String>,
 }
 
@@ -663,17 +642,20 @@ impl AgentAction {
 }
 
 /// An event that occurred during a span.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SpanEvent {
     /// Unique identifier for the event.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// When the event occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
     /// Type of event (e.g., "token_received", "security_scan_completed", "error_occurred").
     pub event_type: String,
     /// Human-readable description.
     pub description: String,
     /// Event-specific data.
+    #[schema(value_type = HashMap<String, String>)]
     pub data: HashMap<String, String>,
 }
 
@@ -697,15 +679,17 @@ impl SpanEvent {
 }
 
 /// A complete trace event representing an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TraceEvent {
     /// Unique trace identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub trace_id: Uuid,
     /// Tenant that owns this trace.
     pub tenant_id: TenantId,
     /// Spans within this trace.
     pub spans: Vec<TraceSpan>,
     /// When the trace was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
 }
 
@@ -725,9 +709,10 @@ pub struct Tenant {
     /// Subscription plan (e.g., "free", "pro", "enterprise").
     pub plan: String,
     /// When the tenant was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// Arbitrary tenant-level configuration.
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub config: serde_json::Value,
 }
 
@@ -790,6 +775,7 @@ pub struct TenantConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditEvent {
     /// Unique event identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant this event belongs to.
     pub tenant_id: TenantId,
@@ -800,9 +786,10 @@ pub struct AuditEvent {
     /// What resource was affected.
     pub resource: String,
     /// Arbitrary event data.
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub data: serde_json::Value,
     /// When the event occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -813,6 +800,7 @@ pub struct AuditEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ComplianceReportRecord {
     /// Unique report identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant that requested the report.
     pub tenant_id: TenantId,
@@ -821,15 +809,19 @@ pub struct ComplianceReportRecord {
     /// Current status: "pending", "completed", or "failed".
     pub status: String,
     /// Start of the reporting period.
+    #[schema(value_type = String, format = "date-time")]
     pub period_start: DateTime<Utc>,
     /// End of the reporting period.
+    #[schema(value_type = String, format = "date-time")]
     pub period_end: DateTime<Utc>,
     /// When the report was requested.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// When the report generation completed (if finished).
+    #[schema(value_type = String, format = "date-time")]
     pub completed_at: Option<DateTime<Utc>>,
     /// Report content as JSON (populated when status is "completed").
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub content: Option<serde_json::Value>,
     /// Error message (populated when status is "failed").
     pub error: Option<String>,
@@ -879,8 +871,11 @@ pub struct AuditQuery {
     /// Filter by event type.
     pub event_type: Option<String>,
     /// Start time for the query range.
+    #[schema(value_type = String, format = "date-time")]
     pub start_time: Option<DateTime<Utc>>,
     /// End time for the query range.
+    #[schema(value_type = String, format = "date-time")]
+    pub end_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
     /// Maximum number of results.
     #[schema(default = 50)]
