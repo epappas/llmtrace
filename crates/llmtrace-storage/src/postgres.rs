@@ -605,10 +605,12 @@ mod tests {
 
     /// Create a test tenant with a unique ID.
     fn make_tenant() -> Tenant {
+        let id = TenantId::new();
         Tenant {
-            id: TenantId::new(),
+            id,
             name: "Test Corp".to_string(),
-            api_token: "test-token".to_string(),
+            // Must be unique: integration tests run concurrently against the same DB.
+            api_token: format!("llmt_{id}"),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces_per_day": 10000}),
