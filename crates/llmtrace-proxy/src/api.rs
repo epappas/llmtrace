@@ -12,13 +12,12 @@ use axum::Extension;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, MonitoringScope,
-    TenantConfig, TraceQuery,
+    AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, MonitoringScope, TraceQuery,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use utoipa::{IntoParams, ToSchema}; // Add this line
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::proxy::AppState;
@@ -40,6 +39,19 @@ pub struct PaginatedResponse<T: Serialize> {
     pub offset: u32,
 }
 
+/// Paginated response for enriched spans.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PaginatedEnrichedSpansResponse {
+    /// The data items for this page.
+    pub data: Vec<EnrichedTraceSpan>,
+    /// Total number of matching items (before pagination).
+    pub total: u64,
+    /// Maximum items per page.
+    pub limit: u32,
+    /// Number of items skipped.
+    pub offset: u32,
+}
+
 /// A TraceSpan enriched with its tenant's MonitoringScope.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct EnrichedTraceSpan {
@@ -49,13 +61,13 @@ pub struct EnrichedTraceSpan {
 }
 
 /// API error response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiError {
     error: ApiErrorDetail,
 }
 
 /// Inner error detail.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiErrorDetail {
     message: String,
     #[serde(rename = "type")]
@@ -255,7 +267,7 @@ pub async fn get_trace(
         ListSpansParams
     ),
     responses(
-        (status = 200, description = "Paginated list of enriched spans", body = PaginatedResponse<EnrichedTraceSpan>),
+        (status = 200, description = "Paginated list of enriched spans", body = PaginatedEnrichedSpansResponse),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 500, description = "Internal Server Error", body = ApiError),
     ),
@@ -283,35 +295,37 @@ pub async fn list_spans(
     // Fetch all spans matching the query first
     match state.storage.traces.query_spans(&query).await {
         Ok(all_spans) => {
-            let tenant_configs = state.storage.config.get_all_tenant_configs().await.unwrap_or_default();
-            let tenant_config_map: HashMap<llmtrace_core::TenantId, llmtrace_core::TenantConfig> = tenant_configs
-                .into_iter()
-                .map(|cfg| (cfg.tenant_id, cfg))
-                .collect();
+            let monitoring_scope = match state.metadata().get_tenant_config(tenant_id).await {
+                Ok(Some(cfg)) => cfg.monitoring_scope,
+                Ok(None) => MonitoringScope::default(),
+                Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            };
 
-            let filtered_and_enriched_spans: Vec<EnrichedTraceSpan> = all_spans
-                .into_iter()
-                .filter_map(|span| {
-                    let tenant_config = tenant_config_map
-                        .get(&span.tenant_id);
-                    let monitoring_scope = tenant_config
-                        .map(|c| c.monitoring_scope)
-                        .unwrap_or_default(); // Default to Hybrid if no config found
+            if let Some(ref scope_filter) = params.monitoring_scope {
+                if &monitoring_scope != scope_filter {
+                    return Json(PaginatedEnrichedSpansResponse {
+                        data: vec![],
+                        total: 0,
+                        limit,
+                        offset,
+                    })
+                    .into_response();
+                }
+            }
 
-                    if let Some(ref scope_filter) = params.monitoring_scope {
-                        if &monitoring_scope != scope_filter {
-                            return None; // Filter out if scope doesn't match
-                        }
-                    }
-                    Some(EnrichedTraceSpan { span, monitoring_scope })
-                })
+            let total = all_spans.len() as u64;
+            let data: Vec<EnrichedTraceSpan> = all_spans
+                .into_iter()
                 .skip(offset as usize)
                 .take(limit as usize)
+                .map(|span| EnrichedTraceSpan {
+                    span,
+                    monitoring_scope,
+                })
                 .collect();
 
-            let total = filtered_and_enriched_spans.len() as u64; // Total reflects filtered count here
-            Json(PaginatedResponse {
-                data: filtered_and_enriched_spans,
+            Json(PaginatedEnrichedSpansResponse {
+                data,
                 total,
                 limit,
                 offset,
@@ -327,7 +341,7 @@ pub async fn list_spans(
     get,
     path = "/api/v1/spans/{span_id}",
     params(
-        ("span_id" = Uuid, Path, description = "ID of the span to retrieve"),
+        ("span_id" = String, Path, description = "ID of the span to retrieve"),
     ),
     responses(
         (status = 200, description = "Enriched span", body = EnrichedTraceSpan),
@@ -350,10 +364,11 @@ pub async fn get_span(
 
     match state.storage.traces.get_span(tenant_id, span_id).await {
         Ok(Some(span)) => {
-            let tenant_config = state.storage.config.get_tenant_config(tenant_id).await;
-            let scope = tenant_config
-                .map(|c| c.monitoring_scope)
-                .unwrap_or_default();
+            let scope = match state.metadata().get_tenant_config(tenant_id).await {
+                Ok(Some(cfg)) => cfg.monitoring_scope,
+                Ok(None) => MonitoringScope::default(),
+                Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+            };
             Json(EnrichedTraceSpan {
                 span,
                 monitoring_scope: scope,

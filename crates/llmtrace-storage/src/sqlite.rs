@@ -1702,6 +1702,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Acme Corp".to_string(),
+            api_token: "test-token".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces": 10000}),
@@ -1744,6 +1745,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Ghost".to_string(),
+            api_token: "ghost-token".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -1761,6 +1763,7 @@ mod tests {
         let tenant = Tenant {
             id: tenant_id,
             name: "Test".to_string(),
+            api_token: "test-token".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

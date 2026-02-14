@@ -644,6 +644,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Test".to_string(),
+            api_token: "test-token".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

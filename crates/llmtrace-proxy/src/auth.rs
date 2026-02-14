@@ -104,22 +104,10 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // Allow health endpoint and tenant/key listing/revocation (for dashboard discovery) without auth
+    // Allow health endpoint without auth so liveness/startup checks work even
+    // when authentication is enabled.
     let path = req.uri().path();
-    let method = req.method();
-    if path == "/health"
-        || (path == "/api/v1/tenants" && method == axum::http::Method::GET)
-        || (path == "/api/v1/auth/keys" && method == axum::http::Method::GET)
-        || (path.starts_with("/api/v1/auth/keys") && method == axum::http::Method::DELETE)
-    {
-        // Still try to resolve tenant from header if provided, for downstream context
-        let tenant_id = resolve_tenant_from_header(req.headers()).unwrap_or_default();
-        let ctx = AuthContext {
-            tenant_id,
-            role: ApiKeyRole::Viewer, // Default to viewer for unauthenticated discovery
-            key_id: None,
-        };
-        req.extensions_mut().insert(ctx);
+    if path == "/health" {
         return next.run(req).await;
     }
 
@@ -155,10 +143,7 @@ pub async fn auth_middleware(
     }
 
     // 2. Extract the bearer token (existing logic)
-    let token = match extract_bearer_token(headers) {
-        Some(t) => Some(t),
-        None => None,
-    };
+    let token = extract_bearer_token(headers);
 
     if let Some(token) = token {
         // Check bootstrap admin key first

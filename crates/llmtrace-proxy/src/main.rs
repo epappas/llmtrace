@@ -9,11 +9,7 @@ use axum::middleware;
 use axum::routing::{any, delete, get, post};
 use axum::Router;
 use clap::{Parser, Subcommand};
-use llmtrace_core::{
-    ApiKeyRecord, ApiKeyRole, AuditEvent, AuditQuery, ComplianceReportRecord, MonitoringScope,
-    ProxyConfig, ReportQuery, SecurityAnalyzer, SecurityFinding, SecuritySeverity, Tenant,
-    TenantConfig, TenantId, TraceSpan,
-};
+use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
 use llmtrace_proxy::alerts::AlertEngine;
 use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
@@ -27,70 +23,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
-
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        llmtrace_proxy::proxy::health_handler,
-        llmtrace_proxy::auth::create_api_key,
-        llmtrace_proxy::auth::list_api_keys,
-        llmtrace_proxy::auth::revoke_api_key,
-        llmtrace_proxy::api::list_traces,
-        llmtrace_proxy::api::get_trace,
-        llmtrace_proxy::api::list_spans,
-        llmtrace_proxy::api::get_span,
-        llmtrace_proxy::api::get_stats,
-        llmtrace_proxy::api::list_security_findings,
-        llmtrace_proxy::api::get_current_costs,
-        llmtrace_proxy::api::report_action,
-        llmtrace_proxy::api::actions_summary,
-        llmtrace_proxy::tenant_api::create_tenant,
-        llmtrace_proxy::tenant_api::list_tenants,
-        llmtrace_proxy::tenant_api::get_tenant,
-        llmtrace_proxy::tenant_api::update_tenant,
-        llmtrace_proxy::tenant_api::delete_tenant,
-        llmtrace_proxy::tenant_api::get_current_tenant_token,
-        llmtrace_proxy::tenant_api::get_tenant_token,
-        llmtrace_proxy::tenant_api::reset_tenant_token,
-        llmtrace_proxy::compliance::generate_report,
-        llmtrace_proxy::compliance::list_reports,
-        llmtrace_proxy::compliance::get_report,
-    ),
-    components(
-        schemas(
-            TenantId,
-            ApiKeyRole,
-            ApiKeyRecord,
-            SecuritySeverity,
-            SecurityFinding,
-            LLMProvider,
-            TraceSpan,
-            Tenant,
-            MonitoringScope,
-            TenantConfig,
-            AuditEvent,
-            ComplianceReportRecord,
-            ReportQuery,
-            AuditQuery,
-            llmtrace_proxy::tenant_api::CreateTenantRequest,
-            llmtrace_proxy::tenant_api::CreateTenantResponse,
-            llmtrace_proxy::tenant_api::UpdateTenantRequest,
-            llmtrace_proxy::compliance::ReportType,
-            llmtrace_proxy::compliance::ReportStatus,
-            llmtrace_proxy::compliance::GenerateReportRequest,
-            llmtrace_proxy::compliance::ListReportsParams,
-            llmtrace_proxy::compliance::Soc2Report,
-            llmtrace_proxy::compliance::GdprReport,
-            llmtrace_proxy::compliance::HipaaReport,
-            llmtrace_proxy::compliance::ReportContent,
-            llmtrace_proxy::compliance::ComplianceReport,
-        )
-    ),
-    tags((name = "LLMTrace Proxy", description = "LLMTrace Security Proxy API")),
-)]
-struct ApiDoc;
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -640,19 +572,6 @@ async fn build_security_analyzer(
     }
 }
 
-/// Serve the OpenAPI JSON specification.
-#[utoipa::path(
-    get,
-    path = "/api-doc/openapi.json",
-    responses(
-        (status = 200, description = "OpenAPI JSON specification", body = String, content_type = "application/json")
-    ),
-    tag = "LLMTrace Proxy"
-)]
-async fn serve_api_doc() -> impl IntoResponse {
-    Json(ApiDoc::openapi())
-}
-
 /// Build the axum [`Router`] with all routes.
 fn build_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
@@ -661,8 +580,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .allow_headers(Any);
 
     Router::new()
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-doc/openapi.json", ApiDoc::openapi()))
-        .route("/api-doc/openapi.json", get(serve_api_doc))
         .route("/health", get(health_handler))
         .route("/metrics", get(llmtrace_proxy::metrics::metrics_handler))
         // Auth key management API

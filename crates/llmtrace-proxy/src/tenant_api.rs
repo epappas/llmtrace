@@ -815,6 +815,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "To Delete".to_string(),
+            api_token: "token-delete".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -872,8 +873,13 @@ mod tests {
             .query_audit_events(&audit_query)
             .await
             .unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "tenant_created");
+        // Tenant creation records both the tenant creation and the auto-generated default API key.
+        let mut types: Vec<String> = events.into_iter().map(|e| e.event_type).collect();
+        types.sort();
+        assert_eq!(
+            types,
+            vec!["api_key_created".to_string(), "tenant_created".to_string()]
+        );
     }
 
     #[tokio::test]

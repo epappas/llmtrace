@@ -739,6 +739,43 @@ pub struct TenantConfig {
     pub monthly_budget: Option<f64>,
 }
 
+/// Controls which parts of an LLM interaction are stored/queried for a tenant.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitoringScope {
+    /// Store both prompt and response (default).
+    #[default]
+    Hybrid,
+    /// Store prompt only (do not store response).
+    InputOnly,
+    /// Store response only (do not store prompt).
+    OutputOnly,
+}
+
+impl std::fmt::Display for MonitoringScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Hybrid => "hybrid",
+            Self::InputOnly => "input_only",
+            Self::OutputOnly => "output_only",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for MonitoringScope {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "hybrid" => Ok(Self::Hybrid),
+            "input_only" => Ok(Self::InputOnly),
+            "output_only" => Ok(Self::OutputOnly),
+            other => Err(format!("Unknown monitoring scope: {other}")),
+        }
+    }
+}
+
 /// An audit log entry recording a tenant-scoped action.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditEvent {
@@ -2179,6 +2216,9 @@ pub trait MetadataRepository: Send + Sync {
     /// Get a tenant by ID.
     async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>>;
 
+    /// Get a tenant by its API token.
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>>;
+
     /// Update an existing tenant.
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()>;
 
@@ -2852,6 +2892,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Acme Corp".to_string(),
+            api_token: "test-token".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces_per_day": 10000}),
@@ -2876,6 +2917,9 @@ mod tests {
             tenant_id: TenantId::new(),
             security_thresholds: thresholds,
             feature_flags: flags,
+            monitoring_scope: MonitoringScope::Hybrid,
+            rate_limit_rpm: None,
+            monthly_budget: None,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

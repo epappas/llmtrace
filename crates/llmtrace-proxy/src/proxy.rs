@@ -185,21 +185,6 @@ fn build_upstream_url(config: &ProxyConfig, path: &str, query: Option<&str>) -> 
     }
 }
 
-/// Build a JSON error response.
-fn api_error(status: StatusCode, message: &str) -> Response<Body> {
-    let body = serde_json::json!({
-        "error": {
-            "message": message,
-            "type": "api_error"
-        }
-    });
-    Response::builder()
-        .status(status)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap()
-}
-
 // ---------------------------------------------------------------------------
 // Main proxy handler
 // ---------------------------------------------------------------------------

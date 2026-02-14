@@ -149,7 +149,8 @@ test.describe('Tenant Features: Advanced/Planned', () => {
     await page.locator('input[type="date"]').first().fill('2020-01-01');
     await page.locator('input[type="date"]').last().fill(today);
 
-    await page.getByRole('button', { name: 'Start Generation' }).click();
+    // UI label is "Generate Audit" (generation starts immediately in the proxy).
+    await page.getByRole('button', { name: 'Generate Audit' }).click();
     
     // The generate card should disappear
     await expect(page.getByText('Generate New Report')).not.toBeVisible();
