@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileCheck, Plus, RefreshCw, AlertTriangle, CheckCircle, Clock, ExternalLink } from "lucide-react";
+import { FileCheck, Plus, RefreshCw, AlertTriangle, CheckCircle, Clock, ExternalLink, Download, ShieldCheck, Lock, Globe, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/data-table";
+import { Separator } from "@/components/ui/separator";
 import {
   generateReport,
   listReports,
@@ -14,6 +15,129 @@ import {
   type ReportType,
   DEFAULT_TENANT_ID,
 } from "@/lib/api";
+
+function ReportViewer({ report }: { report: ComplianceReport }) {
+  const data = report.content?.data || {};
+  
+  const downloadJson = () => {
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `llmtrace-report-${report.report_type}-${report.id.slice(0, 8)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const renderSoc2 = (d: any) => (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><Activity className="h-4 w-4" /> Activity Summary</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Total Traces</span><span className="font-mono">{d.total_traces_processed}</span></div>
+          <div className="flex justify-between text-sm"><span>Audit Events</span><span className="font-mono">{d.total_audit_events}</span></div>
+          <div className="flex justify-between text-sm"><span>Access Control Events</span><span className="font-mono">{d.access_control_events}</span></div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> Security Posture</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Total Findings</span><span className="font-mono">{d.total_security_findings}</span></div>
+          {Object.entries(d.findings_by_severity || {}).map(([sev, count]: [string, any]) => (
+            <div key={sev} className="flex justify-between text-xs text-muted-foreground ml-2">
+              <span>{sev}</span><span>{count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderGdpr = (d: any) => (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><Globe className="h-4 w-4" /> Data Processing</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Processing Activities</span><span className="font-mono">{d.total_processing_activities}</span></div>
+          <div className="flex justify-between text-sm"><span>PII Findings</span><Badge variant={d.pii_findings > 0 ? "destructive" : "secondary"}>{d.pii_findings}</Badge></div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><Lock className="h-4 w-4" /> Lifecycle Management</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Lifecycle Events</span><span className="font-mono">{d.data_lifecycle_events}</span></div>
+          <div className="flex justify-between text-sm"><span>Tenants Impacted</span><span className="font-mono">{d.tenants_processed}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderHipaa = (d: any) => (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><Activity className="h-4 w-4" /> Access Audits</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Total Access Events</span><span className="font-mono">{d.total_access_events}</span></div>
+          <div className="flex justify-between text-sm"><span>Failed Attempts</span><Badge variant={d.failed_access_attempts > 0 ? "destructive" : "secondary"}>{d.failed_access_attempts}</Badge></div>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><Lock className="h-4 w-4" /> Governance</h4>
+        <div className="rounded-md border p-3 space-y-1">
+          <div className="flex justify-between text-sm"><span>Unauthorized Findings</span><Badge variant={d.unauthorized_access_findings > 0 ? "destructive" : "secondary"}>{d.unauthorized_access_findings}</Badge></div>
+          <div className="flex justify-between text-sm"><span>Policy Changes</span><span className="font-mono">{d.access_control_changes}</span></div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <Card className="border-green-600 bg-green-500/5">
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <div className="space-y-1">
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="h-5 w-5 text-green-600" />
+            {report.report_type.toUpperCase()} Compliance Report
+          </CardTitle>
+          <CardDescription>
+            Generated on {new Date(report.created_at).toLocaleString()} • Period: {new Date(report.period_start).toLocaleDateString()} to {new Date(report.period_end).toLocaleDateString()}
+          </CardDescription>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={downloadJson} className="gap-2">
+            <Download className="h-4 w-4" /> JSON
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6 pt-4">
+        {report.status === "failed" ? (
+          <div className="p-4 bg-destructive/10 border border-destructive/20 text-destructive rounded-md text-sm">
+            <strong>Error:</strong> {report.error || "Report generation failed"}
+          </div>
+        ) : (
+          <>
+            {report.report_type === "soc2" && renderSoc2(data)}
+            {report.report_type === "gdpr" && renderGdpr(data)}
+            {report.report_type === "hipaa" && renderHipaa(data)}
+            
+            <Separator />
+            
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase text-muted-foreground">Raw Audit Data</h4>
+              <div className="rounded-md border bg-background p-4 overflow-auto max-h-[200px]">
+                <pre className="text-[10px] leading-tight">
+                  {JSON.stringify(report.content, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function CompliancePage() {
   const [reports, setReports] = useState<ComplianceReport[]>([]);
@@ -179,27 +303,13 @@ export default function CompliancePage() {
       )}
 
       {selectedReport && (
-        <Card className="border-green-600 bg-green-500/5">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <CheckCircle className="h-5 w-5 text-green-600" />
-                {selectedReport.report_type.toUpperCase()} Report Details
-              </CardTitle>
-              <CardDescription>
-                Period: {new Date(selectedReport.period_start).toLocaleDateString()} to {new Date(selectedReport.period_end).toLocaleDateString()}
-              </CardDescription>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedReport(null)}>Close</Button>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-md border bg-background p-4 overflow-auto max-h-[400px]">
-              <pre className="text-xs">
-                {JSON.stringify(selectedReport.content || selectedReport.error || "No content", null, 2)}
-              </pre>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Report View</h2>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedReport(null)}>Close Viewer</Button>
+          </div>
+          <ReportViewer report={selectedReport} />
+        </div>
       )}
 
       <Card>
