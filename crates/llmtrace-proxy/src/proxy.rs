@@ -226,11 +226,16 @@ pub async fn proxy_handler(
     // Use authenticated tenant if available, otherwise fall back to header resolution
     let (tenant_id_opt, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
 
-    // Resolve tenant ID, falling back to "Unknown" for unauthenticated traffic
+    // Resolve tenant ID. If auth is enabled, we MUST have a tenant ID from resolve_authenticated_tenant.
     let tenant_id = match tenant_id_opt {
         Some(id) if !id.0.is_nil() => id,
         _ => {
-            // Use a deterministic UUID for the "Unknown" tenant
+            if state.config.auth.enabled {
+                // This shouldn't be reached if auth_middleware is working correctly
+                warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
+                return error_response(StatusCode::UNAUTHORIZED, "Authentication required");
+            }
+            // Fallback for when auth is disabled: use deterministic "Unknown" tenant
             TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
         }
     };
@@ -246,8 +251,9 @@ pub async fn proxy_handler(
         .unwrap_or(llmtrace_core::MonitoringScope::Hybrid);
 
     // Auto-create tenant on first request (best-effort, non-blocking).
-    // Always auto-create for proxied traffic if it doesn't exist.
-    {
+    // If auth is enabled, only create if we have an authenticated tenant.
+    // If auth is disabled, we still auto-create the "Unknown" tenant.
+    if !state.config.auth.enabled || tenant_id_opt.is_some() {
         let state_ac = Arc::clone(&state);
         let name = if tenant_id_opt.is_some() {
             _api_key
@@ -924,7 +930,11 @@ async fn run_security_analysis(
     };
 
     // --- Output safety analysis (R6) ---
-    if state.config.output_safety.enabled && !captured.response_text.is_empty() {
+    // Respect monitoring_scope: skip if InputOnly.
+    if state.config.output_safety.enabled 
+        && !captured.response_text.is_empty() 
+        && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly 
+    {
         let output_analyzer =
             llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);
         let result = output_analyzer.analyze_output(&captured.response_text);

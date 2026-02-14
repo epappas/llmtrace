@@ -191,16 +191,10 @@ pub async fn auth_middleware(
         }
     }
 
-    // 3. Fallback for unauthenticated proxy traffic (Troubleshooting/Unknown tenant)
-    // We allow the request to proceed without an AuthContext if it's not an API call.
-    // The proxy_handler will detect the lack of AuthContext and use the "Unknown" tenant.
-    if !path.starts_with("/api/v1/") {
-        return next.run(req).await;
-    }
-
+    // 3. Reject unauthenticated traffic when auth is enabled
     auth_error(
         StatusCode::UNAUTHORIZED,
-        "Missing or invalid Authorization header or X-LLMTrace-Token",
+        "Authentication required: Missing or invalid Authorization header or X-LLMTrace-Token",
     )
 }
 

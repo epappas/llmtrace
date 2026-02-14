@@ -41,8 +41,6 @@ pub struct CreateTenantResponse {
     pub tenant: Tenant,
     /// The plaintext API key (only returned once on creation).
     pub api_key: Option<String>,
-    /// The unique API token for this tenant.
-    pub api_token: String,
 }
 
 /// Request body for `PUT /api/v1/tenants/:id`.
@@ -203,7 +201,6 @@ pub async fn create_tenant(
                 let resp = CreateTenantResponse {
                     tenant,
                     api_key: None,
-                    api_token,
                 };
                 (StatusCode::CREATED, Json(resp)).into_response()
             } else {
@@ -224,7 +221,6 @@ pub async fn create_tenant(
                 let resp = CreateTenantResponse {
                     tenant,
                     api_key: Some(plaintext),
-                    api_token,
                 };
                 (StatusCode::CREATED, Json(resp)).into_response()
             }
@@ -354,6 +350,22 @@ pub async fn get_current_tenant_token(
     }
 }
 
+/// `GET /api/v1/tenants/:id/token` — retrieve the API token for a specific tenant (Admin only).
+pub async fn get_tenant_token(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    if let Some(err) = require_admin(&auth) {
+        return err;
+    }
+    match state.metadata().get_tenant(TenantId(id)).await {
+        Ok(Some(tenant)) => Json(serde_json::json!({ "api_token": tenant.api_token })).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 /// `POST /api/v1/tenants/:id/token/reset` — regenerate the API token for a tenant.
 pub async fn reset_tenant_token(
     State(state): State<Arc<AppState>>,
@@ -408,8 +420,21 @@ pub async fn ensure_tenant_exists(state: &Arc<AppState>, tenant_id: TenantId, na
 
     // Fast path: check if the tenant already exists
     match state.metadata().get_tenant(tenant_id).await {
-        Ok(Some(_)) => return, // already exists
-        Ok(None) => {}         // need to create
+        Ok(Some(mut tenant)) => {
+            // Repair path: if tenant exists but has no api_token, generate one.
+            // This handles migrations from older versions.
+            if tenant.api_token.is_empty() {
+                let (new_token, _) = crate::auth::generate_api_key();
+                tenant.api_token = new_token;
+                if let Err(e) = state.metadata().update_tenant(&tenant).await {
+                    tracing::warn!(%tenant_id, "Failed to repair tenant api_token: {e}");
+                } else {
+                    tracing::info!(%tenant_id, "Repaired missing api_token for existing tenant");
+                }
+            }
+            return;
+        }
+        Ok(None) => {} // need to create
         Err(e) => {
             tracing::debug!(
                 %tenant_id,

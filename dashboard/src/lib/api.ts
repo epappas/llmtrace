@@ -343,8 +343,7 @@ export async function getTenant(id: string): Promise<Tenant> {
 
 /** Get the API token for a tenant. */
 export async function getTenantToken(tenantId: string): Promise<{ api_token: string }> {
-  // Using the admin endpoint or specific tenant ID if needed
-  return apiFetch(`/api/v1/tenants/${tenantId}`);
+  return apiFetch(`/api/v1/tenants/${tenantId}/token`);
 }
 
 /** Reset the API token for a tenant. */
