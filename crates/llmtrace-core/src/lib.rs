@@ -11,13 +11,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use utoipa::ToSchema;
 use uuid::Uuid;
+use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Identity types
 // ---------------------------------------------------------------------------
 
 /// Unique identifier for a tenant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[schema(value_type = String, format = "uuid")]
 pub struct TenantId(pub Uuid);
@@ -198,7 +198,7 @@ pub struct SecurityFinding {
     /// Location where the issue was found (e.g., "request.messages[0]", "response.content").
     pub location: Option<String>,
     /// Additional metadata about the finding.
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub metadata: HashMap<String, String>,
     /// Whether this finding requires immediate alerting.
     pub requires_alert: bool,
@@ -559,7 +559,7 @@ pub struct AgentAction {
     #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
     /// Additional metadata.
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub metadata: HashMap<String, String>,
 }
 
@@ -655,7 +655,7 @@ pub struct SpanEvent {
     /// Human-readable description.
     pub description: String,
     /// Event-specific data.
-    #[schema(value_type = HashMap<String, String>)]
+    #[schema(value_type = Object)]
     pub data: HashMap<String, String>,
 }
 
