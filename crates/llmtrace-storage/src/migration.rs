@@ -51,6 +51,16 @@ pub fn sqlite_migrations() -> Vec<Migration> {
             description: "compliance_reports".to_string(),
             sql: include_str!("../migrations/sqlite/004_compliance_reports.sql"),
         },
+        Migration {
+            version: 5,
+            description: "add_tenant_api_token".to_string(),
+            sql: include_str!("../migrations/sqlite/005_add_tenant_api_token.sql"),
+        },
+        Migration {
+            version: 6,
+            description: "add_monitoring_scope".to_string(),
+            sql: include_str!("../migrations/sqlite/006_add_monitoring_scope.sql"),
+        },
     ]
 }
 
@@ -67,6 +77,21 @@ pub fn postgres_migrations() -> Vec<Migration> {
             version: 2,
             description: "cascade_delete".to_string(),
             sql: include_str!("../migrations/postgres/002_cascade_delete.sql"),
+        },
+        Migration {
+            version: 3,
+            description: "add_tenant_api_token".to_string(),
+            sql: include_str!("../migrations/postgres/003_add_tenant_api_token.sql"),
+        },
+        Migration {
+            version: 4,
+            description: "add_monitoring_scope".to_string(),
+            sql: include_str!("../migrations/postgres/004_add_monitoring_scope.sql"),
+        },
+        Migration {
+            version: 5,
+            description: "compliance_reports".to_string(),
+            sql: include_str!("../migrations/postgres/005_compliance_reports.sql"),
         },
     ]
 }

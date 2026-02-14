@@ -150,21 +150,21 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 
 /// Extract tenant ID from a custom `X-LLMTrace-Tenant-ID` header, or
 /// derive one deterministically from the API key.
-pub(crate) fn resolve_tenant(headers: &HeaderMap) -> TenantId {
+pub(crate) fn resolve_tenant(headers: &HeaderMap) -> Option<TenantId> {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
         if let Ok(s) = raw.to_str() {
             if let Ok(uuid) = Uuid::parse_str(s) {
-                return TenantId(uuid);
+                return Some(TenantId(uuid));
             }
         }
     }
-    // Fallback: derive from API key hash or generate a default
+    // Fallback: derive from API key hash
     if let Some(key) = extract_api_key(headers) {
         // Deterministic UUID v5 from the API key
         let ns = Uuid::NAMESPACE_URL;
-        return TenantId(Uuid::new_v5(&ns, key.as_bytes()));
+        return Some(TenantId(Uuid::new_v5(&ns, key.as_bytes())));
     }
-    TenantId::default()
+    None
 }
 
 /// Concatenate all chat message contents into a single string for analysis.
@@ -209,26 +209,56 @@ pub async fn proxy_handler(
     let headers = req.headers().clone();
 
     // Use authenticated tenant if available, otherwise fall back to header resolution
-    let (tenant_id, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
+    let (tenant_id_opt, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
+
+    // Resolve tenant ID. If auth is enabled, we MUST have a tenant ID from resolve_authenticated_tenant.
+    let tenant_id = match tenant_id_opt {
+        Some(id) if !id.0.is_nil() => id,
+        _ => {
+            if state.config.auth.enabled {
+                // This shouldn't be reached if auth_middleware is working correctly
+                warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
+                return error_response(StatusCode::UNAUTHORIZED, "Authentication required");
+            }
+            // Fallback for when auth is disabled: use deterministic "Unknown" tenant
+            TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
+        }
+    };
 
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
+    // Fetch tenant configuration (best-effort)
+    let tenant_config = state
+        .metadata()
+        .get_tenant_config(tenant_id)
+        .await
+        .ok()
+        .flatten();
+    let monitoring_scope = tenant_config
+        .as_ref()
+        .map(|c| c.monitoring_scope)
+        .unwrap_or(llmtrace_core::MonitoringScope::Hybrid);
+
     // Auto-create tenant on first request (best-effort, non-blocking).
-    // Only auto-create if an API key was used, or if a specific tenant header was provided.
-    // This prevents random scanner traffic from creating junk tenants.
-    if _api_key.is_some() || headers.contains_key("x-llmtrace-tenant-id") {
+    // If auth is enabled, only create if we have an authenticated tenant.
+    // If auth is disabled, we still auto-create the "Unknown" tenant.
+    if !state.config.auth.enabled || tenant_id_opt.is_some() {
         let state_ac = Arc::clone(&state);
-        let api_key_prefix = _api_key
-            .as_deref()
-            .map(|k| {
-                let prefix_len = k.len().min(8);
-                format!("key-{}", &k[..prefix_len])
-            })
-            .unwrap_or_else(|| format!("auto-{}", tenant_id.0));
+        let name = if tenant_id_opt.is_some() {
+            _api_key
+                .as_deref()
+                .map(|k| {
+                    let prefix_len = k.len().min(8);
+                    format!("key-{}", &k[..prefix_len])
+                })
+                .unwrap_or_else(|| format!("tenant-{}", tenant_id.0))
+        } else {
+            "Unknown".to_string()
+        };
         tokio::spawn(async move {
-            crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &api_key_prefix).await;
+            crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &name).await;
         });
     }
 
@@ -423,6 +453,7 @@ pub async fn proxy_handler(
     let model_name_bg = model_name.clone();
     let provider_bg = detected_provider;
     let agent_id_bg = agent_id;
+    let scope_bg = monitoring_scope;
     let task_guard = state.shutdown.track_task();
     tokio::spawn(async move {
         // Hold the task guard for the lifetime of this background task so the
@@ -437,20 +468,24 @@ pub async fn proxy_handler(
         };
         // Initialise the streaming security monitor (only for SSE streams
         // when streaming analysis is enabled).
-        let mut streaming_monitor = if is_streaming {
-            StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
-        } else {
-            None
-        };
+        // Respect monitoring_scope: disable if OutputOnly.
+        let mut streaming_monitor =
+            if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
+                StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
+            } else {
+                None
+            };
         // Initialise the streaming output monitor for response-side analysis (R7).
-        let mut output_monitor = if is_streaming {
-            StreamingOutputMonitor::new(
-                &state_bg.config.streaming_analysis,
-                &state_bg.config.output_safety,
-            )
-        } else {
-            None
-        };
+        // Respect monitoring_scope: disable if InputOnly.
+        let mut output_monitor =
+            if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
+                StreamingOutputMonitor::new(
+                    &state_bg.config.streaming_analysis,
+                    &state_bg.config.output_safety,
+                )
+            } else {
+                None
+            };
         let mut raw_collected = Vec::new();
         let mut ttft_ms: Option<u64> = None;
 
@@ -619,6 +654,7 @@ pub async fn proxy_handler(
             completion_tokens,
             total_tokens,
             agent_actions: auto_actions,
+            monitoring_scope: scope_bg,
         };
 
         // --- Async spend recording for cost caps ---
@@ -789,6 +825,8 @@ struct CapturedInteraction {
     total_tokens: Option<u32>,
     /// Agent actions auto-parsed from the LLM response (tool calls).
     agent_actions: Vec<AgentAction>,
+    /// Monitoring scope for this tenant.
+    monitoring_scope: llmtrace_core::MonitoringScope,
 }
 
 /// Run security analysis and return findings.
@@ -819,13 +857,24 @@ async fn run_security_analysis(
     };
 
     let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
+
+    // Respect monitoring_scope: pass empty string for parts we shouldn't monitor
+    let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
+        ""
+    } else {
+        &captured.prompt_text
+    };
+    let response = if captured.monitoring_scope == llmtrace_core::MonitoringScope::InputOnly {
+        ""
+    } else {
+        &captured.response_text
+    };
+
     let analysis_result = tokio::time::timeout(
         timeout,
-        state.security.analyze_interaction(
-            &captured.prompt_text,
-            &captured.response_text,
-            &context,
-        ),
+        state
+            .security
+            .analyze_interaction(prompt, response, &context),
     )
     .await;
 
@@ -872,7 +921,11 @@ async fn run_security_analysis(
     };
 
     // --- Output safety analysis (R6) ---
-    if state.config.output_safety.enabled && !captured.response_text.is_empty() {
+    // Respect monitoring_scope: skip if InputOnly.
+    if state.config.output_safety.enabled
+        && !captured.response_text.is_empty()
+        && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly
+    {
         let output_analyzer =
             llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);
         let result = output_analyzer.analyze_output(&captured.response_text);
@@ -1194,7 +1247,7 @@ mod tests {
             "x-llmtrace-tenant-id",
             tenant_uuid.to_string().parse().unwrap(),
         );
-        let tenant = resolve_tenant(&headers);
+        let tenant = resolve_tenant(&headers).unwrap();
         assert_eq!(tenant.0, tenant_uuid);
     }
 
@@ -1202,7 +1255,7 @@ mod tests {
     fn test_resolve_tenant_from_api_key() {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer sk-my-key".parse().unwrap());
-        let tenant = resolve_tenant(&headers);
+        let tenant = resolve_tenant(&headers).unwrap();
         // Should produce a deterministic UUID v5
         let expected = Uuid::new_v5(&Uuid::NAMESPACE_URL, b"sk-my-key");
         assert_eq!(tenant.0, expected);
@@ -1212,8 +1265,8 @@ mod tests {
     fn test_resolve_tenant_fallback() {
         let headers = HeaderMap::new();
         let tenant = resolve_tenant(&headers);
-        // Should produce a valid (non-nil) UUID
-        assert_ne!(tenant.0, Uuid::nil());
+        // Should be None when no header or key is present
+        assert!(tenant.is_none());
     }
 
     #[test]

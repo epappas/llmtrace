@@ -143,19 +143,32 @@ export default function SettingsPage() {
               </thead>
               <tbody>
                 {[
+                  ["GET", "/health", "Health check"],
+                  ["GET", "/metrics", "Prometheus metrics"],
                   ["GET", "/api/v1/traces", "List traces with filters"],
                   ["GET", "/api/v1/traces/:id", "Get trace with all spans"],
+                  ["POST", "/api/v1/traces/:id/actions", "Report agent actions"],
+                  ["GET", "/api/v1/actions/summary", "Aggregate agent actions"],
                   ["GET", "/api/v1/spans", "List spans with filters"],
                   ["GET", "/api/v1/spans/:id", "Get a single span"],
                   ["GET", "/api/v1/stats", "Storage statistics"],
                   ["GET", "/api/v1/security/findings", "Spans with security findings"],
                   ["GET", "/api/v1/costs/current", "Current spend per budget window"],
-                  ["GET", "/api/v1/actions/summary", "Agent actions aggregate"],
                   ["GET", "/api/v1/tenants", "List tenants"],
                   ["POST", "/api/v1/tenants", "Create tenant"],
+                  ["GET", "/api/v1/tenants/:id", "Get tenant by ID"],
                   ["PUT", "/api/v1/tenants/:id", "Update tenant"],
                   ["DELETE", "/api/v1/tenants/:id", "Delete tenant"],
-                  ["GET", "/health", "Health check"],
+                  ["GET", "/api/v1/tenants/current/token", "Get current tenant API token"],
+                  ["GET", "/api/v1/tenants/:id/token", "Get tenant API token (Admin)"],
+                  ["POST", "/api/v1/tenants/:id/token/reset", "Reset tenant API token"],
+                  ["POST", "/api/v1/auth/keys", "Create API key"],
+                  ["GET", "/api/v1/auth/keys", "List API keys"],
+                  ["DELETE", "/api/v1/auth/keys/:id", "Revoke API key"],
+                  ["POST", "/api/v1/reports/generate", "Generate compliance report"],
+                  ["GET", "/api/v1/reports", "List compliance reports"],
+                  ["GET", "/api/v1/reports/:id", "Get compliance report by ID"],
+                  ["POST", "/v1/traces", "OTLP trace ingestion (gRPC gateway)"],
                 ].map(([method, path, desc], i) => (
                   <tr key={i} className="border-b last:border-0">
                     <td className="px-4 py-2">

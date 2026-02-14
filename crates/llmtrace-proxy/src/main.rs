@@ -627,11 +627,23 @@ fn build_router(state: Arc<AppState>) -> Router {
             post(llmtrace_proxy::tenant_api::create_tenant)
                 .get(llmtrace_proxy::tenant_api::list_tenants),
         )
+                        .route(
+                            "/api/v1/tenants/current/token",
+                            get(llmtrace_proxy::tenant_api::get_current_tenant_token),
+                        )
+                        .route(
+                            "/api/v1/tenants/:id/token",
+                            get(llmtrace_proxy::tenant_api::get_tenant_token),
+                        )
         .route(
             "/api/v1/tenants/:id",
             get(llmtrace_proxy::tenant_api::get_tenant)
                 .put(llmtrace_proxy::tenant_api::update_tenant)
                 .delete(llmtrace_proxy::tenant_api::delete_tenant),
+        )
+        .route(
+            "/api/v1/tenants/:id/token/reset",
+            post(llmtrace_proxy::tenant_api::reset_tenant_token),
         )
         // Compliance reporting
         .route(

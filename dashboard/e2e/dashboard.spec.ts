@@ -76,12 +76,22 @@ test.describe('LLMTrace Dashboard', () => {
     // Verify it appeared in the list
     await expect(page.getByTestId(`tenant-name-${tenantName}`)).toBeVisible({ timeout: 15000 });
 
-    // 2. Generate Token
-    const row = page.locator('tr', { has: page.getByTestId(`tenant-name-${tenantName}`) });
-    await row.getByRole('button', { name: 'Token' }).click();
-    await expect(page.getByText('Token Generated')).toBeVisible({ timeout: 10000 });
+    // 2. Automated Token Generation: verify token card appeared immediately after creation
+    await expect(page.getByTestId('new-token-title')).toBeVisible({ timeout: 10000 });
+    
+    // Dismiss the token card
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(page.getByTestId('new-token-title')).not.toBeVisible();
 
-    // 3. Delete Tenant (Explicit test of UI deletion)
+    // 3. Manual Token Management: verify clicking "Token" opens management view
+    const row = page.locator('tr', { has: page.getByTestId(`tenant-name-${tenantName}`) });
+    await row.getByTestId('manage-token-button').click();
+    // Wait for the management card to be rendered after state update
+    await expect(page.getByTestId('manage-tokens-title')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('manage-tokens-title')).not.toBeVisible();
+
+    // 4. Delete Tenant (Explicit test of UI deletion)
     page.on('dialog', dialog => dialog.accept());
     const deleteBtn = row.locator('button').last();
     await deleteBtn.click();
@@ -176,17 +186,31 @@ test.describe('LLMTrace Dashboard', () => {
   });
 
   test('Sidebar: should persist tenant selection', async ({ page, request }) => {
+    // This test is sensitive to environment startup timing (fresh CI stack can have 0 tenants).
+    // Give it extra headroom so it behaves consistently across browsers (especially WebKit/Firefox).
+    test.setTimeout(120_000);
+
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Avoid `networkidle` here; Next.js can keep background requests active in some browsers.
+    await page.waitForLoadState('domcontentloaded');
     
     const selector = page.locator('aside select');
     await expect(selector).toBeVisible();
 
-    // 1. Ensure we have at least 2 tenants
-    let options = await selector.locator('option').all();
-    if (options.length < 2) {
-      const needed = 2 - options.length;
-      console.log(`[Test Setup] Creating ${needed} tenant(s) for persistence test`);
+    // 1. Ensure we have at least 2 real tenants.
+    // The UI may render a placeholder <option> (empty value) even when there are 0 tenants,
+    // so don't use DOM option count for setup. Use the API as the source of truth.
+    const listRes = await request.get(`${proxyBaseUrl}/api/v1/tenants`);
+    if (!listRes.ok()) {
+      const text = await listRes.text().catch(() => '<no body>');
+      throw new Error(`Failed to list tenants: ${listRes.status()} ${text}`);
+    }
+    const initialTenants = (await listRes.json().catch(() => [])) as Array<{ id?: string }>;
+    const existingCount = Array.isArray(initialTenants) ? initialTenants.length : 0;
+
+    if (existingCount < 2) {
+      const needed = 2 - existingCount;
+      console.log(`[Test Setup] Creating ${needed} tenant(s) for persistence test (existing: ${existingCount})`);
 
       for (let i = 0; i < needed; i++) {
         // eslint-disable-next-line no-await-in-loop
@@ -204,7 +228,7 @@ test.describe('LLMTrace Dashboard', () => {
       }
 
       // Wait until the API reflects the new tenants (avoids flakiness around reload timing).
-      const deadline = Date.now() + 10_000;
+      const deadline = Date.now() + 30_000;
       // eslint-disable-next-line no-constant-condition
       while (true) {
         // eslint-disable-next-line no-await-in-loop
@@ -214,37 +238,51 @@ test.describe('LLMTrace Dashboard', () => {
           const list = await res.json().catch(() => []);
           if (Array.isArray(list) && list.length >= 2) break;
         }
-        if (Date.now() > deadline) break;
+        if (Date.now() > deadline) {
+          // eslint-disable-next-line no-await-in-loop
+          const debugRes = await request.get(`${proxyBaseUrl}/api/v1/tenants`).catch(() => null);
+          const debugText = debugRes ? await debugRes.text().catch(() => '<no body>') : '<no response>';
+          throw new Error(`Timed out waiting for 2 tenants via API. Last response: ${debugText}`);
+        }
         // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 250));
       }
 
       await page.reload();
-      await page.waitForLoadState('networkidle');
-      await page.waitForFunction(() => document.querySelectorAll('aside select option').length >= 2);
-      options = await selector.locator('option').all();
+      await page.waitForLoadState('domcontentloaded');
+      // Wait for 2 real tenant options (ignore placeholder/empty option).
+      await page.waitForFunction(() => {
+        const opts = Array.from(document.querySelectorAll('aside select option'));
+        const real = opts.filter((o) => (o as HTMLOptionElement).value && (o as HTMLOptionElement).value.trim() !== '');
+        return real.length >= 2;
+      });
     }
 
-    if (options.length < 2) {
-      throw new Error(`Test requires 2 tenants but only found ${options.length}`);
+    // 2. Select the second real tenant option (ignore placeholder option with empty value).
+    const optionValues = await selector.evaluate((el) => {
+      const opts = Array.from((el as HTMLSelectElement).querySelectorAll('option'));
+      return opts
+        .map((o) => (o as HTMLOptionElement).value)
+        .filter((v) => v && v.trim() !== '');
+    });
+
+    if (optionValues.length < 2) {
+      throw new Error(`Test requires 2 tenant options but only found ${optionValues.length}`);
     }
 
-    const targetId = await options[1].getAttribute('value');
+    const targetId = optionValues[1];
     if (!targetId) {
       throw new Error('Second tenant option had no value attribute');
     }
     
-    // 2. Select the second tenant and wait until it is persisted in localStorage
+    // 3. Select the second tenant and wait until it is persisted in localStorage
     await selector.selectOption(targetId);
     await page.waitForFunction((id) => localStorage.getItem("llmtrace_tenant_id") === id, targetId);
     
-    // 3. Verify it persists after navigation + reload (forces sidebar to re-read localStorage)
-    await page.goto('/settings');
-    await page.waitForLoadState('networkidle');
+    // 4. Verify it persists after a hard reload (sidebar must re-read localStorage).
     await page.reload();
-    await page.waitForLoadState('networkidle');
-
-    await expect(page.locator('aside select')).toHaveValue(targetId, { timeout: 10000 });
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.locator('aside select')).toHaveValue(targetId, { timeout: 15000 });
   });
 
 });

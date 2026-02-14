@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,8 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 
 /// Unique identifier for a tenant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[schema(value_type = String, format = "uuid")]
 pub struct TenantId(pub Uuid);
 
 impl std::fmt::Display for TenantId {
@@ -43,7 +45,7 @@ impl Default for TenantId {
 // ---------------------------------------------------------------------------
 
 /// Role for API key-based access control.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiKeyRole {
     /// Full access: manage tenants, keys, read/write traces.
@@ -95,9 +97,10 @@ impl std::str::FromStr for ApiKeyRole {
 }
 
 /// A stored API key record (the plaintext key is never persisted).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyRecord {
     /// Unique identifier for this key.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant this key belongs to.
     pub tenant_id: TenantId,
@@ -111,8 +114,10 @@ pub struct ApiKeyRecord {
     /// Role granted by this key.
     pub role: ApiKeyRole,
     /// When the key was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// When the key was revoked (`None` if still active).
+    #[schema(value_type = String, format = "date-time")]
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
@@ -132,7 +137,7 @@ pub struct AuthContext {
 // ---------------------------------------------------------------------------
 
 /// Severity level for security findings.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 pub enum SecuritySeverity {
     /// Informational — no immediate action needed.
     Info,
@@ -174,9 +179,10 @@ impl std::str::FromStr for SecuritySeverity {
 }
 
 /// A security finding detected during analysis.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SecurityFinding {
     /// Unique identifier for this finding.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Severity level of the finding.
     pub severity: SecuritySeverity,
@@ -185,12 +191,14 @@ pub struct SecurityFinding {
     /// Human-readable description of the finding.
     pub description: String,
     /// When the finding was detected.
+    #[schema(value_type = String, format = "date-time")]
     pub detected_at: DateTime<Utc>,
     /// Confidence score (0.0 to 1.0).
     pub confidence_score: f64,
     /// Location where the issue was found (e.g., "request.messages[0]", "response.content").
     pub location: Option<String>,
     /// Additional metadata about the finding.
+    #[schema(value_type = Object)]
     pub metadata: HashMap<String, String>,
     /// Whether this finding requires immediate alerting.
     pub requires_alert: bool,
@@ -245,7 +253,7 @@ impl SecurityFinding {
 // ---------------------------------------------------------------------------
 
 /// Supported LLM providers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub enum LLMProvider {
     OpenAI,
     Anthropic,
@@ -263,21 +271,26 @@ pub enum LLMProvider {
 // ---------------------------------------------------------------------------
 
 /// A single span within a trace representing a portion of an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TraceSpan {
     /// Unique identifier for the trace this span belongs to.
+    #[schema(value_type = String, format = "uuid")]
     pub trace_id: Uuid,
     /// Unique identifier for this span.
+    #[schema(value_type = String, format = "uuid")]
     pub span_id: Uuid,
     /// Parent span ID if this is a child span.
+    #[schema(value_type = String, format = "uuid")]
     pub parent_span_id: Option<Uuid>,
     /// Tenant this span belongs to.
     pub tenant_id: TenantId,
     /// Name of the operation (e.g., "chat_completion", "embedding", "prompt_analysis").
     pub operation_name: String,
     /// When the span started.
+    #[schema(value_type = String, format = "date-time")]
     pub start_time: DateTime<Utc>,
     /// When the span ended (None if still in progress).
+    #[schema(value_type = String, format = "date-time")]
     pub end_time: Option<DateTime<Utc>>,
     /// LLM provider used for this span.
     pub provider: LLMProvider,
@@ -485,7 +498,7 @@ impl TraceSpan {
 pub const AGENT_ACTION_RESULT_MAX_BYTES: usize = 4096;
 
 /// Type of agent action observed during an LLM interaction.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentActionType {
     /// LLM tool/function call (e.g. OpenAI `tool_calls`, Anthropic `tool_use`).
@@ -513,9 +526,10 @@ impl std::fmt::Display for AgentActionType {
 }
 
 /// A single agent action captured during or after an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentAction {
     /// Unique identifier for this action.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Type of action.
     pub action_type: AgentActionType,
@@ -546,9 +560,10 @@ pub struct AgentAction {
     #[serde(default)]
     pub file_operation: Option<String>,
     /// When the action occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
     /// Additional metadata.
-    #[serde(default)]
+    #[schema(value_type = Object)]
     pub metadata: HashMap<String, String>,
 }
 
@@ -631,17 +646,20 @@ impl AgentAction {
 }
 
 /// An event that occurred during a span.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SpanEvent {
     /// Unique identifier for the event.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// When the event occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
     /// Type of event (e.g., "token_received", "security_scan_completed", "error_occurred").
     pub event_type: String,
     /// Human-readable description.
     pub description: String,
     /// Event-specific data.
+    #[schema(value_type = Object)]
     pub data: HashMap<String, String>,
 }
 
@@ -665,15 +683,17 @@ impl SpanEvent {
 }
 
 /// A complete trace event representing an LLM interaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TraceEvent {
     /// Unique trace identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub trace_id: Uuid,
     /// Tenant that owns this trace.
     pub tenant_id: TenantId,
     /// Spans within this trace.
     pub spans: Vec<TraceSpan>,
     /// When the trace was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
 }
 
@@ -682,35 +702,85 @@ pub struct TraceEvent {
 // ---------------------------------------------------------------------------
 
 /// A tenant in the system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Tenant {
     /// Unique tenant identifier.
     pub id: TenantId,
     /// Human-readable tenant name.
     pub name: String,
+    /// Unique API token for proxy traffic.
+    pub api_token: String,
     /// Subscription plan (e.g., "free", "pro", "enterprise").
     pub plan: String,
     /// When the tenant was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// Arbitrary tenant-level configuration.
+    #[schema(value_type = Object)]
     pub config: serde_json::Value,
 }
 
 /// Per-tenant configuration for security thresholds and feature flags.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TenantConfig {
     /// Tenant this configuration belongs to.
     pub tenant_id: TenantId,
     /// Security severity thresholds (e.g., "alert_min_score" → 80.0).
+    #[schema(value_type = Object)]
     pub security_thresholds: HashMap<String, f64>,
     /// Feature flags (e.g., "enable_pii_detection" → true).
+    #[schema(value_type = Object)]
     pub feature_flags: HashMap<String, bool>,
+    /// Monitoring scope for this tenant.
+    pub monitoring_scope: MonitoringScope,
+    /// Rate limit in requests per minute (optional).
+    pub rate_limit_rpm: Option<u32>,
+    /// Monthly budget in USD (optional).
+    pub monthly_budget: Option<f64>,
+}
+
+/// Controls which parts of an LLM interaction are stored/queried for a tenant.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MonitoringScope {
+    /// Store both prompt and response (default).
+    #[default]
+    Hybrid,
+    /// Store prompt only (do not store response).
+    InputOnly,
+    /// Store response only (do not store prompt).
+    OutputOnly,
+}
+
+impl std::fmt::Display for MonitoringScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Hybrid => "hybrid",
+            Self::InputOnly => "input_only",
+            Self::OutputOnly => "output_only",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for MonitoringScope {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "hybrid" => Ok(Self::Hybrid),
+            "input_only" => Ok(Self::InputOnly),
+            "output_only" => Ok(Self::OutputOnly),
+            other => Err(format!("Unknown monitoring scope: {other}")),
+        }
+    }
 }
 
 /// An audit log entry recording a tenant-scoped action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuditEvent {
     /// Unique event identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant this event belongs to.
     pub tenant_id: TenantId,
@@ -721,8 +791,10 @@ pub struct AuditEvent {
     /// What resource was affected.
     pub resource: String,
     /// Arbitrary event data.
+    #[schema(value_type = Object)]
     pub data: serde_json::Value,
     /// When the event occurred.
+    #[schema(value_type = String, format = "date-time")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -730,9 +802,10 @@ pub struct AuditEvent {
 ///
 /// Contains all data needed to persist and retrieve a compliance report
 /// from the metadata repository.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ComplianceReportRecord {
     /// Unique report identifier.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// Tenant that requested the report.
     pub tenant_id: TenantId,
@@ -741,21 +814,26 @@ pub struct ComplianceReportRecord {
     /// Current status: "pending", "completed", or "failed".
     pub status: String,
     /// Start of the reporting period.
+    #[schema(value_type = String, format = "date-time")]
     pub period_start: DateTime<Utc>,
     /// End of the reporting period.
+    #[schema(value_type = String, format = "date-time")]
     pub period_end: DateTime<Utc>,
     /// When the report was requested.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: DateTime<Utc>,
     /// When the report generation completed (if finished).
+    #[schema(value_type = String, format = "date-time")]
     pub completed_at: Option<DateTime<Utc>>,
     /// Report content as JSON (populated when status is "completed").
+    #[schema(value_type = Object)]
     pub content: Option<serde_json::Value>,
     /// Error message (populated when status is "failed").
     pub error: Option<String>,
 }
 
 /// Query parameters for listing compliance reports.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub struct ReportQuery {
     /// Tenant to query reports for.
     pub tenant_id: TenantId,
@@ -789,15 +867,17 @@ impl ReportQuery {
 }
 
 /// Query parameters for filtering audit events.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToSchema)]
 pub struct AuditQuery {
     /// Tenant to query audit events for.
     pub tenant_id: TenantId,
     /// Filter by event type.
     pub event_type: Option<String>,
     /// Start time for the query range.
+    #[schema(value_type = String, format = "date-time")]
     pub start_time: Option<DateTime<Utc>>,
     /// End time for the query range.
+    #[schema(value_type = String, format = "date-time")]
     pub end_time: Option<DateTime<Utc>>,
     /// Maximum number of results.
     pub limit: Option<u32>,
@@ -2136,6 +2216,9 @@ pub trait MetadataRepository: Send + Sync {
     /// Get a tenant by ID.
     async fn get_tenant(&self, id: TenantId) -> Result<Option<Tenant>>;
 
+    /// Get a tenant by its API token.
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>>;
+
     /// Update an existing tenant.
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()>;
 
@@ -2809,6 +2892,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Acme Corp".to_string(),
+            api_token: "test-token".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces_per_day": 10000}),
@@ -2833,6 +2917,9 @@ mod tests {
             tenant_id: TenantId::new(),
             security_thresholds: thresholds,
             feature_flags: flags,
+            monitoring_scope: MonitoringScope::Hybrid,
+            rate_limit_rpm: None,
+            monthly_budget: None,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

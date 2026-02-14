@@ -14,3 +14,4 @@ uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
+utoipa = { version = "5" }

@@ -161,6 +161,7 @@ mod tests {
         let t = Tenant {
             id: tenant,
             name: "Test".to_string(),
+            api_token: "test-token".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -208,6 +209,7 @@ mod tests {
         let t = Tenant {
             id: tenant,
             name: "LiteTenant".to_string(),
+            api_token: "lite-token".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -274,6 +276,7 @@ mod tests {
         let t = Tenant {
             id: tenant,
             name: "ProdTest".to_string(),
+            api_token: "prod-token".to_string(),
             plan: "enterprise".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

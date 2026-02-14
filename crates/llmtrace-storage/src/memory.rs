@@ -336,6 +336,11 @@ impl MetadataRepository for InMemoryMetadataRepository {
         Ok(tenants.iter().find(|t| t.id == id).cloned())
     }
 
+    async fn get_tenant_by_token(&self, token: &str) -> Result<Option<Tenant>> {
+        let tenants = self.tenants.read().await;
+        Ok(tenants.iter().find(|t| t.api_token == token).cloned())
+    }
+
     async fn update_tenant(&self, tenant: &Tenant) -> Result<()> {
         let mut tenants = self.tenants.write().await;
         if let Some(existing) = tenants.iter_mut().find(|t| t.id == tenant.id) {
@@ -639,6 +644,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Test".to_string(),
+            api_token: "test-token".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

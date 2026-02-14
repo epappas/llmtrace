@@ -11,9 +11,10 @@ import {
   Users,
   Settings,
   User,
+  FileCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { listTenants, setStoredTenant, type Tenant } from "@/lib/api";
+import { listTenants, setStoredTenant, type Tenant, DEFAULT_TENANT_ID } from "@/lib/api";
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -21,13 +22,14 @@ const navItems = [
   { href: "/security", label: "Security", icon: Shield },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/tenants", label: "Tenants", icon: Users },
+  { href: "/compliance", label: "Compliance", icon: FileCheck },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [selectedTenant, setSelectedTenant] = useState<string>("");
+  const [selectedTenant, setSelectedTenant] = useState<string>(DEFAULT_TENANT_ID);
 
   useEffect(() => {
     async function load() {
@@ -36,14 +38,20 @@ export function Sidebar() {
         setTenants(data);
         const stored = localStorage.getItem("llmtrace_tenant_id");
 
-        if (stored && data.some((t) => t.id === stored)) {
+        if (stored && (stored === DEFAULT_TENANT_ID || data.some((t) => t.id === stored))) {
           setSelectedTenant(stored);
         } else if (data.length > 0) {
+          // If we have tenants but none stored, pick the first one from DB
           setSelectedTenant(data[0].id);
           if (!stored) setStoredTenant(data[0].id);
+        } else {
+          // Fallback to nil tenant if no tenants exist in DB
+          setSelectedTenant(DEFAULT_TENANT_ID);
+          if (!stored) setStoredTenant(DEFAULT_TENANT_ID);
         }
       } catch (e) {
         console.error("Failed to load tenants in sidebar", e);
+        setSelectedTenant(DEFAULT_TENANT_ID);
       }
     }
     load();
@@ -52,6 +60,8 @@ export function Sidebar() {
   const handleTenantChange = (id: string) => {
     setSelectedTenant(id);
     setStoredTenant(id);
+    // Refresh the page to update all components with the new tenant ID
+    window.location.reload();
   };
 
   return (
@@ -71,8 +81,12 @@ export function Sidebar() {
           <select
             value={selectedTenant}
             onChange={(e) => handleTenantChange(e.target.value)}
-            className="w-full bg-background border rounded-md px-3 py-2 text-sm appearance-none cursor-pointer"
+            className="w-full bg-background border rounded-md px-3 py-2 text-sm appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
           >
+            {/* Always include the Default/Nil tenant if it's the only one or currently selected */}
+            {(tenants.length === 0 || selectedTenant === DEFAULT_TENANT_ID) && (
+              <option value={DEFAULT_TENANT_ID}>Default Tenant</option>
+            )}
             {tenants.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}

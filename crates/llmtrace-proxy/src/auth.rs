@@ -86,10 +86,15 @@ pub async fn auth_middleware(
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
+    // Always allow OPTIONS requests for CORS preflights
+    if req.method() == axum::http::Method::OPTIONS {
+        return next.run(req).await;
+    }
+
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
     if !state.config.auth.enabled {
-        let tenant_id = crate::proxy::resolve_tenant(req.headers());
+        let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
         let ctx = AuthContext {
             tenant_id,
             role: ApiKeyRole::Admin,
@@ -99,60 +104,91 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
-    // Allow health endpoint without auth
-    if req.uri().path() == "/health" {
+    // Allow health endpoint without auth so liveness/startup checks work even
+    // when authentication is enabled.
+    let path = req.uri().path();
+    if path == "/health" {
         return next.run(req).await;
     }
 
     let headers = req.headers();
 
-    // Extract the bearer token
-    let token = match extract_bearer_token(headers) {
-        Some(t) => t,
-        None => {
-            return auth_error(
-                StatusCode::UNAUTHORIZED,
-                "Missing or invalid Authorization header",
-            )
+    // 1. Try X-LLMTrace-Token header (preferred for proxy traffic)
+    if let Some(token) = headers
+        .get("x-llmtrace-token")
+        .and_then(|v| v.to_str().ok())
+    {
+        match state.metadata().get_tenant_by_token(token).await {
+            Ok(Some(tenant)) => {
+                let ctx = AuthContext {
+                    tenant_id: tenant.id,
+                    role: ApiKeyRole::Operator, // Token grants operator access for traffic
+                    key_id: None,
+                };
+                req.extensions_mut().insert(ctx);
+                return next.run(req).await;
+            }
+            Ok(None) => {
+                // If token is invalid, we continue to check other auth methods
+                // but we might want to return 401 later if nothing else matches.
+            }
+            Err(e) => {
+                tracing::error!("Tenant token lookup failed: {e}");
+                return auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Authentication service unavailable",
+                );
+            }
         }
-    };
+    }
 
-    // Check bootstrap admin key first
-    if let Some(ref admin_key) = state.config.auth.admin_key {
-        if token == admin_key.as_str() {
-            // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
-            let tenant_id = resolve_tenant_from_header(headers);
-            let ctx = AuthContext {
-                tenant_id,
-                role: ApiKeyRole::Admin,
-                key_id: None,
-            };
-            req.extensions_mut().insert(ctx);
-            return next.run(req).await;
+    // 2. Extract the bearer token (existing logic)
+    let token = extract_bearer_token(headers);
+
+    if let Some(token) = token {
+        // Check bootstrap admin key first
+        if let Some(ref admin_key) = state.config.auth.admin_key {
+            if token == admin_key.as_str() {
+                // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
+                let tenant_id = resolve_tenant_from_header(headers).unwrap_or_default();
+                let ctx = AuthContext {
+                    tenant_id,
+                    role: ApiKeyRole::Admin,
+                    key_id: None,
+                };
+                req.extensions_mut().insert(ctx);
+                return next.run(req).await;
+            }
+        }
+
+        // Look up key in the database
+        let key_hash = hash_api_key(token);
+        match state.metadata().get_api_key_by_hash(&key_hash).await {
+            Ok(Some(record)) => {
+                let ctx = AuthContext {
+                    tenant_id: record.tenant_id,
+                    role: record.role,
+                    key_id: Some(record.id),
+                };
+                req.extensions_mut().insert(ctx);
+                return next.run(req).await;
+            }
+            Ok(None) => return auth_error(StatusCode::UNAUTHORIZED, "Invalid API key"),
+            Err(e) => {
+                tracing::error!("API key lookup failed: {e}");
+                return auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Authentication service unavailable",
+                );
+            }
         }
     }
 
-    // Look up key in the database
-    let key_hash = hash_api_key(token);
-    match state.metadata().get_api_key_by_hash(&key_hash).await {
-        Ok(Some(record)) => {
-            let ctx = AuthContext {
-                tenant_id: record.tenant_id,
-                role: record.role,
-                key_id: Some(record.id),
-            };
-            req.extensions_mut().insert(ctx);
-            next.run(req).await
-        }
-        Ok(None) => auth_error(StatusCode::UNAUTHORIZED, "Invalid API key"),
-        Err(e) => {
-            tracing::error!("API key lookup failed: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Authentication service unavailable",
-            )
-        }
-    }
+    // 3. Reject unauthenticated traffic when auth is enabled
+    auth_error(
+        StatusCode::UNAUTHORIZED,
+        "Authentication required: Missing or invalid Authorization header or X-LLMTrace-Token",
+    )
 }
 
 /// Extract the tenant from [`AuthContext`] (if present) or fall back to header-based resolution.
@@ -163,9 +199,9 @@ pub async fn auth_middleware(
 pub fn resolve_authenticated_tenant(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
-) -> (TenantId, Option<ApiKeyRole>) {
+) -> (Option<TenantId>, Option<ApiKeyRole>) {
     if let Some(ctx) = extensions.get::<AuthContext>() {
-        (ctx.tenant_id, Some(ctx.role))
+        (Some(ctx.tenant_id), Some(ctx.role))
     } else {
         (crate::proxy::resolve_tenant(headers), None)
     }
@@ -339,7 +375,11 @@ pub async fn list_api_keys(State(state): State<Arc<AppState>>, req: Request<Body
         return err;
     }
 
-    let (tenant_id, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let (tenant_id_opt, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let tenant_id = match tenant_id_opt {
+        Some(id) => id,
+        None => return auth_error(StatusCode::BAD_REQUEST, "Missing tenant identifier"),
+    };
 
     match state.metadata().list_api_keys(tenant_id).await {
         Ok(keys) => Json(keys).into_response(),
@@ -360,7 +400,11 @@ pub async fn revoke_api_key(
         return err;
     }
 
-    let (tenant_id, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let (tenant_id_opt, _) = resolve_authenticated_tenant(req.headers(), req.extensions());
+    let tenant_id = match tenant_id_opt {
+        Some(id) => id,
+        None => return auth_error(StatusCode::BAD_REQUEST, "Missing tenant identifier"),
+    };
 
     match state.metadata().revoke_api_key(key_id).await {
         Ok(true) => {
@@ -398,15 +442,15 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// Extract tenant ID from the `X-LLMTrace-Tenant-ID` header.
-fn resolve_tenant_from_header(headers: &HeaderMap) -> TenantId {
+fn resolve_tenant_from_header(headers: &HeaderMap) -> Option<TenantId> {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
         if let Ok(s) = raw.to_str() {
             if let Ok(uuid) = Uuid::parse_str(s) {
-                return TenantId(uuid);
+                return Some(TenantId(uuid));
             }
         }
     }
-    TenantId::default()
+    None
 }
 
 /// Build a JSON authentication error response.
@@ -522,14 +566,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         let uuid = Uuid::new_v4();
         headers.insert("x-llmtrace-tenant-id", uuid.to_string().parse().unwrap());
-        assert_eq!(resolve_tenant_from_header(&headers).0, uuid);
+        assert_eq!(resolve_tenant_from_header(&headers).unwrap().0, uuid);
     }
 
     #[test]
     fn test_resolve_tenant_from_header_missing() {
         let headers = HeaderMap::new();
         let tenant = resolve_tenant_from_header(&headers);
-        assert_ne!(tenant.0, Uuid::nil());
+        assert!(tenant.is_none());
     }
 
     #[test]
@@ -697,6 +741,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Test Org".to_string(),
+            api_token: "token-test".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -743,6 +788,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "RBAC Test".to_string(),
+            api_token: "token-viewer".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -782,6 +828,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Revoke Test".to_string(),
+            api_token: "token-revoke".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -837,6 +884,7 @@ mod tests {
         let t1 = Tenant {
             id: TenantId::new(),
             name: "Tenant A".to_string(),
+            api_token: "token-a".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -844,6 +892,7 @@ mod tests {
         let t2 = Tenant {
             id: TenantId::new(),
             name: "Tenant B".to_string(),
+            api_token: "token-b".to_string(),
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
@@ -921,6 +970,7 @@ mod tests {
         let tenant = Tenant {
             id: TenantId::new(),
             name: "Key List Test".to_string(),
+            api_token: "token-key-list".to_string(),
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),

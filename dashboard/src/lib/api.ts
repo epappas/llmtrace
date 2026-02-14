@@ -2,7 +2,10 @@
 // LLMTrace REST API Client — typed fetch wrapper
 // ---------------------------------------------------------------------------
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8081";
+
+/** Default tenant ID (nil UUID) used as a fallback for the "default" tenant. */
+export const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000";
 
 // ---------------------------------------------------------------------------
 // Core types (mirror Rust API responses)
@@ -74,16 +77,30 @@ export interface StorageStats {
   total_traces: number;
   total_spans: number;
   total_cost_usd: number;
+  total_findings?: number;
   newest_trace?: string;
   oldest_trace?: string;
+}
+
+export type MonitoringScope = "hybrid" | "input_only" | "output_only";
+
+export interface TenantConfig {
+  tenant_id: string;
+  security_thresholds: Record<string, number>;
+  feature_flags: Record<string, boolean>;
+  monitoring_scope: MonitoringScope;
+  rate_limit_rpm?: number;
+  monthly_budget?: number;
 }
 
 export interface Tenant {
   id: string;
   name: string;
+  api_token: string;
   plan: string;
   created_at: string;
-  config: Record<string, unknown>;
+  config: TenantConfig;
+  api_key?: string; // Present only immediately after creation
 }
 
 export interface ApiKey {
@@ -93,6 +110,7 @@ export interface ApiKey {
   key_prefix: string;
   role: string;
   created_at: string;
+  revoked_at: string | null;
   tenant_id: string;
 }
 
@@ -260,20 +278,28 @@ export async function getStats(tenantId?: string): Promise<StorageStats> {
 export async function getGlobalStats(): Promise<StorageStats> {
   try {
     const tenants = await listTenants();
-    const statsPromises = tenants.map(t => getStats(t.id).catch(() => null));
+    console.log(`[API] getGlobalStats: Found ${tenants.length} tenants`);
+    const statsPromises = tenants.map(t => getStats(t.id).catch(err => {
+      console.warn(`[API] Failed to fetch stats for tenant ${t.id}:`, err);
+      return null;
+    }));
     const allStats = await Promise.all(statsPromises);
     
-    return allStats.reduce((acc: StorageStats, s) => {
+    const aggregated = allStats.reduce((acc: StorageStats, s) => {
       if (!s) return acc;
       return {
         ...acc,
         total_traces: acc.total_traces + s.total_traces,
         total_spans: acc.total_spans + s.total_spans,
         total_cost_usd: acc.total_cost_usd + s.total_cost_usd,
+        total_findings: (acc.total_findings || 0) + (s.total_findings || 0),
       };
-    }, { total_traces: 0, total_spans: 0, total_cost_usd: 0 });
+    }, { total_traces: 0, total_spans: 0, total_cost_usd: 0, total_findings: 0 });
+
+    console.log("[API] getGlobalStats result:", aggregated);
+    return aggregated;
   } catch (e) {
-    console.error("Failed to fetch global stats:", e);
+    console.error("[API] Failed to fetch global stats:", e);
     return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
   }
 }
@@ -315,6 +341,16 @@ export async function getTenant(id: string): Promise<Tenant> {
   return apiFetch(`/api/v1/tenants/${id}`);
 }
 
+/** Get the API token for a tenant. */
+export async function getTenantToken(tenantId: string): Promise<{ api_token: string }> {
+  return apiFetch(`/api/v1/tenants/${tenantId}/token`);
+}
+
+/** Reset the API token for a tenant. */
+export async function resetTenantToken(tenantId: string): Promise<{ api_token: string }> {
+  return apiFetch(`/api/v1/tenants/${tenantId}/token/reset`, { method: "POST" });
+}
+
 /** Create a new tenant. */
 export async function createTenant(
   body: { name: string; plan?: string; config?: Record<string, unknown> },
@@ -328,7 +364,7 @@ export async function createTenant(
 /** Update tenant. */
 export async function updateTenant(
   id: string,
-  body: { name?: string; plan?: string; config?: Record<string, unknown> },
+  body: { name?: string; plan?: string; config?: Partial<TenantConfig> },
 ): Promise<Tenant> {
   return apiFetch(`/api/v1/tenants/${id}`, {
     method: "PUT",
@@ -358,6 +394,11 @@ export async function createApiKey(
   }, tenantId);
 }
 
+/** Revoke an API key. */
+export async function revokeApiKey(keyId: string, tenantId: string): Promise<void> {
+  await apiFetch(`/api/v1/auth/keys/${keyId}`, { method: "DELETE" }, tenantId);
+}
+
 /** Health check. */
 export async function healthCheck(): Promise<{ status: string }> {
   return apiFetch("/health");
@@ -367,7 +408,10 @@ export async function healthCheck(): Promise<{ status: string }> {
 export async function findActiveTenant(): Promise<string | undefined> {
   try {
     const tenants = await listTenants();
+    console.log(`[API] findActiveTenant: Found ${tenants.length} tenants`);
+    
     if (tenants.length === 0) {
+      console.warn("[API] No tenants found in the database.");
       setStoredTenant(undefined);
       return undefined;
     }
@@ -376,32 +420,38 @@ export async function findActiveTenant(): Promise<string | undefined> {
     if (typeof window !== "undefined") {
       const stored = localStorage.getItem("llmtrace_tenant_id");
       if (stored && tenants.some(t => t.id === stored)) {
+        console.log(`[API] Using stored tenant ID: ${stored}`);
         return stored;
       }
     }
 
-    // Fetch stats for all tenants in parallel
+    // Fetch stats for all tenants in parallel to find the one with the most activity
     const statsPromises = tenants.map(t => 
       getStats(t.id).then(s => ({ 
         id: t.id, 
         count: s.total_traces, 
         newest: s.newest_trace ? new Date(s.newest_trace).getTime() : 0 
-      })).catch(() => ({ id: t.id, count: 0, newest: 0 }))
+      })).catch(err => {
+        console.warn(`[API] Error fetching stats for tenant ${t.id}:`, err);
+        return { id: t.id, count: 0, newest: 0 };
+      })
     );
     
     const results = await Promise.all(statsPromises);
     // Sort by newest trace first, then by count
     results.sort((a, b) => b.newest - a.newest || b.count - a.count);
     
-    const activeId = results[0]?.id;
+    const activeId = results[0]?.id || DEFAULT_TENANT_ID;
+    console.log(`[API] Identified most active tenant: ${activeId}`);
+
     // Only set stored tenant if none is currently selected
-    if (activeId && !localStorage.getItem("llmtrace_tenant_id")) {
+    if (activeId && typeof window !== "undefined" && !localStorage.getItem("llmtrace_tenant_id")) {
       setStoredTenant(activeId);
     }
     return activeId;
   } catch (e) {
-    console.error("Failed to find active tenant:", e);
-    return undefined;
+    console.error("[API] findActiveTenant failed:", e);
+    return DEFAULT_TENANT_ID;
   }
 }
 
@@ -413,4 +463,52 @@ export function setStoredTenant(tenantId: string | undefined): void {
   } else {
     localStorage.removeItem("llmtrace_tenant_id");
   }
+}
+
+// -- Compliance reporting ---------------------------------------------------
+
+export type ReportType = "soc2" | "gdpr" | "hipaa";
+export type ReportStatus = "pending" | "completed" | "failed";
+
+export interface ComplianceReport {
+  id: string;
+  tenant_id: string;
+  report_type: ReportType;
+  status: ReportStatus;
+  period_start: string;
+  period_end: string;
+  created_at: string;
+  completed_at?: string;
+  content?: any;
+  error?: string;
+}
+
+/** Generate a new compliance report. */
+export async function generateReport(
+  reportType: ReportType,
+  periodStart: string,
+  periodEnd: string,
+  tenantId?: string,
+): Promise<{ id: string; status: "pending" }> {
+  return apiFetch("/api/v1/reports/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      report_type: reportType,
+      period_start: periodStart,
+      period_end: periodEnd,
+    }),
+  }, tenantId);
+}
+
+/** List compliance reports. */
+export async function listReports(
+  params: { limit?: number; offset?: number } = {},
+  tenantId?: string,
+): Promise<PaginatedResponse<ComplianceReport>> {
+  return apiFetch(`/api/v1/reports${qs(params as Record<string, string | number | undefined>)}`, undefined, tenantId);
+}
+
+/** Get a single compliance report. */
+export async function getReport(id: string, tenantId?: string): Promise<ComplianceReport> {
+  return apiFetch(`/api/v1/reports/${id}`, undefined, tenantId);
 }
