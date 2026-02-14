@@ -513,11 +513,7 @@ impl MetadataRepository for PostgresMetadataRepository {
             return Ok(None);
         };
 
-        let content_str: Option<String> = row.get("content");
-        let content = content_str
-            .map(|s| serde_json::from_str(&s))
-            .transpose()
-            .map_err(|e| LLMTraceError::Storage(format!("Invalid report content JSON: {e}")))?;
+        let content: Option<serde_json::Value> = row.get("content");
 
         Ok(Some(llmtrace_core::ComplianceReportRecord {
             id: row.get("id"),
@@ -554,13 +550,7 @@ impl MetadataRepository for PostgresMetadataRepository {
 
         rows.iter()
             .map(|row| {
-                let content_str: Option<String> = row.get("content");
-                let content = content_str
-                    .map(|s| serde_json::from_str(&s))
-                    .transpose()
-                    .map_err(|e| {
-                        LLMTraceError::Storage(format!("Invalid report content JSON: {e}"))
-                    })?;
+                let content: Option<serde_json::Value> = row.get("content");
 
                 Ok(llmtrace_core::ComplianceReportRecord {
                     id: row.get("id"),
