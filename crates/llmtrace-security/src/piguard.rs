@@ -122,6 +122,14 @@ impl PIGuardAnalyzer {
         self.inner.inference_stats()
     }
 
+    /// Return raw classification scores without thresholding.
+    ///
+    /// Returns `None` if the ML model is not loaded (fallback mode).
+    /// The tuple contains `(injection_score, predicted_label)`.
+    pub fn classify_raw(&self, text: &str) -> Result<Option<(f64, String)>> {
+        self.inner.classify_raw(text)
+    }
+
     /// Classify text and produce `piguard_injection` findings.
     pub(crate) fn classify_text(&self, text: &str, location: &str) -> Result<Vec<SecurityFinding>> {
         let findings = self.inner.classify_text(text, location)?;
