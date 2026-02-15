@@ -1,0 +1,25 @@
+\begin{table}[ht]
+\centering
+\caption{Checkpoint strategy comparison (aggregated across suites).}
+\label{tab:checkpoint}
+\begin{tabular}{llllllll}
+\toprule
+Detector & Strategy & Checkpoints & TPR & FPR & Avg Calls & Avg Latency & Pareto \\
+\midrule
+InjecGuard & full_only & 1 & 0.765 & 0.075 & 0.94 & 1.000 & Y \\
+InjecGuard & half_full & 2 & 0.845 & 0.084 & 1.62 & 0.665 & Y \\
+InjecGuard & thirds & 3 & 0.872 & 0.091 & 2.24 & 0.551 & Y \\
+InjecGuard & quarters & 4 & 0.876 & 0.094 & 2.86 & 0.508 & Y \\
+InjecGuard & front_heavy & 5 & 0.872 & 0.107 & 3.36 & 0.462 & Y \\
+InjecGuard & quintiles & 5 & 0.888 & 0.097 & 3.41 & 0.469 & Y \\
+InjecGuard & deciles & 10 & 0.905 & 0.122 & 6.17 & 0.408 & Y \\
+PIGuard & full_only & 1 & 0.765 & 0.075 & 0.94 & 1.000 & Y \\
+PIGuard & half_full & 2 & 0.845 & 0.084 & 1.62 & 0.665 & Y \\
+PIGuard & thirds & 3 & 0.872 & 0.091 & 2.24 & 0.551 & Y \\
+PIGuard & quarters & 4 & 0.876 & 0.094 & 2.86 & 0.508 & Y \\
+PIGuard & front_heavy & 5 & 0.872 & 0.107 & 3.36 & 0.462 & Y \\
+PIGuard & quintiles & 5 & 0.888 & 0.097 & 3.41 & 0.469 & Y \\
+PIGuard & deciles & 10 & 0.905 & 0.122 & 6.17 & 0.408 & Y \\
+\bottomrule
+\end{tabular}
+\end{table}
