@@ -653,6 +653,13 @@ impl RegexSecurityAnalyzer {
                 0.85,
                 "is_hypothetical",
             ),
+            (
+                "roleplay_lets",
+                r"(?i)\blet['']?s\s+roleplay\b",
+                SecuritySeverity::Medium,
+                0.75,
+                "jailbreak",
+            ),
             // --- Impersonation attacks ---
             (
                 "impersonation_developer",
@@ -667,6 +674,20 @@ impl RegexSecurityAnalyzer {
                 SecuritySeverity::High,
                 0.85,
                 "is_systemic",
+            ),
+            (
+                "authority_claim_update",
+                r"(?i)\b(update|message|notice|directive)\s+(from|by)\s+(the\s+)?(developers?|admins?|creators?|system|openai|anthropic)\b",
+                SecuritySeverity::High,
+                0.8,
+                "is_systemic",
+            ),
+            (
+                "disable_safety",
+                r"(?i)\b(disable|remove|turn\s+off|deactivate)\s+(content\s+filter(ing)?|safety|guardrails?|restrictions?)\b",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_injection",
             ),
             (
                 "impersonation_sysadmin",

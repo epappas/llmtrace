@@ -44,8 +44,8 @@ export interface TraceSpan {
   agent_actions: AgentAction[];
   estimated_cost_usd: number | null;
   tags: Record<string, string>;
-  started_at: string;
-  ended_at: string | null;
+  start_time: string;
+  end_time: string | null;
 }
 
 export interface SecurityFinding {

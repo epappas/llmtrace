@@ -296,6 +296,24 @@ impl InjecGuardAnalyzer {
         self.stats_tracker.stats()
     }
 
+    /// Return raw classification scores without thresholding.
+    ///
+    /// Returns `None` if the ML model is not loaded (fallback mode).
+    /// The tuple contains `(injection_score, predicted_label)`.
+    pub fn classify_raw(&self, text: &str) -> Result<Option<(f64, String)>> {
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let loaded = match &self.model {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let start = Instant::now();
+        let result = loaded.classify(text)?;
+        self.stats_tracker.record(start.elapsed());
+        Ok(Some(result))
+    }
+
     /// Download and load model from HuggingFace Hub.
     async fn load_model(config: &InjecGuardConfig) -> Result<LoadedInjecGuard> {
         use hf_hub::api::tokio::{Api, ApiBuilder};

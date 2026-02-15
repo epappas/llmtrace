@@ -507,6 +507,20 @@ async fn build_security_analyzer(
                         piguard: pg_loaded,
                         load_time_ms,
                     };
+                    let op = match config.security_analysis.operating_point {
+                        llmtrace_core::OperatingPoint::HighRecall => {
+                            llmtrace_security::OperatingPoint::HighRecall
+                        }
+                        llmtrace_core::OperatingPoint::HighPrecision => {
+                            llmtrace_security::OperatingPoint::HighPrecision
+                        }
+                        llmtrace_core::OperatingPoint::Balanced => {
+                            llmtrace_security::OperatingPoint::Balanced
+                        }
+                    };
+                    let ensemble = ensemble
+                        .with_operating_point(op)
+                        .with_over_defence(config.security_analysis.over_defence);
                     Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))
                 }
                 Ok(Err(e)) => {

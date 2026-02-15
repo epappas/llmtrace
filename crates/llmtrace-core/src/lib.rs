@@ -136,6 +136,29 @@ pub struct AuthContext {
 // Security types
 // ---------------------------------------------------------------------------
 
+/// Metadata key for ensemble voting result ("majority" or "single_detector").
+pub const VOTING_RESULT_KEY: &str = "voting_result";
+/// Value indicating a finding was confirmed by multiple detectors.
+pub const VOTING_MAJORITY: &str = "majority";
+/// Value indicating a finding came from a single detector only.
+pub const VOTING_SINGLE_DETECTOR: &str = "single_detector";
+
+/// Pre-defined operating points that balance precision against recall.
+///
+/// Used in [`SecurityAnalysisConfig`] and mapped to per-category thresholds
+/// by the ensemble analyzer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatingPoint {
+    /// High recall, more false positives -- catch everything.
+    HighRecall,
+    /// Balanced precision and recall -- recommended default.
+    #[default]
+    Balanced,
+    /// High precision, fewer false positives -- production-safe.
+    HighPrecision,
+}
+
 /// Severity level for security findings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 pub enum SecuritySeverity {
@@ -391,16 +414,26 @@ impl TraceSpan {
     /// Add a security finding to this span.
     pub fn add_security_finding(&mut self, finding: SecurityFinding) {
         self.security_findings.push(finding);
-        // Update overall security score based on highest severity finding
         let max_score = self
             .security_findings
             .iter()
-            .map(|f| match f.severity {
-                SecuritySeverity::Critical => 95,
-                SecuritySeverity::High => 80,
-                SecuritySeverity::Medium => 60,
-                SecuritySeverity::Low => 30,
-                SecuritySeverity::Info => 10,
+            .map(|f| {
+                let base = match f.severity {
+                    SecuritySeverity::Critical => 95,
+                    SecuritySeverity::High => 80,
+                    SecuritySeverity::Medium => 60,
+                    SecuritySeverity::Low => 30,
+                    SecuritySeverity::Info => 10,
+                };
+                // Discount single-detector findings: cap at Medium (60)
+                if f.metadata
+                    .get(VOTING_RESULT_KEY)
+                    .is_some_and(|v| v == VOTING_SINGLE_DETECTOR)
+                {
+                    base.min(60)
+                } else {
+                    base
+                }
             })
             .max()
             .unwrap_or(0);
@@ -1739,6 +1772,12 @@ pub struct SecurityAnalysisConfig {
     /// Confidence threshold for PIGuard detection (0.0-1.0).
     #[serde(default = "default_piguard_threshold")]
     pub piguard_threshold: f64,
+    /// Operating point for ensemble thresholds.
+    #[serde(default)]
+    pub operating_point: OperatingPoint,
+    /// Enable over-defence suppression to reduce false positives on benign content.
+    #[serde(default)]
+    pub over_defence: bool,
 }
 
 fn default_ml_enabled() -> bool {
@@ -1814,6 +1853,8 @@ impl Default for SecurityAnalysisConfig {
             piguard_enabled: false,
             piguard_model: default_piguard_model(),
             piguard_threshold: default_piguard_threshold(),
+            operating_point: OperatingPoint::default(),
+            over_defence: false,
         }
     }
 }
@@ -2812,6 +2853,8 @@ mod tests {
                 piguard_enabled: false,
                 piguard_model: default_piguard_model(),
                 piguard_threshold: default_piguard_threshold(),
+                operating_point: OperatingPoint::default(),
+                over_defence: false,
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -3316,6 +3359,8 @@ mod tests {
             piguard_enabled: false,
             piguard_model: default_piguard_model(),
             piguard_threshold: default_piguard_threshold(),
+            operating_point: OperatingPoint::default(),
+            over_defence: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

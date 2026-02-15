@@ -371,6 +371,24 @@ impl PromptGuardAnalyzer {
         self.stats_tracker.stats()
     }
 
+    /// Return raw classification scores without thresholding.
+    ///
+    /// Returns `None` if the ML model is not loaded (fallback mode).
+    /// Use this for experiments that need continuous confidence values.
+    pub fn classify_raw(&self, text: &str) -> Result<Option<PromptGuardResult>> {
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let loaded = match &self.model {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let start = Instant::now();
+        let result = loaded.classify(text)?;
+        self.stats_tracker.record(start.elapsed());
+        Ok(Some(result))
+    }
+
     /// Download and load model from HuggingFace Hub.
     async fn load_model(config: &PromptGuardConfig) -> Result<LoadedPromptGuard> {
         use hf_hub::api::tokio::{Api, ApiBuilder};
