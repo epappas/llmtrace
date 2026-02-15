@@ -11,6 +11,7 @@
 
 use clap::Parser;
 use llmtrace_benchmarks::datasets::{BenchmarkSample, DatasetLoader};
+use llmtrace_benchmarks::experiments;
 use llmtrace_benchmarks::metrics::{tpr_at_fpr, BenchmarkMetrics};
 use llmtrace_benchmarks::regression;
 use llmtrace_benchmarks::regression::RegressionResult;
@@ -47,6 +48,31 @@ struct Cli {
     /// promptguard, injecguard, piguard, mlsecurity
     #[arg(long)]
     analyzer: Vec<String>,
+
+    /// Experiment mode. When set, runs the specified experiment instead of
+    /// normal benchmark regression gates.
+    /// Valid values: truncation, boundary, checkpoint, recalibration
+    #[arg(long)]
+    mode: Option<String>,
+
+    /// Truncation levels for Experiment A (comma-separated fractions).
+    /// Default: 0.2,0.4,0.6,0.8,1.0
+    #[arg(long, value_delimiter = ',')]
+    truncation_levels: Vec<f64>,
+
+    /// Confidence thresholds for Experiment B boundary detection.
+    /// Default: 0.5,0.7,0.9
+    #[arg(long, value_delimiter = ',')]
+    boundary_thresholds: Vec<f64>,
+
+    /// Detection threshold for Experiment C checkpoint simulation.
+    /// Default: 0.5
+    #[arg(long)]
+    checkpoint_threshold: Option<f64>,
+
+    /// Path to Experiment A truncation results JSON (required for --mode recalibration).
+    #[arg(long)]
+    truncation_results: Option<PathBuf>,
 }
 
 struct NamedAnalyzer {
@@ -171,7 +197,14 @@ async fn main() {
 
     let datasets_dir = cli
         .datasets_dir
+        .clone()
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("datasets"));
+
+    // Dispatch to experiment mode if requested.
+    if let Some(ref mode) = cli.mode {
+        run_experiment(mode, &cli, &datasets_dir).await;
+        return;
+    }
 
     let analyzers = build_analyzers(&cli.analyzer).await;
 
@@ -701,4 +734,625 @@ fn print_regression_summary(results: &[RegressionResult]) {
         println!("  REGRESSION DETECTED -- exiting with code 1.");
     }
     println!("{}", "=".repeat(60));
+}
+
+// ---------------------------------------------------------------------------
+// Experiment mode
+// ---------------------------------------------------------------------------
+
+/// Wrapper: PromptGuard as a RawScoreDetector.
+struct PromptGuardDetector(llmtrace_security::PromptGuardAnalyzer);
+
+impl experiments::RawScoreDetector for PromptGuardDetector {
+    fn name(&self) -> &str {
+        "PromptGuard"
+    }
+
+    fn score(&self, text: &str) -> llmtrace_core::Result<Option<experiments::RawScores>> {
+        let result = self.0.classify_raw(text)?;
+        Ok(result.map(|r| experiments::RawScores {
+            injection_score: r.injection_score,
+            predicted_label: r.predicted_label,
+            jailbreak_score: Some(r.jailbreak_score),
+            benign_score: Some(r.benign_score),
+        }))
+    }
+}
+
+/// Wrapper: InjecGuard as a RawScoreDetector.
+struct InjecGuardDetector(llmtrace_security::InjecGuardAnalyzer);
+
+impl experiments::RawScoreDetector for InjecGuardDetector {
+    fn name(&self) -> &str {
+        "InjecGuard"
+    }
+
+    fn score(&self, text: &str) -> llmtrace_core::Result<Option<experiments::RawScores>> {
+        let result = self.0.classify_raw(text)?;
+        Ok(result.map(|(score, label)| experiments::RawScores {
+            injection_score: score,
+            predicted_label: label,
+            jailbreak_score: None,
+            benign_score: None,
+        }))
+    }
+}
+
+/// Wrapper: PIGuard as a RawScoreDetector.
+struct PIGuardDetector(llmtrace_security::PIGuardAnalyzer);
+
+impl experiments::RawScoreDetector for PIGuardDetector {
+    fn name(&self) -> &str {
+        "PIGuard"
+    }
+
+    fn score(&self, text: &str) -> llmtrace_core::Result<Option<experiments::RawScores>> {
+        let result = self.0.classify_raw(text)?;
+        Ok(result.map(|(score, label)| experiments::RawScores {
+            injection_score: score,
+            predicted_label: label,
+            jailbreak_score: None,
+            benign_score: None,
+        }))
+    }
+}
+
+/// Build experiment detectors (standalone ML models only -- no ensemble).
+async fn build_experiment_detectors() -> Vec<Box<dyn experiments::RawScoreDetector>> {
+    let mut detectors: Vec<Box<dyn experiments::RawScoreDetector>> = Vec::new();
+
+    match llmtrace_security::PromptGuardAnalyzer::new(
+        &llmtrace_security::PromptGuardConfig::default(),
+    )
+    .await
+    {
+        Ok(a) if a.is_model_loaded() => {
+            println!("  PromptGuard: loaded");
+            detectors.push(Box::new(PromptGuardDetector(a)));
+        }
+        Ok(_) => eprintln!("  PromptGuard: model not loaded, skipping"),
+        Err(e) => eprintln!("  PromptGuard: init failed ({e}), skipping"),
+    }
+
+    match llmtrace_security::InjecGuardAnalyzer::new(
+        &llmtrace_security::InjecGuardConfig::default(),
+    )
+    .await
+    {
+        Ok(a) if a.is_model_loaded() => {
+            println!("  InjecGuard: loaded");
+            detectors.push(Box::new(InjecGuardDetector(a)));
+        }
+        Ok(_) => eprintln!("  InjecGuard: model not loaded, skipping"),
+        Err(e) => eprintln!("  InjecGuard: init failed ({e}), skipping"),
+    }
+
+    match llmtrace_security::PIGuardAnalyzer::new(&llmtrace_security::PIGuardConfig::default())
+        .await
+    {
+        Ok(a) if a.is_model_loaded() => {
+            println!("  PIGuard: loaded");
+            detectors.push(Box::new(PIGuardDetector(a)));
+        }
+        Ok(_) => eprintln!("  PIGuard: model not loaded, skipping"),
+        Err(e) => eprintln!("  PIGuard: init failed ({e}), skipping"),
+    }
+
+    detectors
+}
+
+/// Load the experiment suites (mixed-label datasets with both benign and malicious).
+fn load_experiment_suites(
+    datasets_dir: &Path,
+    suite_filter: &[String],
+) -> Vec<(String, Vec<BenchmarkSample>)> {
+    let run_all = suite_filter.is_empty();
+    let want = |name: &str| run_all || suite_filter.iter().any(|s| s.eq_ignore_ascii_case(name));
+
+    let mut suites: Vec<(String, Vec<BenchmarkSample>)> = Vec::new();
+
+    // Standard (mixed: injection + benign)
+    if want("standard") {
+        match DatasetLoader::load_injection_samples(datasets_dir) {
+            Ok(mut samples) => {
+                if let Ok(benign) = DatasetLoader::load_benign_samples(datasets_dir) {
+                    samples.extend(benign);
+                }
+                println!("  Standard: {} samples", samples.len());
+                suites.push(("standard".to_string(), samples));
+            }
+            Err(e) => eprintln!("  Standard: failed to load ({e})"),
+        }
+    }
+
+    // Load external suites that have mixed labels
+    type SuiteLoader = fn(&Path) -> Result<Vec<BenchmarkSample>, String>;
+    let mixed_suites: &[(&str, SuiteLoader)] = &[
+        ("safeguard_v2", DatasetLoader::load_safeguard_samples),
+        ("deepset_v2", DatasetLoader::load_deepset_v2_samples),
+        ("bipia", DatasetLoader::load_bipia_samples),
+        ("tensor_trust", DatasetLoader::load_tensor_trust_samples),
+        ("jackhhao", DatasetLoader::load_jackhhao_samples),
+    ];
+
+    for (name, loader) in mixed_suites {
+        if !want(name) {
+            continue;
+        }
+        match loader(datasets_dir) {
+            Ok(samples) => {
+                let n_mal = samples
+                    .iter()
+                    .filter(|s| s.label == llmtrace_benchmarks::datasets::Label::Malicious)
+                    .count();
+                let n_ben = samples.len() - n_mal;
+                println!(
+                    "  {}: {} samples ({} mal, {} ben)",
+                    name,
+                    samples.len(),
+                    n_mal,
+                    n_ben
+                );
+                suites.push((name.to_string(), samples));
+            }
+            Err(e) => eprintln!("  {}: failed to load ({e})", name),
+        }
+    }
+
+    suites
+}
+
+async fn run_experiment(mode: &str, cli: &Cli, datasets_dir: &Path) {
+    match mode {
+        "truncation" => run_truncation_mode(cli, datasets_dir).await,
+        "boundary" => run_boundary_mode(cli, datasets_dir).await,
+        "checkpoint" => run_checkpoint_mode(cli, datasets_dir).await,
+        "recalibration" => run_recalibration_mode(cli),
+        other => {
+            eprintln!("Unknown experiment mode: {other}");
+            eprintln!("Valid modes: truncation, boundary, checkpoint, recalibration");
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run_truncation_mode(cli: &Cli, datasets_dir: &Path) {
+    println!("\n{}", "=".repeat(60));
+    println!("  Experiment A: Truncation Degradation Study");
+    println!("{}", "=".repeat(60));
+
+    println!("\nLoading ML detectors...");
+    let detectors = build_experiment_detectors().await;
+    if detectors.is_empty() {
+        eprintln!("Error: no ML detectors loaded. Cannot run truncation experiment.");
+        std::process::exit(1);
+    }
+
+    println!("\nLoading datasets...");
+    let suites = load_experiment_suites(datasets_dir, &cli.suite);
+    if suites.is_empty() {
+        eprintln!("Error: no suites loaded. Cannot run truncation experiment.");
+        std::process::exit(1);
+    }
+
+    let levels = if cli.truncation_levels.is_empty() {
+        experiments::DEFAULT_TRUNCATION_LEVELS.to_vec()
+    } else {
+        cli.truncation_levels.clone()
+    };
+
+    println!("\nTruncation levels: {:?}", levels);
+    println!("Detectors: {}", detectors.len());
+    println!("Suites: {}", suites.len());
+    println!("\nRunning experiment...\n");
+
+    // Build refs for the runner
+    let detector_refs: Vec<&dyn experiments::RawScoreDetector> =
+        detectors.iter().map(|d| d.as_ref()).collect();
+    let suite_refs: Vec<(&str, &[BenchmarkSample])> = suites
+        .iter()
+        .map(|(name, samples)| (name.as_str(), samples.as_slice()))
+        .collect();
+
+    let result = experiments::run_truncation_experiment(&detector_refs, &suite_refs, &levels);
+
+    experiments::print_truncation_summary(&result);
+
+    // Save results
+    if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
+        eprintln!("Warning: could not create output dir: {e}");
+    } else {
+        let json_path = cli.output_dir.join("truncation_experiment.json");
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => match std::fs::write(&json_path, json) {
+                Ok(()) => println!("\nResults saved to {}", json_path.display()),
+                Err(e) => eprintln!("Failed to write results: {e}"),
+            },
+            Err(e) => eprintln!("Failed to serialize results: {e}"),
+        }
+
+        // Also save per-sample CSV for downstream analysis
+        let csv_path = cli.output_dir.join("truncation_samples.csv");
+        match write_truncation_csv(&result.sample_results, &csv_path) {
+            Ok(()) => println!("Per-sample CSV saved to {}", csv_path.display()),
+            Err(e) => eprintln!("Failed to write CSV: {e}"),
+        }
+    }
+
+    println!(
+        "\nExperiment A complete. {} samples, {:.1}s",
+        result.sample_results.len(),
+        result.total_duration_ms as f64 / 1000.0
+    );
+}
+
+fn write_truncation_csv(
+    samples: &[experiments::TruncationSampleResult],
+    path: &Path,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)
+        .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+    writeln!(
+        f,
+        "sample_id,suite,direction,actual_malicious,original_char_len,truncation_fraction,truncated_char_len,detector,injection_score,predicted_label,inference_us"
+    )
+    .map_err(|e| format!("Write failed: {e}"))?;
+
+    for s in samples {
+        writeln!(
+            f,
+            "{},{},{},{},{},{:.2},{},{},{:.6},{},{}",
+            s.sample_id,
+            s.suite,
+            experiments::suite_direction(&s.suite),
+            s.actual_malicious,
+            s.original_char_len,
+            s.truncation_fraction,
+            s.truncated_char_len,
+            s.detector,
+            s.scores.injection_score,
+            s.scores.predicted_label,
+            s.inference_us,
+        )
+        .map_err(|e| format!("Write failed: {e}"))?;
+    }
+    Ok(())
+}
+
+async fn run_boundary_mode(cli: &Cli, datasets_dir: &Path) {
+    println!("\n{}", "=".repeat(60));
+    println!("  Experiment B: Injection Boundary Detection");
+    println!("{}", "=".repeat(60));
+
+    println!("\nLoading ML detectors...");
+    let detectors = build_experiment_detectors().await;
+    if detectors.is_empty() {
+        eprintln!("Error: no ML detectors loaded. Cannot run boundary experiment.");
+        std::process::exit(1);
+    }
+
+    println!("\nLoading datasets...");
+    let suites = load_experiment_suites(datasets_dir, &cli.suite);
+    if suites.is_empty() {
+        eprintln!("Error: no suites loaded. Cannot run boundary experiment.");
+        std::process::exit(1);
+    }
+
+    let thresholds = if cli.boundary_thresholds.is_empty() {
+        experiments::DEFAULT_BOUNDARY_THRESHOLDS.to_vec()
+    } else {
+        cli.boundary_thresholds.clone()
+    };
+
+    println!("\nBoundary thresholds: {:?}", thresholds);
+    println!("Detectors: {}", detectors.len());
+    println!("Suites: {}", suites.len());
+    println!("\nRunning experiment...\n");
+
+    let detector_refs: Vec<&dyn experiments::RawScoreDetector> =
+        detectors.iter().map(|d| d.as_ref()).collect();
+    let suite_refs: Vec<(&str, &[BenchmarkSample])> = suites
+        .iter()
+        .map(|(name, samples)| (name.as_str(), samples.as_slice()))
+        .collect();
+
+    let result = experiments::run_boundary_experiment(&detector_refs, &suite_refs, &thresholds);
+
+    experiments::print_boundary_summary(&result);
+
+    // Save results
+    if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
+        eprintln!("Warning: could not create output dir: {e}");
+    } else {
+        let json_path = cli.output_dir.join("boundary_experiment.json");
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => match std::fs::write(&json_path, json) {
+                Ok(()) => println!("\nResults saved to {}", json_path.display()),
+                Err(e) => eprintln!("Failed to write results: {e}"),
+            },
+            Err(e) => eprintln!("Failed to serialize results: {e}"),
+        }
+
+        let csv_path = cli.output_dir.join("boundary_samples.csv");
+        match write_boundary_csv(&result.sample_results, &csv_path) {
+            Ok(()) => println!("Per-sample CSV saved to {}", csv_path.display()),
+            Err(e) => eprintln!("Failed to write CSV: {e}"),
+        }
+    }
+
+    println!(
+        "\nExperiment B complete. {} samples, {:.1}s",
+        result.sample_results.len(),
+        result.total_duration_ms as f64 / 1000.0
+    );
+}
+
+async fn run_checkpoint_mode(cli: &Cli, datasets_dir: &Path) {
+    println!("\n{}", "=".repeat(60));
+    println!("  Experiment C: Checkpoint Interval Optimization");
+    println!("{}", "=".repeat(60));
+
+    println!("\nLoading ML detectors...");
+    let detectors = build_experiment_detectors().await;
+    if detectors.is_empty() {
+        eprintln!("Error: no ML detectors loaded. Cannot run checkpoint experiment.");
+        std::process::exit(1);
+    }
+
+    println!("\nLoading datasets...");
+    let suites = load_experiment_suites(datasets_dir, &cli.suite);
+    if suites.is_empty() {
+        eprintln!("Error: no suites loaded. Cannot run checkpoint experiment.");
+        std::process::exit(1);
+    }
+
+    let threshold = cli
+        .checkpoint_threshold
+        .unwrap_or(experiments::checkpoint::DEFAULT_CHECKPOINT_THRESHOLD);
+    let strategies = experiments::checkpoint::default_strategies();
+
+    println!("\nDetection threshold: {}", threshold);
+    println!("Strategies: {}", strategies.len());
+    println!("Detectors: {}", detectors.len());
+    println!("Suites: {}", suites.len());
+    println!("\nRunning experiment...\n");
+
+    let detector_refs: Vec<&dyn experiments::RawScoreDetector> =
+        detectors.iter().map(|d| d.as_ref()).collect();
+    let suite_refs: Vec<(&str, &[BenchmarkSample])> = suites
+        .iter()
+        .map(|(name, samples)| (name.as_str(), samples.as_slice()))
+        .collect();
+
+    let result =
+        experiments::run_checkpoint_experiment(&detector_refs, &suite_refs, &strategies, threshold);
+
+    experiments::print_checkpoint_summary(&result);
+
+    if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
+        eprintln!("Warning: could not create output dir: {e}");
+    } else {
+        let json_path = cli.output_dir.join("checkpoint_experiment.json");
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => match std::fs::write(&json_path, json) {
+                Ok(()) => println!("\nResults saved to {}", json_path.display()),
+                Err(e) => eprintln!("Failed to write results: {e}"),
+            },
+            Err(e) => eprintln!("Failed to serialize results: {e}"),
+        }
+
+        let csv_path = cli.output_dir.join("checkpoint_samples.csv");
+        match write_checkpoint_csv(&result.sample_results, &csv_path) {
+            Ok(()) => println!("Per-sample CSV saved to {}", csv_path.display()),
+            Err(e) => eprintln!("Failed to write CSV: {e}"),
+        }
+    }
+
+    println!(
+        "\nExperiment C complete. {} samples, {:.1}s",
+        result.sample_results.len(),
+        result.total_duration_ms as f64 / 1000.0
+    );
+}
+
+fn run_recalibration_mode(cli: &Cli) {
+    println!("\n{}", "=".repeat(60));
+    println!("  Streaming-Aware Fusion Re-calibration");
+    println!("{}", "=".repeat(60));
+
+    let results_path = match &cli.truncation_results {
+        Some(p) => p.clone(),
+        None => {
+            eprintln!(
+                "Error: --truncation-results is required for recalibration mode.\n\
+                 Run --mode truncation first, then pass the JSON path."
+            );
+            std::process::exit(1);
+        }
+    };
+
+    println!(
+        "\nLoading truncation results from {}...",
+        results_path.display()
+    );
+    let json = match std::fs::read_to_string(&results_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Error reading {}: {e}", results_path.display());
+            std::process::exit(1);
+        }
+    };
+    let truncation_result: experiments::TruncationExperimentResult =
+        match serde_json::from_str(&json) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error parsing truncation JSON: {e}");
+                std::process::exit(1);
+            }
+        };
+
+    println!("Running recalibration...\n");
+    let result = experiments::run_recalibration_experiment(&truncation_result);
+    experiments::print_recalibration_summary(&result);
+
+    if let Err(e) = std::fs::create_dir_all(&cli.output_dir) {
+        eprintln!("Warning: could not create output dir: {e}");
+    } else {
+        let json_path = cli.output_dir.join("recalibration_experiment.json");
+        match serde_json::to_string_pretty(&result) {
+            Ok(json) => match std::fs::write(&json_path, json) {
+                Ok(()) => println!("\nResults saved to {}", json_path.display()),
+                Err(e) => eprintln!("Failed to write results: {e}"),
+            },
+            Err(e) => eprintln!("Failed to serialize results: {e}"),
+        }
+
+        let csv_path = cli.output_dir.join("recalibration_levels.csv");
+        match write_recalibration_csv(&result, &csv_path) {
+            Ok(()) => println!("Per-level CSV saved to {}", csv_path.display()),
+            Err(e) => eprintln!("Failed to write CSV: {e}"),
+        }
+    }
+
+    println!(
+        "\nRecalibration complete. {} levels, {:.1}s",
+        result.per_level.len(),
+        result.total_duration_ms as f64 / 1000.0
+    );
+}
+
+fn write_recalibration_csv(
+    result: &experiments::RecalibrationExperimentResult,
+    path: &Path,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)
+        .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+
+    // Header
+    let mut header = "truncation_fraction,num_train,num_val,\
+        streaming_acc,streaming_tpr,streaming_fpr,streaming_f1,\
+        naive_acc,naive_tpr,naive_fpr,naive_f1"
+        .to_string();
+    for name in &result.detector_names {
+        header.push_str(&format!(",w_{name}"));
+    }
+    header.push_str(",w_bias");
+    writeln!(f, "{header}").map_err(|e| format!("Write failed: {e}"))?;
+
+    for r in &result.per_level {
+        let s = &r.streaming_metrics;
+        let n = &r.naive_metrics;
+        let mut line = format!(
+            "{:.2},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            r.truncation_fraction,
+            r.num_train,
+            r.num_val,
+            s.accuracy,
+            s.tpr,
+            s.fpr,
+            s.f1,
+            n.accuracy,
+            n.tpr,
+            n.fpr,
+            n.f1,
+        );
+        for w in &r.streaming_weights.detector_weights {
+            line.push_str(&format!(",{:.6}", w));
+        }
+        line.push_str(&format!(",{:.6}", r.streaming_weights.bias));
+        writeln!(f, "{line}").map_err(|e| format!("Write failed: {e}"))?;
+    }
+    Ok(())
+}
+
+fn write_checkpoint_csv(
+    samples: &[experiments::CheckpointSampleResult],
+    path: &Path,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)
+        .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+    writeln!(
+        f,
+        "sample_id,suite,direction,actual_malicious,original_char_len,detector,strategy,full_text_score,detection_checkpoint,detection_score,inference_calls"
+    )
+    .map_err(|e| format!("Write failed: {e}"))?;
+
+    for s in samples {
+        let det_cp = s
+            .detection_checkpoint
+            .map_or(String::new(), |v| format!("{:.4}", v));
+        let det_score = s
+            .detection_score
+            .map_or(String::new(), |v| format!("{:.6}", v));
+        writeln!(
+            f,
+            "{},{},{},{},{},{},{},{:.6},{},{},{}",
+            s.sample_id,
+            s.suite,
+            experiments::suite_direction(&s.suite),
+            s.actual_malicious,
+            s.original_char_len,
+            s.detector,
+            s.strategy,
+            s.full_text_score,
+            det_cp,
+            det_score,
+            s.inference_calls,
+        )
+        .map_err(|e| format!("Write failed: {e}"))?;
+    }
+    Ok(())
+}
+
+fn write_boundary_csv(
+    samples: &[experiments::BoundarySampleResult],
+    path: &Path,
+) -> Result<(), String> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)
+        .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+
+    // Collect threshold columns from first sample
+    let threshold_cols: Vec<f64> = samples
+        .first()
+        .map(|s| s.boundaries.iter().map(|b| b.threshold).collect())
+        .unwrap_or_default();
+
+    // Header
+    let mut header =
+        "sample_id,suite,direction,original_char_len,detector,full_text_score,inference_calls"
+            .to_string();
+    for t in &threshold_cols {
+        header.push_str(&format!(",boundary_{:.0}pct_fraction", t * 100.0));
+        header.push_str(&format!(",boundary_{:.0}pct_charpos", t * 100.0));
+    }
+    writeln!(f, "{header}").map_err(|e| format!("Write failed: {e}"))?;
+
+    for s in samples {
+        let mut line = format!(
+            "{},{},{},{},{},{:.6},{}",
+            s.sample_id,
+            s.suite,
+            experiments::suite_direction(&s.suite),
+            s.original_char_len,
+            s.detector,
+            s.full_text_score,
+            s.inference_calls,
+        );
+        for b in &s.boundaries {
+            match b.boundary_fraction {
+                Some(frac) => line.push_str(&format!(",{:.4}", frac)),
+                None => line.push(','),
+            }
+            match b.boundary_char_pos {
+                Some(pos) => line.push_str(&format!(",{}", pos)),
+                None => line.push(','),
+            }
+        }
+        writeln!(f, "{line}").map_err(|e| format!("Write failed: {e}"))?;
+    }
+    Ok(())
 }
