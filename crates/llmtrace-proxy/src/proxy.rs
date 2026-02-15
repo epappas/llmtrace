@@ -1387,8 +1387,14 @@ mod tests {
         let text = messages_to_analysis_text(&msgs);
         assert!(text.contains("You are helpful."));
         assert!(text.contains("Hello!"));
-        assert!(!text.contains("user:"), "analysis text must not include role prefixes");
-        assert!(!text.contains("system:"), "analysis text must not include role prefixes");
+        assert!(
+            !text.contains("user:"),
+            "analysis text must not include role prefixes"
+        );
+        assert!(
+            !text.contains("system:"),
+            "analysis text must not include role prefixes"
+        );
     }
 
     #[test]

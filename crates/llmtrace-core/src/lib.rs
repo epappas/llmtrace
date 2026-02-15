@@ -426,7 +426,10 @@ impl TraceSpan {
                     SecuritySeverity::Info => 10,
                 };
                 // Discount single-detector findings: cap at Medium (60)
-                if f.metadata.get(VOTING_RESULT_KEY).is_some_and(|v| v == VOTING_SINGLE_DETECTOR) {
+                if f.metadata
+                    .get(VOTING_RESULT_KEY)
+                    .is_some_and(|v| v == VOTING_SINGLE_DETECTOR)
+                {
                     base.min(60)
                 } else {
                     base
@@ -1828,7 +1831,6 @@ fn default_piguard_model() -> String {
 fn default_piguard_threshold() -> f64 {
     0.85
 }
-
 
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {

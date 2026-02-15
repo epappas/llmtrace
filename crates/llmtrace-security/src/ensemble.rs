@@ -1125,8 +1125,10 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
                 out.metadata
                     .insert("ensemble_agreement".to_string(), "true".to_string());
             } else {
-                out.metadata
-                    .insert(VOTING_RESULT_KEY.to_string(), VOTING_SINGLE_DETECTOR.to_string());
+                out.metadata.insert(
+                    VOTING_RESULT_KEY.to_string(),
+                    VOTING_SINGLE_DETECTOR.to_string(),
+                );
             }
             result.push(out);
         }

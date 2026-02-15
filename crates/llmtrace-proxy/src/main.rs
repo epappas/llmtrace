@@ -508,9 +508,15 @@ async fn build_security_analyzer(
                         load_time_ms,
                     };
                     let op = match config.security_analysis.operating_point {
-                        llmtrace_core::OperatingPoint::HighRecall => llmtrace_security::OperatingPoint::HighRecall,
-                        llmtrace_core::OperatingPoint::HighPrecision => llmtrace_security::OperatingPoint::HighPrecision,
-                        llmtrace_core::OperatingPoint::Balanced => llmtrace_security::OperatingPoint::Balanced,
+                        llmtrace_core::OperatingPoint::HighRecall => {
+                            llmtrace_security::OperatingPoint::HighRecall
+                        }
+                        llmtrace_core::OperatingPoint::HighPrecision => {
+                            llmtrace_security::OperatingPoint::HighPrecision
+                        }
+                        llmtrace_core::OperatingPoint::Balanced => {
+                            llmtrace_security::OperatingPoint::Balanced
+                        }
                     };
                     let ensemble = ensemble
                         .with_operating_point(op)
