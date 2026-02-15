@@ -498,7 +498,7 @@ impl EnsembleSecurityAnalyzer {
             return findings;
         }
         // If any injection finding exists, keep everything
-        if findings.iter().any(|f| is_injection_finding(f)) {
+        if findings.iter().any(is_injection_finding) {
             return findings;
         }
         // Only auxiliary findings remain — suppress them to reduce false positives
