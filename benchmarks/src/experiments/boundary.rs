@@ -289,7 +289,7 @@ pub fn print_boundary_summary(result: &BoundaryExperimentResult) {
             let n = sorted.len();
             let total_eligible = detector_results.len();
 
-            let median = if n % 2 == 0 {
+            let median = if n.is_multiple_of(2) {
                 (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
             } else {
                 sorted[n / 2]
@@ -369,7 +369,7 @@ fn print_boundary_direction_summary(samples: &[BoundarySampleResult], thresholds
                 let mut sorted = fractions.clone();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
                 let n = sorted.len();
-                let median = if n % 2 == 0 {
+                let median = if n.is_multiple_of(2) {
                     (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
                 } else {
                     sorted[n / 2]
