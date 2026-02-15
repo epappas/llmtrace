@@ -512,6 +512,30 @@ impl EnsembleSecurityAnalyzer {
         Vec::new()
     }
 
+    /// When no injection was found in the initial pass, try decoding evasion
+    /// encodings (base64, rot13, hex, leetspeak) and rerun ML on decoded text.
+    async fn try_decoded_ml_reanalysis(
+        &self,
+        text: &str,
+        findings: &mut Vec<SecurityFinding>,
+        context: &AnalysisContext,
+    ) {
+        if findings.iter().any(is_injection_finding) || !self.ml.is_model_loaded() {
+            return;
+        }
+        for payload in crate::encoding::try_decode_evasions(text) {
+            let ml_findings = match self.ml.analyze_request(&payload.decoded, context).await {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            for mut f in ml_findings {
+                f.metadata
+                    .insert("decoded_from".to_string(), payload.encoding.to_string());
+                findings.push(f);
+            }
+        }
+    }
+
     /// Spawn InjecGuard inference on the tokio blocking pool.
     ///
     /// Returns `None` when InjecGuard is not loaded. The returned handle
@@ -760,6 +784,10 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             combined = merge_pii_findings(combined, ner_findings);
         }
 
+        // ML-034: decode evasion encodings and rerun ML if nothing found
+        self.try_decoded_ml_reanalysis(prompt, &mut combined, context)
+            .await;
+
         let combined = self.filter_by_thresholds(combined);
         let combined = self.apply_over_defence(combined);
         Ok(combined)
@@ -808,6 +836,10 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             }
             combined = merge_pii_findings(combined, ner_findings);
         }
+
+        // ML-034: decode evasion encodings and rerun ML if nothing found
+        self.try_decoded_ml_reanalysis(response, &mut combined, context)
+            .await;
 
         let combined = self.filter_by_thresholds(combined);
         let combined = self.apply_over_defence(combined);
@@ -870,6 +902,7 @@ fn is_injection_finding(finding: &SecurityFinding) -> bool {
             | "encoding_attack"
             | "synonym_injection"
             | "p2sql_injection"
+            | "shell_injection"
             | "ml_prompt_injection"
             | "injecguard_injection"
             | "piguard_injection"
