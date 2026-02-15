@@ -181,8 +181,12 @@ impl ResolvedThresholds {
             "prompt_injection"
             | "role_injection"
             | "encoding_attack"
+            | "synonym_injection"
+            | "p2sql_injection"
             | "ml_prompt_injection"
-            | "fusion_prompt_injection" => Some(self.injection),
+            | "fusion_prompt_injection"
+            | "injecguard_injection"
+            | "piguard_injection" => Some(self.injection),
             "jailbreak" => Some(self.jailbreak),
             "pii_detected" => Some(self.pii),
             "toxicity" => Some(self.toxicity),
