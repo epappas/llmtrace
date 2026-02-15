@@ -51,6 +51,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
 
     let storage = StorageProfile::Memory.build().await.unwrap();
     let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
+    let fast_analyzer = security.clone();
 
     let storage_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
     let security_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
@@ -62,6 +63,7 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         client,
         storage,
         security,
+        fast_analyzer,
         storage_breaker,
         security_breaker,
         cost_estimator,

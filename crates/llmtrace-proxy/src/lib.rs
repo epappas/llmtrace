@@ -12,6 +12,7 @@ pub mod compliance;
 pub mod config;
 pub mod cost;
 pub mod cost_caps;
+pub mod enforcement;
 pub mod grpc;
 pub mod metrics;
 pub mod otel;

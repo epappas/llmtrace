@@ -263,14 +263,15 @@ impl LoadedModel {
         Ok(Some(embedding))
     }
 
-    /// Classify text and return `(injection_score, predicted_label)`.
-    fn classify(&self, text: &str) -> Result<(f64, String)> {
+    /// Classify text and return `(injection_score, predicted_label, token_count)`.
+    fn classify(&self, text: &str) -> Result<(f64, String, usize)> {
         let encoding = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
 
         let ids = encoding.get_ids();
+        let token_count = ids.len();
         let type_ids = encoding.get_type_ids();
         let mask = encoding.get_attention_mask();
 
@@ -320,8 +321,32 @@ impl LoadedModel {
             .cloned()
             .unwrap_or_else(|| format!("label_{predicted_idx}"));
 
-        Ok((injection_score, predicted_label))
+        Ok((injection_score, predicted_label, token_count))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Short-input confidence scaling (ML-032)
+// ---------------------------------------------------------------------------
+
+/// Inputs shorter than this token count get a scaled-up threshold.
+pub(crate) const SHORT_INPUT_TOKEN_LIMIT: usize = 10;
+
+/// Threshold applied to single-token inputs (linearly interpolated down to
+/// `base_threshold` at `SHORT_INPUT_TOKEN_LIMIT` tokens).
+pub(crate) const SHORT_INPUT_HIGH_THRESHOLD: f64 = 0.95;
+
+/// Compute effective threshold for short inputs.
+///
+/// For inputs with fewer than `SHORT_INPUT_TOKEN_LIMIT` tokens, returns a
+/// linearly interpolated value between `SHORT_INPUT_HIGH_THRESHOLD` (at 0
+/// tokens) and `base_threshold` (at `SHORT_INPUT_TOKEN_LIMIT` tokens).
+pub(crate) fn short_input_threshold(base_threshold: f64, token_count: usize) -> f64 {
+    if token_count >= SHORT_INPUT_TOKEN_LIMIT {
+        return base_threshold;
+    }
+    let ratio = token_count as f64 / SHORT_INPUT_TOKEN_LIMIT as f64;
+    SHORT_INPUT_HIGH_THRESHOLD + ratio * (base_threshold - SHORT_INPUT_HIGH_THRESHOLD)
 }
 
 // ---------------------------------------------------------------------------
@@ -804,9 +829,10 @@ fn classify_and_find(
         return Ok(Vec::new());
     }
 
-    let (score, label) = model.classify(text)?;
+    let (score, label, token_count) = model.classify(text)?;
+    let effective_threshold = short_input_threshold(threshold, token_count);
 
-    if score >= threshold {
+    if score >= effective_threshold {
         let severity = if score >= 0.95 {
             SecuritySeverity::Critical
         } else if score >= 0.85 {
@@ -826,9 +852,10 @@ fn classify_and_find(
         .with_metadata("ml_model".to_string(), "candle-classifier".to_string())
         .with_metadata("ml_label".to_string(), label)
         .with_metadata("ml_score".to_string(), format!("{score:.4}"))
+        .with_metadata("ml_token_count".to_string(), token_count.to_string())
         .with_metadata(
-            "ml_threshold".to_string(),
-            format!("{threshold:.2}"),
+            "ml_effective_threshold".to_string(),
+            format!("{effective_threshold:.4}"),
         )])
     } else {
         Ok(Vec::new())
@@ -1136,5 +1163,57 @@ mod tests {
         assert_eq!(PoolingStrategy::MeanPool, PoolingStrategy::MeanPool);
         assert_eq!(PoolingStrategy::Cls, PoolingStrategy::Cls);
         assert_ne!(PoolingStrategy::MeanPool, PoolingStrategy::Cls);
+    }
+
+    // -- Short-input threshold (ML-032) ------------------------------------
+
+    #[test]
+    fn test_short_input_threshold_at_limit() {
+        let base = 0.5;
+        let result = short_input_threshold(base, SHORT_INPUT_TOKEN_LIMIT);
+        assert!((result - base).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_above_limit() {
+        let base = 0.5;
+        let result = short_input_threshold(base, 100);
+        assert!((result - base).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_at_zero_tokens() {
+        let result = short_input_threshold(0.5, 0);
+        assert!((result - SHORT_INPUT_HIGH_THRESHOLD).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_at_one_token() {
+        let result = short_input_threshold(0.5, 1);
+        // ratio = 1/10 = 0.1
+        // 0.95 + 0.1 * (0.5 - 0.95) = 0.95 - 0.045 = 0.905
+        assert!((result - 0.905).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_at_five_tokens() {
+        let result = short_input_threshold(0.5, 5);
+        // ratio = 5/10 = 0.5
+        // 0.95 + 0.5 * (0.5 - 0.95) = 0.95 - 0.225 = 0.725
+        assert!((result - 0.725).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_monotonically_decreasing() {
+        let base = 0.5;
+        let mut prev = short_input_threshold(base, 0);
+        for tokens in 1..=SHORT_INPUT_TOKEN_LIMIT {
+            let current = short_input_threshold(base, tokens);
+            assert!(
+                current <= prev,
+                "threshold should decrease as tokens increase"
+            );
+            prev = current;
+        }
     }
 }

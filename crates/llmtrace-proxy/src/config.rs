@@ -113,6 +113,18 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
         }
     }
 
+    // Enforcement config validation
+    let enf = &config.enforcement;
+    if !(0.0..=1.0).contains(&enf.min_confidence) {
+        errors.push(format!(
+            "enforcement.min_confidence must be between 0.0 and 1.0, got {}",
+            enf.min_confidence
+        ));
+    }
+    if enf.timeout_ms == 0 {
+        errors.push("enforcement.timeout_ms must be greater than 0".to_string());
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -363,6 +375,45 @@ health_check:
         let msg = err.to_string();
         assert!(msg.contains("tls_cert_file"));
         assert!(msg.contains("tls_key_file"));
+    }
+
+    #[test]
+    fn test_validate_config_enforcement_bad_confidence() {
+        let config = ProxyConfig {
+            enforcement: llmtrace_core::EnforcementConfig {
+                min_confidence: 1.5,
+                ..llmtrace_core::EnforcementConfig::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("enforcement.min_confidence"));
+    }
+
+    #[test]
+    fn test_validate_config_enforcement_negative_confidence() {
+        let config = ProxyConfig {
+            enforcement: llmtrace_core::EnforcementConfig {
+                min_confidence: -0.1,
+                ..llmtrace_core::EnforcementConfig::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("enforcement.min_confidence"));
+    }
+
+    #[test]
+    fn test_validate_config_enforcement_zero_timeout() {
+        let config = ProxyConfig {
+            enforcement: llmtrace_core::EnforcementConfig {
+                timeout_ms: 0,
+                ..llmtrace_core::EnforcementConfig::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("enforcement.timeout_ms"));
     }
 
     #[test]

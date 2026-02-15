@@ -323,63 +323,18 @@ impl JailbreakDetector {
         }
     }
 
-    // -- Helpers ------------------------------------------------------------
+    // -- Helpers (delegating to shared encoding module) ----------------------
 
-    /// Check if decoded text contains suspicious jailbreak-related phrases.
     fn is_suspicious_decoded(text: &str) -> bool {
-        let lower = text.to_lowercase();
-        const SUSPICIOUS: &[&str] = &[
-            "ignore",
-            "override",
-            "system prompt",
-            "instructions",
-            "you are now",
-            "forget",
-            "disregard",
-            "act as",
-            "new role",
-            "jailbreak",
-            "do anything now",
-            "no restrictions",
-            "bypass",
-            "admin mode",
-            "developer mode",
-            "debug mode",
-            "without limits",
-            "without filters",
-        ];
-        SUSPICIOUS.iter().any(|phrase| lower.contains(phrase))
+        crate::encoding::is_suspicious_decoded(text)
     }
 
-    /// Apply ROT13 encoding/decoding to a string.
     fn rot13(input: &str) -> String {
-        input
-            .chars()
-            .map(|c| match c {
-                'a'..='m' | 'A'..='M' => char::from(c as u8 + 13),
-                'n'..='z' | 'N'..='Z' => char::from(c as u8 - 13),
-                _ => c,
-            })
-            .collect()
+        crate::encoding::rot13(input)
     }
 
-    /// Decode common leetspeak substitutions.
     fn decode_leetspeak(input: &str) -> String {
-        input
-            .chars()
-            .map(|c| match c {
-                '0' => 'o',
-                '1' => 'i',
-                '3' => 'e',
-                '4' => 'a',
-                '5' => 's',
-                '7' => 't',
-                '8' => 'b',
-                '@' => 'a',
-                '$' => 's',
-                other => other.to_ascii_lowercase(),
-            })
-            .collect()
+        crate::encoding::decode_leetspeak(input)
     }
 
     // -- Pattern compilation ------------------------------------------------
