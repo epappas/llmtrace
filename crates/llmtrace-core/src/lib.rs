@@ -1010,6 +1010,9 @@ pub struct ProxyConfig {
     /// Security analysis configuration (ML-based detection, thresholds).
     #[serde(default)]
     pub security_analysis: SecurityAnalysisConfig,
+    /// Security enforcement configuration (pre-request blocking/flagging).
+    #[serde(default)]
+    pub enforcement: EnforcementConfig,
     /// OpenTelemetry OTLP ingestion configuration.
     #[serde(default)]
     pub otel_ingest: OtelIngestConfig,
@@ -1062,6 +1065,7 @@ impl Default for ProxyConfig {
             alerts: AlertConfig::default(),
             cost_caps: CostCapConfig::default(),
             security_analysis: SecurityAnalysisConfig::default(),
+            enforcement: EnforcementConfig::default(),
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
@@ -1855,6 +1859,94 @@ impl Default for SecurityAnalysisConfig {
             piguard_threshold: default_piguard_threshold(),
             operating_point: OperatingPoint::default(),
             over_defence: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Enforcement configuration
+// ---------------------------------------------------------------------------
+
+/// Enforcement mode for the proxy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementMode {
+    /// Log findings only (current behavior). Default for backward compat.
+    #[default]
+    Log,
+    /// Block requests that trigger enforcement. Return 403.
+    Block,
+    /// Forward to upstream but attach finding metadata as response headers.
+    Flag,
+}
+
+/// Analysis depth for enforcement.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisDepth {
+    /// Regex-only analysis. Near-zero added latency.
+    #[default]
+    Fast,
+    /// Full ensemble analysis (regex + ML). Adds ML inference latency.
+    Full,
+}
+
+/// Per-category enforcement override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryEnforcement {
+    /// The finding type to match (e.g. "prompt_injection", "jailbreak").
+    pub finding_type: String,
+    /// Enforcement action for this category.
+    pub action: EnforcementMode,
+}
+
+fn default_enforcement_min_severity() -> SecuritySeverity {
+    SecuritySeverity::High
+}
+
+fn default_enforcement_min_confidence() -> f64 {
+    0.8
+}
+
+fn default_enforcement_timeout_ms() -> u64 {
+    2000
+}
+
+/// Security enforcement configuration.
+///
+/// Controls whether the proxy acts on security findings before forwarding
+/// requests upstream. Default is `log` mode (current behavior unchanged).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnforcementConfig {
+    /// Default enforcement mode.
+    #[serde(default)]
+    pub mode: EnforcementMode,
+    /// Analysis depth: "fast" (regex only) or "full" (regex + ML ensemble).
+    #[serde(default)]
+    pub analysis_depth: AnalysisDepth,
+    /// Minimum severity level to enforce on.
+    #[serde(default = "default_enforcement_min_severity")]
+    pub min_severity: SecuritySeverity,
+    /// Minimum confidence score to enforce on (0.0-1.0).
+    #[serde(default = "default_enforcement_min_confidence")]
+    pub min_confidence: f64,
+    /// Timeout for enforcement analysis in milliseconds. Fail-open on timeout.
+    #[serde(default = "default_enforcement_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Per-category enforcement overrides.
+    #[serde(default)]
+    pub categories: Vec<CategoryEnforcement>,
+}
+
+impl Default for EnforcementConfig {
+    fn default() -> Self {
+        Self {
+            mode: EnforcementMode::Log,
+            analysis_depth: AnalysisDepth::Fast,
+            min_severity: default_enforcement_min_severity(),
+            min_confidence: default_enforcement_min_confidence(),
+            timeout_ms: default_enforcement_timeout_ms(),
+            categories: Vec::new(),
         }
     }
 }
@@ -2866,6 +2958,7 @@ mod tests {
             },
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
+            enforcement: EnforcementConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

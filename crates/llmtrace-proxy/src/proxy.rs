@@ -64,6 +64,8 @@ pub struct AppState {
     pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
+    /// Regex-only security analyzer for fast-path enforcement.
+    pub fast_analyzer: Arc<dyn SecurityAnalyzer>,
     /// Circuit breaker for the storage subsystem.
     pub storage_breaker: Arc<CircuitBreaker>,
     /// Circuit breaker for the security subsystem.
@@ -409,6 +411,39 @@ pub async fn proxy_handler(
                 }
             }
             _ => {}
+        }
+    }
+
+    // --- Pre-request security enforcement ---
+    let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
+    if state.config.enable_security_analysis {
+        let enf_context = AnalysisContext {
+            tenant_id,
+            trace_id,
+            span_id: Uuid::new_v4(),
+            provider: detected_provider.clone(),
+            model_name: model_name.clone(),
+            parameters: std::collections::HashMap::new(),
+        };
+        let decision = crate::enforcement::run_enforcement(
+            &analysis_text,
+            &enf_context,
+            &state.config.enforcement,
+            &state.security,
+            &state.fast_analyzer,
+        )
+        .await;
+        match decision {
+            crate::enforcement::EnforcementDecision::Block { reason, findings } => {
+                warn!(%trace_id, %reason, "Security enforcement blocked request");
+                state.metrics.active_connections.dec();
+                return crate::enforcement::blocked_response(&reason, &findings);
+            }
+            crate::enforcement::EnforcementDecision::Flag { findings } => {
+                info!(%trace_id, count = findings.len(), "Security enforcement flagged request");
+                flagged_findings = findings;
+            }
+            crate::enforcement::EnforcementDecision::Allow => {}
         }
     }
 
@@ -815,6 +850,15 @@ pub async fn proxy_handler(
             if let Ok(hval) = axum::http::HeaderValue::from_bytes(value.as_bytes()) {
                 builder = builder.header(hname, hval);
             }
+        }
+    }
+
+    // Inject enforcement flag headers if the request was flagged
+    if !flagged_findings.is_empty() {
+        builder = builder.header("x-llmtrace-flagged", "true");
+        let summary = crate::enforcement::findings_header_value(&flagged_findings);
+        if let Ok(hval) = axum::http::HeaderValue::from_str(&summary) {
+            builder = builder.header("x-llmtrace-findings", hval);
         }
     }
 
