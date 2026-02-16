@@ -213,6 +213,9 @@ impl JailbreakDetector {
         // Leetspeak
         findings.extend(Self::detect_leetspeak_evasion(text));
 
+        // Hex
+        findings.extend(Self::detect_hex_evasion(text));
+
         findings
     }
 
@@ -314,6 +317,30 @@ impl JailbreakDetector {
             )
             .with_metadata("jailbreak_type".to_string(), "encoding_evasion".to_string())
             .with_metadata("encoding".to_string(), "leetspeak".to_string())
+            .with_metadata(
+                "decoded_preview".to_string(),
+                decoded[..decoded.len().min(100)].to_string(),
+            )]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Detect hex-encoded jailbreak evasion.
+    fn detect_hex_evasion(text: &str) -> Vec<SecurityFinding> {
+        let decoded = match crate::encoding::try_decode_hex(text) {
+            Some(d) => d,
+            None => return Vec::new(),
+        };
+        if Self::is_suspicious_decoded(&decoded) {
+            vec![SecurityFinding::new(
+                SecuritySeverity::High,
+                "jailbreak".to_string(),
+                "Hex-encoded jailbreak instructions detected".to_string(),
+                0.80,
+            )
+            .with_metadata("jailbreak_type".to_string(), "encoding_evasion".to_string())
+            .with_metadata("encoding".to_string(), "hex".to_string())
             .with_metadata(
                 "decoded_preview".to_string(),
                 decoded[..decoded.len().min(100)].to_string(),

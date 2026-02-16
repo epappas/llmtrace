@@ -184,6 +184,8 @@ impl ResolvedThresholds {
             | "synonym_injection"
             | "p2sql_injection"
             | "shell_injection"
+            | "prompt_extraction"
+            | "data_exfiltration"
             | "ml_prompt_injection"
             | "fusion_prompt_injection"
             | "injecguard_injection"
