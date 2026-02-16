@@ -64,6 +64,8 @@ pub struct AppState {
     pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
+    /// Regex-only security analyzer for fast-path enforcement.
+    pub fast_analyzer: Arc<dyn SecurityAnalyzer>,
     /// Circuit breaker for the storage subsystem.
     pub storage_breaker: Arc<CircuitBreaker>,
     /// Circuit breaker for the security subsystem.
@@ -167,11 +169,27 @@ pub(crate) fn resolve_tenant(headers: &HeaderMap) -> Option<TenantId> {
     None
 }
 
-/// Concatenate all chat message contents into a single string for analysis.
+/// Concatenate all chat message contents into a single string for display/storage.
+///
+/// Includes role prefixes (e.g. "user: Hello") so the stored trace shows
+/// which role sent each message.
 fn messages_to_prompt_text(messages: &[ChatMessage]) -> String {
     messages
         .iter()
         .map(|m| format!("{}: {}", m.role, m.content))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Extract raw message content for security analysis (no role prefixes).
+///
+/// The security analyzer should see only the actual content so that structural
+/// role markers added by the proxy (e.g. "user: ") do not trigger false
+/// positives on role-injection or ML prompt-injection detectors.
+fn messages_to_analysis_text(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .map(|m| m.content.as_str())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -323,6 +341,16 @@ pub async fn proxy_handler(
             }
         })
         .unwrap_or_default();
+    let analysis_text = llm_body
+        .as_ref()
+        .map(|b| {
+            if !b.messages.is_empty() {
+                messages_to_analysis_text(&b.messages)
+            } else {
+                b.prompt.clone().unwrap_or_default()
+            }
+        })
+        .unwrap_or_default();
 
     // --- Pre-request cost cap enforcement ---
     if let Some(ref tracker) = state.cost_tracker {
@@ -386,6 +414,39 @@ pub async fn proxy_handler(
         }
     }
 
+    // --- Pre-request security enforcement ---
+    let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
+    if state.config.enable_security_analysis {
+        let enf_context = AnalysisContext {
+            tenant_id,
+            trace_id,
+            span_id: Uuid::new_v4(),
+            provider: detected_provider.clone(),
+            model_name: model_name.clone(),
+            parameters: std::collections::HashMap::new(),
+        };
+        let decision = crate::enforcement::run_enforcement(
+            &analysis_text,
+            &enf_context,
+            &state.config.enforcement,
+            &state.security,
+            &state.fast_analyzer,
+        )
+        .await;
+        match decision {
+            crate::enforcement::EnforcementDecision::Block { reason, findings } => {
+                warn!(%trace_id, %reason, "Security enforcement blocked request");
+                state.metrics.active_connections.dec();
+                return crate::enforcement::blocked_response(&reason, &findings);
+            }
+            crate::enforcement::EnforcementDecision::Flag { findings } => {
+                info!(%trace_id, count = findings.len(), "Security enforcement flagged request");
+                flagged_findings = findings;
+            }
+            crate::enforcement::EnforcementDecision::Allow => {}
+        }
+    }
+
     // Build the upstream request
     let upstream_url = build_upstream_url(&state.config, &path, query.as_deref());
 
@@ -394,10 +455,12 @@ pub async fn proxy_handler(
         &upstream_url,
     );
 
-    // Forward all headers except `Host` (reqwest sets it from the URL)
+    // Forward all headers except `Host` (reqwest sets it) and `Accept-Encoding`
+    // (the proxy needs to read uncompressed responses for security analysis and
+    // trace capture; reqwest does not enable auto-decompression).
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
     for (name, value) in headers.iter() {
-        if name == "host" {
+        if name == "host" || name == "accept-encoding" {
             continue;
         }
         if let Ok(rname) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
@@ -450,6 +513,7 @@ pub async fn proxy_handler(
     // the client response and a background buffer for trace capture.
     let state_bg = Arc::clone(&state);
     let prompt_text_bg = prompt_text.clone();
+    let analysis_text_bg = analysis_text;
     let model_name_bg = model_name.clone();
     let provider_bg = detected_provider;
     let agent_id_bg = agent_id;
@@ -645,6 +709,7 @@ pub async fn proxy_handler(
             provider: provider_bg,
             model_name: model_name_bg,
             prompt_text: prompt_text_bg,
+            analysis_text: analysis_text_bg,
             response_text,
             status_code: response_status.as_u16(),
             start_time,
@@ -788,6 +853,15 @@ pub async fn proxy_handler(
         }
     }
 
+    // Inject enforcement flag headers if the request was flagged
+    if !flagged_findings.is_empty() {
+        builder = builder.header("x-llmtrace-flagged", "true");
+        let summary = crate::enforcement::findings_header_value(&flagged_findings);
+        if let Ok(hval) = axum::http::HeaderValue::from_str(&summary) {
+            builder = builder.header("x-llmtrace-findings", hval);
+        }
+    }
+
     builder
         .body(Body::from_stream(response_body_stream))
         .unwrap_or_else(|_| {
@@ -809,7 +883,10 @@ struct CapturedInteraction {
     /// Detected LLM provider for this request.
     provider: LLMProvider,
     model_name: String,
+    /// Role-prefixed prompt text for display/storage (e.g. "user: Hello").
     prompt_text: String,
+    /// Raw content without role prefixes, for security analysis only.
+    analysis_text: String,
     response_text: String,
     status_code: u16,
     start_time: chrono::DateTime<Utc>,
@@ -862,7 +939,7 @@ async fn run_security_analysis(
     let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
         ""
     } else {
-        &captured.prompt_text
+        &captured.analysis_text
     };
     let response = if captured.monitoring_scope == llmtrace_core::MonitoringScope::InputOnly {
         ""
@@ -1336,6 +1413,37 @@ mod tests {
     #[test]
     fn test_messages_to_prompt_text_empty() {
         let text = messages_to_prompt_text(&[]);
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_messages_to_analysis_text() {
+        let msgs = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: "You are helpful.".to_string(),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: "Hello!".to_string(),
+            },
+        ];
+        let text = messages_to_analysis_text(&msgs);
+        assert!(text.contains("You are helpful."));
+        assert!(text.contains("Hello!"));
+        assert!(
+            !text.contains("user:"),
+            "analysis text must not include role prefixes"
+        );
+        assert!(
+            !text.contains("system:"),
+            "analysis text must not include role prefixes"
+        );
+    }
+
+    #[test]
+    fn test_messages_to_analysis_text_empty() {
+        let text = messages_to_analysis_text(&[]);
         assert!(text.is_empty());
     }
 

@@ -20,6 +20,7 @@
 //! - [`runners`] — Benchmark runner framework with paper-table output
 
 pub mod datasets;
+pub mod experiments;
 pub mod metrics;
 pub mod regression;
 pub mod runners;

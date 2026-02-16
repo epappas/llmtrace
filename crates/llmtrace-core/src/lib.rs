@@ -136,6 +136,29 @@ pub struct AuthContext {
 // Security types
 // ---------------------------------------------------------------------------
 
+/// Metadata key for ensemble voting result ("majority" or "single_detector").
+pub const VOTING_RESULT_KEY: &str = "voting_result";
+/// Value indicating a finding was confirmed by multiple detectors.
+pub const VOTING_MAJORITY: &str = "majority";
+/// Value indicating a finding came from a single detector only.
+pub const VOTING_SINGLE_DETECTOR: &str = "single_detector";
+
+/// Pre-defined operating points that balance precision against recall.
+///
+/// Used in [`SecurityAnalysisConfig`] and mapped to per-category thresholds
+/// by the ensemble analyzer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatingPoint {
+    /// High recall, more false positives -- catch everything.
+    HighRecall,
+    /// Balanced precision and recall -- recommended default.
+    #[default]
+    Balanced,
+    /// High precision, fewer false positives -- production-safe.
+    HighPrecision,
+}
+
 /// Severity level for security findings.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
 pub enum SecuritySeverity {
@@ -391,16 +414,26 @@ impl TraceSpan {
     /// Add a security finding to this span.
     pub fn add_security_finding(&mut self, finding: SecurityFinding) {
         self.security_findings.push(finding);
-        // Update overall security score based on highest severity finding
         let max_score = self
             .security_findings
             .iter()
-            .map(|f| match f.severity {
-                SecuritySeverity::Critical => 95,
-                SecuritySeverity::High => 80,
-                SecuritySeverity::Medium => 60,
-                SecuritySeverity::Low => 30,
-                SecuritySeverity::Info => 10,
+            .map(|f| {
+                let base = match f.severity {
+                    SecuritySeverity::Critical => 95,
+                    SecuritySeverity::High => 80,
+                    SecuritySeverity::Medium => 60,
+                    SecuritySeverity::Low => 30,
+                    SecuritySeverity::Info => 10,
+                };
+                // Discount single-detector findings: cap at Medium (60)
+                if f.metadata
+                    .get(VOTING_RESULT_KEY)
+                    .is_some_and(|v| v == VOTING_SINGLE_DETECTOR)
+                {
+                    base.min(60)
+                } else {
+                    base
+                }
             })
             .max()
             .unwrap_or(0);
@@ -977,6 +1010,9 @@ pub struct ProxyConfig {
     /// Security analysis configuration (ML-based detection, thresholds).
     #[serde(default)]
     pub security_analysis: SecurityAnalysisConfig,
+    /// Security enforcement configuration (pre-request blocking/flagging).
+    #[serde(default)]
+    pub enforcement: EnforcementConfig,
     /// OpenTelemetry OTLP ingestion configuration.
     #[serde(default)]
     pub otel_ingest: OtelIngestConfig,
@@ -1029,6 +1065,7 @@ impl Default for ProxyConfig {
             alerts: AlertConfig::default(),
             cost_caps: CostCapConfig::default(),
             security_analysis: SecurityAnalysisConfig::default(),
+            enforcement: EnforcementConfig::default(),
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
             grpc: GrpcConfig::default(),
@@ -1739,6 +1776,12 @@ pub struct SecurityAnalysisConfig {
     /// Confidence threshold for PIGuard detection (0.0-1.0).
     #[serde(default = "default_piguard_threshold")]
     pub piguard_threshold: f64,
+    /// Operating point for ensemble thresholds.
+    #[serde(default)]
+    pub operating_point: OperatingPoint,
+    /// Enable over-defence suppression to reduce false positives on benign content.
+    #[serde(default)]
+    pub over_defence: bool,
 }
 
 fn default_ml_enabled() -> bool {
@@ -1814,6 +1857,96 @@ impl Default for SecurityAnalysisConfig {
             piguard_enabled: false,
             piguard_model: default_piguard_model(),
             piguard_threshold: default_piguard_threshold(),
+            operating_point: OperatingPoint::default(),
+            over_defence: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Enforcement configuration
+// ---------------------------------------------------------------------------
+
+/// Enforcement mode for the proxy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcementMode {
+    /// Log findings only (current behavior). Default for backward compat.
+    #[default]
+    Log,
+    /// Block requests that trigger enforcement. Return 403.
+    Block,
+    /// Forward to upstream but attach finding metadata as response headers.
+    Flag,
+}
+
+/// Analysis depth for enforcement.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalysisDepth {
+    /// Regex-only analysis. Near-zero added latency.
+    #[default]
+    Fast,
+    /// Full ensemble analysis (regex + ML). Adds ML inference latency.
+    Full,
+}
+
+/// Per-category enforcement override.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryEnforcement {
+    /// The finding type to match (e.g. "prompt_injection", "jailbreak").
+    pub finding_type: String,
+    /// Enforcement action for this category.
+    pub action: EnforcementMode,
+}
+
+fn default_enforcement_min_severity() -> SecuritySeverity {
+    SecuritySeverity::High
+}
+
+fn default_enforcement_min_confidence() -> f64 {
+    0.8
+}
+
+fn default_enforcement_timeout_ms() -> u64 {
+    2000
+}
+
+/// Security enforcement configuration.
+///
+/// Controls whether the proxy acts on security findings before forwarding
+/// requests upstream. Default is `log` mode (current behavior unchanged).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnforcementConfig {
+    /// Default enforcement mode.
+    #[serde(default)]
+    pub mode: EnforcementMode,
+    /// Analysis depth: "fast" (regex only) or "full" (regex + ML ensemble).
+    #[serde(default)]
+    pub analysis_depth: AnalysisDepth,
+    /// Minimum severity level to enforce on.
+    #[serde(default = "default_enforcement_min_severity")]
+    pub min_severity: SecuritySeverity,
+    /// Minimum confidence score to enforce on (0.0-1.0).
+    #[serde(default = "default_enforcement_min_confidence")]
+    pub min_confidence: f64,
+    /// Timeout for enforcement analysis in milliseconds. Fail-open on timeout.
+    #[serde(default = "default_enforcement_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Per-category enforcement overrides.
+    #[serde(default)]
+    pub categories: Vec<CategoryEnforcement>,
+}
+
+impl Default for EnforcementConfig {
+    fn default() -> Self {
+        Self {
+            mode: EnforcementMode::Log,
+            analysis_depth: AnalysisDepth::Fast,
+            min_severity: default_enforcement_min_severity(),
+            min_confidence: default_enforcement_min_confidence(),
+            timeout_ms: default_enforcement_timeout_ms(),
+            categories: Vec::new(),
         }
     }
 }
@@ -2814,6 +2947,8 @@ mod tests {
                 piguard_enabled: false,
                 piguard_model: default_piguard_model(),
                 piguard_threshold: default_piguard_threshold(),
+                operating_point: OperatingPoint::default(),
+                over_defence: false,
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -2825,6 +2960,7 @@ mod tests {
             },
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
+            enforcement: EnforcementConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -3318,6 +3454,8 @@ mod tests {
             piguard_enabled: false,
             piguard_model: default_piguard_model(),
             piguard_threshold: default_piguard_threshold(),
+            operating_point: OperatingPoint::default(),
+            over_defence: false,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

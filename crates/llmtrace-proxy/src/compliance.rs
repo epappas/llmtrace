@@ -838,6 +838,7 @@ mod tests {
             config,
             client,
             storage,
+            fast_analyzer: security.clone(),
             security,
             storage_breaker,
             security_breaker,

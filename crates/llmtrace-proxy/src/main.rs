@@ -329,6 +329,12 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     // Build the security analyzer — attempt ML warm-up if enabled and compiled
     let (security, ml_status) = build_security_analyzer(&config).await?;
 
+    // Regex-only analyzer for fast-path enforcement (near-zero latency)
+    let fast_analyzer: Arc<dyn llmtrace_core::SecurityAnalyzer> = Arc::new(
+        llmtrace_security::RegexSecurityAnalyzer::new()
+            .map_err(|e| anyhow::anyhow!("Failed to build fast analyzer: {e}"))?,
+    );
+
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
@@ -379,6 +385,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         client,
         storage,
         security,
+        fast_analyzer,
         storage_breaker,
         security_breaker,
         cost_estimator,
@@ -510,6 +517,20 @@ async fn build_security_analyzer(
                         piguard: pg_loaded,
                         load_time_ms,
                     };
+                    let op = match config.security_analysis.operating_point {
+                        llmtrace_core::OperatingPoint::HighRecall => {
+                            llmtrace_security::OperatingPoint::HighRecall
+                        }
+                        llmtrace_core::OperatingPoint::HighPrecision => {
+                            llmtrace_security::OperatingPoint::HighPrecision
+                        }
+                        llmtrace_core::OperatingPoint::Balanced => {
+                            llmtrace_security::OperatingPoint::Balanced
+                        }
+                    };
+                    let ensemble = ensemble
+                        .with_operating_point(op)
+                        .with_over_defence(config.security_analysis.over_defence);
                     Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))
                 }
                 Ok(Err(e)) => {

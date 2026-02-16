@@ -1,5 +1,10 @@
-# Pinned dependencies for dataset download scripts.
+# Pinned dependencies for dataset download and analysis scripts.
 # These versions were used to generate the committed dataset files.
 # Changing versions may alter langdetect filtering results.
 datasets==4.5.0
 langdetect==1.0.9
+
+# Analysis script (analyze_experiments.py)
+pandas>=2.0.0
+matplotlib>=3.7.0
+numpy>=1.24.0

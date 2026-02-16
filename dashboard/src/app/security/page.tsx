@@ -109,7 +109,7 @@ export default function SecurityPage() {
     {
       header: "Detected",
       accessor: (s: TraceSpan) =>
-        new Date(s.started_at).toLocaleString(),
+        new Date(s.start_time).toLocaleString(),
     },
   ];
 

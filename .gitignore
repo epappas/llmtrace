@@ -50,3 +50,4 @@ TODO.md
 models/
 benchmarks/datasets/training/cache/
 benchmarks/datasets/training/training_dataset.json
+.next/

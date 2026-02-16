@@ -1,7 +1,7 @@
 # LLMTrace Implementation TODO
 
 **Generated from:** `docs/FEATURE_ROADMAP.md`
-**Updated:** 2026-02-03
+**Updated:** 2026-02-15
 **Methodology:** RALPH loops — each loop spawns a Claude Code agent with strict quality gates, reviewed by lead engineer before merge.
 
 ---
@@ -491,6 +491,77 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | IS-023 | Character smuggling variants (comprehensive unicode exploitation) | Medium | 🔄 |
 | IS-030 | Word-importance transferability mitigation | High | ⬜ |
 
+### Loop 23 — E2E Accuracy Optimization (Post Stress Test)
+> After wiring OperatingPoint, threshold filtering, over-defence suppression, and score capping for single-detector findings, the E2E stress test reached **83.7% accuracy, 84.7% F1** on a 153-sample corpus (79 malicious, 74 benign) from 13+ benchmark datasets. The remaining 15 FPs and 10 FNs require ML-level fixes documented below.
+> Reference: `docs/FEATURE_ROADMAP.md` section 3.4.4 for full analysis.
+>
+> **Review findings (2026-02-15, AI Engineer + MLOps Engineer):**
+> - Combined ML-030 + ML-033 impact is NOT additive; realistic combined: -7 to -12 FPs.
+> - ML-030 must precede ML-033 (calibrating before fine-tuning is wasted work).
+> - ML-030 triggers ML-001 re-evaluation (fusion classifier needs re-validation after base model changes).
+> - ML-033 supersedes IS-029 (Loop 22). IS-029 remains for temperature scaling only; ML-033 adds proper Platt scaling.
+> - IS-060 elevated to P0 (4 FNs, largest single FN category, indirect injection is most dangerous for agent systems).
+> - IS-070 elevated to P1 (shell injection in agent contexts is high-severity).
+> - ML-034 elevated to P1 (encoding bypass is an active evasion vector).
+> - Acceptance criterion for ALL items: full benchmark suite recall must not decrease by >1pp.
+> - MLOps prerequisites (OPS-001 through OPS-008) must be addressed before deploying model changes.
+> - Recommended execution order: ML-032 + ML-034 (patch evasion vectors) -> ML-033 (calibrate existing system) -> IS-070 (expand detection) -> ML-030 (model fine-tuning, highest risk last).
+
+**Infrastructure already wired (this session):**
+- `SecurityAnalysisConfig.operating_point` + `SecurityAnalysisConfig.over_defence` config fields
+- `EnsembleSecurityAnalyzer::filter_by_thresholds()` applying per-category confidence gates
+- `EnsembleSecurityAnalyzer::apply_over_defence()` suppressing auxiliary-only findings (no injection corroboration)
+- Single-detector score cap at 60 (Medium) in `add_security_finding()`
+- 3 new regex patterns: `roleplay_lets` (jailbreak), `authority_claim_update` (is_systemic), `disable_safety` (prompt_injection)
+
+**Dependency chain:**
+```
+OPS-001..OPS-008 (prerequisites)
+    |
+    v
+ML-032 + ML-034 (patch evasion vectors, low risk)
+    |
+    v
+ML-033 (calibrate existing system, supersedes IS-029)
+    |
+    v
+IS-060 + IS-070 (new detection capabilities)
+    |
+    v
+ML-030 (fine-tune DeBERTa, highest risk)
+    |
+    v
+ML-001 re-evaluation (fusion classifier re-validation)
+    |
+    v
+ML-031 (multilingual calibration, depends on language detection infra)
+```
+
+**MLOps prerequisites (must complete before deploying ML changes):**
+
+| ID | Feature | Complexity | Status |
+|----|---------|-----------|--------|
+| OPS-001 | **Externalize SecurityConfig to file/env** — All thresholds, operating points, and model identifiers loadable from config file or environment variables. Hardcoded values serve only as fallback defaults. Required before ML-033 (recalibrated thresholds currently require code change and rebuild). | Medium | ⬜ |
+| OPS-002 | **Pin model revisions with SHA** — Use `hf_hub` revision/commit SHA parameters for all model downloads. Add SHA256 integrity verification of SafeTensors files. Current code downloads latest revision on cold start, risking silent behavior changes. | Low | ⬜ |
+| OPS-003 | **Model inference metrics** — Expose per-model inference latency histograms, raw score distributions, classification outcome counters, ensemble agreement rate. Essential for validating model changes in production. | Medium | ⬜ |
+| OPS-004 | **Model version manifest** — `models.toml` declaring model name, revision SHA, expected SafeTensors SHA256, deployment timestamp. Enables rollback by reverting manifest to previous version. | Low | ⬜ |
+| OPS-005 | **CI regression test gate** — CI step that loads ensemble, runs fixed regression set (50-100 canonical examples), asserts no accuracy regression beyond threshold. Blocks merge on failure. | Medium | ⬜ |
+| OPS-006 | **Training infrastructure for ML-030** — Define training environment (Python/PyTorch), GPU provisioning, SafeTensors export validation step ensuring layer-name compatibility with Candle loader. Define artifact registry for fine-tuned weights. | High | ⬜ |
+| OPS-007 | **Expand calibration dataset to 1,000+ samples** — 153 stress test samples is insufficient for Platt scaling. Collect stratified samples across injection types. Separate calibration holdout from ML-030 training set (at least 30% of NotInject reserved for calibration). | Medium | ⬜ |
+| OPS-008 | **Shadow-mode inference** — Run new model ensemble in parallel without affecting response path, log predictions for offline comparison. Required for safe validation of ML-030 fine-tuned model before production cutover. | High | ⬜ |
+
+**ML accuracy work items:**
+
+| ID | Feature | Complexity | Priority | Status |
+|----|---------|-----------|----------|--------|
+| ML-032 | **Short-input confidence scaling** — For inputs < 10 tokens, scale confidence threshold linearly from 0.95 (at 1 token) to normal threshold (at 10 tokens). Do NOT bypass ML entirely to avoid blind spots for short attacks like "Ignore all previous instructions" (5 tokens). Estimated impact: -1 FP. | Low | P1 | ⬜ |
+| ML-034 | **Encoding decoder preprocessor** — Before ML inference, apply decoding pipeline: base64, rot13, leetspeak, hex, binary, upside-down text, Cyrillic homoglyphs. Add content-type heuristic before decoding (skip base64 if string contains spaces/punctuation). Specify latency cap (5ms max). Must define integration plan with existing `jailbreak_detector.rs` encoding detection (augment, not replace). 7/11 encoding evasion test cases detected (64%); 4 misses are encoded payloads without plaintext injection markers. | Medium | P1 | ⬜ |
+| ML-033 | **Confidence recalibration (Platt scaling)** — Apply Platt scaling (logistic regression) to recalibrate DeBERTa output probabilities. Supersedes IS-029 temperature scaling. Requires OPS-007 (1,000+ calibration samples). Calibration set MUST be disjoint from ML-030 training set. Specify per-model vs post-ensemble calibration. Re-derive operating point thresholds after calibration (current HighRecall/Balanced/HighPrecision values become invalid). Estimated impact: -2 to -4 FPs. Depends on: OPS-007. | Medium | P1 | ⬜ |
+| IS-060 | **Spotlighting/datamarking for indirect injection** — Split input into instruction zones and data zones using configurable boundary markers. Apply injection detection only to data zones. Sub-tasks: (a) zone boundary detection heuristics for common data formats (HTML tables, email headers, CSV, JSON data fields), (b) config-declared boundary support, (c) ensemble integration (feed datamarking results into existing voting). Targets 4 BIPIA FNs (40% of all FNs). Reference: `docs/research/spotlighting-indirect-injection-defense.md` (datamarking reduces ASR from >50% to <3%). | High | P0 | ⬜ |
+| IS-070 | **Shell command injection detection** — Detect dangerous shell commands (curl with exfiltration, python -c with socket, wget, reverse shell, rm -rf) in prompt content. Extend existing RL3-02 regex patterns (do not duplicate). Distinct from prompt injection; targets 2 FN code execution attacks. Critical for agent systems with tool-use capabilities. | Medium | P1 | ⬜ |
+| ML-030 | **DeBERTa fine-tuning on NotInject dataset** — Fine-tune `protectai/deberta-v3-base-prompt-injection-v2` using 339 NotInject samples + 15 stress test FPs + 10-20 "creative writing instruction" samples as hard negatives. Mix with full training set (61k benign + 16k injection from ML-014) to prevent catastrophic forgetting. Training: 3 epochs, lr=2e-5, batch_size=16. Reserve 20% of NotInject for validation. Acceptance criteria: F1 >= 0.88 on held-out set, no per-class recall regression > 2%, full benchmark suite pass. Estimated impact: -5 to -10 FPs. Depends on: OPS-002, OPS-004, OPS-005, OPS-006. Triggers: ML-001 re-evaluation. | High | P0 | ⬜ |
+| ML-031 | **Multilingual calibration** — Two sub-tasks: (a) add language detection to ensemble pipeline (e.g., `lingua-rs` or trigram detector), (b) calibrate per-language confidence thresholds using holdout set. Collect 1,000+ benign Chinese samples (traditional + simplified, technical/conversational/educational). Fine-tuning is a separate future item. Estimated impact: -2 FPs. Depends on: ML-030. | Medium | P2 | ⬜ |
+
 ---
 
 ### Loop R19 — ML Prompt Injection Detection (Candle)
@@ -665,14 +736,14 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 ## Notes
 
-- IS-007 (Configurable operating points) completed in R8 commit `41e219b`
+- IS-007 (Configurable operating points) completed in R8 commit `41e219b`. Fully wired to proxy config and ensemble in 2026-02-15 session: `SecurityAnalysisConfig.operating_point` field drives `EnsembleSecurityAnalyzer::with_operating_point()`, `filter_by_thresholds()` applies per-category confidence gates, `over_defence` flag enables auxiliary-only suppression.
 - R11 (code_security module) completed in commit `b08dccc`, tests fixed in `aa9ab98`
 - Each loop targets a coherent feature set that can be tested independently
 - Phase 1 focuses on closing critical 100% ASR gaps and establishing evaluation baseline
 - RALPH quality policy: no placeholders/mocks; if spec requires ML, implement real ML inference (regex fallback only when model weights unavailable).
 - AS-004/AS-006/AS-007 are 🔄 because literature expects LLM-based parsing/sanitization for tool outputs; current implementation is heuristic only.
 - AS-020/AS-021/AS-023/AS-024 are 🔄 because literature expects multi-agent LLM coordination; current implementation is heuristic/policy-only.
-- IS-024/IS-027/IS-028/IS-029 are 🔄 because only normalization/temperature scaling exists (no attack-specific defenses or Platt scaling).
+- IS-024/IS-027/IS-028/IS-029 are 🔄 because only normalization/temperature scaling exists (no attack-specific defenses or Platt scaling). ML-033 (Loop 23) supersedes IS-029 for Platt scaling; IS-029 remains for temperature-scaling-only scope.
 - PR-006 is 🔄 because full non-Latin PII coverage and a custom-entity plugin architecture are not fully implemented.
 - Tool parsing expectations come from `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`.
 - Multi-agent expectations come from `docs/research/multi-agent-defense-pipeline.md`.

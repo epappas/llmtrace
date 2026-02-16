@@ -14,6 +14,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
+    VOTING_MAJORITY, VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR,
 };
 
 use crate::feature_extraction::extract_heuristic_features;
@@ -457,6 +458,84 @@ impl EnsembleSecurityAnalyzer {
         self
     }
 
+    /// Filter findings that fall below the resolved threshold for their type.
+    fn filter_by_thresholds(&self, findings: Vec<SecurityFinding>) -> Vec<SecurityFinding> {
+        let before = findings.len();
+        let kept: Vec<SecurityFinding> = findings
+            .into_iter()
+            .filter(|f| {
+                let dominated = self
+                    .thresholds
+                    .threshold_for_finding_type(&f.finding_type)
+                    .is_some_and(|t| f.confidence_score < t);
+                if dominated {
+                    tracing::debug!(
+                        finding_type = %f.finding_type,
+                        confidence = f.confidence_score,
+                        "finding filtered by threshold"
+                    );
+                }
+                !dominated
+            })
+            .collect();
+        let filtered = before - kept.len();
+        if filtered > 0 {
+            tracing::info!(
+                filtered_count = filtered,
+                kept_count = kept.len(),
+                "threshold filtering suppressed findings"
+            );
+        }
+        kept
+    }
+
+    /// Suppress single-detector injection findings when over-defence mitigation is active.
+    ///
+    /// Keeps a finding only if it has multi-detector agreement OR is not an
+    /// injection finding (PII, toxicity, etc. pass through unconditionally).
+    fn apply_over_defence(&self, findings: Vec<SecurityFinding>) -> Vec<SecurityFinding> {
+        if !self.over_defence_enabled {
+            return findings;
+        }
+        // If any injection finding exists, keep everything
+        if findings.iter().any(is_injection_finding) {
+            return findings;
+        }
+        // Only auxiliary findings remain — suppress them to reduce false positives
+        let count = findings.len();
+        if count > 0 {
+            tracing::info!(
+                suppressed_count = count,
+                "over-defence: suppressed auxiliary-only findings (no injection corroboration)"
+            );
+        }
+        Vec::new()
+    }
+
+    /// When no injection was found in the initial pass, try decoding evasion
+    /// encodings (base64, rot13, hex, leetspeak) and rerun ML on decoded text.
+    async fn try_decoded_ml_reanalysis(
+        &self,
+        text: &str,
+        findings: &mut Vec<SecurityFinding>,
+        context: &AnalysisContext,
+    ) {
+        if findings.iter().any(is_injection_finding) || !self.ml.is_model_loaded() {
+            return;
+        }
+        for payload in crate::encoding::try_decode_evasions(text) {
+            let ml_findings = match self.ml.analyze_request(&payload.decoded, context).await {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            for mut f in ml_findings {
+                f.metadata
+                    .insert("decoded_from".to_string(), payload.encoding.to_string());
+                findings.push(f);
+            }
+        }
+    }
+
     /// Spawn InjecGuard inference on the tokio blocking pool.
     ///
     /// Returns `None` when InjecGuard is not loaded. The returned handle
@@ -705,6 +784,12 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             combined = merge_pii_findings(combined, ner_findings);
         }
 
+        // ML-034: decode evasion encodings and rerun ML if nothing found
+        self.try_decoded_ml_reanalysis(prompt, &mut combined, context)
+            .await;
+
+        let combined = self.filter_by_thresholds(combined);
+        let combined = self.apply_over_defence(combined);
         Ok(combined)
     }
 
@@ -752,6 +837,12 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             combined = merge_pii_findings(combined, ner_findings);
         }
 
+        // ML-034: decode evasion encodings and rerun ML if nothing found
+        self.try_decoded_ml_reanalysis(response, &mut combined, context)
+            .await;
+
+        let combined = self.filter_by_thresholds(combined);
+        let combined = self.apply_over_defence(combined);
         Ok(combined)
     }
 
@@ -809,6 +900,9 @@ fn is_injection_finding(finding: &SecurityFinding) -> bool {
             | "role_injection"
             | "jailbreak"
             | "encoding_attack"
+            | "synonym_injection"
+            | "p2sql_injection"
+            | "shell_injection"
             | "ml_prompt_injection"
             | "injecguard_injection"
             | "piguard_injection"
@@ -1058,14 +1152,16 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
                     out.severity = max_severity.clone();
                 }
                 out.metadata
-                    .insert("voting_result".to_string(), "majority".to_string());
+                    .insert(VOTING_RESULT_KEY.to_string(), VOTING_MAJORITY.to_string());
                 out.metadata
                     .insert("agreeing_detectors".to_string(), names_str.clone());
                 out.metadata
                     .insert("ensemble_agreement".to_string(), "true".to_string());
             } else {
-                out.metadata
-                    .insert("voting_result".to_string(), "single_detector".to_string());
+                out.metadata.insert(
+                    VOTING_RESULT_KEY.to_string(),
+                    VOTING_SINGLE_DETECTOR.to_string(),
+                );
             }
             result.push(out);
         }
@@ -1208,8 +1304,8 @@ mod tests {
         assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
         assert!(!result[0].metadata.contains_key("ensemble_agreement"));
         assert_eq!(
-            result[0].metadata.get("voting_result"),
-            Some(&"single_detector".to_string())
+            result[0].metadata.get(VOTING_RESULT_KEY),
+            Some(&VOTING_SINGLE_DETECTOR.to_string())
         );
     }
 
@@ -1262,8 +1358,8 @@ mod tests {
             Some(&"true".to_string())
         );
         assert_eq!(
-            regex_finding.metadata.get("voting_result"),
-            Some(&"majority".to_string())
+            regex_finding.metadata.get(VOTING_RESULT_KEY),
+            Some(&VOTING_MAJORITY.to_string())
         );
 
         let ml_finding = result
@@ -1734,8 +1830,8 @@ mod tests {
         for f in &result {
             assert!(is_injection_finding(f));
             assert_eq!(
-                f.metadata.get("voting_result"),
-                Some(&"majority".to_string())
+                f.metadata.get(VOTING_RESULT_KEY),
+                Some(&VOTING_MAJORITY.to_string())
             );
             assert!(f
                 .metadata
@@ -1850,8 +1946,8 @@ mod tests {
         assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
         assert!(!result[0].metadata.contains_key("ensemble_agreement"));
         assert_eq!(
-            result[0].metadata.get("voting_result"),
-            Some(&"single_detector".to_string())
+            result[0].metadata.get(VOTING_RESULT_KEY),
+            Some(&VOTING_SINGLE_DETECTOR.to_string())
         );
     }
 
@@ -1870,8 +1966,8 @@ mod tests {
         assert!((result[0].confidence_score - 0.85).abs() < f64::EPSILON);
         assert!(!result[0].metadata.contains_key("ensemble_agreement"));
         assert_eq!(
-            result[0].metadata.get("voting_result"),
-            Some(&"single_detector".to_string())
+            result[0].metadata.get(VOTING_RESULT_KEY),
+            Some(&VOTING_SINGLE_DETECTOR.to_string())
         );
     }
 
@@ -2036,8 +2132,8 @@ mod tests {
         assert_eq!(injection_count, 3); // regex + ml + best of deberta_pair
         for f in result.iter().filter(|f| is_injection_finding(f)) {
             assert_eq!(
-                f.metadata.get("voting_result"),
-                Some(&"majority".to_string())
+                f.metadata.get(VOTING_RESULT_KEY),
+                Some(&VOTING_MAJORITY.to_string())
             );
         }
     }

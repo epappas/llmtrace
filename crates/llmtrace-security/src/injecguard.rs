@@ -31,6 +31,7 @@ use llmtrace_core::{
 use tokenizers::Tokenizer;
 
 use crate::inference_stats::{InferenceStats, InferenceStatsTracker};
+use crate::ml_detector::short_input_threshold;
 use crate::RegexSecurityAnalyzer;
 
 // ---------------------------------------------------------------------------
@@ -134,14 +135,15 @@ struct LoadedInjecGuard {
 }
 
 impl LoadedInjecGuard {
-    /// Classify text and return `(injection_score, predicted_label)`.
-    fn classify(&self, text: &str) -> Result<(f64, String)> {
+    /// Classify text and return `(injection_score, predicted_label, token_count)`.
+    fn classify(&self, text: &str) -> Result<(f64, String, usize)> {
         let encoding = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
 
         let ids = encoding.get_ids();
+        let token_count = ids.len();
         let type_ids = encoding.get_type_ids();
         let mask = encoding.get_attention_mask();
 
@@ -190,7 +192,7 @@ impl LoadedInjecGuard {
             .cloned()
             .unwrap_or_else(|| format!("label_{predicted_idx}"));
 
-        Ok((injection_score, predicted_label))
+        Ok((injection_score, predicted_label, token_count))
     }
 }
 
@@ -294,6 +296,24 @@ impl InjecGuardAnalyzer {
     #[must_use]
     pub fn inference_stats(&self) -> Option<InferenceStats> {
         self.stats_tracker.stats()
+    }
+
+    /// Return raw classification scores without thresholding.
+    ///
+    /// Returns `None` if the ML model is not loaded (fallback mode).
+    /// The tuple contains `(injection_score, predicted_label)`.
+    pub fn classify_raw(&self, text: &str) -> Result<Option<(f64, String)>> {
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let loaded = match &self.model {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let start = Instant::now();
+        let (score, label, _token_count) = loaded.classify(text)?;
+        self.stats_tracker.record(start.elapsed());
+        Ok(Some((score, label)))
     }
 
     /// Download and load model from HuggingFace Hub.
@@ -434,10 +454,12 @@ impl InjecGuardAnalyzer {
         };
 
         let start = Instant::now();
-        let (score, label) = loaded.classify(text)?;
+        let (score, label, token_count) = loaded.classify(text)?;
         self.stats_tracker.record(start.elapsed());
 
-        if score >= self.threshold {
+        let effective_threshold = short_input_threshold(self.threshold, token_count);
+
+        if score >= effective_threshold {
             let severity = if score >= 0.95 {
                 SecuritySeverity::Critical
             } else if score >= 0.85 {
@@ -458,7 +480,11 @@ impl InjecGuardAnalyzer {
             .with_metadata("ml_model".to_string(), "injecguard".to_string())
             .with_metadata("ml_label".to_string(), label)
             .with_metadata("ml_score".to_string(), format!("{score:.4}"))
-            .with_metadata("ml_threshold".to_string(), format!("{:.2}", self.threshold))
+            .with_metadata("ml_token_count".to_string(), token_count.to_string())
+            .with_metadata(
+                "ml_effective_threshold".to_string(),
+                format!("{effective_threshold:.4}"),
+            )
             .with_metadata("location".to_string(), location.to_string())])
         } else {
             Ok(Vec::new())
