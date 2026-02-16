@@ -225,7 +225,23 @@ def send_request(text: str, model: str = "gpt-4o-mini") -> dict[str, Any]:
 def get_tenant_id() -> str:
     resp = requests.get(f"{PROXY_URL}/api/v1/tenants", timeout=10)
     tenants = resp.json()
-    return tenants[0]["id"] if tenants else ""
+    if not tenants:
+        return ""
+    # Pick the tenant with the most findings data (last one is usually the
+    # API-key derived tenant; auto-created header tenants have no data).
+    best, best_count = tenants[0]["id"], 0
+    for t in tenants:
+        tid = t["id"]
+        r = requests.get(
+            f"{PROXY_URL}/api/v1/security/findings",
+            params={"limit": 1},
+            headers={"X-LLMTrace-Tenant-ID": tid},
+            timeout=5,
+        )
+        cnt = r.json().get("total", 0) if r.status_code == 200 else 0
+        if cnt > best_count:
+            best, best_count = tid, cnt
+    return best
 
 
 def fetch_findings(tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
@@ -350,7 +366,7 @@ def main() -> None:
     # Fetch findings
     tenant_id = get_tenant_id()
     print(f"Tenant ID: {tenant_id}")
-    findings = fetch_findings(tenant_id, limit=500)
+    findings = fetch_findings(tenant_id, limit=2000)
     print(f"Retrieved {len(findings)} spans\n")
 
     # Match findings to samples
