@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/epappas/llmtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/epappas/llmtrace/actions/workflows/security.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/security.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![GitHub Stars](https://img.shields.io/github/stars/epappas/llmtrace)](https://github.com/epappas/llmtrace/stargazers)
 
 **Zero-code LLM observability and security for production.**
 
@@ -20,12 +23,23 @@ LLMTrace solves this by sitting transparently between your application and LLM p
 ## Key Features
 
 - **Transparent Proxy** — Drop-in replacement for any OpenAI-compatible API
+- **ML Ensemble Detection** — Multi-detector majority voting (regex, DeBERTa, InjecGuard, PIGuard)
 - **Real-time Security** — Prompt injection detection, PII scanning, data leakage prevention
 - **Performance Monitoring** — Latency, token usage, streaming metrics (TTFT), error tracking
 - **Cost Control** — Per-agent budgets, rate limits, anomaly detection
 - **Multi-tenant Ready** — Isolated per API key or custom tenant headers
 - **High Performance** — Built in Rust, handles streaming responses, circuit breaker protection
-- **SDK Integration** — Native Python bindings for direct instrumentation
+
+## Security Performance
+
+| Metric    | Value |
+|-----------|-------|
+| Accuracy  | 87.6% |
+| Precision | 95.5% |
+| F1 Score  | 86.9% |
+| Recall    | 79.7% |
+
+Tested on a 153-sample adversarial corpus across 12 attack categories including CyberSecEval2, BIPIA, TensorTrust, and InjecAgent. See [benchmarks/](benchmarks/) for methodology and full results.
 
 ## Quick Start
 
@@ -62,13 +76,13 @@ response = client.chat.completions.create(
 
 ```bash
 # View recent activity
-curl http://localhost:8080/traces | jq '.[0]'
+curl http://localhost:8080/api/v1/traces | jq '.[0]'
 
 # Check security findings
-curl http://localhost:8080/security/findings | jq
+curl http://localhost:8080/api/v1/security/findings | jq
 
 # Monitor costs
-curl http://localhost:8080/metrics/costs | jq
+curl http://localhost:8080/api/v1/metrics/costs | jq
 ```
 
 **That's it!** You now have full observability into your LLM interactions.
@@ -81,14 +95,14 @@ graph LR
     B -->|HTTP| C[OpenAI/LLM Provider]
     B -->|Async| D[Security Engine]
     B -->|Async| E[Storage Engine]
-    
+
     D --> F[SQLite/PostgreSQL]
     E --> F
     D --> G[Real-time Alerts]
-    
+
     H[Dashboard] -->|REST API| B
     I[Monitoring] -->|Metrics API| B
-    
+
     style B fill:#e1f5fe
     style D fill:#fff3e0
     style E fill:#f3e5f5
@@ -141,7 +155,7 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-**[View all integration guides →](docs/guides/)**
+**[View all integration guides ->](docs/guides/)**
 
 ## Dashboard & Monitoring
 
@@ -152,9 +166,9 @@ LLMTrace includes a built-in dashboard for visualizing traces, security findings
 open http://localhost:3000
 
 # Or use the REST API
-curl http://localhost:8080/api/traces
-curl http://localhost:8080/api/security/findings
-curl http://localhost:8080/api/metrics/costs
+curl http://localhost:8080/api/v1/traces
+curl http://localhost:8080/api/v1/security/findings
+curl http://localhost:8080/api/v1/metrics/costs
 ```
 
 **Dashboard features:**
@@ -203,26 +217,26 @@ cost_control:
 alerts:
   slack:
     webhook_url: "https://hooks.slack.com/..."
-    
+
 rate_limiting:
   requests_per_minute: 1000
   burst_capacity: 2000
 ```
 
-**[Full configuration guide →](docs/getting-started/configuration.md)**
+**[Full configuration guide ->](docs/getting-started/configuration.md)**
 
 ## API Reference
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /traces` | List recent traces |
-| `GET /traces/{id}` | Get specific trace details |
-| `GET /security/findings` | List security incidents |
-| `GET /metrics/costs` | Cost breakdown and usage |
+| `GET /api/v1/traces` | List recent traces |
+| `GET /api/v1/traces/{id}` | Get specific trace details |
+| `GET /api/v1/security/findings` | List security incidents |
+| `GET /api/v1/metrics/costs` | Cost breakdown and usage |
 | `GET /health` | Health check and circuit breaker status |
 | `POST /policies/validate` | Validate custom security policies |
 
-**[Full API documentation →](docs/api/)**
+**[Full API documentation ->](docs/api/)**
 
 ## Installation
 
@@ -246,46 +260,16 @@ kubectl apply -f https://raw.githubusercontent.com/epappas/llmtrace/main/deploym
 ```bash
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
-cargo build --release
-CARGO_TARGET_DIR=/tmp/llmtrace-target  # WSL2 workaround
+cargo build --release --features ml
 ./target/release/llmtrace-proxy --config config.yaml
 ```
 
-**[Installation guide with all methods →](docs/getting-started/installation.md)**
-
-## Python SDK
-
-For direct integration without a proxy:
-
-```bash
-pip install llmtrace-python
-```
-
-```python
-import llmtrace
-import openai
-
-# Create tracer
-tracer = llmtrace.configure({"enable_security": True})
-
-# Option 1: Instrument existing OpenAI client
-client = openai.OpenAI()
-client = llmtrace.instrument(client, tracer=tracer)
-
-# Option 2: Manual tracing
-span = tracer.start_span("chat", "openai", "gpt-4")
-span.set_prompt("What is 2+2?")
-span.set_response("4")
-span.set_token_counts(prompt_tokens=5, completion_tokens=1)
-print(span.to_json())
-```
-
-**[Python SDK documentation →](docs/guides/python-sdk.md)**
+**[Installation guide with all methods ->](docs/getting-started/installation.md)**
 
 ## Production Deployment
 
 ### High-Availability Setup
-- **Load Balancer** → Multiple LLMTrace instances
+- **Load Balancer** -> Multiple LLMTrace instances
 - **PostgreSQL** for persistent trace storage
 - **ClickHouse** for high-volume analytics
 - **Redis** for caching and rate limiting
@@ -302,7 +286,7 @@ print(span.to_json())
 - PagerDuty/Slack integration
 - OWASP LLM Top 10 compliance reporting
 
-**[Production deployment guide →](docs/deployment/)**
+**[Production deployment guide ->](docs/deployment/)**
 
 ## Contributing
 
@@ -321,11 +305,11 @@ cargo test --workspace
 |-------|---------|
 | `llmtrace-core` | Shared types and traits |
 | `llmtrace-proxy` | HTTP proxy server |
-| `llmtrace-security` | Security analysis engine |
-| `llmtrace-storage` | Storage backends |
+| `llmtrace-security` | Security analysis engine (regex + DeBERTa + InjecGuard + PIGuard ensemble) |
+| `llmtrace-storage` | Storage backends (SQLite, PostgreSQL, ClickHouse, Redis) |
 | `llmtrace-python` | Python bindings |
 
-**[Development guide →](docs/development/)**
+**[Development guide ->](docs/development/)**
 
 ## License
 
