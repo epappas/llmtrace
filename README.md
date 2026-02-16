@@ -82,7 +82,7 @@ curl http://localhost:8080/api/v1/traces | jq '.[0]'
 curl http://localhost:8080/api/v1/security/findings | jq
 
 # Monitor costs
-curl http://localhost:8080/api/v1/metrics/costs | jq
+curl http://localhost:8080/api/v1/costs/current | jq
 ```
 
 **That's it!** You now have full observability into your LLM interactions.
@@ -155,7 +155,7 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
-**[View all integration guides ->](docs/guides/)**
+**[View all integration guides ->](docs/README.md#guides)**
 
 ## Dashboard & Monitoring
 
@@ -168,7 +168,7 @@ open http://localhost:3000
 # Or use the REST API
 curl http://localhost:8080/api/v1/traces
 curl http://localhost:8080/api/v1/security/findings
-curl http://localhost:8080/api/v1/metrics/costs
+curl http://localhost:8080/api/v1/costs/current
 ```
 
 **Dashboard features:**
@@ -232,11 +232,11 @@ rate_limiting:
 | `GET /api/v1/traces` | List recent traces |
 | `GET /api/v1/traces/{id}` | Get specific trace details |
 | `GET /api/v1/security/findings` | List security incidents |
-| `GET /api/v1/metrics/costs` | Cost breakdown and usage |
+| `GET /api/v1/costs/current` | Cost breakdown and usage |
 | `GET /health` | Health check and circuit breaker status |
 | `POST /policies/validate` | Validate custom security policies |
 
-**[Full API documentation ->](docs/api/)**
+**[Full API documentation ->](docs/guides/API.md)**
 
 ## Installation
 
@@ -286,7 +286,7 @@ cargo build --release --features ml
 - PagerDuty/Slack integration
 - OWASP LLM Top 10 compliance reporting
 
-**[Production deployment guide ->](docs/deployment/)**
+**[Production deployment guide ->](docs/deployment/kubernetes.md)**
 
 ## Contributing
 
@@ -309,7 +309,7 @@ cargo test --workspace
 | `llmtrace-storage` | Storage backends (SQLite, PostgreSQL, ClickHouse, Redis) |
 | `llmtrace-python` | Python bindings |
 
-**[Development guide ->](docs/development/)**
+**[Development guide ->](CONTRIBUTING.md)**
 
 ## License
 

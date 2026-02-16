@@ -332,52 +332,40 @@ curl http://localhost:8080/v1/chat/completions \
 
 ```bash
 # Get recent traces
-curl http://localhost:8080/traces | jq '.[0:5]'
+curl http://localhost:8080/api/v1/traces | jq '.[0:5]'
 
 # Get specific trace
-curl http://localhost:8080/traces/trace_abc123 | jq
+curl http://localhost:8080/api/v1/traces/trace_abc123 | jq
 
 # Filter traces by model
-curl "http://localhost:8080/traces?model=gpt-4" | jq
+curl "http://localhost:8080/api/v1/traces?model=gpt-4" | jq
 ```
 
 ### Security Findings
 
 ```bash
 # Get all security findings
-curl http://localhost:8080/security/findings | jq
+curl http://localhost:8080/api/v1/security/findings | jq
 
 # Get findings by severity
-curl "http://localhost:8080/security/findings?severity=high" | jq
+curl "http://localhost:8080/api/v1/security/findings?severity=high" | jq
 
 # Get findings by type
-curl "http://localhost:8080/security/findings?type=prompt_injection" | jq
+curl "http://localhost:8080/api/v1/security/findings?type=prompt_injection" | jq
 ```
 
 ### Cost Metrics
 
 ```bash
-# Get cost summary
-curl http://localhost:8080/metrics/costs | jq
-
-# Get cost breakdown by model
-curl http://localhost:8080/metrics/costs/by-model | jq
-
-# Get daily spending
-curl "http://localhost:8080/metrics/costs?period=daily" | jq
+# Get current cost summary
+curl http://localhost:8080/api/v1/costs/current | jq
 ```
 
-### Performance Metrics
+### Statistics
 
 ```bash
-# Get latency statistics
-curl http://localhost:8080/metrics/latency | jq
-
-# Get token usage stats
-curl http://localhost:8080/metrics/tokens | jq
-
-# Get error rates
-curl http://localhost:8080/metrics/errors | jq
+# Get overall stats
+curl http://localhost:8080/api/v1/stats | jq
 ```
 
 ## Bash Scripting Examples
@@ -441,7 +429,7 @@ while IFS= read -r prompt; do
 
     # Optional: Check for security findings
     sleep 1  # Allow time for async analysis
-    findings=$(curl -s "$LLMTRACE_URL/security/findings?trace_id=$trace_id")
+    findings=$(curl -s "$LLMTRACE_URL/api/v1/security/findings?trace_id=$trace_id")
     finding_count=$(echo "$findings" | jq length)
 
     if [ "$finding_count" -gt 0 ]; then
@@ -478,7 +466,7 @@ function check_health() {
 
 function check_metrics() {
     echo " Recent activity:"
-    curl -s "$LLMTRACE_URL/metrics/summary" | jq '{
+    curl -s "$LLMTRACE_URL/api/v1/stats" | jq '{
         total_requests,
         avg_latency_ms,
         error_rate,
@@ -521,13 +509,13 @@ class LLMTraceClient:
         return response.json()
 
     def get_traces(self, limit=10):
-        url = f"{self.base_url}/traces"
+        url = f"{self.base_url}/api/v1/traces"
         response = requests.get(url, params={"limit": limit})
         response.raise_for_status()
         return response.json()
 
     def get_security_findings(self):
-        url = f"{self.base_url}/security/findings"
+        url = f"{self.base_url}/api/v1/security/findings"
         response = requests.get(url)
         response.raise_for_status()
         return response.json()
@@ -623,4 +611,4 @@ curl -k https://localhost:8443/health  # -k ignores cert errors
 - **[Python SDK](python-sdk.md)** — Native Python instrumentation
 - **[Dashboard Usage](dashboard.md)** — Visual monitoring
 
-**Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [API documentation](../api/).
+**Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [API documentation](API.md).
