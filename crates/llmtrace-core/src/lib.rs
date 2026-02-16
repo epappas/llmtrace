@@ -1230,7 +1230,7 @@ pub struct ModelPricingConfig {
 // ---------------------------------------------------------------------------
 
 /// Time window for budget enforcement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BudgetWindow {
     /// Rolling one-hour window.
@@ -2153,7 +2153,7 @@ impl TraceQuery {
 // ---------------------------------------------------------------------------
 
 /// Storage statistics for a tenant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StorageStats {
     /// Total number of traces stored.
     pub total_traces: u64,
@@ -2162,8 +2162,10 @@ pub struct StorageStats {
     /// Storage size in bytes.
     pub storage_size_bytes: u64,
     /// Oldest trace timestamp.
+    #[schema(value_type = String, format = "date-time")]
     pub oldest_trace: Option<DateTime<Utc>>,
     /// Newest trace timestamp.
+    #[schema(value_type = String, format = "date-time")]
     pub newest_trace: Option<DateTime<Utc>>,
 }
 

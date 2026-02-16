@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::proxy::AppState;
@@ -24,7 +25,7 @@ use crate::proxy::AppState;
 // ---------------------------------------------------------------------------
 
 /// Supported compliance report types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportType {
     /// SOC2 audit trail report — covers audit events, access patterns,
@@ -49,7 +50,7 @@ impl std::fmt::Display for ReportType {
 }
 
 /// Status of a generated report.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportStatus {
     /// Report generation is in progress.
@@ -186,7 +187,7 @@ pub fn new_report_store() -> ReportStore {
 }
 
 /// Query parameters for `GET /api/v1/reports`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct ListReportsParams {
     /// Maximum number of results (default 50, max 1000).
     pub limit: Option<u32>,
@@ -199,28 +200,50 @@ pub struct ListReportsParams {
 // ---------------------------------------------------------------------------
 
 /// Request body for `POST /api/v1/reports/generate`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct GenerateReportRequest {
     /// Type of report to generate.
     pub report_type: ReportType,
     /// Start of the reporting period (RFC 3339).
+    #[schema(value_type = String, format = "date-time")]
     pub period_start: DateTime<Utc>,
     /// End of the reporting period (RFC 3339).
+    #[schema(value_type = String, format = "date-time")]
     pub period_end: DateTime<Utc>,
 }
 
 /// API error response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiError {
     error: ApiErrorDetail,
 }
 
 /// Inner error detail.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiErrorDetail {
     message: String,
     #[serde(rename = "type")]
     error_type: String,
+}
+
+/// Response body for `POST /api/v1/reports/generate`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct GenerateReportResponse {
+    /// Newly created report ID.
+    pub id: String,
+    /// Report status.
+    pub status: String,
+}
+
+/// Response body for `GET /api/v1/reports`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ListReportsResponse {
+    /// Report records.
+    pub data: Vec<llmtrace_core::ComplianceReportRecord>,
+    /// Page size.
+    pub limit: u32,
+    /// Offset.
+    pub offset: u32,
 }
 
 /// Build a JSON error response.
@@ -264,6 +287,20 @@ fn require_role_operator(auth: &AuthContext) -> Option<Response> {
 /// Creates a report record in `Pending` status, spawns an async task to
 /// gather data and populate the report, then returns the report ID
 /// immediately so the caller can poll `GET /api/v1/reports/:id`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/reports/generate",
+    request_body = GenerateReportRequest,
+    responses(
+        (status = 202, description = "Report generation started", body = GenerateReportResponse),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn generate_report(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -396,10 +433,10 @@ pub async fn generate_report(
 
     (
         StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "id": report_id.to_string(),
-            "status": "pending",
-        })),
+        Json(GenerateReportResponse {
+            id: report_id.to_string(),
+            status: "pending".to_string(),
+        }),
     )
         .into_response()
 }
@@ -408,6 +445,22 @@ pub async fn generate_report(
 ///
 /// First checks the in-memory store (for recently-generated reports still
 /// in-flight), then falls back to the persistent MetadataRepository.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reports/{id}",
+    params(
+        ("id" = String, Path, description = "Report ID"),
+    ),
+    responses(
+        (status = 200, description = "Report record", body = llmtrace_core::ComplianceReportRecord),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Report not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_report(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -424,7 +477,29 @@ pub async fn get_report(
             if report.tenant_id != auth.tenant_id {
                 return api_error(StatusCode::NOT_FOUND, "Report not found");
             }
-            return Json(report.clone()).into_response();
+            let status = match report.status {
+                ReportStatus::Pending => "pending",
+                ReportStatus::Completed => "completed",
+                ReportStatus::Failed => "failed",
+            }
+            .to_string();
+            let content = match &report.content {
+                Some(c) => serde_json::to_value(c).ok(),
+                None => None,
+            };
+            let record = llmtrace_core::ComplianceReportRecord {
+                id: report.id,
+                tenant_id: report.tenant_id,
+                report_type: report.report_type.to_string(),
+                status,
+                period_start: report.period_start,
+                period_end: report.period_end,
+                created_at: report.created_at,
+                completed_at: report.completed_at,
+                content,
+                error: report.error.clone(),
+            };
+            return Json(record).into_response();
         }
     }
 
@@ -448,6 +523,21 @@ pub async fn get_report(
 ///
 /// Reads from the persistent MetadataRepository for a complete list of
 /// reports that survive proxy restarts.
+#[utoipa::path(
+    get,
+    path = "/api/v1/reports",
+    params(
+        ListReportsParams
+    ),
+    responses(
+        (status = 200, description = "Paginated report records", body = ListReportsResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn list_reports(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -465,14 +555,12 @@ pub async fn list_reports(
         .with_offset(offset);
 
     match state.storage.metadata.list_reports(&query).await {
-        Ok(reports) => {
-            let body = serde_json::json!({
-                "data": reports,
-                "limit": limit,
-                "offset": offset,
-            });
-            Json(body).into_response()
-        }
+        Ok(reports) => Json(ListReportsResponse {
+            data: reports,
+            limit,
+            offset,
+        })
+        .into_response(),
         Err(e) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             &format!("Failed to list reports: {e}"),
