@@ -1172,7 +1172,11 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
 
     // High-precision findings bypass voting entirely
     for ballot in &ballots {
-        for finding in ballot.findings.iter().filter(|f| is_high_precision_finding(f)) {
+        for finding in ballot
+            .findings
+            .iter()
+            .filter(|f| is_high_precision_finding(f))
+        {
             let mut out = finding.clone();
             out.metadata.insert(
                 VOTING_RESULT_KEY.to_string(),

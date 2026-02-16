@@ -313,10 +313,7 @@ pub(crate) fn try_decode_evasions(text: &str) -> Vec<DecodedPayload> {
 
     // Homoglyphs: only if normalization differs and produces suspicious content
     let normalized = normalize_homoglyphs(text);
-    if normalized != text
-        && is_suspicious_decoded(&normalized)
-        && !is_suspicious_decoded(text)
-    {
+    if normalized != text && is_suspicious_decoded(&normalized) && !is_suspicious_decoded(text) {
         results.push(DecodedPayload {
             encoding: "homoglyph",
             decoded: normalized,
