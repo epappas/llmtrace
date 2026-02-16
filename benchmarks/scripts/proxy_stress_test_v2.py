@@ -227,8 +227,6 @@ def get_tenant_id() -> str:
     tenants = resp.json()
     if not tenants:
         return ""
-    # Pick the tenant with the most findings data (last one is usually the
-    # API-key derived tenant; auto-created header tenants have no data).
     best, best_count = tenants[0]["id"], 0
     for t in tenants:
         tid = t["id"]
@@ -244,9 +242,9 @@ def get_tenant_id() -> str:
     return best
 
 
-def fetch_findings(tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
+def fetch_spans(tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
     resp = requests.get(
-        f"{PROXY_URL}/api/v1/security/findings",
+        f"{PROXY_URL}/api/v1/spans",
         params={"limit": limit},
         headers={"X-LLMTrace-Tenant-ID": tenant_id},
         timeout=15,
@@ -359,14 +357,14 @@ def main() -> None:
         # Small stagger to avoid overwhelming the proxy
         time.sleep(0.3)
 
-    # Wait for async storage
-    print("\nWaiting 5s for storage flush...")
-    time.sleep(5)
+    # Wait for async storage (4 ML models need time to finish)
+    print("\nWaiting 15s for storage flush...")
+    time.sleep(15)
 
     # Fetch findings
     tenant_id = get_tenant_id()
     print(f"Tenant ID: {tenant_id}")
-    findings = fetch_findings(tenant_id, limit=2000)
+    findings = fetch_spans(tenant_id, limit=2000)
     print(f"Retrieved {len(findings)} spans\n")
 
     # Match findings to samples
@@ -375,7 +373,7 @@ def main() -> None:
         span = match_finding(findings, r["text_preview"][:80], run_start)
         if span:
             matched += 1
-            r["security_score"] = span.get("security_score", 0)
+            r["security_score"] = span.get("security_score") or 0
             sf = span.get("security_findings", [])
             r["num_findings"] = len(sf)
             r["finding_types"] = [f.get("finding_type", "") for f in sf]
