@@ -394,6 +394,7 @@ export default function TenantsPage() {
                   variant="outline" 
                   size="sm" 
                   className="h-7 text-xs"
+                  data-testid="reset-proxy-token-button"
                   onClick={() => handleResetToken(activeTenantKeys.tenantId)}
                 >
                   Reset
@@ -405,12 +406,13 @@ export default function TenantsPage() {
               {activeTenantKeys.apiToken ? (
                 <div className="flex items-center gap-2 rounded-md border bg-background p-2">
                   <code className="flex-1 font-mono text-xs break-all">
-                    {activeTenantKeys.apiToken}
+                    <span data-testid="proxy-token-value">{activeTenantKeys.apiToken}</span>
                   </code>
                   <Button
                     size="icon"
                     variant="ghost"
                     className="h-8 w-8"
+                    data-testid="copy-proxy-token-button"
                     onClick={() => copyToClipboard(activeTenantKeys.apiToken ?? "")}
                   >
                     {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -427,7 +429,11 @@ export default function TenantsPage() {
             <h3 className="text-sm font-semibold">API Keys (Dashboard Auth)</h3>
             <div className="space-y-3">
               {activeTenantKeys.keys.map(key => (
-                <div key={key.id} className="flex items-center justify-between rounded-md border bg-background p-3">
+                <div
+                  key={key.id}
+                  data-testid={`api-key-row-${key.id}`}
+                  className="flex items-center justify-between rounded-md border bg-background p-3"
+                >
                   <div className="space-y-1">
                     <p className="text-sm font-medium">{key.name}</p>
                     <p className="text-xs font-mono text-muted-foreground">Prefix: {key.key_prefix}</p>
@@ -437,6 +443,7 @@ export default function TenantsPage() {
                     <Button 
                       variant="ghost" 
                       size="icon" 
+                      data-testid={`revoke-api-key-${key.id}`}
                       onClick={() => handleRevokeKey(key.id, activeTenantKeys.tenantId)}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />

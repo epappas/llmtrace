@@ -12,6 +12,7 @@ import {
   Settings,
   User,
   FileCheck,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { listTenants, setStoredTenant, type Tenant, DEFAULT_TENANT_ID } from "@/lib/api";
@@ -23,6 +24,7 @@ const navItems = [
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/tenants", label: "Tenants", icon: Users },
   { href: "/compliance", label: "Compliance", icon: FileCheck },
+  { href: "/guide", label: "Guide", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
