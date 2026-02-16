@@ -345,6 +345,9 @@ pub(crate) fn short_input_threshold(base_threshold: f64, token_count: usize) -> 
     if token_count >= SHORT_INPUT_TOKEN_LIMIT {
         return base_threshold;
     }
+    if token_count <= 3 {
+        return 0.999;
+    }
     let ratio = token_count as f64 / SHORT_INPUT_TOKEN_LIMIT as f64;
     SHORT_INPUT_HIGH_THRESHOLD + ratio * (base_threshold - SHORT_INPUT_HIGH_THRESHOLD)
 }
@@ -1184,15 +1187,22 @@ mod tests {
     #[test]
     fn test_short_input_threshold_at_zero_tokens() {
         let result = short_input_threshold(0.5, 0);
-        assert!((result - SHORT_INPUT_HIGH_THRESHOLD).abs() < 1e-10);
+        // Ultra-short (<=3 tokens) returns 0.999
+        assert!((result - 0.999).abs() < 1e-10);
     }
 
     #[test]
     fn test_short_input_threshold_at_one_token() {
         let result = short_input_threshold(0.5, 1);
-        // ratio = 1/10 = 0.1
-        // 0.95 + 0.1 * (0.5 - 0.95) = 0.95 - 0.045 = 0.905
-        assert!((result - 0.905).abs() < 1e-10);
+        // Ultra-short (<=3 tokens) returns 0.999
+        assert!((result - 0.999).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_short_input_threshold_at_three_tokens() {
+        let result = short_input_threshold(0.5, 3);
+        // Ultra-short boundary (<=3 tokens) returns 0.999
+        assert!((result - 0.999).abs() < 1e-10);
     }
 
     #[test]

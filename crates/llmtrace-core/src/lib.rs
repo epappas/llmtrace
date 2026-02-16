@@ -143,6 +143,24 @@ pub const VOTING_MAJORITY: &str = "majority";
 /// Value indicating a finding came from a single detector only.
 pub const VOTING_SINGLE_DETECTOR: &str = "single_detector";
 
+/// Returns `true` if a finding type is auxiliary (informational, not a direct
+/// injection/attack indicator). Auxiliary findings should not drive the
+/// security score above the flagging threshold on their own.
+#[must_use]
+pub fn is_auxiliary_finding_type(finding_type: &str) -> bool {
+    matches!(
+        finding_type,
+        "is_hypothetical"
+            | "is_incentive"
+            | "is_urgent"
+            | "is_systemic"
+            | "is_covert"
+            | "is_immoral"
+            | "is_repeated_token"
+            | "context_flooding"
+    )
+}
+
 /// Pre-defined operating points that balance precision against recall.
 ///
 /// Used in [`SecurityAnalysisConfig`] and mapped to per-category thresholds
@@ -425,6 +443,11 @@ impl TraceSpan {
                     SecuritySeverity::Low => 30,
                     SecuritySeverity::Info => 10,
                 };
+                // Auxiliary (non-injection) findings: cap at 30 so they
+                // don't cross the flagging threshold (50) on their own
+                if is_auxiliary_finding_type(&f.finding_type) {
+                    return base.min(30);
+                }
                 // Discount single-detector findings: cap at Medium (60)
                 if f.metadata
                     .get(VOTING_RESULT_KEY)

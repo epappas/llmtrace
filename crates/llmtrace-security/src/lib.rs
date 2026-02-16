@@ -819,6 +819,117 @@ impl RegexSecurityAnalyzer {
                 0.85,
                 "shell_injection",
             ),
+            // --- Broader injection patterns (Loop 24) ---
+            (
+                "ignore_everything",
+                r"(?i)\bignore\s+(everything|all\b.*\b(you|been|told|said|given))",
+                SecuritySeverity::High,
+                0.9,
+                "prompt_injection",
+            ),
+            (
+                "conversation_boundary",
+                r"(?i)\[(end|beginning)\s+of\s+(new\s+)?(conversation|session|chat)\]",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_injection",
+            ),
+            (
+                "prompt_extraction",
+                r"(?i)(what\s+is|reveal|show|repeat|print)\s+(your|the)\s+(system\s+prompt|instructions|rules)",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_extraction",
+            ),
+            (
+                "secret_key_extraction",
+                r"(?i)(what\s+is|reveal|share)\s+(your|the)\s+(secret|api|access)\s*(key|token|password)",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_extraction",
+            ),
+            (
+                "no_restrictions_mode",
+                r"(?i)\b(no\s+restrictions?|without\s+(any\s+)?restrictions?|unrestricted|unfiltered)\b",
+                SecuritySeverity::Medium,
+                0.7,
+                "jailbreak",
+            ),
+            (
+                "repeated_token_flood",
+                r"(?i)(a{20,}|b{20,}|c{20,}|x{20,}|\.{20,}|!{20,}|\?{20,}|\*{20,})",
+                SecuritySeverity::Medium,
+                0.7,
+                "prompt_injection",
+            ),
+            // --- Data exfiltration patterns (Loop 24) ---
+            (
+                "curl_data_exfil",
+                r"(?i)\bcurl\b.{0,40}-[a-zA-Z]*d\b.{0,40}\$\(",
+                SecuritySeverity::High,
+                0.90,
+                "shell_injection",
+            ),
+            (
+                "requests_post_exfil",
+                r"(?i)requests\.(post|put)\s*\(.{0,60}(url|http)",
+                SecuritySeverity::High,
+                0.85,
+                "shell_injection",
+            ),
+            (
+                "file_move_to_tmp",
+                r"(?i)\b(move|copy|cp|mv)\b.{0,60}(/tmp|/var/tmp)\b",
+                SecuritySeverity::Medium,
+                0.75,
+                "shell_injection",
+            ),
+            (
+                "send_data_to_email",
+                r"(?i)\b(send|forward|email|share)\b.{0,60}\b\S+@\S+\.\S+",
+                SecuritySeverity::Medium,
+                0.75,
+                "data_exfiltration",
+            ),
+            // --- Multilingual injection (FN coverage) ---
+            (
+                "multilingual_ignore",
+                r"(?i)\b(ignorar|ignorer|ignoriere|ignorare)\b.{0,40}\b(instruc|previ|anter|vorher)",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_injection",
+            ),
+            // --- System prompt extraction variants ---
+            (
+                "system_prompt_says",
+                r"(?i)\bmy\s+system\s+prompt\s+(says|contains|reads|is)\b",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_extraction",
+            ),
+            (
+                "password_solicitation",
+                r"(?i)\b(tell|give|share|provide|send)\b.{0,20}\b(your|the)\s+(password|credentials|login)\b",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_extraction",
+            ),
+            // --- Short-form injection ---
+            (
+                "short_ignore_inject",
+                r"(?i)^ignore\s+(all\s+)?(previous\s+)?instructions?\b",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_injection",
+            ),
+            // --- Info overload injection ---
+            (
+                "info_overload_inject",
+                r"(?i)\b(ignore|disregard)\b.{200,}\b(instead|now\s+do|actually)\b",
+                SecuritySeverity::High,
+                0.85,
+                "prompt_injection",
+            ),
         ])
     }
 
