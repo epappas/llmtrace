@@ -489,27 +489,47 @@ impl EnsembleSecurityAnalyzer {
         kept
     }
 
-    /// Suppress single-detector injection findings when over-defence mitigation is active.
-    ///
-    /// Keeps a finding only if it has multi-detector agreement OR is not an
-    /// injection finding (PII, toxicity, etc. pass through unconditionally).
+    /// Suppress ML-only single-detector injection findings when no regex
+    /// corroboration exists. Non-injection findings (PII, toxicity, etc.) pass
+    /// through unconditionally.
     fn apply_over_defence(&self, findings: Vec<SecurityFinding>) -> Vec<SecurityFinding> {
         if !self.over_defence_enabled {
             return findings;
         }
-        // If any injection finding exists, keep everything
-        if findings.iter().any(is_injection_finding) {
+        // With 3+ ballots (IG/PG active), majority voting handles FP control
+        if self.is_injecguard_active() || self.is_piguard_active() {
             return findings;
         }
-        // Only auxiliary findings remain — suppress them to reduce false positives
-        let count = findings.len();
-        if count > 0 {
+        // If any injection finding has majority agreement, keep everything
+        if findings.iter().any(|f| {
+            is_injection_finding(f)
+                && f.metadata
+                    .get(VOTING_RESULT_KEY)
+                    .is_some_and(|v| v == VOTING_MAJORITY)
+        }) {
+            return findings;
+        }
+        // If any regex-originated injection finding exists, keep everything
+        if findings
+            .iter()
+            .any(|f| is_injection_finding(f) && !is_ml_only_finding(f))
+        {
+            return findings;
+        }
+        // Only ML-based single-detector injection findings remain — suppress them
+        let before = findings.len();
+        let kept: Vec<SecurityFinding> = findings
+            .into_iter()
+            .filter(|f| !is_injection_finding(f))
+            .collect();
+        let suppressed = before - kept.len();
+        if suppressed > 0 {
             tracing::info!(
-                suppressed_count = count,
-                "over-defence: suppressed auxiliary-only findings (no injection corroboration)"
+                suppressed_count = suppressed,
+                "over-defence: suppressed ML-only single-detector injection findings"
             );
         }
-        Vec::new()
+        kept
     }
 
     /// When no injection was found in the initial pass, try decoding evasion
@@ -903,7 +923,21 @@ fn is_injection_finding(finding: &SecurityFinding) -> bool {
             | "synonym_injection"
             | "p2sql_injection"
             | "shell_injection"
+            | "prompt_extraction"
+            | "data_exfiltration"
             | "ml_prompt_injection"
+            | "injecguard_injection"
+            | "piguard_injection"
+            | "fusion_prompt_injection"
+    )
+}
+
+/// Returns `true` if a finding originated from an ML-only detector
+/// (not from regex patterns).
+fn is_ml_only_finding(finding: &SecurityFinding) -> bool {
+    matches!(
+        finding.finding_type.as_str(),
+        "ml_prompt_injection"
             | "injecguard_injection"
             | "piguard_injection"
             | "fusion_prompt_injection"
@@ -1096,17 +1130,31 @@ fn combine_findings(
     combine_with_voting(ballots)
 }
 
+/// Returns `true` if a finding type is high-precision (should bypass majority voting).
+///
+/// These patterns have very low false positive rates by design (e.g. `curl | sh`,
+/// `python -c socket`, `rm -rf /`). Requiring ML corroboration would suppress
+/// true positives that ML models are not trained to detect.
+fn is_high_precision_finding(finding: &SecurityFinding) -> bool {
+    matches!(
+        finding.finding_type.as_str(),
+        "shell_injection" | "data_exfiltration" | "p2sql_injection"
+    )
+}
+
 /// Combine findings from multiple detectors using majority voting (ML-006).
 ///
 /// 1. Non-injection findings from all ballots always pass through.
-/// 2. Count how many ballots contain injection findings (agree_count).
-/// 3. Compute majority threshold:
+/// 2. High-precision injection findings (shell_injection, data_exfiltration)
+///    bypass voting and pass through from any detector.
+/// 3. Count how many ballots contain injection findings (agree_count).
+/// 4. Compute majority threshold:
 ///    - N>=3: true majority (N/2+1), e.g. 2/3 needed
 ///    - N<=2: any detector sufficient (backward compatible with union merge)
-/// 4. If agree_count >= majority: include injection findings from agreeing
+/// 5. If agree_count >= majority: include injection findings from agreeing
 ///    ballots. Multi-detector agreement applies +0.1 confidence boost,
 ///    max severity escalation, and voting metadata.
-/// 5. If agree_count < majority: suppress all injection findings.
+/// 6. If agree_count < majority: suppress remaining injection findings.
 fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
     let n = ballots.len();
     assert!(n >= 1, "At least one ballot required");
@@ -1122,8 +1170,29 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
         .cloned()
         .collect();
 
-    // Count agreeing detectors
-    let agreeing: Vec<&InjectionBallot> = ballots.iter().filter(|b| b.has_injection()).collect();
+    // High-precision findings bypass voting entirely
+    for ballot in &ballots {
+        for finding in ballot.findings.iter().filter(|f| is_high_precision_finding(f)) {
+            let mut out = finding.clone();
+            out.metadata.insert(
+                VOTING_RESULT_KEY.to_string(),
+                VOTING_SINGLE_DETECTOR.to_string(),
+            );
+            out.metadata
+                .insert("voting_bypass".to_string(), "high_precision".to_string());
+            result.push(out);
+        }
+    }
+
+    // Count agreeing detectors (only considering non-high-precision injection findings)
+    let agreeing: Vec<&InjectionBallot> = ballots
+        .iter()
+        .filter(|b| {
+            b.findings
+                .iter()
+                .any(|f| is_injection_finding(f) && !is_high_precision_finding(f))
+        })
+        .collect();
     let agree_count = agreeing.len();
 
     if agree_count < majority {
@@ -1138,13 +1207,17 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
     let max_severity = agreeing
         .iter()
         .flat_map(|b| b.injection_findings())
+        .filter(|f| !is_high_precision_finding(f))
         .map(|f| &f.severity)
         .max()
         .cloned()
         .unwrap_or(SecuritySeverity::Medium);
 
     for ballot in &agreeing {
-        for finding in ballot.injection_findings() {
+        for finding in ballot
+            .injection_findings()
+            .filter(|f| !is_high_precision_finding(f))
+        {
             let mut out = finding.clone();
             if multi_agreement {
                 out.confidence_score = (out.confidence_score + AGREEMENT_BOOST).min(1.0);
