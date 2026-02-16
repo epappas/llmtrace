@@ -17,6 +17,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::proxy::AppState;
@@ -107,7 +108,9 @@ pub async fn auth_middleware(
     // Allow health endpoint without auth so liveness/startup checks work even
     // when authentication is enabled.
     let path = req.uri().path();
-    if path == "/health" {
+    // Swagger/OpenAPI docs are also served without auth so operators can
+    // inspect the API surface even before bootstrap keys are configured.
+    if path == "/health" || path.starts_with("/swagger-ui") || path.starts_with("/api-doc") {
         return next.run(req).await;
     }
 
@@ -232,9 +235,10 @@ pub fn require_role(extensions: &axum::http::Extensions, required: ApiKeyRole) -
 // ---------------------------------------------------------------------------
 
 /// Request body for `POST /api/v1/auth/keys`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateApiKeyRequest {
     /// Tenant ID to create the key for.
+    #[schema(value_type = String, format = "uuid")]
     pub tenant_id: Uuid,
     /// Human-readable name for the key.
     pub name: String,
@@ -243,9 +247,10 @@ pub struct CreateApiKeyRequest {
 }
 
 /// Successful response from `POST /api/v1/auth/keys` — includes plaintext key once.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateApiKeyResponse {
     /// The key ID.
+    #[schema(value_type = String, format = "uuid")]
     pub id: Uuid,
     /// The plaintext API key — shown only once, store it securely.
     pub key: String,
@@ -256,17 +261,18 @@ pub struct CreateApiKeyResponse {
     /// Role granted by this key.
     pub role: ApiKeyRole,
     /// When the key was created.
+    #[schema(value_type = String, format = "date-time")]
     pub created_at: chrono::DateTime<Utc>,
 }
 
 /// API error response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiError {
     error: ApiErrorDetail,
 }
 
 /// Inner error detail.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiErrorDetail {
     message: String,
     #[serde(rename = "type")]
@@ -278,6 +284,21 @@ struct ApiErrorDetail {
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/auth/keys` — create a new API key (admin only).
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/keys",
+    request_body = CreateApiKeyRequest,
+    responses(
+        (status = 201, description = "API key created", body = CreateApiKeyResponse),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn create_api_key(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
     // Require admin role
     if let Some(err) = require_role(req.extensions(), ApiKeyRole::Admin) {
@@ -370,6 +391,19 @@ pub async fn create_api_key(State(state): State<Arc<AppState>>, req: Request<Bod
 }
 
 /// `GET /api/v1/auth/keys` — list API keys for the authenticated tenant (admin only).
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/keys",
+    responses(
+        (status = 200, description = "List of API keys", body = [llmtrace_core::ApiKeyRecord]),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn list_api_keys(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
     if let Some(err) = require_role(req.extensions(), ApiKeyRole::Admin) {
         return err;
@@ -391,6 +425,23 @@ pub async fn list_api_keys(State(state): State<Arc<AppState>>, req: Request<Body
 }
 
 /// `DELETE /api/v1/auth/keys/:id` — revoke an API key (admin only).
+#[utoipa::path(
+    delete,
+    path = "/api/v1/auth/keys/{id}",
+    params(
+        ("id" = String, Path, description = "ID of the API key to revoke"),
+    ),
+    responses(
+        (status = 204, description = "API key revoked"),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn revoke_api_key(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(key_id): axum::extract::Path<Uuid>,

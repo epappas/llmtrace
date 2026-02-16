@@ -15,6 +15,7 @@ pub mod cost_caps;
 pub mod enforcement;
 pub mod grpc;
 pub mod metrics;
+pub mod openapi;
 pub mod otel;
 pub mod provider;
 pub mod proxy;

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, CheckCircle, XCircle } from "lucide-react";
+import { RefreshCw, CheckCircle, XCircle, ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -13,12 +13,20 @@ interface HealthStatus {
   security?: { healthy: boolean };
 }
 
+function joinUrl(base: string, path: string): string {
+  const trimmedBase = base.replace(/\/+$/, "");
+  const trimmedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${trimmedBase}${trimmedPath}`;
+}
+
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [apiUrl] = useState(
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080",
   );
+  const swaggerUiUrl = joinUrl(apiUrl, "/swagger-ui/");
+  const openApiJsonUrl = joinUrl(apiUrl, "/api-doc/openapi.json");
 
   async function checkHealth() {
     console.log("[Settings] Checking health via API helper...");
@@ -128,60 +136,36 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle className="text-base">API Endpoints</CardTitle>
           <CardDescription>
-            Available LLMTrace REST API endpoints.
+            Interactive Swagger UI served by the LLMTrace proxy.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-4 py-2 text-left font-medium">Method</th>
-                  <th className="px-4 py-2 text-left font-medium">Path</th>
-                  <th className="px-4 py-2 text-left font-medium">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ["GET", "/health", "Health check"],
-                  ["GET", "/metrics", "Prometheus metrics"],
-                  ["GET", "/api/v1/traces", "List traces with filters"],
-                  ["GET", "/api/v1/traces/:id", "Get trace with all spans"],
-                  ["POST", "/api/v1/traces/:id/actions", "Report agent actions"],
-                  ["GET", "/api/v1/actions/summary", "Aggregate agent actions"],
-                  ["GET", "/api/v1/spans", "List spans with filters"],
-                  ["GET", "/api/v1/spans/:id", "Get a single span"],
-                  ["GET", "/api/v1/stats", "Storage statistics"],
-                  ["GET", "/api/v1/security/findings", "Spans with security findings"],
-                  ["GET", "/api/v1/costs/current", "Current spend per budget window"],
-                  ["GET", "/api/v1/tenants", "List tenants"],
-                  ["POST", "/api/v1/tenants", "Create tenant"],
-                  ["GET", "/api/v1/tenants/:id", "Get tenant by ID"],
-                  ["PUT", "/api/v1/tenants/:id", "Update tenant"],
-                  ["DELETE", "/api/v1/tenants/:id", "Delete tenant"],
-                  ["GET", "/api/v1/tenants/current/token", "Get current tenant API token"],
-                  ["GET", "/api/v1/tenants/:id/token", "Get tenant API token (Admin)"],
-                  ["POST", "/api/v1/tenants/:id/token/reset", "Reset tenant API token"],
-                  ["POST", "/api/v1/auth/keys", "Create API key"],
-                  ["GET", "/api/v1/auth/keys", "List API keys"],
-                  ["DELETE", "/api/v1/auth/keys/:id", "Revoke API key"],
-                  ["POST", "/api/v1/reports/generate", "Generate compliance report"],
-                  ["GET", "/api/v1/reports", "List compliance reports"],
-                  ["GET", "/api/v1/reports/:id", "Get compliance report by ID"],
-                  ["POST", "/v1/traces", "OTLP trace ingestion (gRPC gateway)"],
-                ].map(([method, path, desc], i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="px-4 py-2">
-                      <Badge variant={method === "GET" ? "secondary" : "default"}>
-                        {method}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-2 font-mono text-xs">{path}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{desc}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button asChild variant="outline" size="sm">
+                <a href={swaggerUiUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Swagger UI
+                </a>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <a href={openApiJsonUrl} target="_blank" rel="noreferrer">
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open OpenAPI JSON
+                </a>
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Uses <span className="font-mono">NEXT_PUBLIC_API_URL</span> ({apiUrl})
+              </span>
+            </div>
+
+            <div className="rounded-md border">
+              <iframe
+                title="LLMTrace Swagger UI"
+                src={swaggerUiUrl}
+                className="h-[70vh] w-full rounded-md"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

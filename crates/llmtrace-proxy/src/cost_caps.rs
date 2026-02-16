@@ -11,6 +11,7 @@ use llmtrace_core::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, warn};
+use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Enforcement results
@@ -49,7 +50,7 @@ pub enum CapCheckResult {
 // ---------------------------------------------------------------------------
 
 /// Current spend for a single budget window.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WindowSpend {
     /// The budget window.
     pub window: BudgetWindow,
@@ -66,7 +67,7 @@ pub struct WindowSpend {
 }
 
 /// Spend snapshot across all windows for a tenant/agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SpendSnapshot {
     /// Tenant ID.
     pub tenant_id: String,

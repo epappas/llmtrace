@@ -26,11 +26,24 @@ use crate::proxy::AppState;
 // Response types
 // ---------------------------------------------------------------------------
 
-/// Paginated API response wrapper.
-#[derive(Debug, Serialize)]
-pub struct PaginatedResponse<T: Serialize> {
+/// Paginated response for trace events.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PaginatedTracesResponse {
     /// The data items for this page.
-    pub data: Vec<T>,
+    pub data: Vec<llmtrace_core::TraceEvent>,
+    /// Total number of matching items (before pagination).
+    pub total: u64,
+    /// Maximum items per page.
+    pub limit: u32,
+    /// Number of items skipped.
+    pub offset: u32,
+}
+
+/// Paginated response for spans (used by security findings list).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PaginatedSpansResponse {
+    /// The data items for this page.
+    pub data: Vec<llmtrace_core::TraceSpan>,
     /// Total number of matching items (before pagination).
     pub total: u64,
     /// Maximum items per page.
@@ -79,11 +92,13 @@ struct ApiErrorDetail {
 // ---------------------------------------------------------------------------
 
 /// Query parameters for `GET /api/v1/traces`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct ListTracesParams {
     /// Filter traces starting after this time (RFC 3339).
+    #[param(value_type = String, format = "date-time")]
     pub start_time: Option<DateTime<Utc>>,
     /// Filter traces ending before this time (RFC 3339).
+    #[param(value_type = String, format = "date-time")]
     pub end_time: Option<DateTime<Utc>>,
     /// Filter by LLM provider name.
     pub provider: Option<String>,
@@ -117,7 +132,7 @@ pub struct ListSpansParams {
 }
 
 /// Query parameters for `GET /api/v1/security/findings`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct ListFindingsParams {
     /// Maximum number of results (default 50, max 1000).
     pub limit: Option<u32>,
@@ -197,6 +212,21 @@ fn api_error(status: StatusCode, message: &str) -> Response {
 ///
 /// Supports filtering by time range, provider, and model. Results are
 /// paginated via `limit` and `offset` query parameters.
+#[utoipa::path(
+    get,
+    path = "/api/v1/traces",
+    params(
+        ListTracesParams
+    ),
+    responses(
+        (status = 200, description = "Paginated list of traces", body = PaginatedTracesResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn list_traces(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -226,7 +256,7 @@ pub async fn list_traces(
                 .skip(offset as usize)
                 .take(limit as usize)
                 .collect();
-            Json(PaginatedResponse {
+            Json(PaginatedTracesResponse {
                 data,
                 total,
                 limit,
@@ -239,6 +269,22 @@ pub async fn list_traces(
 }
 
 /// `GET /api/v1/traces/:trace_id` — get a single trace with all spans.
+#[utoipa::path(
+    get,
+    path = "/api/v1/traces/{trace_id}",
+    params(
+        ("trace_id" = String, Path, description = "Trace ID"),
+    ),
+    responses(
+        (status = 200, description = "Trace event", body = llmtrace_core::TraceEvent),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Trace not found", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_trace(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -381,6 +427,18 @@ pub async fn get_span(
 }
 
 /// `GET /api/v1/stats` — storage statistics for the tenant.
+#[utoipa::path(
+    get,
+    path = "/api/v1/stats",
+    responses(
+        (status = 200, description = "Stats", body = llmtrace_core::StorageStats),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -401,6 +459,22 @@ pub async fn get_stats(
 /// Returns the current spend for the tenant (and optionally a specific agent)
 /// across all configured budget windows, including remaining budget and
 /// utilization percentage.
+#[utoipa::path(
+    get,
+    path = "/api/v1/costs/current",
+    params(
+        CostQueryParams
+    ),
+    responses(
+        (status = 200, description = "Current spend snapshot", body = crate::cost_caps::SpendSnapshot),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Cost caps are not enabled", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_current_costs(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -424,7 +498,7 @@ pub async fn get_current_costs(
 }
 
 /// Query parameters for `GET /api/v1/costs/current`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
 pub struct CostQueryParams {
     /// Optional agent ID to filter spend for.
     pub agent_id: Option<String>,
@@ -433,6 +507,21 @@ pub struct CostQueryParams {
 /// `GET /api/v1/security/findings` — spans with security findings.
 ///
 /// Returns all spans where `security_score > 0`, paginated.
+#[utoipa::path(
+    get,
+    path = "/api/v1/security/findings",
+    params(
+        ListFindingsParams
+    ),
+    responses(
+        (status = 200, description = "Paginated list of spans with security findings", body = PaginatedSpansResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn list_security_findings(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -456,7 +545,7 @@ pub async fn list_security_findings(
                 .skip(offset as usize)
                 .take(limit as usize)
                 .collect();
-            Json(PaginatedResponse {
+            Json(PaginatedSpansResponse {
                 data,
                 total,
                 limit,
@@ -473,7 +562,7 @@ pub async fn list_security_findings(
 // ---------------------------------------------------------------------------
 
 /// Request body for `POST /api/v1/traces/:trace_id/actions`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ReportActionRequest {
     /// Type of action: "tool_call", "skill_invocation", "command_execution",
     /// "web_access", "file_access".
@@ -529,6 +618,34 @@ fn parse_action_type(s: &str) -> Option<AgentActionType> {
 ///
 /// Appends an action to the first span of the given trace. If the trace has
 /// no spans, returns 404.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReportActionResponse {
+    /// Whether the action was stored.
+    pub status: String,
+    /// ID of the created action.
+    pub action_id: String,
+    /// Trace ID the action was attached to.
+    pub trace_id: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/traces/{trace_id}/actions",
+    params(
+        ("trace_id" = String, Path, description = "Trace ID"),
+    ),
+    request_body = ReportActionRequest,
+    responses(
+        (status = 200, description = "Action stored", body = ReportActionResponse),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Trace not found", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn report_action(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -594,18 +711,18 @@ pub async fn report_action(
     span.add_agent_action(action.clone());
 
     match state.storage.traces.store_span(&span).await {
-        Ok(()) => Json(serde_json::json!({
-            "status": "ok",
-            "action_id": action.id.to_string(),
-            "trace_id": trace_id.to_string(),
-        }))
+        Ok(()) => Json(ReportActionResponse {
+            status: "ok".to_string(),
+            action_id: action.id.to_string(),
+            trace_id: trace_id.to_string(),
+        })
         .into_response(),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 /// Response type for the actions summary endpoint.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ActionsSummary {
     /// Total number of spans scanned.
     pub total_spans: u64,
@@ -622,7 +739,7 @@ pub struct ActionsSummary {
 }
 
 /// Action name with its frequency count.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ActionFrequency {
     /// Action name.
     pub name: String,
@@ -633,6 +750,21 @@ pub struct ActionFrequency {
 }
 
 /// `GET /api/v1/actions/summary` — aggregate view of agent actions.
+#[utoipa::path(
+    get,
+    path = "/api/v1/actions/summary",
+    params(
+        ListSpansParams
+    ),
+    responses(
+        (status = 200, description = "Actions summary", body = ActionsSummary),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn actions_summary(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,

@@ -12,6 +12,7 @@ use chrono::Utc;
 use llmtrace_core::{ApiKeyRole, AuditEvent, AuthContext, Tenant, TenantId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::proxy::AppState;
@@ -21,7 +22,7 @@ use crate::proxy::AppState;
 // ---------------------------------------------------------------------------
 
 /// Request body for `POST /api/v1/tenants`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateTenantRequest {
     /// Human-readable tenant name.
     pub name: String,
@@ -34,7 +35,7 @@ pub struct CreateTenantRequest {
 }
 
 /// Response body for `POST /api/v1/tenants`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateTenantResponse {
     /// The created tenant metadata.
     #[serde(flatten)]
@@ -44,7 +45,7 @@ pub struct CreateTenantResponse {
 }
 
 /// Request body for `PUT /api/v1/tenants/:id`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTenantRequest {
     /// Updated tenant name (optional).
     pub name: Option<String>,
@@ -55,17 +56,24 @@ pub struct UpdateTenantRequest {
 }
 
 /// API error response body.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiError {
     error: ApiErrorDetail,
 }
 
 /// Inner error detail.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct ApiErrorDetail {
     message: String,
     #[serde(rename = "type")]
     error_type: String,
+}
+
+/// Response body for tenant token endpoints.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TenantTokenResponse {
+    /// Tenant token used for proxy traffic (`X-LLMTrace-Token`).
+    pub api_token: String,
 }
 
 fn default_plan() -> String {
@@ -147,6 +155,20 @@ fn require_admin(auth: &AuthContext) -> Option<Response> {
 }
 
 /// `POST /api/v1/tenants` — create a new tenant.
+#[utoipa::path(
+    post,
+    path = "/api/v1/tenants",
+    request_body = CreateTenantRequest,
+    responses(
+        (status = 201, description = "Tenant created", body = CreateTenantResponse),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn create_tenant(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -230,6 +252,18 @@ pub async fn create_tenant(
 }
 
 /// `GET /api/v1/tenants` — list all tenants.
+#[utoipa::path(
+    get,
+    path = "/api/v1/tenants",
+    responses(
+        (status = 200, description = "Tenants", body = [Tenant]),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn list_tenants(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -244,6 +278,22 @@ pub async fn list_tenants(
 }
 
 /// `GET /api/v1/tenants/:id` — get tenant details.
+#[utoipa::path(
+    get,
+    path = "/api/v1/tenants/{id}",
+    params(
+        ("id" = String, Path, description = "Tenant ID"),
+    ),
+    responses(
+        (status = 200, description = "Tenant", body = Tenant),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_tenant(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -261,6 +311,24 @@ pub async fn get_tenant(
 }
 
 /// `PUT /api/v1/tenants/:id` — update tenant name, plan, or config.
+#[utoipa::path(
+    put,
+    path = "/api/v1/tenants/{id}",
+    params(
+        ("id" = String, Path, description = "Tenant ID"),
+    ),
+    request_body = UpdateTenantRequest,
+    responses(
+        (status = 200, description = "Updated tenant", body = Tenant),
+        (status = 400, description = "Bad request", body = ApiError),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn update_tenant(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -305,6 +373,22 @@ pub async fn update_tenant(
 }
 
 /// `DELETE /api/v1/tenants/:id` — delete a tenant.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/tenants/{id}",
+    params(
+        ("id" = String, Path, description = "Tenant ID"),
+    ),
+    responses(
+        (status = 204, description = "Tenant deleted"),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn delete_tenant(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -339,20 +423,49 @@ pub async fn delete_tenant(
 }
 
 /// `GET /api/v1/tenants/current/token` — get the API token for the currently authenticated tenant.
+#[utoipa::path(
+    get,
+    path = "/api/v1/tenants/current/token",
+    responses(
+        (status = 200, description = "Current tenant token", body = TenantTokenResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_current_tenant_token(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
 ) -> Response {
     match state.metadata().get_tenant(auth.tenant_id).await {
-        Ok(Some(tenant)) => {
-            Json(serde_json::json!({ "api_token": tenant.api_token })).into_response()
-        }
+        Ok(Some(tenant)) => Json(TenantTokenResponse {
+            api_token: tenant.api_token,
+        })
+        .into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 /// `GET /api/v1/tenants/:id/token` — retrieve the API token for a specific tenant (Admin only).
+#[utoipa::path(
+    get,
+    path = "/api/v1/tenants/{id}/token",
+    params(
+        ("id" = String, Path, description = "Tenant ID"),
+    ),
+    responses(
+        (status = 200, description = "Tenant token", body = TenantTokenResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn get_tenant_token(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -362,15 +475,32 @@ pub async fn get_tenant_token(
         return err;
     }
     match state.metadata().get_tenant(TenantId(id)).await {
-        Ok(Some(tenant)) => {
-            Json(serde_json::json!({ "api_token": tenant.api_token })).into_response()
-        }
+        Ok(Some(tenant)) => Json(TenantTokenResponse {
+            api_token: tenant.api_token,
+        })
+        .into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
 
 /// `POST /api/v1/tenants/:id/token/reset` — regenerate the API token for a tenant.
+#[utoipa::path(
+    post,
+    path = "/api/v1/tenants/{id}/token/reset",
+    params(
+        ("id" = String, Path, description = "Tenant ID"),
+    ),
+    responses(
+        (status = 200, description = "New tenant token", body = TenantTokenResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 404, description = "Tenant not found", body = ApiError),
+        (status = 500, description = "Internal server error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
 pub async fn reset_tenant_token(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
@@ -401,7 +531,10 @@ pub async fn reset_tenant_token(
                 serde_json::json!({ "note": "API token regenerated" }),
             )
             .await;
-            Json(serde_json::json!({ "api_token": new_token })).into_response()
+            Json(TenantTokenResponse {
+                api_token: new_token,
+            })
+            .into_response()
         }
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }

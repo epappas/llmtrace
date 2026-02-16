@@ -15,6 +15,7 @@ use llmtrace_proxy::circuit_breaker::CircuitBreaker;
 use llmtrace_proxy::config;
 use llmtrace_proxy::cost::CostEstimator;
 use llmtrace_proxy::cost_caps::CostTracker;
+use llmtrace_proxy::openapi::ApiDoc;
 use llmtrace_proxy::proxy::{health_handler, proxy_handler, AppState, MlModelStatus};
 use llmtrace_proxy::shutdown::{self, ShutdownCoordinator};
 use llmtrace_security::RegexSecurityAnalyzer;
@@ -23,6 +24,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -601,6 +604,8 @@ fn build_router(state: Arc<AppState>) -> Router {
         .allow_headers(Any);
 
     Router::new()
+        // OpenAPI / Swagger UI (served by the proxy itself, not forwarded upstream).
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-doc/openapi.json", ApiDoc::openapi()))
         .route("/health", get(health_handler))
         .route("/metrics", get(llmtrace_proxy::metrics::metrics_handler))
         // Auth key management API
