@@ -15,7 +15,7 @@ How to cut a new release of LLMTrace. A single `v*` tag triggers the full pipeli
 ### 1. Bump the version
 
 ```bash
-./scripts/bump-version.sh 0.2.0
+./scripts/release.sh 0.2.0
 ```
 
 This updates:
@@ -108,7 +108,7 @@ llmtrace-security = { path = "crates/llmtrace-security", version = "0.1.3" }
 
 The `version` field alongside `path` is required for crates.io -- path is stripped during publish, so crates.io needs the version to resolve dependencies.
 
-The bump script (`scripts/bump-version.sh`) updates all four version strings in one command.
+The release script (`scripts/release.sh`) updates all four version strings in one command.
 
 ## Validation
 
@@ -144,7 +144,7 @@ If you forget to bump before tagging:
 ```bash
 git tag -d v0.2.0
 git push origin :refs/tags/v0.2.0
-./scripts/bump-version.sh 0.2.0
+./scripts/release.sh 0.2.0
 git add Cargo.toml Cargo.lock
 git commit -m "release: v0.2.0"
 git tag v0.2.0

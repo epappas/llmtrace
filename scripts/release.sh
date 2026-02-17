@@ -37,6 +37,7 @@ cargo check --workspace 2>/dev/null && echo "cargo check passed" || echo "WARNIN
 
 echo ""
 echo "Next steps:"
+echo "  git add Cargo.toml Cargo.lock"
 echo "  git commit -m \"release: v$VERSION\""
 echo "  git tag v$VERSION"
 echo "  git push && git push --tags"
