@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-02-17
+
+- release: v0.1.2 (943e950)
+- feat(release): rename packages to llmtrace for cargo/pip install (0daa0da)
+- changelog: update for v0.1.1 (e19f4ee)
+
 ## [0.1.1] - 2026-02-17
 
 - fix(ci): pin python interpreter for aarch64 wheels, resilient job deps (abab87f)
