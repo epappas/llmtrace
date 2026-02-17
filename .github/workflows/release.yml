@@ -257,7 +257,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: --release --out dist -i python3.12
           manylinux: auto
           working-directory: crates/llmtrace-python
 
@@ -270,6 +270,7 @@ jobs:
   publish-pypi-upload:
     name: Publish to PyPI
     needs: publish-pypi
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -350,6 +351,7 @@ jobs:
   github-release:
     name: GitHub Release
     needs: [validate, docker, publish-crates, publish-pypi-upload, build-binaries]
+    if: always() && needs.validate.result == 'success' && needs.docker.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
