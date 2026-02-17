@@ -1,5 +1,5 @@
 [package]
-name = "llmtrace-proxy"
+name = "llmtrace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

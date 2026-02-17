@@ -553,7 +553,7 @@ fn instrument(
 
 /// LLMTrace Python bindings.
 #[pymodule]
-fn llmtrace_python(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn llmtrace(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     m.add_class::<PyLLMSecTracer>()?;

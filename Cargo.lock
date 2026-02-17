@@ -2327,41 +2327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
-name = "llmtrace-benchmarks"
-version = "0.1.1"
-dependencies = [
- "candle-core",
- "candle-nn",
- "chrono",
- "clap",
- "criterion",
- "llmtrace-core",
- "llmtrace-security",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "safetensors 0.4.5",
- "serde",
- "serde_json",
- "tokio",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "llmtrace-core"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "llmtrace-proxy"
+name = "llmtrace"
 version = "0.1.1"
 dependencies = [
  "anyhow",
@@ -2403,6 +2369,40 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+ "uuid",
+]
+
+[[package]]
+name = "llmtrace-benchmarks"
+version = "0.1.1"
+dependencies = [
+ "candle-core",
+ "candle-nn",
+ "chrono",
+ "clap",
+ "criterion",
+ "llmtrace-core",
+ "llmtrace-security",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "safetensors 0.4.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "llmtrace-core"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "utoipa",
  "uuid",
 ]
 

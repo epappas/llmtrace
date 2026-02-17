@@ -9,7 +9,7 @@ description = "Python bindings for LLMTrace via PyO3"
 publish = false
 
 [lib]
-name = "llmtrace_python"
+name = "llmtrace"
 crate-type = ["cdylib"]
 
 [dependencies]

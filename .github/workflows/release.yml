@@ -55,11 +55,25 @@ jobs:
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
           # Generate release body for GitHub Release
+          {
+            echo "### Install"
+            echo ""
+            echo '```bash'
+            echo "cargo install llmtrace       # Rust proxy"
+            echo "pip install llmtrace          # Python SDK"
+            echo "docker pull ghcr.io/epappas/llmtrace-proxy:$VERSION"
+            echo '```'
+            echo ""
+            echo "- [crates.io/crates/llmtrace](https://crates.io/crates/llmtrace)"
+            echo "- [pypi.org/project/llmtrace](https://pypi.org/project/llmtrace)"
+            echo ""
+          } > changelog.md
+
           if [ -n "$PREV_TAG" ]; then
-            echo "## Changes since $PREV_TAG" > changelog.md
+            echo "### Changes since $PREV_TAG" >> changelog.md
             git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD >> changelog.md
           else
-            echo "## Initial Release" > changelog.md
+            echo "### Changes" >> changelog.md
             git log --pretty=format:"- %s (%h)" >> changelog.md
           fi
 
@@ -226,7 +240,7 @@ jobs:
           publish llmtrace-security
           sleep 30
           publish llmtrace-sdk
-          publish llmtrace-proxy
+          publish llmtrace
 
   # ---------------------------------------------------------------------------
   # Job 5: Build Python wheels and publish to PyPI
