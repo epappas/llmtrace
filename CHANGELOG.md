@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-02-17
+
+- fix(release): add musl C++ compiler for static Linux binary build (92020c2)
+- release: v0.1.4 (acc1ee3)
+- fix(release): build static Linux binary with musl target (9ee1885)
+- feat(scripts): add one-line installer script (a13a376)
+- fix(docs): add missing --features ml flag, HEALTHCHECK, and GHCR image path (4b6fd68)
+- refactor(scripts): rename bump-version.sh to release.sh (32a6a25)
+- docs(guides): add release runbook (41a814a)
+- changelog: update for v0.1.3 (972ad28)
+- changelog: update for v0.1.2 (bbeed06)
+- docs: update install instructions with cargo/pip/docker references (36626ea)
+
 ## [0.1.3] - 2026-02-17
 
 - release: v0.1.3 (f7dfa0f)
