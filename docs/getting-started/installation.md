@@ -6,12 +6,31 @@ This guide covers supported ways to run LLMTrace as implemented in this reposito
 
 | Method | Best For | Notes |
 |--------|----------|-------|
-| `cargo install` | Quickest install | Pre-built from [crates.io](https://crates.io/crates/llmtrace) |
+| Install script | Quickest install | Downloads binary + config in one command |
+| `cargo install` | Rust users | Pre-built from [crates.io](https://crates.io/crates/llmtrace) |
 | `pip install` | Python SDK | Pre-built from [PyPI](https://pypi.org/project/llmtracing/) |
 | Docker (GHCR) | Containerized runs | Pre-built multi-arch image from GHCR |
 | From source | Development | Uses local Rust toolchain |
 | Docker Compose | Local infra/dev stack | Starts ClickHouse/Postgres/Redis and dashboard |
 | Helm chart | Kubernetes clusters | Chart under `deployments/helm/llmtrace` |
+
+---
+
+## Install Script (Recommended)
+
+Downloads the latest binary for your platform (Linux amd64, macOS arm64) and a starter config:
+
+```bash
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
+```
+
+Options via environment variables:
+
+```bash
+LLMTRACE_VERSION=0.1.3 curl -sS .../install.sh | bash   # pin version
+LLMTRACE_INSTALL=~/bin curl -sS .../install.sh | bash    # custom install dir
+LLMTRACE_NO_CONFIG=1 curl -sS .../install.sh | bash      # skip config download
+```
 
 ---
 

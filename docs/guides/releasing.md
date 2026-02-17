@@ -65,6 +65,7 @@ After a successful release, the following are published:
 
 | Channel | Package | Install command |
 |---------|---------|-----------------|
+| Install script | - | `curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh \| bash` |
 | crates.io | [`llmtrace`](https://crates.io/crates/llmtrace) | `cargo install llmtrace` |
 | PyPI | [`llmtracing`](https://pypi.org/project/llmtracing/) | `pip install llmtracing` (imports as `import llmtrace`) |
 | GHCR | `ghcr.io/epappas/llmtrace-proxy` | `docker pull ghcr.io/epappas/llmtrace-proxy:<version>` |

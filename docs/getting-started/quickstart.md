@@ -19,7 +19,21 @@ The proxy forwards this key to the upstream provider. Without it, proxied reques
 
 ---
 
-## Option A: Cargo Install (Fastest)
+## Option A: One-line Install (Fastest)
+
+```bash
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
+```
+
+This downloads the latest binary for your platform and a starter `config.yaml`. Then run:
+
+```bash
+llmtrace-proxy --config config.yaml
+```
+
+---
+
+## Option B: Cargo Install
 
 ```bash
 cargo install llmtrace
@@ -29,7 +43,7 @@ llmtrace-proxy --config config.yaml
 
 ---
 
-## Option B: Docker (GHCR)
+## Option C: Docker (GHCR)
 
 ```bash
 docker pull ghcr.io/epappas/llmtrace-proxy:latest
@@ -38,7 +52,7 @@ docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 
 ---
 
-## Option C: From Source
+## Option D: From Source
 
 ```bash
 git clone https://github.com/epappas/llmtrace

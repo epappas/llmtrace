@@ -59,6 +59,9 @@ jobs:
             echo "### Install"
             echo ""
             echo '```bash'
+            echo "curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash"
+            echo ""
+            echo "# Or use:"
             echo "cargo install llmtrace       # Rust proxy"
             echo "pip install llmtracing         # Python SDK"
             echo "docker pull ghcr.io/epappas/llmtrace-proxy:$VERSION"

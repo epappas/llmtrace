@@ -45,18 +45,27 @@ Tested on a 153-sample adversarial corpus across 12 attack categories including 
 
 ## Quick Start
 
-### 1. Run with Docker Compose (Recommended)
+### 1. Install
 
 ```bash
-# Clone and start
-git clone https://github.com/epappas/llmtrace
-cd llmtrace
-docker compose up -d
-
-# The proxy is now running on localhost:8080
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
 ```
 
-### 2. Try it with your existing code
+Or use one of the other methods:
+
+```bash
+cargo install llmtrace                # from crates.io
+docker pull ghcr.io/epappas/llmtrace-proxy:latest  # Docker
+```
+
+### 2. Run
+
+```bash
+export OPENAI_API_KEY="sk-..."
+llmtrace-proxy --config config.yaml
+```
+
+### 3. Try it with your existing code
 
 ```python
 import openai
@@ -74,7 +83,7 @@ response = client.chat.completions.create(
 )
 ```
 
-### 3. See your traces
+### 4. See your traces
 
 ```bash
 # View recent activity
