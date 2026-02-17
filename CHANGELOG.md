@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.4] - 2026-02-17
 
+- fix(release): use ubuntu-22.04 for portable Linux binary (7f4ccda)
 - fix(release): add musl C++ compiler for static Linux binary build (92020c2)
 - release: v0.1.4 (acc1ee3)
 - fix(release): build static Linux binary with musl target (9ee1885)
