@@ -261,13 +261,13 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: auto
-          manifest-path: crates/llmtrace-python/Cargo.toml
+          working-directory: crates/llmtrace-python
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.target }}
-          path: dist/*.whl
+          path: crates/llmtrace-python/dist/*.whl
 
   publish-pypi-upload:
     name: Publish to PyPI
