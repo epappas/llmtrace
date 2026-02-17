@@ -315,7 +315,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             artifact: llmtrace-proxy-linux-amd64
           - os: macos-latest
             target: aarch64-apple-darwin
@@ -324,9 +324,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install protoc (Linux)
+      - name: Install musl toolchain and protoc (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y musl-tools protobuf-compiler
 
       - name: Install protoc (macOS)
         if: runner.os == 'macOS'
