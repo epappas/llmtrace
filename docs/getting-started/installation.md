@@ -2,28 +2,83 @@
 
 This guide covers supported ways to run LLMTrace as implemented in this repository. All instructions are based on the current codebase and bundled files.
 
-## Options (Accurate to This Repo)
+## Options
 
 | Method | Best For | Notes |
 |--------|----------|-------|
-| From source (cargo) | Development | Uses local Rust toolchain.
-| Docker (build locally) | Containerized runs | Build with `Dockerfile` in repo.
-| Docker Compose (infra + dashboard) | Local infra/dev stack | Compose starts ClickHouse/Postgres/Redis and dashboard; you run the proxy separately.
-| Helm chart (local) | Kubernetes clusters | Chart is under `deployments/helm/llmtrace`.
+| Install script | Quickest install | Downloads binary + config in one command |
+| `cargo install` | Rust users | Pre-built from [crates.io](https://crates.io/crates/llmtrace) |
+| `pip install` | Python SDK | Pre-built from [PyPI](https://pypi.org/project/llmtracing/) |
+| Docker (GHCR) | Containerized runs | Pre-built multi-arch image from GHCR |
+| From source | Development | Uses local Rust toolchain |
+| Docker Compose | Local infra/dev stack | Starts ClickHouse/Postgres/Redis and dashboard |
+| Helm chart | Kubernetes clusters | Chart under `deployments/helm/llmtrace` |
 
 ---
 
-## From Source (Recommended for Development)
+## Install Script (Recommended)
 
-**Prerequisite:** Rust 1.93 (per repo instructions).
+Downloads the latest binary for your platform (Linux amd64, macOS arm64) and a starter config:
+
+```bash
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
+```
+
+Options via environment variables:
+
+```bash
+LLMTRACE_VERSION=0.1.3 curl -sS .../install.sh | bash   # pin version
+LLMTRACE_INSTALL=~/bin curl -sS .../install.sh | bash    # custom install dir
+LLMTRACE_NO_CONFIG=1 curl -sS .../install.sh | bash      # skip config download
+```
+
+---
+
+## Cargo Install (Proxy)
+
+Install the proxy binary directly from crates.io:
+
+```bash
+cargo install llmtrace
+
+# Run with a config file
+cp config.example.yaml config.yaml
+llmtrace-proxy --config config.yaml
+```
+
+---
+
+## Pip Install (Python SDK)
+
+Install the Python SDK from PyPI (imports as `import llmtrace`):
+
+```bash
+pip install llmtracing
+```
+
+```python
+import llmtrace
+
+tracer = llmtrace.configure({"enable_security": True})
+span = tracer.start_span("chat_completion", "openai", "gpt-4")
+span.set_prompt("Hello!")
+span.set_response("Hi there!")
+print(span.to_dict())
+```
+
+---
+
+## From Source
+
+**Prerequisite:** Rust 1.93+.
 
 ```bash
 # 1. Clone
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
 
-# 2. Build
-cargo build --release --bin llmtrace-proxy
+# 2. Build (--features ml enables DeBERTa ML detectors)
+cargo build --release --bin llmtrace-proxy --features ml
 
 # 3. Run with example config
 cp config.example.yaml config.yaml
@@ -32,16 +87,13 @@ cp config.example.yaml config.yaml
 
 ---
 
-## Docker (Build Locally)
+## Docker (GHCR)
 
-The repository includes a multi-stage `Dockerfile` that builds the `llmtrace-proxy` binary.
+Pre-built multi-arch images (amd64 + arm64) are published to GHCR on every release:
 
 ```bash
-# Build the proxy image
-docker build -t llmtrace-proxy .
-
-# Run with environment variables (or mount a config file)
-docker run -p 8080:8080 --env-file .env llmtrace-proxy
+docker pull ghcr.io/epappas/llmtrace-proxy:latest
+docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 ```
 
 To customize configuration, mount a config file:
@@ -49,7 +101,14 @@ To customize configuration, mount a config file:
 ```bash
 docker run -p 8080:8080 \
   -v $(pwd)/config.yaml:/etc/llmtrace/config.yaml \
-  llmtrace-proxy
+  ghcr.io/epappas/llmtrace-proxy:latest
+```
+
+### Build Locally
+
+```bash
+docker build -t llmtrace-proxy .
+docker run -p 8080:8080 --env-file .env llmtrace-proxy
 ```
 
 ---
@@ -87,8 +146,8 @@ helm install llmtrace ./deployments/helm/llmtrace
 
 Notes:
 
-- The chart defaults to an image repository named `llmtrace-proxy`.
-- You must build and push an image (or adjust the image settings in `values.yaml`).
+- The chart defaults to the GHCR image `ghcr.io/epappas/llmtrace-proxy`.
+- Override `proxy.image.repository` and `proxy.image.tag` in `values.yaml` if using a custom registry.
 
 ---
 

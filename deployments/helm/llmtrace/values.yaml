@@ -17,7 +17,7 @@ proxy:
   replicaCount: 1
 
   image:
-    repository: llmtrace-proxy
+    repository: ghcr.io/epappas/llmtrace-proxy
     pullPolicy: IfNotPresent
     # -- Overrides the image tag; defaults to Chart.appVersion
     tag: ""

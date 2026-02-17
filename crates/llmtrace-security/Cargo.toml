@@ -22,7 +22,7 @@ cuda = ["candle-core?/cuda", "candle-nn?/cuda", "candle-transformers?/cuda"]
 metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]
 
 [dependencies]
-llmtrace-core = { path = "../llmtrace-core" }
+llmtrace-core.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

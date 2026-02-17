@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Comprehensive benchmark suite for LLMTrace security analysis"
+publish = false
 
 [[bin]]
 name = "benchmarks"
@@ -20,7 +21,7 @@ cuda = ["llmtrace-security/cuda"]
 metal = ["llmtrace-security/metal"]
 
 [dependencies]
-llmtrace-core = { path = "../crates/llmtrace-core" }
+llmtrace-core = { workspace = true }
 llmtrace-security = { path = "../crates/llmtrace-security", features = ["ml"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -103,7 +103,7 @@ The proxy uses `StorageProfile::build` to assemble the storage composite at star
 The repository includes client libraries to help instrument applications, but they are not part of the proxy runtime:
 
 - `llmtrace-sdk` (Rust)
-- `llmtrace-python`
+- `llmtrace-python` ([PyPI: llmtracing](https://pypi.org/project/llmtracing/) -- `pip install llmtracing`, imports as `import llmtrace`)
 - `llmtrace-wasm`
 
 ## Security Analysis Pipeline

@@ -18,7 +18,7 @@ cargo build --workspace
 cargo build --release --features ml
 
 # Build proxy only
-cargo build -p llmtrace-proxy --release --features ml
+cargo build -p llmtrace --release --features ml
 ```
 
 ## Running Tests
@@ -29,7 +29,7 @@ cargo test --workspace
 
 # Run tests for a specific crate
 cargo test -p llmtrace-security
-cargo test -p llmtrace-proxy
+cargo test -p llmtrace
 ```
 
 ## Code Style
@@ -84,11 +84,11 @@ type(scope): description
 | Crate | Responsibility |
 |-------|---------------|
 | `llmtrace-core` | Shared types, traits, and configuration |
-| `llmtrace-proxy` | HTTP proxy server, request/response handling, streaming |
+| `llmtrace` | HTTP proxy server, request/response handling, streaming ([crates.io](https://crates.io/crates/llmtrace)) |
 | `llmtrace-security` | Security analysis engine: regex patterns, DeBERTa ML, InjecGuard, PIGuard, ensemble voting |
 | `llmtrace-storage` | Storage backends: SQLite, PostgreSQL, ClickHouse, Redis |
 | `llmtrace-sdk` | Rust SDK for programmatic access |
-| `llmtrace-python` | Python bindings via PyO3 |
+| `llmtrace-python` | Python SDK via PyO3 ([PyPI: llmtracing](https://pypi.org/project/llmtracing/)) |
 
 ### Security Ensemble Pipeline
 

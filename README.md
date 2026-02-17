@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/epappas/llmtrace/actions/workflows/ci.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/epappas/llmtrace/actions/workflows/security.yml/badge.svg)](https://github.com/epappas/llmtrace/actions/workflows/security.yml)
+[![crates.io](https://img.shields.io/crates/v/llmtrace.svg)](https://crates.io/crates/llmtrace)
+[![PyPI](https://img.shields.io/pypi/v/llmtracing.svg)](https://pypi.org/project/llmtracing/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![GitHub Stars](https://img.shields.io/github/stars/epappas/llmtrace)](https://github.com/epappas/llmtrace/stargazers)
@@ -43,18 +45,27 @@ Tested on a 153-sample adversarial corpus across 12 attack categories including 
 
 ## Quick Start
 
-### 1. Run with Docker Compose (Recommended)
+### 1. Install
 
 ```bash
-# Clone and start
-git clone https://github.com/epappas/llmtrace
-cd llmtrace
-docker compose up -d
-
-# The proxy is now running on localhost:8080
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
 ```
 
-### 2. Try it with your existing code
+Or use one of the other methods:
+
+```bash
+cargo install llmtrace                # from crates.io
+docker pull ghcr.io/epappas/llmtrace-proxy:latest  # Docker
+```
+
+### 2. Run
+
+```bash
+export OPENAI_API_KEY="sk-..."
+llmtrace-proxy --config config.yaml
+```
+
+### 3. Try it with your existing code
 
 ```python
 import openai
@@ -72,7 +83,7 @@ response = client.chat.completions.create(
 )
 ```
 
-### 3. See your traces
+### 4. See your traces
 
 ```bash
 # View recent activity
@@ -240,9 +251,31 @@ rate_limiting:
 
 ## Installation
 
-### Docker (Recommended)
+### Cargo (Rust Proxy)
 ```bash
-docker run -p 8080:8080 epappas/llmtrace:latest
+cargo install llmtrace
+llmtrace-proxy --config config.yaml
+```
+
+### Pip (Python SDK)
+```bash
+pip install llmtracing
+```
+
+```python
+import llmtrace
+
+tracer = llmtrace.configure({"enable_security": True})
+span = tracer.start_span("chat_completion", "openai", "gpt-4")
+span.set_prompt("Hello!")
+span.set_response("Hi there!")
+print(span.to_dict())
+```
+
+### Docker
+```bash
+docker pull ghcr.io/epappas/llmtrace-proxy:latest
+docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 ```
 
 ### Docker Compose with Dependencies
@@ -251,17 +284,17 @@ curl -o compose.yaml https://raw.githubusercontent.com/epappas/llmtrace/main/com
 docker compose up -d
 ```
 
-### Kubernetes
-```bash
-kubectl apply -f https://raw.githubusercontent.com/epappas/llmtrace/main/deployments/kubernetes/
-```
-
 ### From Source
 ```bash
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
 cargo build --release --features ml
 ./target/release/llmtrace-proxy --config config.yaml
+```
+
+### Kubernetes
+```bash
+helm install llmtrace ./deployments/helm/llmtrace
 ```
 
 **[Installation guide with all methods ->](docs/getting-started/installation.md)**
@@ -301,13 +334,13 @@ cargo test --workspace
 ```
 
 ### Project Structure
-| Crate | Purpose |
-|-------|---------|
-| `llmtrace-core` | Shared types and traits |
-| `llmtrace-proxy` | HTTP proxy server |
-| `llmtrace-security` | Security analysis engine (regex + DeBERTa + InjecGuard + PIGuard ensemble) |
-| `llmtrace-storage` | Storage backends (SQLite, PostgreSQL, ClickHouse, Redis) |
-| `llmtrace-python` | Python bindings |
+| Crate | Package | Purpose |
+|-------|---------|---------|
+| `llmtrace-core` | - | Shared types and traits |
+| `llmtrace` | [crates.io](https://crates.io/crates/llmtrace) | HTTP proxy server (`cargo install llmtrace`) |
+| `llmtrace-security` | - | Security analysis engine (regex + DeBERTa + InjecGuard + PIGuard ensemble) |
+| `llmtrace-storage` | - | Storage backends (SQLite, PostgreSQL, ClickHouse, Redis) |
+| `llmtrace-python` | [PyPI](https://pypi.org/project/llmtracing/) | Python SDK (`pip install llmtracing`, imports as `import llmtrace`) |
 
 **[Development guide ->](CONTRIBUTING.md)**
 

@@ -9,7 +9,7 @@ import uuid
 
 import pytest
 
-import llmtrace_python as llmtrace
+import llmtrace
 
 
 # ---------------------------------------------------------------------------

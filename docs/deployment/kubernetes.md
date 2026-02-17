@@ -18,15 +18,17 @@ Deploy LLMTrace on Kubernetes using the official Helm chart. The chart provision
 
 ## Quick Start
 
-### 1. Build the Proxy Image
+### 1. Use the GHCR Image (or Build Your Own)
+
+Pre-built multi-arch images are published to GHCR on every release:
 
 ```bash
-# From the repository root
-docker build -t llmtrace-proxy:0.1.0 .
+# Use the official image
+ghcr.io/epappas/llmtrace-proxy:latest
 
-# Push to your registry
-docker tag llmtrace-proxy:0.1.0 your-registry.io/llmtrace-proxy:0.1.0
-docker push your-registry.io/llmtrace-proxy:0.1.0
+# Or build and push your own
+docker build -t your-registry.io/llmtrace-proxy:0.1.3 .
+docker push your-registry.io/llmtrace-proxy:0.1.3
 ```
 
 ### 2. Update Helm Dependencies
@@ -44,7 +46,7 @@ This downloads the Bitnami sub-charts (ClickHouse, PostgreSQL, Redis) into the `
 helm install llmtrace ./deployments/helm/llmtrace \
   --namespace llmtrace \
   --create-namespace \
-  --set proxy.image.repository=your-registry.io/llmtrace-proxy
+  --set proxy.image.repository=ghcr.io/epappas/llmtrace-proxy
 ```
 
 ### 4. Install (Production)
@@ -54,7 +56,7 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --namespace llmtrace \
   --create-namespace \
   -f ./deployments/helm/llmtrace/values-production.yaml \
-  --set proxy.image.repository=your-registry.io/llmtrace-proxy \
+  --set proxy.image.repository=ghcr.io/epappas/llmtrace-proxy \
   --set postgresql.auth.password=YOUR_SECURE_PASSWORD \
   --set secrets.postgresUrl="postgres://llmtrace:YOUR_SECURE_PASSWORD@llmtrace-postgresql:5432/llmtrace"
 ```

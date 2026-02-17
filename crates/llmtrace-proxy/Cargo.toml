@@ -1,5 +1,5 @@
 [package]
-name = "llmtrace-proxy"
+name = "llmtrace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -22,9 +22,9 @@ name = "llmtrace-proxy"
 path = "src/main.rs"
 
 [dependencies]
-llmtrace-core = { path = "../llmtrace-core" }
-llmtrace-storage = { path = "../llmtrace-storage", features = ["clickhouse", "postgres", "redis_backend"] }
-llmtrace-security = { path = "../llmtrace-security" }
+llmtrace-core.workspace = true
+llmtrace-storage = { workspace = true, features = ["clickhouse", "postgres", "redis_backend"] }
+llmtrace-security.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

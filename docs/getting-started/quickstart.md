@@ -7,32 +7,62 @@ This guide gets the LLMTrace proxy running and verifies that traces and findings
 - OpenAI API key (or another OpenAI-compatible upstream)
 - Either Rust toolchain or Docker
 
----
+### Environment Setup
 
-## Option A: From Source (Fastest for Dev)
+Set your LLM provider API key before running the proxy:
 
 ```bash
-# 1. Clone and build
+export OPENAI_API_KEY="sk-..."
+```
+
+The proxy forwards this key to the upstream provider. Without it, proxied requests will fail with `401 Unauthorized`.
+
+---
+
+## Option A: One-line Install (Fastest)
+
+```bash
+curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash
+```
+
+This downloads the latest binary for your platform and a starter `config.yaml`. Then run:
+
+```bash
+llmtrace-proxy --config config.yaml
+```
+
+---
+
+## Option B: Cargo Install
+
+```bash
+cargo install llmtrace
+cp config.example.yaml config.yaml
+llmtrace-proxy --config config.yaml
+```
+
+---
+
+## Option C: Docker (GHCR)
+
+```bash
+docker pull ghcr.io/epappas/llmtrace-proxy:latest
+docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
+```
+
+---
+
+## Option D: From Source
+
+```bash
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
-cargo build --release --bin llmtrace-proxy
-
-# 2. Start the proxy with example config
+cargo build --release --bin llmtrace-proxy --features ml
 cp config.example.yaml config.yaml
 ./target/release/llmtrace-proxy --config config.yaml
 ```
 
----
-
-## Option B: Docker (Local Image)
-
-```bash
-# Build image
-docker build -t llmtrace-proxy .
-
-# Run with env overrides
-docker run -p 8080:8080 --env-file .env llmtrace-proxy
-```
+The `--features ml` flag enables the DeBERTa ML-based security detectors. Without it, only regex-based detection is available.
 
 ---
 
@@ -94,8 +124,17 @@ response = client.chat.completions.create(
 
 ---
 
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401 Unauthorized` from upstream | Missing or invalid API key | `export OPENAI_API_KEY="sk-..."` |
+| `connection refused` on `:8080` | Proxy not running | Check proxy logs, ensure `--config config.yaml` is passed |
+| No security findings | ML features not compiled | Rebuild with `--features ml` (source builds only) |
+| `config.yaml not found` | Missing config file | `cp config.example.yaml config.yaml` |
+
 ## Next Steps
 
-- `docs/getting-started/configuration.md`
-- `docs/guides/API.md`
-- `docs/architecture/SYSTEM_ARCHITECTURE.md`
+- [Configuration Guide](configuration.md)
+- [API Reference](../guides/API.md)
+- [System Architecture](../architecture/SYSTEM_ARCHITECTURE.md)
