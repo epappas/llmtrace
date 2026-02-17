@@ -21,12 +21,15 @@ CARGO_TOML="$REPO_ROOT/Cargo.toml"
 # Update workspace.package.version
 sed -i "s/^\(version = \"\)[^\"]*\"/\1$VERSION\"/" "$CARGO_TOML"
 
-# Update llmtrace-core workspace dependency version
-sed -i "s/\(llmtrace-core = { path = \"crates\/llmtrace-core\", version = \"\)[^\"]*\"/\1$VERSION\"/" "$CARGO_TOML"
+# Update all workspace dependency versions (core, storage, security)
+for CRATE in llmtrace-core llmtrace-storage llmtrace-security; do
+  CRATE_PATH="${CRATE//llmtrace-/llmtrace-}"
+  sed -i "s/\($CRATE = { path = \"crates\/$CRATE_PATH\", version = \"\)[^\"]*\"/\1$VERSION\"/" "$CARGO_TOML"
+done
 
 # Verify changes
 echo "Updated $CARGO_TOML:"
-grep -n 'version' "$CARGO_TOML" | head -5
+grep -n 'version' "$CARGO_TOML" | head -8
 
 # Sanity check: cargo resolves correctly
 cd "$REPO_ROOT"

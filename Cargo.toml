@@ -23,6 +23,8 @@ homepage = "https://llmtrace.io"
 
 [workspace.dependencies]
 llmtrace-core = { path = "crates/llmtrace-core", version = "0.1.0" }
+llmtrace-storage = { path = "crates/llmtrace-storage", version = "0.1.0" }
+llmtrace-security = { path = "crates/llmtrace-security", version = "0.1.0" }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
