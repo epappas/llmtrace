@@ -54,11 +54,32 @@ const sections: GuideSection[] = [
     learn: "Configure isolation boundaries and role-based access controls.",
   },
   {
+    title: "Tenant Config",
+    route: "/tenants/config",
+    image: "/guide/tenants-config.png",
+    description: "Tenant-level monitoring scope, thresholds, and feature flag controls.",
+    learn: "Tune enforcement per tenant without changing global proxy defaults.",
+  },
+  {
     title: "Compliance",
     route: "/compliance",
     image: "/guide/compliance.png",
     description: "Generate and review SOC2/GDPR/HIPAA style reports.",
     learn: "Use the report viewer for audit evidence and export JSON when needed.",
+  },
+  {
+    title: "Compliance Report Viewer",
+    route: "/compliance (report open)",
+    image: "/guide/compliance-report-viewer.png",
+    description: "Expanded generated report with controls for export, raw JSON, and close.",
+    learn: "Review auditor-facing evidence in the same workflow used for compliance generation.",
+  },
+  {
+    title: "Compliance Raw JSON",
+    route: "/compliance (report raw)",
+    image: "/guide/compliance-report-viewer-raw.png",
+    description: "Raw report payload view for programmatic auditing and downstream integrations.",
+    learn: "Validate the exact structured report content before export/automation.",
   },
   {
     title: "Settings",
@@ -101,4 +122,3 @@ export default function GuidePage() {
     </div>
   );
 }
-
