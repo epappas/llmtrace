@@ -312,6 +312,7 @@ jobs:
     name: Build Binaries
     needs: test
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -326,7 +327,11 @@ jobs:
 
       - name: Install musl toolchain and protoc (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools protobuf-compiler
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools musl-dev protobuf-compiler
+          # Symlink musl-g++ so cc-rs can find the C++ compiler for musl target
+          sudo ln -sf /usr/bin/g++ /usr/local/bin/x86_64-linux-musl-g++
+          sudo ln -sf /usr/bin/gcc /usr/local/bin/x86_64-linux-musl-gcc
 
       - name: Install protoc (macOS)
         if: runner.os == 'macOS'
