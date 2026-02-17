@@ -10,7 +10,13 @@ This directory contains E2E tests written in [Playwright](https://playwright.dev
 
 ## Test Suite Coverage
 
-The tests in `e2e/dashboard.spec.ts` cover the following critical user flows:
+The Playwright suite includes:
+
+- `e2e/dashboard.spec.ts` for core dashboard flows.
+- `e2e/tenants-rbac.spec.ts` for tenant admin and RBAC-oriented flows.
+- `e2e/feature-gaps.spec.ts` for settings/swagger embedding, trace deletion, token lifecycle, compliance viewer controls, and guide-page rendering.
+
+Key covered flows include:
 
 1.  **Overview Page:** Verifies global stats, trace counts, and activity chart rendering.
 2.  **Tenant Management:**
@@ -70,6 +76,17 @@ If you have Node.js installed:
     ```bash
     npm run test:e2e
     ```
+
+## Guide Snapshots
+
+To refresh walkthrough screenshots used on `/guide`:
+
+```bash
+cd dashboard
+npm run guide:snapshots
+```
+
+Images are written to `dashboard/public/guide/`.
 
 ## Viewing Results
 

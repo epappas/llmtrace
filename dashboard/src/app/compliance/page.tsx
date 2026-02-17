@@ -182,7 +182,13 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
             <Button variant="outline" size="sm" onClick={handlePrint} className="gap-2">
               <Printer className="h-4 w-4" /> Print / PDF
             </Button>
-            <Button variant="outline" size="sm" onClick={downloadJson} className="gap-2">
+            <Button
+              data-testid="download-report-json-button"
+              variant="outline"
+              size="sm"
+              onClick={downloadJson}
+              className="gap-2"
+            >
               <Download className="h-4 w-4" /> JSON
             </Button>
           </div>
@@ -209,7 +215,8 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
               )}
 
               <div className="mt-8 pt-6 border-t print:hidden">
-                <button 
+                <button
+                  data-testid="report-raw-toggle"
                   onClick={() => setShowRaw(!showRaw)}
                   className="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground hover:text-foreground transition-colors"
                 >
@@ -219,7 +226,10 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
                 
                 {showRaw && (
                   <div className="mt-4 rounded-xl border bg-slate-950 p-4 shadow-inner">
-                    <pre className="text-[10px] leading-relaxed text-slate-300 overflow-auto max-h-[300px] scrollbar-thin scrollbar-thumb-slate-700">
+                    <pre
+                      data-testid="report-raw-content"
+                      className="text-[10px] leading-relaxed text-slate-300 overflow-auto max-h-[300px] scrollbar-thin scrollbar-thumb-slate-700"
+                    >
                       {JSON.stringify(report.content, null, 2)}
                     </pre>
                   </div>
@@ -346,9 +356,10 @@ export default function CompliancePage() {
     {
       header: "",
       accessor: (r: ComplianceReport) => (
-        <Button 
-          variant="secondary" 
-          size="sm" 
+        <Button
+          data-testid={`view-report-${r.id}`}
+          variant="secondary"
+          size="sm"
           className="h-8 px-3 text-xs gap-2"
           onClick={() => viewReport(r.id)}
           disabled={r.status === "pending"}
@@ -371,7 +382,11 @@ export default function CompliancePage() {
           <Button variant="outline" onClick={loadReports} className="shadow-sm">
             <RefreshCw className="mr-2 h-4 w-4" /> Refresh
           </Button>
-          <Button onClick={() => setShowGenerate(!showGenerate)} className="shadow-md">
+          <Button
+            data-testid="generate-report-toggle"
+            onClick={() => setShowGenerate(!showGenerate)}
+            className="shadow-md"
+          >
             <Plus className="mr-2 h-4 w-4" /> Generate Report
           </Button>
         </div>
@@ -380,11 +395,17 @@ export default function CompliancePage() {
       {selectedReport && (
         <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center justify-between print:hidden">
-            <h2 className="text-xl font-bold flex items-center gap-2">
+            <h2 data-testid="active-report-viewer" className="text-xl font-bold flex items-center gap-2">
               <div className="w-1.5 h-6 bg-green-600 rounded-full" />
               Active Viewer
             </h2>
-            <Button variant="ghost" size="sm" onClick={() => setSelectedReport(null)} className="text-muted-foreground">
+            <Button
+              data-testid="close-report-viewer"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedReport(null)}
+              className="text-muted-foreground"
+            >
               Close Viewer
             </Button>
           </div>
@@ -433,7 +454,12 @@ export default function CompliancePage() {
                 className="h-10 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-primary shadow-sm"
               />
             </div>
-            <Button onClick={handleGenerate} disabled={generating} className="h-10 px-8">
+            <Button
+              data-testid="generate-audit-button"
+              onClick={handleGenerate}
+              disabled={generating}
+              className="h-10 px-8"
+            >
               {generating ? "Gathering Data..." : "Generate Audit"}
             </Button>
           </CardContent>
