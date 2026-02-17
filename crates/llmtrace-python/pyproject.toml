@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "llmtrace"
+name = "llmtracing"
 dynamic = ["version"]
 description = "Python bindings for LLMTrace — security-aware LLM observability"
 requires-python = ">=3.8"

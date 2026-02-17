@@ -60,12 +60,12 @@ jobs:
             echo ""
             echo '```bash'
             echo "cargo install llmtrace       # Rust proxy"
-            echo "pip install llmtrace          # Python SDK"
+            echo "pip install llmtracing         # Python SDK"
             echo "docker pull ghcr.io/epappas/llmtrace-proxy:$VERSION"
             echo '```'
             echo ""
             echo "- [crates.io/crates/llmtrace](https://crates.io/crates/llmtrace)"
-            echo "- [pypi.org/project/llmtrace](https://pypi.org/project/llmtrace)"
+            echo "- [pypi.org/project/llmtracing](https://pypi.org/project/llmtracing)"
             echo ""
           } > changelog.md
 
