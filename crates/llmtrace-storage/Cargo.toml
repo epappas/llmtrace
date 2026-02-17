@@ -14,7 +14,7 @@ postgres = ["sqlx/postgres"]
 redis_backend = ["dep:redis"]
 
 [dependencies]
-llmtrace-core = { path = "../llmtrace-core" }
+llmtrace-core.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -6,13 +6,14 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Python bindings for LLMTrace via PyO3"
+publish = false
 
 [lib]
 name = "llmtrace_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-llmtrace-core = { path = "../llmtrace-core" }
+llmtrace-core.workspace = true
 pyo3 = { version = "0.24.1", features = ["extension-module"] }
 serde_json.workspace = true
 uuid.workspace = true

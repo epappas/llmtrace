@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Transparent proxy server for LLM API calls"
+publish = false
 
 [features]
 default = ["ml"]
@@ -22,7 +23,7 @@ name = "llmtrace-proxy"
 path = "src/main.rs"
 
 [dependencies]
-llmtrace-core = { path = "../llmtrace-core" }
+llmtrace-core.workspace = true
 llmtrace-storage = { path = "../llmtrace-storage", features = ["clickhouse", "postgres", "redis_backend"] }
 llmtrace-security = { path = "../llmtrace-security" }
 tokio.workspace = true

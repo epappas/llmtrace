@@ -1,5 +1,5 @@
 # =============================================================================
-# Release — Build Docker image, scan, push to GHCR, create GitHub Release on tag
+# Release Pipeline -- Docker + crates.io + GitHub Release on v* tags
 # =============================================================================
 name: Release
 
@@ -18,23 +18,43 @@ permissions:
   security-events: write
 
 jobs:
-  build-and-push:
-    name: Build & Push Docker Image
+  # ---------------------------------------------------------------------------
+  # Job 1: Validate tag and extract metadata
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate Tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
+      - name: Extract and validate version
         id: meta
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          # Generate changelog from last tag
+
+          # Verify tag version matches workspace Cargo.toml
+          CARGO_VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "ERROR: Tag version ($VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+
+      - name: Generate changelog
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          DATE=$(date +%Y-%m-%d)
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          # Generate release body for GitHub Release
           if [ -n "$PREV_TAG" ]; then
             echo "## Changes since $PREV_TAG" > changelog.md
             git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD >> changelog.md
@@ -43,6 +63,82 @@ jobs:
             git log --pretty=format:"- %s (%h)" >> changelog.md
           fi
 
+          # Generate entry for CHANGELOG.md
+          ENTRY="## [$VERSION] - $DATE"
+          if [ -n "$PREV_TAG" ]; then
+            ENTRY="$ENTRY"$'\n\n'"$(git log --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)"
+          else
+            ENTRY="$ENTRY"$'\n\n'"$(git log --pretty=format:"- %s (%h)")"
+          fi
+
+          # Prepend new entry after the header in CHANGELOG.md
+          HEADER_END=$(grep -n '^and this project adheres' CHANGELOG.md | head -1 | cut -d: -f1)
+          {
+            head -n "$HEADER_END" CHANGELOG.md
+            echo ""
+            echo "$ENTRY"
+            tail -n +"$((HEADER_END + 1))" CHANGELOG.md
+          } > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+
+      - name: Upload changelog artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: |
+            changelog.md
+            CHANGELOG.md
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Run tests (gate on passing)
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test Suite
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Multi-arch Docker build + push to GHCR
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker Build & Push
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -50,30 +146,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image (local)
+      - name: Build image for scanning (amd64 only)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
           load: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          platforms: linux/amd64
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@0.33.1
         with:
-          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}"
+          image-ref: "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:scan"
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
@@ -85,29 +172,96 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
-      - name: Push Docker image to GHCR
+      - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ---------------------------------------------------------------------------
+  # Job 4: Publish crates to crates.io (in dependency order)
+  # ---------------------------------------------------------------------------
+  publish-crates:
+    name: Publish to crates.io
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish llmtrace-core
+        run: cargo publish -p llmtrace-core --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      - name: Publish llmtrace-storage
+        run: cargo publish -p llmtrace-storage --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Publish llmtrace-security
+        run: cargo publish -p llmtrace-security --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Wait for index propagation
+        run: sleep 30
+
+      - name: Publish llmtrace-sdk
+        run: cargo publish -p llmtrace-sdk --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Create GitHub Release with changelog
+  # ---------------------------------------------------------------------------
+  github-release:
+    name: GitHub Release
+    needs: [validate, docker, publish-crates]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
+
+      - name: Commit CHANGELOG.md
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "changelog: update for ${{ needs.validate.outputs.tag }}"
+          git push origin main
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: "LLMTrace ${{ steps.meta.outputs.tag }}"
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: "LLMTrace ${{ needs.validate.outputs.tag }}"
           body_path: changelog.md
           draft: false
-          prerelease: ${{ contains(steps.meta.outputs.tag, '-') }}
+          prerelease: ${{ contains(needs.validate.outputs.tag, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
