@@ -121,3 +121,9 @@ To scan locally:
 docker build -t llmtrace-proxy:local .
 trivy image --severity CRITICAL,HIGH llmtrace-proxy:local
 ```
+
+Pre-built images are also available from GHCR:
+
+```bash
+trivy image --severity CRITICAL,HIGH ghcr.io/epappas/llmtrace-proxy:latest
+```

@@ -9,29 +9,33 @@ This guide gets the LLMTrace proxy running and verifies that traces and findings
 
 ---
 
-## Option A: From Source (Fastest for Dev)
+## Option A: Cargo Install (Fastest)
 
 ```bash
-# 1. Clone and build
-git clone https://github.com/epappas/llmtrace
-cd llmtrace
-cargo build --release --bin llmtrace-proxy
-
-# 2. Start the proxy with example config
+cargo install llmtrace
 cp config.example.yaml config.yaml
-./target/release/llmtrace-proxy --config config.yaml
+llmtrace-proxy --config config.yaml
 ```
 
 ---
 
-## Option B: Docker (Local Image)
+## Option B: Docker (GHCR)
 
 ```bash
-# Build image
-docker build -t llmtrace-proxy .
+docker pull ghcr.io/epappas/llmtrace-proxy:latest
+docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
+```
 
-# Run with env overrides
-docker run -p 8080:8080 --env-file .env llmtrace-proxy
+---
+
+## Option C: From Source
+
+```bash
+git clone https://github.com/epappas/llmtrace
+cd llmtrace
+cargo build --release --bin llmtrace-proxy
+cp config.example.yaml config.yaml
+./target/release/llmtrace-proxy --config config.yaml
 ```
 
 ---
