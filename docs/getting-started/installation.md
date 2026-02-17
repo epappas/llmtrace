@@ -58,8 +58,8 @@ print(span.to_dict())
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
 
-# 2. Build
-cargo build --release --bin llmtrace-proxy
+# 2. Build (--features ml enables DeBERTa ML detectors)
+cargo build --release --bin llmtrace-proxy --features ml
 
 # 3. Run with example config
 cp config.example.yaml config.yaml

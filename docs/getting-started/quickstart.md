@@ -7,6 +7,16 @@ This guide gets the LLMTrace proxy running and verifies that traces and findings
 - OpenAI API key (or another OpenAI-compatible upstream)
 - Either Rust toolchain or Docker
 
+### Environment Setup
+
+Set your LLM provider API key before running the proxy:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+The proxy forwards this key to the upstream provider. Without it, proxied requests will fail with `401 Unauthorized`.
+
 ---
 
 ## Option A: Cargo Install (Fastest)
@@ -33,10 +43,12 @@ docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 ```bash
 git clone https://github.com/epappas/llmtrace
 cd llmtrace
-cargo build --release --bin llmtrace-proxy
+cargo build --release --bin llmtrace-proxy --features ml
 cp config.example.yaml config.yaml
 ./target/release/llmtrace-proxy --config config.yaml
 ```
+
+The `--features ml` flag enables the DeBERTa ML-based security detectors. Without it, only regex-based detection is available.
 
 ---
 
@@ -98,8 +110,17 @@ response = client.chat.completions.create(
 
 ---
 
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `401 Unauthorized` from upstream | Missing or invalid API key | `export OPENAI_API_KEY="sk-..."` |
+| `connection refused` on `:8080` | Proxy not running | Check proxy logs, ensure `--config config.yaml` is passed |
+| No security findings | ML features not compiled | Rebuild with `--features ml` (source builds only) |
+| `config.yaml not found` | Missing config file | `cp config.example.yaml config.yaml` |
+
 ## Next Steps
 
-- `docs/getting-started/configuration.md`
-- `docs/guides/API.md`
-- `docs/architecture/SYSTEM_ARCHITECTURE.md`
+- [Configuration Guide](configuration.md)
+- [API Reference](../guides/API.md)
+- [System Architecture](../architecture/SYSTEM_ARCHITECTURE.md)
