@@ -2328,7 +2328,7 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "llmtrace"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2374,7 +2374,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-benchmarks"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -2395,7 +2395,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2408,7 +2408,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-python"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "llmtrace-core",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-sdk"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-security"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-storage"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "llmtrace-wasm"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "chrono",
  "js-sys",
