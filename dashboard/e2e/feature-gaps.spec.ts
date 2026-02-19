@@ -47,6 +47,55 @@ test.describe("Dashboard Coverage Gaps", () => {
     await expect(iframe).toHaveAttribute("src", /\/swagger-ui\/$/);
   });
 
+  test("Settings API proxy route: should return live config JSON (or auth error when protected)", async ({
+    request,
+  }) => {
+    const res = await request.get("/api/proxy/config/live");
+    expect([200, 401, 403]).toContain(res.status());
+
+    const contentType = res.headers()["content-type"] ?? "";
+    expect(contentType).toContain("application/json");
+
+    if (res.status() === 200) {
+      const body = await res.json();
+      expect(body).toHaveProperty("config");
+      expect(typeof body.config).toBe("object");
+    }
+  });
+
+  test("Settings: should render Current Configuration in human-friendly format", async ({
+    page,
+  }) => {
+    await page.route("**/api/proxy/config/live", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          config: {
+            listen_addr: "0.0.0.0:8081",
+            auth: { enabled: false, admin_key: "***redacted***" },
+            security_analysis: { ml_enabled: true },
+            alerts: { channels: [] },
+          },
+        }),
+      });
+    });
+
+    await page.goto("/settings");
+    await expect(
+      page.getByRole("heading", { name: "Current Configuration", exact: true }),
+    ).toBeVisible();
+
+    await expect(page.getByText("Listen Addr", { exact: true })).toBeVisible();
+    await expect(page.getByText("0.0.0.0:8081", { exact: true })).toBeVisible();
+
+    await expect(page.locator("span.font-mono", { hasText: "Enabled" }).first()).toBeVisible();
+    await expect(
+      page.locator("span.font-mono.text-amber-700", { hasText: "Redacted" }).first(),
+    ).toBeVisible();
+    await expect(page.locator("span.text-muted-foreground", { hasText: "None" }).first()).toBeVisible();
+  });
+
   test("Traces: should support deleting a trace from the table", async ({ page }) => {
     await page.goto("/traces");
     await page.waitForLoadState("domcontentloaded");

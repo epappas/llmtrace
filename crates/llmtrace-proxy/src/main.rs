@@ -619,6 +619,10 @@ fn build_router(state: Arc<AppState>) -> Router {
             delete(llmtrace_proxy::auth::revoke_api_key),
         )
         // REST Query API
+        .route(
+            "/api/v1/config/live",
+            get(llmtrace_proxy::api::get_live_config),
+        )
         .route("/api/v1/traces", get(llmtrace_proxy::api::list_traces))
         .route(
             "/api/v1/traces/:trace_id",

@@ -15,6 +15,7 @@ use llmtrace_core::{
     AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, MonitoringScope, TraceQuery,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -71,6 +72,14 @@ pub struct EnrichedTraceSpan {
     #[serde(flatten)]
     pub span: llmtrace_core::TraceSpan,
     pub monitoring_scope: MonitoringScope,
+}
+
+/// Response for `GET /api/v1/config/live`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LiveConfigResponse {
+    /// Redacted live proxy configuration currently loaded in memory.
+    #[schema(value_type = Object)]
+    pub config: Value,
 }
 
 /// API error response body.
@@ -202,6 +211,54 @@ fn api_error(status: StatusCode, message: &str) -> Response {
         },
     };
     (status, Json(body)).into_response()
+}
+
+/// Marker used for redacted sensitive configuration values.
+const REDACTED_VALUE: &str = "***redacted***";
+
+/// Build a JSON config object with sensitive fields redacted.
+fn redacted_live_config(config: &llmtrace_core::ProxyConfig) -> Value {
+    let mut value = serde_json::to_value(config).unwrap_or(Value::Null);
+    redact_sensitive_fields(&mut value);
+    value
+}
+
+/// Recursively redact sensitive keys in a JSON value.
+fn redact_sensitive_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, inner) in map.iter_mut() {
+                if is_sensitive_config_key(key) {
+                    *inner = Value::String(REDACTED_VALUE.to_string());
+                } else {
+                    redact_sensitive_fields(inner);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_sensitive_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// True when a configuration key should be redacted in API output.
+fn is_sensitive_config_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "admin_key"
+            | "api_token"
+            | "postgres_url"
+            | "redis_url"
+            | "clickhouse_url"
+            | "webhook_url"
+            | "url"
+            | "routing_key"
+    ) || lower.contains("password")
+        || lower.contains("secret")
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +889,34 @@ pub async fn actions_summary(
     .into_response()
 }
 
+/// `GET /api/v1/config/live` — return the currently loaded proxy configuration.
+///
+/// The response is redacted to avoid leaking secrets (API tokens, admin keys,
+/// storage credentials, and webhook URLs).
+#[utoipa::path(
+    get,
+    path = "/api/v1/config/live",
+    responses(
+        (status = 200, description = "Live proxy configuration (redacted)", body = LiveConfigResponse),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
+pub async fn get_live_config(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    if let Some(err) = require_role_operator(&auth) {
+        return err;
+    }
+    Json(LiveConfigResponse {
+        config: redacted_live_config(&state.config),
+    })
+    .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -952,6 +1037,7 @@ mod tests {
     /// Build a router containing only the API routes.
     fn api_router(state: Arc<AppState>) -> Router {
         Router::new()
+            .route("/api/v1/config/live", get(get_live_config))
             .route("/api/v1/traces", get(list_traces))
             .route("/api/v1/traces/:trace_id", get(get_trace))
             .route("/api/v1/spans", get(list_spans))
@@ -1051,6 +1137,29 @@ mod tests {
         assert_eq!(body["data"].as_array().unwrap().len(), 0);
         assert_eq!(body["limit"], 50);
         assert_eq!(body["offset"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_live_config_redacts_sensitive_fields() {
+        let app = api_router(test_state().await);
+        let req = Request::get("/api/v1/config/live")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = json_body(resp).await;
+        let cfg = body["config"].as_object().unwrap();
+
+        // Non-sensitive fields remain visible.
+        assert_eq!(cfg.get("listen_addr").unwrap(), "0.0.0.0:8080");
+
+        // Sensitive fields are always present as redacted markers.
+        assert_eq!(cfg["storage"]["postgres_url"], REDACTED_VALUE);
+        assert_eq!(cfg["storage"]["redis_url"], REDACTED_VALUE);
+        assert_eq!(cfg["storage"]["clickhouse_url"], REDACTED_VALUE);
+        assert_eq!(cfg["auth"]["admin_key"], REDACTED_VALUE);
+        assert_eq!(cfg["alerts"]["webhook_url"], REDACTED_VALUE);
     }
 
     #[tokio::test]

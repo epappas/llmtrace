@@ -30,6 +30,7 @@ impl Modify for SecurityAddon {
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        crate::api::get_live_config,
         crate::api::list_traces,
         crate::api::get_trace,
         crate::api::list_spans,
