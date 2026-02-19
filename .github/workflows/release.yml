@@ -304,6 +304,7 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist/
+          skip-existing: true
 
   # ---------------------------------------------------------------------------
   # Job 6: Build proxy binaries for release assets
