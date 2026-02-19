@@ -92,8 +92,17 @@ export default function TraceDetailPage(props: {
       </div>
 
       {/* Spans */}
-      {trace.spans.map((span, idx) => (
-        <Card key={span.span_id}>
+      {trace.spans.map((span, idx) => {
+        const latencyMs = span.duration_ms ?? span.latency_ms ?? null;
+        const ttftMs = span.time_to_first_token_ms ?? span.ttft_ms ?? null;
+        const totalTokens =
+          span.total_tokens ??
+          (span.prompt_tokens != null && span.completion_tokens != null
+            ? span.prompt_tokens + span.completion_tokens
+            : null);
+
+        return (
+          <Card key={span.span_id}>
           <CardHeader>
             <CardTitle className="flex items-center gap-3 text-base">
               Span {idx + 1}: {span.operation_name}
@@ -140,15 +149,15 @@ export default function TraceDetailPage(props: {
                   </div>
                   <div>
                     <span className="text-muted-foreground">Total Tokens:</span>{" "}
-                    {span.total_tokens ?? "—"}
+                    {totalTokens ?? "—"}
                   </div>
                   <div>
                     <span className="text-muted-foreground">Latency:</span>{" "}
-                    {span.latency_ms != null ? `${span.latency_ms}ms` : "—"}
+                    {latencyMs != null ? `${latencyMs}ms` : "—"}
                   </div>
                   <div>
                     <span className="text-muted-foreground">TTFT:</span>{" "}
-                    {span.ttft_ms != null ? `${span.ttft_ms}ms` : "—"}
+                    {ttftMs != null ? `${ttftMs}ms` : "—"}
                   </div>
                   <div>
                     <span className="text-muted-foreground">Cost:</span>{" "}
@@ -224,8 +233,9 @@ export default function TraceDetailPage(props: {
               )}
             </Tabs>
           </CardContent>
-        </Card>
-      ))}
+          </Card>
+        );
+      })}
     </div>
   );
 }

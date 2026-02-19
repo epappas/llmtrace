@@ -37,8 +37,12 @@ export interface TraceSpan {
   prompt_tokens: number | null;
   completion_tokens: number | null;
   total_tokens: number | null;
-  latency_ms: number | null;
-  ttft_ms: number | null;
+  // Legacy UI aliases kept for backward compatibility.
+  latency_ms?: number | null;
+  ttft_ms?: number | null;
+  // Canonical backend fields from llmtrace-core TraceSpan.
+  duration_ms?: number | null;
+  time_to_first_token_ms?: number | null;
   security_score: number;
   security_findings: SecurityFinding[];
   agent_actions: AgentAction[];
