@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-02-19
+
+- chore(release): align workspace version to 0.1.5 (68b1444)
+- fix(ci): gate pypi upload on wheel build success (c5fcd82)
+- Merge pull request #20 from epappas/dependabot/github_actions/dot-github/workflows/aquasecurity/trivy-action-0.34.0 (1e9d5a6)
+- chore(deps): bump aquasecurity/trivy-action in /.github/workflows (c9a1d28)
+- Merge pull request #19 from epappas/feat/ubuntu-24-04-release-runner (0a61faf)
+- fix(ci): skip existing files when publishing to pypi (459e2ca)
+- ci: move release binary runner to ubuntu 24.04 (d5aa9ec)
+- Merge pull request #18 from epappas/Dash-002 (8b64f5e)
+- feat(dashboard): expand guide snapshots with subpages and report viewer (d3d886f)
+- Merge remote-tracking branch 'origin/main' into dash002-sync (7032623)
+- changelog: update for v0.1.4 (a414ef1)
+- changelog: update for v0.1.4 (1740fcf)
+- feat(dashboard): add guide page and e2e feature gap coverage (6e69d66)
+
 ## [0.1.4] - 2026-02-17
 
 - fix(release): use ubuntu-22.04 for portable Linux binary (7f4ccda)
