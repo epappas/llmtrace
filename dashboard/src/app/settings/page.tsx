@@ -13,6 +13,81 @@ interface HealthStatus {
   security?: { healthy: boolean };
 }
 
+interface LiveConfigPayload {
+  config: Record<string, unknown>;
+}
+
+function humanizeKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatPrimitive(value: string | number | boolean | null): string {
+  if (value === null) return "Not set";
+  if (typeof value === "boolean") return value ? "Enabled" : "Disabled";
+  return String(value);
+}
+
+function renderConfigValue(value: unknown, depth = 0) {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    const text = formatPrimitive(value);
+    const isRedacted = text === "***redacted***";
+    return (
+      <span className={isRedacted ? "font-mono text-amber-700" : "font-mono"}>
+        {isRedacted ? "Redacted" : text}
+      </span>
+    );
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return <span className="text-muted-foreground">None</span>;
+    }
+    return (
+      <div className="space-y-2">
+        {value.map((item, index) => (
+          <div
+            key={`${depth}-${index}`}
+            className="rounded-md border bg-background/50 p-2"
+          >
+            {renderConfigValue(item, depth + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      return <span className="text-muted-foreground">None</span>;
+    }
+
+    return (
+      <div className="space-y-2">
+        {entries.map(([key, nested]) => (
+          <div
+            key={`${depth}-${key}`}
+            className="grid gap-2 rounded-md border bg-background/50 p-3 md:grid-cols-[240px_1fr]"
+          >
+            <div className="text-sm font-medium">{humanizeKey(key)}</div>
+            <div className="text-sm">{renderConfigValue(nested, depth + 1)}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <span className="text-muted-foreground">Unsupported value</span>;
+}
+
 function joinUrl(base: string, path: string): string {
   const trimmedBase = base.replace(/\/+$/, "");
   const trimmedPath = path.startsWith("/") ? path : `/${path}`;
@@ -21,7 +96,9 @@ function joinUrl(base: string, path: string): string {
 
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [liveConfig, setLiveConfig] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [configLoading, setConfigLoading] = useState(false);
   const [apiUrl] = useState(
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080",
   );
@@ -43,8 +120,25 @@ export default function SettingsPage() {
     }
   }
 
+  async function fetchLiveConfig() {
+    setConfigLoading(true);
+    try {
+      const response = await fetch("/api/proxy/config/live", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Failed to load config: ${response.status}`);
+      }
+      const data = (await response.json()) as LiveConfigPayload;
+      setLiveConfig(data.config);
+    } catch {
+      setLiveConfig(null);
+    } finally {
+      setConfigLoading(false);
+    }
+  }
+
   useEffect(() => {
     checkHealth();
+    fetchLiveConfig();
   }, []);
 
   return (
@@ -127,6 +221,31 @@ export default function SettingsPage() {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Current Configuration */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Current Configuration</CardTitle>
+          <CardDescription>
+            Redacted runtime configuration currently loaded by the proxy server.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button variant="outline" size="sm" onClick={fetchLiveConfig} disabled={configLoading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${configLoading ? "animate-spin" : ""}`} />
+            Refresh Config
+          </Button>
+          <div className="rounded-md border bg-muted/20 p-3">
+            {liveConfig ? (
+              <div className="max-h-[520px] overflow-auto pr-1">
+                {renderConfigValue(liveConfig)}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Live configuration unavailable.</p>
+            )}
           </div>
         </CardContent>
       </Card>
