@@ -287,7 +287,7 @@ jobs:
   publish-pypi-upload:
     name: Publish to PyPI
     needs: publish-pypi
-    if: always() && !cancelled()
+    if: needs.publish-pypi.result == 'success' && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       id-token: write
