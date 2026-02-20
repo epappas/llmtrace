@@ -721,14 +721,13 @@ impl TraceRepository for SqliteTraceRepository {
         .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
         let storage_size_bytes: i64 = size_row.get("sz");
 
-        let time_row = sqlx::query(
-            "SELECT MIN(created_at) as oldest, MAX(created_at) as newest FROM traces",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            LLMTraceError::Storage(format!("Failed to get global time range: {e}"))
-        })?;
+        let time_row =
+            sqlx::query("SELECT MIN(created_at) as oldest, MAX(created_at) as newest FROM traces")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    LLMTraceError::Storage(format!("Failed to get global time range: {e}"))
+                })?;
 
         let oldest_trace = time_row
             .get::<Option<String>, _>("oldest")
