@@ -700,12 +700,11 @@ impl TraceRepository for SqliteTraceRepository {
     }
 
     async fn get_global_stats(&self) -> Result<StorageStats> {
-        let trace_count: i64 =
-            sqlx::query("SELECT COUNT(*) as cnt FROM traces")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|e| LLMTraceError::Storage(format!("Failed to count global traces: {e}")))?
-                .get("cnt");
+        let trace_count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM traces")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to count global traces: {e}")))?
+            .get("cnt");
 
         let span_count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM spans")
             .fetch_one(&self.pool)
@@ -714,7 +713,8 @@ impl TraceRepository for SqliteTraceRepository {
             .get("cnt");
 
         let size_row = sqlx::query(
-            "SELECT COALESCE(SUM(LENGTH(prompt) + COALESCE(LENGTH(response), 0)), 0) as sz FROM spans",
+            "SELECT COALESCE(SUM(LENGTH(prompt) + COALESCE(LENGTH(response), 0)), 0) as sz \
+             FROM spans",
         )
         .fetch_one(&self.pool)
         .await
@@ -726,7 +726,9 @@ impl TraceRepository for SqliteTraceRepository {
         )
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| LLMTraceError::Storage(format!("Failed to get global time range: {e}")))?;
+        .map_err(|e| {
+            LLMTraceError::Storage(format!("Failed to get global time range: {e}"))
+        })?;
 
         let oldest_trace = time_row
             .get::<Option<String>, _>("oldest")
