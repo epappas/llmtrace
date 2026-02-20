@@ -699,6 +699,53 @@ impl TraceRepository for SqliteTraceRepository {
         })
     }
 
+    async fn get_global_stats(&self) -> Result<StorageStats> {
+        let trace_count: i64 =
+            sqlx::query("SELECT COUNT(*) as cnt FROM traces")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to count global traces: {e}")))?
+                .get("cnt");
+
+        let span_count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM spans")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to count global spans: {e}")))?
+            .get("cnt");
+
+        let size_row = sqlx::query(
+            "SELECT COALESCE(SUM(LENGTH(prompt) + COALESCE(LENGTH(response), 0)), 0) as sz FROM spans",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
+        let storage_size_bytes: i64 = size_row.get("sz");
+
+        let time_row = sqlx::query(
+            "SELECT MIN(created_at) as oldest, MAX(created_at) as newest FROM traces",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to get global time range: {e}")))?;
+
+        let oldest_trace = time_row
+            .get::<Option<String>, _>("oldest")
+            .map(|s| parse_datetime(&s))
+            .transpose()?;
+        let newest_trace = time_row
+            .get::<Option<String>, _>("newest")
+            .map(|s| parse_datetime(&s))
+            .transpose()?;
+
+        Ok(StorageStats {
+            total_traces: trace_count as u64,
+            total_spans: span_count as u64,
+            storage_size_bytes: storage_size_bytes as u64,
+            oldest_trace,
+            newest_trace,
+        })
+    }
+
     async fn health_check(&self) -> Result<()> {
         sqlx::query("SELECT 1")
             .fetch_one(&self.pool)
