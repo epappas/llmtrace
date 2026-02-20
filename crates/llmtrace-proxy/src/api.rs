@@ -530,7 +530,10 @@ pub async fn get_global_stats(
 ) -> Response {
     // Only admins can see global stats
     if !auth.role.has_permission(llmtrace_core::ApiKeyRole::Admin) {
-        return api_error(StatusCode::FORBIDDEN, "Insufficient permissions: requires admin role");
+        return api_error(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions: requires admin role",
+        );
     }
 
     match state.storage.traces.get_global_stats().await {
