@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.LLMTRACE_API_URL ?? "http://localhost:8080";
+const BACKEND_URL = "http://llmtrace-proxy:8080";
 
 /**
  * Proxy a GET request to the LLMTrace backend, forwarding query params
@@ -20,8 +20,14 @@ export async function proxyGet(
   const headers: Record<string, string> = {};
   const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
   if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
+  
+  // Forward incoming auth, or inject bootstrap admin key
   const authHeader = req.headers.get("authorization");
-  if (authHeader) headers["Authorization"] = authHeader;
+  if (authHeader) {
+    headers["Authorization"] = authHeader;
+  } else if (process.env.LLMTRACE_AUTH_ADMIN_KEY) {
+    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
+  }
 
   try {
     const res = await fetch(url.toString(), { headers, cache: "no-store" });
@@ -54,6 +60,14 @@ export async function proxyMutate(
   };
   const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
   if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
+
+  // Forward incoming auth, or inject bootstrap admin key
+  const authHeader = req.headers.get("authorization");
+  if (authHeader) {
+    headers["Authorization"] = authHeader;
+  } else if (process.env.LLMTRACE_AUTH_ADMIN_KEY) {
+    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
+  }
 
   let bodyText: string | undefined;
   if (method !== "DELETE") {

@@ -526,11 +526,12 @@ pub async fn get_stats(
 )]
 pub async fn get_global_stats(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(_auth): Extension<AuthContext>,
+    extensions: axum::http::Extensions,
 ) -> Response {
     // Only admins can see global stats
-    if !auth.role.has_permission(llmtrace_core::ApiKeyRole::Admin) {
-        return api_error(StatusCode::FORBIDDEN, "Insufficient permissions: requires admin role");
+    if let Some(err) = crate::auth::require_role(&extensions, llmtrace_core::ApiKeyRole::Admin) {
+        return err;
     }
 
     match state.storage.traces.get_global_stats().await {

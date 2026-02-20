@@ -123,7 +123,7 @@ export default function SettingsPage() {
   async function fetchLiveConfig() {
     setConfigLoading(true);
     try {
-      const response = await fetch("/api/proxy/config/live", { cache: "no-store" });
+      const response = await fetch("/api/v1/config/live", { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`Failed to load config: ${response.status}`);
       }
