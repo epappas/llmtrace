@@ -511,6 +511,34 @@ pub async fn get_stats(
     }
 }
 
+/// `GET /api/v1/stats/global` — storage statistics across all tenants.
+#[utoipa::path(
+    get,
+    path = "/api/v1/stats/global",
+    responses(
+        (status = 200, description = "Global Stats", body = llmtrace_core::StorageStats),
+        (status = 401, description = "Unauthorized", body = ApiError),
+        (status = 403, description = "Forbidden", body = ApiError),
+        (status = 500, description = "Internal Server Error", body = ApiError),
+    ),
+    security(("api_key" = [])),
+    tag = "LLMTrace Proxy"
+)]
+pub async fn get_global_stats(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+) -> Response {
+    // Only admins can see global stats
+    if !auth.role.has_permission(llmtrace_core::ApiKeyRole::Admin) {
+        return api_error(StatusCode::FORBIDDEN, "Insufficient permissions: requires admin role");
+    }
+
+    match state.storage.traces.get_global_stats().await {
+        Ok(stats) => Json(stats).into_response(),
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
 /// `GET /api/v1/costs/current` — real-time spend per budget window.
 ///
 /// Returns the current spend for the tenant (and optionally a specific agent)

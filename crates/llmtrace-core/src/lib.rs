@@ -2359,6 +2359,9 @@ pub trait TraceRepository: Send + Sync {
     /// Get storage statistics for a tenant.
     async fn get_stats(&self, tenant_id: TenantId) -> Result<StorageStats>;
 
+    /// Get aggregate statistics across all tenants (cluster-wide).
+    async fn get_global_stats(&self) -> Result<StorageStats>;
+
     /// Health check for the trace repository.
     async fn health_check(&self) -> Result<()>;
 }

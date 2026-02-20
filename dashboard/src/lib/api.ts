@@ -2,10 +2,10 @@
 // LLMTrace REST API Client — typed fetch wrapper
 // ---------------------------------------------------------------------------
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8081";
+const API_BASE = "";
 
-/** Default tenant ID (nil UUID) used as a fallback for the "default" tenant. */
-export const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000";
+/** Default tenant ID used as a fallback for the "default" tenant. */
+export const DEFAULT_TENANT_ID = "6ae1ab34-02d8-5b68-ad6f-132bf4de8408";
 
 // ---------------------------------------------------------------------------
 // Core types (mirror Rust API responses)
@@ -187,6 +187,12 @@ async function apiFetch<T>(
     ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
   };
 
+  // Add bootstrap admin key if configured
+  const adminKey = process.env.LLMTRACE_AUTH_ADMIN_KEY;
+  if (adminKey) {
+    headers["Authorization"] = `Bearer ${adminKey}`;
+  }
+
   try {
     const res = await fetch(url, {
       ...init,
@@ -281,27 +287,7 @@ export async function getStats(tenantId?: string): Promise<StorageStats> {
 /** Get global storage stats across all tenants. */
 export async function getGlobalStats(): Promise<StorageStats> {
   try {
-    const tenants = await listTenants();
-    console.log(`[API] getGlobalStats: Found ${tenants.length} tenants`);
-    const statsPromises = tenants.map(t => getStats(t.id).catch(err => {
-      console.warn(`[API] Failed to fetch stats for tenant ${t.id}:`, err);
-      return null;
-    }));
-    const allStats = await Promise.all(statsPromises);
-    
-    const aggregated = allStats.reduce((acc: StorageStats, s) => {
-      if (!s) return acc;
-      return {
-        ...acc,
-        total_traces: acc.total_traces + s.total_traces,
-        total_spans: acc.total_spans + s.total_spans,
-        total_cost_usd: acc.total_cost_usd + s.total_cost_usd,
-        total_findings: (acc.total_findings || 0) + (s.total_findings || 0),
-      };
-    }, { total_traces: 0, total_spans: 0, total_cost_usd: 0, total_findings: 0 });
-
-    console.log("[API] getGlobalStats result:", aggregated);
-    return aggregated;
+    return apiFetch("/api/v1/stats/global");
   } catch (e) {
     console.error("[API] Failed to fetch global stats:", e);
     return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
