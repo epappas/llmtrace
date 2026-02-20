@@ -635,6 +635,10 @@ fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/stats", get(llmtrace_proxy::api::get_stats))
         .route(
+            "/api/v1/stats/global",
+            get(llmtrace_proxy::api::get_global_stats),
+        )
+        .route(
             "/api/v1/security/findings",
             get(llmtrace_proxy::api::list_security_findings),
         )

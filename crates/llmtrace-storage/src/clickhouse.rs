@@ -738,6 +738,49 @@ impl TraceRepository for ClickHouseTraceRepository {
         })
     }
 
+    async fn get_global_stats(&self) -> Result<StorageStats> {
+        let trace_count: CountRow = self
+            .client
+            .query("SELECT count() as cnt FROM traces")
+            .fetch_one()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to count global traces: {e}")))?;
+
+        let span_count: CountRow = self
+            .client
+            .query("SELECT count() as cnt FROM spans")
+            .fetch_one()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to count global spans: {e}")))?;
+
+        let size_row: SizeRow = self
+            .client
+            .query("SELECT sum(length(prompt) + length(coalesce(response, ''))) as sz FROM spans")
+            .fetch_one()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
+
+        let (oldest_trace, newest_trace) = if trace_count.cnt > 0 {
+            let time_row: TimeRangeRow = self
+                .client
+                .query("SELECT min(created_at) as oldest, max(created_at) as newest FROM traces")
+                .fetch_one()
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to get global time range: {e}")))?;
+            (Some(time_row.oldest), Some(time_row.newest))
+        } else {
+            (None, None)
+        };
+
+        Ok(StorageStats {
+            total_traces: trace_count.cnt,
+            total_spans: span_count.cnt,
+            storage_size_bytes: size_row.sz,
+            oldest_trace,
+            newest_trace,
+        })
+    }
+
     async fn health_check(&self) -> Result<()> {
         self.client
             .query("SELECT 1")

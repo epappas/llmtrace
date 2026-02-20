@@ -280,6 +280,26 @@ impl TraceRepository for InMemoryTraceRepository {
         })
     }
 
+    async fn get_global_stats(&self) -> Result<StorageStats> {
+        let traces = self.traces.read().await;
+        let standalone = self.standalone_spans.read().await;
+
+        let total_traces = traces.len() as u64;
+        let trace_span_count: usize = traces.iter().map(|t| t.spans.len()).sum();
+        let total_spans = (trace_span_count + standalone.len()) as u64;
+
+        let oldest_trace = traces.iter().map(|t| t.created_at).min();
+        let newest_trace = traces.iter().map(|t| t.created_at).max();
+
+        Ok(StorageStats {
+            total_traces,
+            total_spans,
+            storage_size_bytes: 0,
+            oldest_trace,
+            newest_trace,
+        })
+    }
+
     async fn health_check(&self) -> Result<()> {
         Ok(())
     }
