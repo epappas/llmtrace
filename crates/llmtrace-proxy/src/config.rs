@@ -55,6 +55,13 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
     if let Ok(val) = std::env::var("LLMTRACE_REDIS_URL") {
         config.storage.redis_url = Some(val);
     }
+    if let Ok(val) = std::env::var("LLMTRACE_AUTH_ENABLED") {
+        let val = val.to_lowercase();
+        config.auth.enabled = val == "1" || val == "true" || val == "yes";
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_AUTH_ADMIN_KEY") {
+        config.auth.admin_key = Some(val);
+    }
 }
 
 /// Validate a [`ProxyConfig`] for common configuration errors.
