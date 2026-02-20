@@ -526,7 +526,7 @@ pub async fn get_stats(
 )]
 pub async fn get_global_stats(
     State(state): State<Arc<AppState>>,
-    Extension(auth): Extension<AuthContext>,
+    Extension(_auth): Extension<AuthContext>,
     extensions: axum::http::Extensions,
 ) -> Response {
     // Only admins can see global stats
