@@ -755,7 +755,10 @@ impl TraceRepository for ClickHouseTraceRepository {
 
         let size_row: SizeRow = self
             .client
-            .query("SELECT sum(length(prompt) + length(coalesce(response, ''))) as sz FROM spans")
+            .query(
+                "SELECT sum(length(prompt) + length(coalesce(response, ''))) as sz \
+                 FROM spans",
+            )
             .fetch_one()
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
@@ -763,10 +766,15 @@ impl TraceRepository for ClickHouseTraceRepository {
         let (oldest_trace, newest_trace) = if trace_count.cnt > 0 {
             let time_row: TimeRangeRow = self
                 .client
-                .query("SELECT min(created_at) as oldest, max(created_at) as newest FROM traces")
+                .query(
+                    "SELECT min(created_at) as oldest, max(created_at) as newest \
+                     FROM traces",
+                )
                 .fetch_one()
                 .await
-                .map_err(|e| LLMTraceError::Storage(format!("Failed to get global time range: {e}")))?;
+                .map_err(|e| {
+                    LLMTraceError::Storage(format!("Failed to get global time range: {e}"))
+                })?;
             (Some(time_row.oldest), Some(time_row.newest))
         } else {
             (None, None)
