@@ -39,7 +39,7 @@ def sample_from(
 
 
 def build_corpus() -> list[dict[str, Any]]:
-    """Build a ~150-sample corpus covering all attack types and edge cases."""
+    """Build a ~250-sample corpus covering all attack types and edge cases."""
     corpus: list[dict[str, Any]] = []
 
     # ── Core datasets ──
@@ -60,7 +60,25 @@ def build_corpus() -> list[dict[str, Any]]:
     injecagent = load_dataset(ext / "injecagent_attacks.json")
     safeguard = load_dataset(ext / "safeguard_test.json")
 
-    # ── Malicious samples (~75) ──
+    # ── New external datasets (load if available, skip if missing) ──
+    def try_load(path: Path) -> list[dict[str, Any]]:
+        try:
+            return load_dataset(path)
+        except FileNotFoundError:
+            return []
+
+    wildjailbreak = try_load(ext / "wildjailbreak.json")
+    hackaprompt = try_load(ext / "hackaprompt.json")
+    in_the_wild = try_load(ext / "in_the_wild_jailbreak.json")
+    mindgard = try_load(ext / "mindgard_evasion.json")
+    xstest = try_load(ext / "xstest.json")
+    jailbreakbench = try_load(ext / "jailbreakbench.json")
+    advbench = try_load(ext / "advbench_harmful.json")
+    spml = try_load(ext / "spml_chatbot.json")
+    rubend18 = try_load(ext / "rubend18_jailbreak.json")
+    satml = try_load(ext / "satml_ctf.json")
+
+    # ── Malicious samples (~145) ──
     corpus.extend(sample_from(injections, 15, "malicious"))
     corpus.extend(sample_from(encoding, 10, "malicious"))
     corpus.extend(sample_from(cybersec, 8, "malicious"))
@@ -70,8 +88,17 @@ def build_corpus() -> list[dict[str, Any]]:
     corpus.extend(sample_from(transfer, 6, "malicious"))
     corpus.extend(sample_from(bipia, 6, "malicious"))
     corpus.extend(sample_from(injecagent, 8, "malicious"))
+    corpus.extend(sample_from(wildjailbreak, 8, "malicious"))
+    corpus.extend(sample_from(hackaprompt, 8, "malicious"))
+    corpus.extend(sample_from(in_the_wild, 8, "malicious"))
+    corpus.extend(sample_from(mindgard, 8, "malicious"))
+    corpus.extend(sample_from(jailbreakbench, 6, "malicious"))
+    corpus.extend(sample_from(advbench, 8, "malicious"))
+    corpus.extend(sample_from(spml, 8, "malicious"))
+    corpus.extend(sample_from(rubend18, 6, "malicious"))
+    corpus.extend(sample_from(satml, 8, "malicious"))
 
-    # ── Benign samples (~75) ──
+    # ── Benign samples (~95) ──
     corpus.extend(sample_from(benign, 15, "benign"))
     # notinject: stratify by difficulty to test edge cases properly
     notinject_d1 = [s for s in notinject if s.get("difficulty") == 1]
@@ -84,6 +111,9 @@ def build_corpus() -> list[dict[str, Any]]:
     corpus.extend(sample_from(encoding, 3, "benign"))
     corpus.extend(sample_from(jackhhao, 6, "benign"))
     corpus.extend(sample_from(safeguard, 8, "benign"))
+    corpus.extend(sample_from(xstest, 10, "benign"))
+    corpus.extend(sample_from(wildjailbreak, 8, "benign"))
+    corpus.extend(sample_from(spml, 6, "benign"))
 
     # ── Edge cases: token width ──
     edge_cases = build_edge_cases()
