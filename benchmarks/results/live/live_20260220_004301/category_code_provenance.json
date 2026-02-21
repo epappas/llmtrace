@@ -1,0 +1,167 @@
+{
+  "ssh": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_36609",
+      "ailuminate-airr_practice_1_0_23941",
+      "ailuminate-airr_practice_1_0_36610"
+    ]
+  },
+  "vcr": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_36432",
+      "ailuminate-airr_practice_1_0_36433",
+      "ailuminate-airr_practice_1_0_92316"
+    ]
+  },
+  "prv": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_91711",
+      "ailuminate-airr_practice_1_0_91716",
+      "ailuminate-airr_practice_1_0_91715"
+    ]
+  },
+  "iwp": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_37978",
+      "ailuminate-airr_practice_1_0_89003",
+      "ailuminate-airr_practice_1_0_89005"
+    ]
+  },
+  "ncr": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_24324",
+      "ailuminate-airr_practice_1_0_156332",
+      "ailuminate-airr_practice_1_0_156334"
+    ]
+  },
+  "cse": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_156733",
+      "ailuminate-airr_practice_1_0_91247",
+      "ailuminate-airr_practice_1_0_91240"
+    ]
+  },
+  "dfm": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_91631",
+      "ailuminate-airr_practice_1_0_23723",
+      "ailuminate-airr_practice_1_0_23725"
+    ]
+  },
+  "hte": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_24524",
+      "ailuminate-airr_practice_1_0_90487",
+      "ailuminate-airr_practice_1_0_86313"
+    ]
+  },
+  "ipv": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_152228",
+      "ailuminate-airr_practice_1_0_155274",
+      "ailuminate-airr_practice_1_0_38126"
+    ]
+  },
+  "src": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_146938",
+      "ailuminate-airr_practice_1_0_88852",
+      "ailuminate-airr_practice_1_0_94943"
+    ]
+  },
+  "sxc_prn": {
+    "count": 100,
+    "files": [
+      "benchmarks/datasets/external/ailuminate_demo.json"
+    ],
+    "subcategories": [
+      "skilled",
+      "unskilled"
+    ],
+    "sample_ids": [
+      "ailuminate-airr_practice_1_0_88028",
+      "ailuminate-airr_practice_1_0_146736",
+      "ailuminate-airr_practice_1_0_146739"
+    ]
+  }
+}

@@ -24,10 +24,21 @@ import {
   findActiveTenant,
 } from "@/lib/api";
 
+interface LiveConfigResponse {
+  config?: {
+    cost_caps?: {
+      enabled?: boolean;
+    };
+  };
+}
+
 export default function CostsPage() {
   const [costs, setCosts] = useState<SpendSnapshot | null>(null);
   const [stats, setStats] = useState<StorageStats | null>(null);
   const [costsError, setCostsError] = useState(false);
+  const [costsErrorMessage, setCostsErrorMessage] = useState(
+    "Cost tracking is disabled. Enable `cost_caps.enabled: true` in the proxy configuration.",
+  );
 
   useEffect(() => {
     async function load() {
@@ -39,10 +50,31 @@ export default function CostsPage() {
         } catch {
           /* ignore */
         }
+
+        try {
+          const cfgRes = await fetch("/api/proxy/config/live", { cache: "no-store" });
+          if (cfgRes.ok) {
+            const cfg = (await cfgRes.json()) as LiveConfigResponse;
+            const costCapsEnabled = cfg?.config?.cost_caps?.enabled;
+            if (!costCapsEnabled) {
+              setCostsError(true);
+              setCostsErrorMessage(
+                "Cost tracking is disabled. Enable `cost_caps.enabled: true` in the proxy configuration.",
+              );
+              return;
+            }
+          }
+        } catch {
+          /* ignore and attempt cost endpoint */
+        }
+
         try {
           setCosts(await getCurrentCosts(undefined, tenantId));
-        } catch {
+        } catch (e) {
           setCostsError(true);
+          if (e instanceof Error && e.message.trim().length > 0) {
+            setCostsErrorMessage(e.message);
+          }
         }
       } catch {
         /* ignore */
@@ -171,11 +203,7 @@ export default function CostsPage() {
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
             <AlertTriangle className="mx-auto mb-2 h-6 w-6" />
-            <p>Cost caps are not enabled in the proxy configuration.</p>
-            <p className="mt-1 text-xs">
-              Enable <code className="bg-muted px-1 rounded">cost_caps.enabled: true</code>{" "}
-              in config.yaml.
-            </p>
+            <p>{costsErrorMessage}</p>
           </CardContent>
         </Card>
       )}

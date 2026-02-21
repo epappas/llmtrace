@@ -1,0 +1,129 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Latency Root Cause - live_20260220_004301</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f6f8fb;color:#1d2433;margin:0} .w{max-width:1100px;margin:20px auto;padding:0 12px}
+.card{background:#fff;border:1px solid #e3e8f0;border-radius:10px;padding:14px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse} th,td{border-bottom:1px solid #e6ebf2;padding:7px;text-align:right;font-size:13px} th:first-child,td:first-child{text-align:left}
+pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;overflow:auto}
+.k{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px} .box{border:1px solid #e6ebf2;border-radius:8px;padding:8px;background:#fafcff}
+.small{color:#5a6475;font-size:13px}
+a{color:#0b66c3;text-decoration:none}
+</style></head><body><div class="w">
+<div class="card"><h2>Latency Root Cause Report</h2><div class="small">Run: live_20260220_004301 | Generated: 2026-02-20T10:00:43.462398</div></div>
+<div class="card"><div class="k">
+<div class="box"><div class="small">Mean Delta (P-D)</div><div><b>5253.22 ms</b></div></div>
+<div class="box"><div class="small">Median Delta</div><div><b>-7.64 ms</b></div></div>
+<div class="box"><div class="small">P95 Delta</div><div><b>16197.56 ms</b></div></div>
+<div class="box"><div class="small">Paired Samples</div><div><b>8480</b></div></div>
+</div></div>
+<div class="card"><h3>Attack Patterns (Category)</h3><table><thead><tr><th>Category</th><th>Samples</th><th>Direct Mean</th><th>Proxy Mean</th><th>Delta Mean</th><th>Delta p95</th><th>Share Extra</th></tr></thead><tbody><tr><td>prompt_injection</td><td>2109</td><td>4104.47</td><td>6329.51</td><td>2225.04</td><td>15813.15</td><td>10.53%</td></tr>
+<tr><td>Data Security Harm</td><td>374</td><td>3187.02</td><td>10924.37</td><td>7737.35</td><td>16313.60</td><td>6.50%</td></tr>
+<tr><td>Disruptive Attack</td><td>200</td><td>4413.10</td><td>18680.50</td><td>14267.40</td><td>16058.24</td><td>6.41%</td></tr>
+<tr><td>Stealthy Attack</td><td>200</td><td>4414.06</td><td>18481.52</td><td>14067.46</td><td>16104.67</td><td>6.32%</td></tr>
+<tr><td>Financial Harm</td><td>306</td><td>3090.55</td><td>10258.51</td><td>7167.96</td><td>16906.77</td><td>4.92%</td></tr>
+<tr><td>Physical Harm</td><td>340</td><td>3081.14</td><td>8928.22</td><td>5847.09</td><td>16598.63</td><td>4.46%</td></tr>
+<tr><td>copyright</td><td>100</td><td>3592.00</td><td>19009.32</td><td>15417.32</td><td>16532.02</td><td>3.46%</td></tr>
+<tr><td>hte</td><td>100</td><td>5496.60</td><td>18599.14</td><td>13102.54</td><td>14495.03</td><td>2.94%</td></tr>
+<tr><td>iwp</td><td>100</td><td>5694.31</td><td>18731.40</td><td>13037.09</td><td>14067.68</td><td>2.93%</td></tr>
+<tr><td>ncr</td><td>100</td><td>5579.23</td><td>18614.88</td><td>13035.65</td><td>14742.68</td><td>2.93%</td></tr>
+<tr><td>ssh</td><td>100</td><td>5742.93</td><td>18697.02</td><td>12954.09</td><td>14452.42</td><td>2.91%</td></tr>
+<tr><td>cse</td><td>100</td><td>5283.98</td><td>18235.86</td><td>12951.88</td><td>14954.57</td><td>2.91%</td></tr>
+<tr><td>dfm</td><td>100</td><td>5338.09</td><td>18279.05</td><td>12940.96</td><td>15017.11</td><td>2.90%</td></tr>
+<tr><td>ipv</td><td>100</td><td>5558.37</td><td>18459.04</td><td>12900.67</td><td>14519.74</td><td>2.90%</td></tr>
+<tr><td>vcr</td><td>100</td><td>5812.85</td><td>18669.92</td><td>12857.07</td><td>14269.42</td><td>2.89%</td></tr>
+<tr><td>sxc_prn</td><td>100</td><td>5763.68</td><td>18503.01</td><td>12739.33</td><td>14243.34</td><td>2.86%</td></tr>
+<tr><td>src</td><td>100</td><td>5804.96</td><td>18294.98</td><td>12490.01</td><td>14144.63</td><td>2.80%</td></tr>
+<tr><td>prv</td><td>100</td><td>5477.01</td><td>17926.39</td><td>12449.38</td><td>15230.83</td><td>2.79%</td></tr>
+<tr><td>cybercrime_intrusion</td><td>67</td><td>4038.37</td><td>18496.04</td><td>14457.67</td><td>16031.53</td><td>2.17%</td></tr>
+<tr><td>misinformation_disinformation</td><td>65</td><td>4054.17</td><td>18849.79</td><td>14795.63</td><td>15636.36</td><td>2.16%</td></tr></tbody></table></div>
+<div class="card"><h3>Top Subcategories</h3><table><thead><tr><th>Category</th><th>Subcategory</th><th>Samples</th><th>Delta Mean</th><th>Delta p95</th><th>Share Extra</th></tr></thead><tbody><tr><td>prompt_injection</td><td>none</td><td>2000</td><td>2367.78</td><td>15847.54</td><td>10.63%</td></tr>
+<tr><td>Data Security Harm</td><td>dh_base</td><td>187</td><td>15437.60</td><td>16433.90</td><td>6.48%</td></tr>
+<tr><td>Financial Harm</td><td>dh_base</td><td>153</td><td>14269.96</td><td>17080.29</td><td>4.90%</td></tr>
+<tr><td>Physical Harm</td><td>dh_base</td><td>170</td><td>11620.65</td><td>16827.11</td><td>4.43%</td></tr>
+<tr><td>copyright</td><td>copyright</td><td>100</td><td>15417.32</td><td>16532.02</td><td>3.46%</td></tr>
+<tr><td>illegal</td><td>standard</td><td>58</td><td>14392.12</td><td>16052.58</td><td>1.87%</td></tr>
+<tr><td>ncr</td><td>unskilled</td><td>50</td><td>13527.88</td><td>14797.49</td><td>1.52%</td></tr>
+<tr><td>prv</td><td>skilled</td><td>50</td><td>13325.39</td><td>15602.85</td><td>1.50%</td></tr>
+<tr><td>dfm</td><td>unskilled</td><td>50</td><td>13316.37</td><td>15222.78</td><td>1.49%</td></tr>
+<tr><td>iwp</td><td>skilled</td><td>50</td><td>13316.01</td><td>15636.41</td><td>1.49%</td></tr>
+<tr><td>hte</td><td>skilled</td><td>50</td><td>13192.79</td><td>14577.11</td><td>1.48%</td></tr>
+<tr><td>ipv</td><td>unskilled</td><td>50</td><td>13147.52</td><td>14253.55</td><td>1.48%</td></tr>
+<tr><td>vcr</td><td>skilled</td><td>50</td><td>13104.96</td><td>14352.93</td><td>1.47%</td></tr>
+<tr><td>cse</td><td>unskilled</td><td>50</td><td>13057.65</td><td>14105.48</td><td>1.47%</td></tr>
+<tr><td>ssh</td><td>skilled</td><td>50</td><td>13020.85</td><td>14961.41</td><td>1.46%</td></tr>
+<tr><td>hte</td><td>unskilled</td><td>50</td><td>13012.29</td><td>14433.11</td><td>1.46%</td></tr>
+<tr><td>sxc_prn</td><td>skilled</td><td>50</td><td>13011.81</td><td>14840.70</td><td>1.46%</td></tr>
+<tr><td>src</td><td>skilled</td><td>50</td><td>12932.91</td><td>14388.34</td><td>1.45%</td></tr>
+<tr><td>ssh</td><td>unskilled</td><td>50</td><td>12887.33</td><td>14296.41</td><td>1.45%</td></tr>
+<tr><td>cse</td><td>skilled</td><td>50</td><td>12846.11</td><td>15414.28</td><td>1.44%</td></tr>
+<tr><td>iwp</td><td>unskilled</td><td>50</td><td>12758.17</td><td>13630.56</td><td>1.43%</td></tr>
+<tr><td>ipv</td><td>skilled</td><td>50</td><td>12653.82</td><td>14531.32</td><td>1.42%</td></tr>
+<tr><td>vcr</td><td>unskilled</td><td>50</td><td>12609.18</td><td>13834.76</td><td>1.42%</td></tr>
+<tr><td>dfm</td><td>skilled</td><td>50</td><td>12565.55</td><td>14654.79</td><td>1.41%</td></tr>
+<tr><td>ncr</td><td>skilled</td><td>50</td><td>12543.42</td><td>14339.78</td><td>1.41%</td></tr>
+<tr><td>sxc_prn</td><td>unskilled</td><td>50</td><td>12466.84</td><td>14118.14</td><td>1.40%</td></tr>
+<tr><td>src</td><td>unskilled</td><td>50</td><td>12047.12</td><td>13727.71</td><td>1.35%</td></tr>
+<tr><td>cybercrime_intrusion</td><td>standard</td><td>40</td><td>14529.11</td><td>16129.34</td><td>1.30%</td></tr>
+<tr><td>prv</td><td>unskilled</td><td>50</td><td>11573.38</td><td>14744.12</td><td>1.30%</td></tr>
+<tr><td>misinformation_disinformation</td><td>standard</td><td>34</td><td>14812.72</td><td>15717.02</td><td>1.13%</td></tr></tbody></table></div>
+<div class="card"><h3>Delta Distribution</h3><table><thead><tr><th>Bucket ms</th><th>Count</th><th>Share</th></tr></thead><tbody><tr><td>[-inf, -1000)</td><td>671</td><td>7.91%</td></tr>
+<tr><td>[-1000, -250)</td><td>2720</td><td>32.08%</td></tr>
+<tr><td>[-250, 0)</td><td>893</td><td>10.53%</td></tr>
+<tr><td>[0, 250)</td><td>675</td><td>7.96%</td></tr>
+<tr><td>[250, 1000)</td><td>126</td><td>1.49%</td></tr>
+<tr><td>[1000, 2500)</td><td>16</td><td>0.19%</td></tr>
+<tr><td>[2500, 5000)</td><td>212</td><td>2.50%</td></tr>
+<tr><td>[5000, 10000)</td><td>51</td><td>0.60%</td></tr>
+<tr><td>[10000, 20000)</td><td>3051</td><td>35.98%</td></tr>
+<tr><td>[20000, +inf)</td><td>65</td><td>0.77%</td></tr></tbody></table></div>
+<div class="card"><h3>Logical Flow</h3><pre>
+1) Request arrives
+
+2) Auth + tenant resolution
+
+3) Rate limiting + cost caps
+
+4) Optional pre-request enforcement
+   - In this live config: mode=log + no categories =&gt; allow fast-path
+
+5) Forward to upstream model (vLLM)
+
+6) Stream response back to client
+
+7) Background tasks after response body
+   - Security analysis on prompt+response (sequential request+response analysis)
+   - Anomaly checks
+   - Trace persistence + metrics
+</pre></div>
+<div class="card"><h3>Files</h3><ul>
+<li><a href="./latency_root_cause_by_attack_pattern.md" target="_blank">latency_root_cause_by_attack_pattern.md</a></li>
+<li><a href="./latency_attack_pattern_summary.json" target="_blank">latency_attack_pattern_summary.json</a></li>
+<li><a href="./ab_full_malicious_report.md" target="_blank">ab_full_malicious_report.md</a></li>
+</ul></div>
+
+<div class="card"><h3>Clarification: prompt_injection timing</h3>
+<ul>
+<li>Checks include regex injection heuristics, ML prompt-injection model, and jailbreak detector (per live config).</li>
+<li><b>prompt_injection category timing:</b> direct mean 4104.47 ms, proxy mean 6329.51 ms, delta mean 2225.04 ms, delta p95 15813.15 ms.</li>
+<li>Current system records aggregate <code>ensemble</code> detector latency per request, not per-finding-type latency split.</li>
+</ul>
+</div>
+<div class="card"><h3>Clarification: category codes (ssh, vcr, prv, ...)</h3>
+<div class="small">These are dataset category labels from AILuminate external dataset, not proxy finding_type values.</div>
+<table><thead><tr><th>Code</th><th>Count</th><th>Subcategories</th><th>Source</th><th>Example IDs</th></tr></thead><tbody>
+<tr><td>ssh</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_36609, ailuminate-airr_practice_1_0_23941, ailuminate-airr_practice_1_0_36610</td></tr>
+<tr><td>vcr</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_36432, ailuminate-airr_practice_1_0_36433, ailuminate-airr_practice_1_0_92316</td></tr>
+<tr><td>prv</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_91711, ailuminate-airr_practice_1_0_91716, ailuminate-airr_practice_1_0_91715</td></tr>
+<tr><td>iwp</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_37978, ailuminate-airr_practice_1_0_89003, ailuminate-airr_practice_1_0_89005</td></tr>
+<tr><td>ncr</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_24324, ailuminate-airr_practice_1_0_156332, ailuminate-airr_practice_1_0_156334</td></tr>
+<tr><td>cse</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_156733, ailuminate-airr_practice_1_0_91247, ailuminate-airr_practice_1_0_91240</td></tr>
+<tr><td>dfm</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_91631, ailuminate-airr_practice_1_0_23723, ailuminate-airr_practice_1_0_23725</td></tr>
+<tr><td>hte</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_24524, ailuminate-airr_practice_1_0_90487, ailuminate-airr_practice_1_0_86313</td></tr>
+<tr><td>ipv</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_152228, ailuminate-airr_practice_1_0_155274, ailuminate-airr_practice_1_0_38126</td></tr>
+<tr><td>src</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_146938, ailuminate-airr_practice_1_0_88852, ailuminate-airr_practice_1_0_94943</td></tr>
+<tr><td>sxc_prn</td><td>100</td><td>skilled, unskilled</td><td><code>benchmarks/datasets/external/ailuminate_demo.json</code></td><td>ailuminate-airr_practice_1_0_88028, ailuminate-airr_practice_1_0_146736, ailuminate-airr_practice_1_0_146739</td></tr>
+</tbody></table>
+</div>
+
+</div></body></html>
