@@ -1,0 +1,45 @@
+{
+  "run_id": "live_20260220_004301",
+  "generated_at": "2026-02-20T09:53:01.684317",
+  "dataset_label": "malicious",
+  "samples": 8480,
+  "auth": "proxy bearer token enabled",
+  "direct": {
+    "requests": 8480,
+    "ok": 8480,
+    "errors": 0,
+    "mean_ms": 4269.475485599491,
+    "p50_ms": 4174.710937380791,
+    "p95_ms": 5796.731684851645,
+    "p99_ms": 5996.064175543785,
+    "max_ms": 7248.661999940872,
+    "avg_total_tokens": 168.74540094339622
+  },
+  "proxy": {
+    "requests": 8480,
+    "ok": 8480,
+    "errors": 0,
+    "mean_ms": 9522.69779467878,
+    "p50_ms": 3854.5209999084473,
+    "p95_ms": 20182.57092545032,
+    "p99_ms": 24075.161781258546,
+    "max_ms": 37251.76558327675,
+    "avg_total_tokens": 168.65385068993984
+  },
+  "ab": {
+    "paired_rows": 8480,
+    "paired_success_rows": 8480,
+    "delta_mean_ms": 5253.222309079289,
+    "delta_p50_ms": -7.638041853904724,
+    "delta_p95_ms": 16197.555164587497,
+    "delta_p99_ms": 19142.461922328457,
+    "proxy_faster_count": 4284,
+    "proxy_slower_count": 4196,
+    "same_count": 0
+  },
+  "proxy_run_meta": {
+    "concurrency": 12,
+    "timeout": 35,
+    "duration_s": 6730.857858181
+  }
+}

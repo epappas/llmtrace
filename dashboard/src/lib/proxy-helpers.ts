@@ -1,6 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = "http://llmtrace-proxy:8080";
+const backendUrlCandidates = [
+  process.env.LLMTRACE_PROXY_URL,
+  process.env.LLMTRACE_BACKEND_URL,
+  "http://llmtrace-proxy:8080",
+  "http://llmtrace-proxy:8081",
+  "http://127.0.0.1:8080",
+  "http://127.0.0.1:8081",
+  "http://localhost:8080",
+  "http://localhost:8081",
+].filter((value, index, arr): value is string => Boolean(value) && arr.indexOf(value) === index);
+
+async function fetchWithFallback(
+  backendPath: string,
+  init: RequestInit,
+): Promise<{ response: Response; backendUrl: string }> {
+  let lastError: unknown;
+  let lastResponse: Response | undefined;
+  const normalizedPath = backendPath.split("?")[0] ?? backendPath;
+  const retryOnNotFoundPaths = [
+    "/api/v1/config/live",
+    "/config/live",
+    "/swagger-ui",
+    "/swagger-ui/",
+    "/api-doc/openapi.json",
+  ];
+  const shouldRetryOnNotFound = retryOnNotFoundPaths.some((path) =>
+    normalizedPath.startsWith(path),
+  );
+
+  for (const backendUrl of backendUrlCandidates) {
+    const url = new URL(backendPath, backendUrl);
+    try {
+      const response = await fetch(url.toString(), init);
+      if (shouldRetryOnNotFound && response.status === 404) {
+        lastResponse = response;
+        continue;
+      }
+      return { response, backendUrl };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastResponse) {
+    return {
+      response: lastResponse,
+      backendUrl: "none",
+    };
+  }
+
+  throw lastError ?? new Error("No backend URL candidates configured");
+}
 
 /**
  * Proxy a GET request to the LLMTrace backend, forwarding query params
@@ -10,13 +61,6 @@ export async function proxyGet(
   req: NextRequest,
   backendPath: string,
 ): Promise<NextResponse> {
-  console.log(`[Proxy] GET request to ${backendPath}. BACKEND_URL is ${BACKEND_URL}`);
-  const url = new URL(backendPath, BACKEND_URL);
-  // Forward query params
-  req.nextUrl.searchParams.forEach((v, k) => url.searchParams.set(k, v));
-  
-  console.log(`[Proxy] Fetching from upstream: ${url.toString()}`);
-
   const headers: Record<string, string> = {};
   const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
   if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
@@ -30,7 +74,12 @@ export async function proxyGet(
   }
 
   try {
-    const res = await fetch(url.toString(), { headers, cache: "no-store" });
+    const pathWithQuery = `${backendPath}${req.nextUrl.search}`;
+    const { response: res, backendUrl } = await fetchWithFallback(pathWithQuery, {
+      headers,
+      cache: "no-store",
+    });
+    console.log(`[Proxy] GET ${pathWithQuery} via ${backendUrl}`);
     const body = await res.text();
     return new NextResponse(body, {
       status: res.status,
@@ -53,8 +102,6 @@ export async function proxyMutate(
   backendPath: string,
   method: string,
 ): Promise<NextResponse> {
-  const url = new URL(backendPath, BACKEND_URL);
-
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
@@ -75,11 +122,12 @@ export async function proxyMutate(
   }
 
   try {
-    const res = await fetch(url.toString(), {
+    const { response: res, backendUrl } = await fetchWithFallback(backendPath, {
       method,
       headers,
       body: bodyText,
     });
+    console.log(`[Proxy] ${method} ${backendPath} via ${backendUrl}`);
     const body = await res.text();
     return new NextResponse(body, {
       status: res.status,

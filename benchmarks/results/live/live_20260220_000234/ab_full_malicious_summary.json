@@ -1,0 +1,153 @@
+{
+  "timestamp": "2026-02-20T00:48:15.367890",
+  "tenant_name": "today",
+  "auth": {
+    "proxy_bearer_token_present": true
+  },
+  "endpoints": {
+    "direct": "http://192.168.1.107:6969/v1/chat/completions",
+    "proxy": "http://192.168.1.107:8080/v1/chat/completions",
+    "proxy_dashboard": "http://192.168.1.107:8081"
+  },
+  "model": "glm-4.7-flash",
+  "dataset": {
+    "suite": "all",
+    "label_filter": "malicious",
+    "samples_total": 8480,
+    "files": [
+      "benchmarks/datasets/encoding_evasion.json",
+      "benchmarks/datasets/external/ailuminate_demo.json",
+      "benchmarks/datasets/external/asb_attacks.json",
+      "benchmarks/datasets/external/bipia_indirect.json",
+      "benchmarks/datasets/external/cyberseceval2_pi.json",
+      "benchmarks/datasets/external/deepset_all.json",
+      "benchmarks/datasets/external/deepset_v2.json",
+      "benchmarks/datasets/external/harmbench_behaviors.json",
+      "benchmarks/datasets/external/hpi_attack_approx.json",
+      "benchmarks/datasets/external/injecagent_attacks.json",
+      "benchmarks/datasets/external/ivanleomk_all.json",
+      "benchmarks/datasets/external/ivanleomk_v2.json",
+      "benchmarks/datasets/external/jackhhao_jailbreak.json",
+      "benchmarks/datasets/external/safeguard_test.json",
+      "benchmarks/datasets/external/tensor_trust_attacks.json",
+      "benchmarks/datasets/external/transfer_attack_samples.json",
+      "benchmarks/datasets/injection_samples.json"
+    ]
+  },
+  "health": {
+    "ml": {
+      "injecguard_model": false,
+      "injection_detector_count": 2,
+      "load_time_ms": 92305,
+      "ner_model": false,
+      "piguard_model": false,
+      "prompt_injection_model": true,
+      "status": "loaded",
+      "voting_mode": "union"
+    },
+    "security": {
+      "circuit_breaker": "Closed",
+      "healthy": true
+    },
+    "starting": false,
+    "status": "healthy",
+    "storage": {
+      "cache": {
+        "healthy": true
+      },
+      "circuit_breaker": "Closed",
+      "metadata": {
+        "healthy": true
+      },
+      "traces": {
+        "healthy": true
+      }
+    }
+  },
+  "non_stream": {
+    "concurrency": 32,
+    "direct_duration_s": 1749.8156831264496,
+    "proxy_duration_s": 680.70960688591,
+    "direct": {
+      "requests": 8480,
+      "ok": 8480,
+      "errors": 0,
+      "blocked_true": 0,
+      "blocked_false": 0,
+      "blocked_unknown": 8480,
+      "mean_ms": 6594.8098662958955,
+      "p50_ms": 6626.141375422478,
+      "p95_ms": 8715.394676971435,
+      "p99_ms": 9300.127247977256,
+      "max_ms": 9954.057041883469,
+      "mean_ttft_ms": null,
+      "p50_ttft_ms": null,
+      "p95_ttft_ms": null
+    },
+    "proxy": {
+      "requests": 8480,
+      "ok": 199,
+      "errors": 8281,
+      "blocked_true": 0,
+      "blocked_false": 0,
+      "blocked_unknown": 8480,
+      "mean_ms": 81951.94452928538,
+      "p50_ms": 81908.11699986458,
+      "p95_ms": 130816.28782503605,
+      "p99_ms": 136785.84541824818,
+      "max_ms": 140479.13295912743,
+      "mean_ttft_ms": null,
+      "p50_ttft_ms": null,
+      "p95_ttft_ms": null
+    }
+  },
+  "sse": {
+    "subset_size": 300,
+    "concurrency": 12,
+    "direct_duration_s": 137.62293076515198,
+    "proxy_duration_s": 172.18316006660461,
+    "direct": {
+      "requests": 300,
+      "ok": 300,
+      "errors": 0,
+      "blocked_true": 0,
+      "blocked_false": 0,
+      "blocked_unknown": 300,
+      "mean_ms": 5480.423649868965,
+      "p50_ms": 5503.162021040916,
+      "p95_ms": 5765.188285875321,
+      "p99_ms": 5774.108979561329,
+      "max_ms": 5775.332875013351,
+      "mean_ttft_ms": 341.5721295865377,
+      "p50_ttft_ms": 330.13054156303406,
+      "p95_ttft_ms": 524.3548599243164
+    },
+    "proxy": {
+      "requests": 300,
+      "ok": 300,
+      "errors": 0,
+      "blocked_true": 0,
+      "blocked_false": 0,
+      "blocked_unknown": 300,
+      "mean_ms": 6720.865476093292,
+      "p50_ms": 6263.003499984741,
+      "p95_ms": 10394.270325279242,
+      "p99_ms": 12698.837375996105,
+      "max_ms": 18342.155583143234,
+      "mean_ttft_ms": 283.7029632012049,
+      "p50_ttft_ms": 261.62545800209045,
+      "p95_ttft_ms": 381.46950827837
+    }
+  },
+  "ab_non_stream": {
+    "paired_rows": 8480,
+    "paired_success_rows": 199,
+    "delta_mean_ms": 77245.73311581684,
+    "delta_p50_ms": 77166.87354207039,
+    "delta_p95_ms": 126074.33292570114,
+    "delta_p99_ms": 132045.60474507808,
+    "proxy_faster_count": 0,
+    "proxy_slower_count": 199,
+    "same_count": 0
+  }
+}

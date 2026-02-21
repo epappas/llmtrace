@@ -287,7 +287,11 @@ export async function getStats(tenantId?: string): Promise<StorageStats> {
 /** Get global storage stats across all tenants. */
 export async function getGlobalStats(): Promise<StorageStats> {
   try {
-    return apiFetch("/api/v1/stats/global");
+    const res = await fetch("/api/v1/stats", { cache: "no-store" });
+    if (!res.ok) {
+      return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
+    }
+    return (await res.json()) as StorageStats;
   } catch (e) {
     console.error("[API] Failed to fetch global stats:", e);
     return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
@@ -308,7 +312,34 @@ export async function getCurrentCosts(
   tenantId?: string,
 ): Promise<SpendSnapshot> {
   const q = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-  return apiFetch(`/api/v1/costs/current${q}`, undefined, tenantId);
+  const url = `/api/v1/costs/current${q}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
+  };
+
+  const adminKey = process.env.LLMTRACE_AUTH_ADMIN_KEY;
+  if (adminKey) {
+    headers["Authorization"] = `Bearer ${adminKey}`;
+  }
+
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers,
+  });
+
+  if (res.status === 404) {
+    throw new Error(
+      "Cost tracking is disabled. Enable `cost_caps.enabled: true` in the proxy configuration to see this page.",
+    );
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to load costs (${res.status}): ${body || "Unknown error"}`);
+  }
+
+  return (await res.json()) as SpendSnapshot;
 }
 
 /** Get agent actions summary. */

@@ -88,12 +88,6 @@ function renderConfigValue(value: unknown, depth = 0) {
   return <span className="text-muted-foreground">Unsupported value</span>;
 }
 
-function joinUrl(base: string, path: string): string {
-  const trimmedBase = base.replace(/\/+$/, "");
-  const trimmedPath = path.startsWith("/") ? path : `/${path}`;
-  return `${trimmedBase}${trimmedPath}`;
-}
-
 export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [liveConfig, setLiveConfig] = useState<Record<string, unknown> | null>(null);
@@ -102,8 +96,8 @@ export default function SettingsPage() {
   const [apiUrl] = useState(
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080",
   );
-  const swaggerUiUrl = joinUrl(apiUrl, "/swagger-ui/");
-  const openApiJsonUrl = joinUrl(apiUrl, "/api-doc/openapi.json");
+  const swaggerUiUrl = "/api/proxy/swagger-ui/";
+  const openApiJsonUrl = "/api/proxy/api-doc/openapi.json";
 
   async function checkHealth() {
     console.log("[Settings] Checking health via API helper...");
@@ -123,7 +117,7 @@ export default function SettingsPage() {
   async function fetchLiveConfig() {
     setConfigLoading(true);
     try {
-      const response = await fetch("/api/v1/config/live", { cache: "no-store" });
+      const response = await fetch("/api/proxy/config/live", { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`Failed to load config: ${response.status}`);
       }
@@ -274,7 +268,7 @@ export default function SettingsPage() {
                 </a>
               </Button>
               <span className="text-xs text-muted-foreground">
-                Uses <span className="font-mono">NEXT_PUBLIC_API_URL</span> ({apiUrl})
+                Served via dashboard proxy routes
               </span>
             </div>
 

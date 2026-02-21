@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A/B Performance Report - live_20260220_004301</title>
+  <style>
+    :root { --bg:#f6f7fb; --card:#fff; --text:#1f2430; --muted:#5a6475; --accent:#0b6bcb; --good:#137333; --warn:#b54708; --bad:#b42318; --line:#e5e7ef; }
+    body { margin:0; font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
+    .wrap { max-width: 1080px; margin: 28px auto; padding: 0 16px; }
+    .card { background: var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+    h1,h2 { margin: 0 0 12px 0; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; }
+    .grid { display:grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap:10px; }
+    .kpi { border:1px solid var(--line); border-radius:10px; padding:10px; background:#fafbff; }
+    .kpi .k { font-size:12px; color:var(--muted); }
+    .kpi .v { font-size:18px; font-weight:700; margin-top:4px; }
+    table { width:100%; border-collapse: collapse; }
+    th,td { border-bottom:1px solid var(--line); text-align:right; padding:8px; font-size:14px; }
+    th:first-child, td:first-child { text-align:left; }
+    .muted { color:var(--muted); }
+    a { color:var(--accent); text-decoration:none; }
+    .good { color:var(--good); }
+    .warn { color:var(--warn); }
+    .bad { color:var(--bad); }
+    @media (max-width:900px) { .grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>A/B Performance Report</h1>
+      <div class="muted">Run <strong>live_20260220_004301</strong> | Generated 2026-02-20T09:53:01.684317</div>
+      <div class="muted">Dataset: malicious-only, 8480 prompts | Proxy auth: bearer token</div>
+    </div>
+
+    <div class="card">
+      <h2>Key Metrics</h2>
+      <div class="grid">
+        <div class="kpi"><div class="k">Direct Mean</div><div class="v">4269.48 ms</div></div>
+        <div class="kpi"><div class="k">Proxy Mean</div><div class="v">9522.70 ms</div></div>
+        <div class="kpi"><div class="k">Delta Mean (P-D)</div><div class="v bad">5253.22 ms</div></div>
+        <div class="kpi"><div class="k">Paired Rows</div><div class="v">8480</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Direct vs Proxy</h2>
+      <table>
+        <thead><tr><th>Metric</th><th>Direct</th><th>Proxy</th></tr></thead>
+        <tbody>
+          <tr><td>requests</td><td>8480</td><td>8480</td></tr>
+          <tr><td>ok</td><td>8480</td><td>8480</td></tr>
+          <tr><td>errors</td><td>0</td><td>0</td></tr>
+          <tr><td>mean_ms</td><td>4269.48</td><td>9522.70</td></tr>
+          <tr><td>p50_ms</td><td>4174.71</td><td>3854.52</td></tr>
+          <tr><td>p95_ms</td><td>5796.73</td><td>20182.57</td></tr>
+          <tr><td>p99_ms</td><td>5996.06</td><td>24075.16</td></tr>
+          <tr><td>max_ms</td><td>7248.66</td><td>37251.77</td></tr>
+          <tr><td>avg_total_tokens</td><td>168.75</td><td>168.65</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Same-Prompt Delta (Proxy - Direct)</h2>
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>paired_rows</td><td>8480</td></tr>
+          <tr><td>paired_success_rows</td><td>8480</td></tr>
+          <tr><td>delta_mean_ms</td><td>5253.22</td></tr>
+          <tr><td>delta_p50_ms</td><td>-7.64</td></tr>
+          <tr><td>delta_p95_ms</td><td>16197.56</td></tr>
+          <tr><td>delta_p99_ms</td><td>19142.46</td></tr>
+          <tr><td>proxy_faster_count</td><td>4284</td></tr>
+          <tr><td>proxy_slower_count</td><td>4196</td></tr>
+          <tr><td>same_count</td><td>0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Artifacts</h2>
+      <ul>
+        <li><a href="./ab_full_malicious_report.md" target="_blank">ab_full_malicious_report.md</a></li>
+        <li><a href="./ab_full_malicious_summary.json" target="_blank">ab_full_malicious_summary.json</a></li>
+        <li><a href="./direct_full_malicious_rows.json" target="_blank">direct_full_malicious_rows.json</a></li>
+        <li><a href="./proxy_full_malicious_rows.json" target="_blank">proxy_full_malicious_rows.json</a></li>
+        <li><a href="./proxy_run_meta.json" target="_blank">proxy_run_meta.json</a></li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
