@@ -14,7 +14,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
-    VOTING_MAJORITY, VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR,
+    VOTING_AUXILIARY, VOTING_MAJORITY, VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR,
 };
 
 use crate::feature_extraction::extract_heuristic_features;
@@ -602,6 +602,8 @@ impl EnsembleSecurityAnalyzer {
         ig_handle: Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>>,
         pg_handle: Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>>,
     ) -> Result<Vec<SecurityFinding>> {
+        // Primary ballots: Regex + DeBERTa. These vote under N<=2 union rules,
+        // preserving the high-recall behaviour where either detector suffices.
         let mut ballots = vec![InjectionBallot {
             name: "regex",
             findings: regex_findings,
@@ -616,12 +618,7 @@ impl EnsembleSecurityAnalyzer {
             });
         }
 
-        // Collect IG and PG results, then merge into a single "deberta_pair"
-        // ballot. Both models are DeBERTa-based and highly correlated, so they
-        // share one vote slot. OR logic: either detecting = group votes yes.
-        // The ballot is always added when at least one model is active, even
-        // with empty findings -- an empty ballot is a "no injection" vote.
-        let ig_active = ig_handle.is_some();
+        // Collect IG/PG results concurrently (auxiliary -- not added to ballots).
         let mut ig_ms = None;
         let mut ig_findings = Vec::new();
         if let Some(handle) = ig_handle {
@@ -632,7 +629,6 @@ impl EnsembleSecurityAnalyzer {
             ig_findings = ig_result?;
         }
 
-        let pg_active = pg_handle.is_some();
         let mut pg_ms = None;
         let mut pg_findings = Vec::new();
         if let Some(handle) = pg_handle {
@@ -643,12 +639,19 @@ impl EnsembleSecurityAnalyzer {
             pg_findings = pg_result?;
         }
 
-        if ig_active || pg_active {
-            ballots.push(merge_deberta_pair(ig_findings, pg_findings));
-        }
+        let aux_ballot = if ig_findings.is_empty() && pg_findings.is_empty() {
+            None
+        } else {
+            Some(merge_deberta_pair(ig_findings, pg_findings))
+        };
 
+        // Log diagnostics including auxiliary detectors.
+        let mut diag_ballots = ballots.clone();
+        if let Some(ref aux) = aux_ballot {
+            diag_ballots.push(aux.clone());
+        }
         log_voting_diagnostics(
-            &ballots,
+            &diag_ballots,
             &DetectorTiming {
                 regex_ms,
                 ml_ms,
@@ -656,7 +659,17 @@ impl EnsembleSecurityAnalyzer {
                 pg_ms,
             },
         );
-        Ok(combine_with_voting(ballots))
+
+        // Vote with primary ballots only (N<=2 union).
+        let mut result = combine_with_voting(ballots);
+
+        // Additive-only auxiliary pass: IG/PG can add NEW injection findings
+        // that the primary pair missed, but can never suppress primary findings.
+        if let Some(aux) = aux_ballot {
+            merge_auxiliary_findings(&mut result, aux);
+        }
+
+        Ok(result)
     }
 
     /// Feature-level fusion analysis path (ADR-013).
@@ -1093,6 +1106,7 @@ fn merge_deberta_pair(
 }
 
 /// A ballot from a single injection detector for majority voting.
+#[derive(Clone)]
 struct InjectionBallot {
     name: &'static str,
     findings: Vec<SecurityFinding>,
@@ -1245,6 +1259,63 @@ fn combine_with_voting(ballots: Vec<InjectionBallot>) -> Vec<SecurityFinding> {
     }
 
     result
+}
+
+/// Confidence cap for auxiliary-only findings (no primary corroboration).
+const AUX_CONFIDENCE_CAP: f64 = 0.60;
+
+/// Merge auxiliary (IG/PG) injection findings into primary voting results.
+///
+/// Rules:
+/// - If an auxiliary injection finding covers a location already detected by
+///   a primary finding, boost the primary's confidence by `AGREEMENT_BOOST`
+///   and tag it with the auxiliary detector name.
+/// - If an auxiliary injection finding covers a NEW location not in the
+///   primary results, add it with confidence capped at `AUX_CONFIDENCE_CAP`
+///   and tagged with `VOTING_AUXILIARY`.
+/// - Non-injection auxiliary findings are ignored (they are informational
+///   and already handled by the primary pipeline).
+fn merge_auxiliary_findings(result: &mut Vec<SecurityFinding>, aux: InjectionBallot) {
+    let primary_locations: std::collections::HashSet<String> = result
+        .iter()
+        .filter(|f| is_injection_finding(f))
+        .filter_map(|f| f.metadata.get("location").cloned())
+        .collect();
+
+    for finding in aux.findings.into_iter().filter(|f| is_injection_finding(f)) {
+        let loc = finding
+            .metadata
+            .get("location")
+            .cloned()
+            .unwrap_or_default();
+
+        if primary_locations.contains(&loc) {
+            // Boost existing primary finding that the auxiliary corroborates.
+            if let Some(primary) = result
+                .iter_mut()
+                .filter(|f| is_injection_finding(f))
+                .find(|f| f.metadata.get("location").cloned().unwrap_or_default() == loc)
+            {
+                primary.confidence_score =
+                    (primary.confidence_score + AGREEMENT_BOOST).min(1.0);
+                primary.metadata.insert(
+                    "auxiliary_corroboration".to_string(),
+                    aux.name.to_string(),
+                );
+            }
+        } else {
+            // New detection from auxiliary only -- add with capped confidence.
+            let mut out = finding;
+            out.confidence_score = out.confidence_score.min(AUX_CONFIDENCE_CAP);
+            out.metadata.insert(
+                VOTING_RESULT_KEY.to_string(),
+                VOTING_AUXILIARY.to_string(),
+            );
+            out.metadata
+                .insert("source_detector".to_string(), aux.name.to_string());
+            result.push(out);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2264,5 +2335,112 @@ mod tests {
     fn test_piguard_finding_type_is_injection() {
         let finding = make_injection_finding("piguard_injection", 0.9);
         assert!(is_injection_finding(&finding));
+    }
+
+    // -- Auxiliary merge tests ------------------------------------------------
+
+    fn make_finding_at(finding_type: &str, score: f64, location: &str) -> SecurityFinding {
+        let mut f = make_injection_finding(finding_type, score);
+        f.metadata
+            .insert("location".to_string(), location.to_string());
+        f
+    }
+
+    #[test]
+    fn test_auxiliary_adds_new_findings() {
+        let mut primary = vec![make_finding_at("prompt_injection", 0.9, "request")];
+        let aux = InjectionBallot {
+            name: "deberta_pair",
+            findings: vec![make_finding_at("injecguard_injection", 0.85, "new_loc")],
+        };
+
+        merge_auxiliary_findings(&mut primary, aux);
+
+        assert_eq!(primary.len(), 2);
+        let added = &primary[1];
+        assert_eq!(added.finding_type, "injecguard_injection");
+        assert!(added.confidence_score <= AUX_CONFIDENCE_CAP);
+        assert_eq!(
+            added.metadata.get(VOTING_RESULT_KEY).unwrap(),
+            VOTING_AUXILIARY
+        );
+    }
+
+    #[test]
+    fn test_auxiliary_boosts_existing_primary() {
+        let mut primary = vec![make_finding_at("prompt_injection", 0.85, "request")];
+        let aux = InjectionBallot {
+            name: "deberta_pair",
+            findings: vec![make_finding_at("injecguard_injection", 0.9, "request")],
+        };
+
+        merge_auxiliary_findings(&mut primary, aux);
+
+        // No new findings added (same location).
+        assert_eq!(primary.len(), 1);
+        // Confidence boosted by AGREEMENT_BOOST.
+        assert!((primary[0].confidence_score - 0.95).abs() < 1e-9);
+        assert_eq!(
+            primary[0].metadata.get("auxiliary_corroboration").unwrap(),
+            "deberta_pair"
+        );
+    }
+
+    #[test]
+    fn test_auxiliary_never_suppresses_primary() {
+        let primary_finding = make_finding_at("prompt_injection", 0.9, "request");
+        let mut primary = vec![primary_finding.clone()];
+        let aux = InjectionBallot {
+            name: "deberta_pair",
+            findings: Vec::new(),
+        };
+
+        merge_auxiliary_findings(&mut primary, aux);
+
+        // Primary finding must remain untouched.
+        assert_eq!(primary.len(), 1);
+        assert_eq!(primary[0].confidence_score, 0.9);
+    }
+
+    #[test]
+    fn test_auxiliary_caps_confidence() {
+        let mut primary = Vec::new();
+        let aux = InjectionBallot {
+            name: "deberta_pair",
+            findings: vec![make_finding_at("injecguard_injection", 0.95, "new_loc")],
+        };
+
+        merge_auxiliary_findings(&mut primary, aux);
+
+        assert_eq!(primary.len(), 1);
+        assert!(
+            primary[0].confidence_score <= AUX_CONFIDENCE_CAP,
+            "Auxiliary confidence {} exceeds cap {}",
+            primary[0].confidence_score,
+            AUX_CONFIDENCE_CAP
+        );
+    }
+
+    #[test]
+    fn test_auxiliary_ignores_non_injection() {
+        let mut primary = Vec::new();
+        let mut pii = SecurityFinding::new(
+            SecuritySeverity::Medium,
+            "pii_detected".to_string(),
+            "PII found".to_string(),
+            0.9,
+        );
+        pii.metadata
+            .insert("location".to_string(), "response".to_string());
+
+        let aux = InjectionBallot {
+            name: "deberta_pair",
+            findings: vec![pii],
+        };
+
+        merge_auxiliary_findings(&mut primary, aux);
+
+        // Non-injection findings from auxiliary are ignored.
+        assert!(primary.is_empty());
     }
 }

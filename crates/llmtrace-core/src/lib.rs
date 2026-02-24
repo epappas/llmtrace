@@ -142,6 +142,8 @@ pub const VOTING_RESULT_KEY: &str = "voting_result";
 pub const VOTING_MAJORITY: &str = "majority";
 /// Value indicating a finding came from a single detector only.
 pub const VOTING_SINGLE_DETECTOR: &str = "single_detector";
+/// Value indicating a finding was added by an auxiliary detector (additive-only).
+pub const VOTING_AUXILIARY: &str = "auxiliary";
 
 /// Returns `true` if a finding type is auxiliary (informational, not a direct
 /// injection/attack indicator). Auxiliary findings should not drive the
