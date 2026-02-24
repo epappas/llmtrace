@@ -1282,7 +1282,7 @@ fn merge_auxiliary_findings(result: &mut Vec<SecurityFinding>, aux: InjectionBal
         .filter_map(|f| f.metadata.get("location").cloned())
         .collect();
 
-    for finding in aux.findings.into_iter().filter(|f| is_injection_finding(f)) {
+    for finding in aux.findings.into_iter().filter(is_injection_finding) {
         let loc = finding
             .metadata
             .get("location")

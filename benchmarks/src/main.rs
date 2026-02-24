@@ -382,6 +382,12 @@ async fn main() {
                     all_results.push(result);
                     regression_results.push(reg);
                 }
+                Err(e) if e.contains("No such file or directory") => {
+                    eprintln!(
+                        "{} suite skipped for {}: dataset not downloaded",
+                        config.display_name, named.name
+                    );
+                }
                 Err(e) => {
                     eprintln!(
                         "{} suite failed for {}: {e}",
