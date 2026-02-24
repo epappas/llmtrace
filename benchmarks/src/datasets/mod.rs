@@ -191,16 +191,12 @@ impl DatasetLoader {
     }
 
     /// Load the WildJailbreak dataset (EV-022, sampled 5000).
-    pub fn load_wildjailbreak_samples(
-        datasets_dir: &Path,
-    ) -> Result<Vec<BenchmarkSample>, String> {
+    pub fn load_wildjailbreak_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/wildjailbreak.json"))
     }
 
     /// Load the HackAPrompt competition attacks dataset (EV-023).
-    pub fn load_hackaprompt_samples(
-        datasets_dir: &Path,
-    ) -> Result<Vec<BenchmarkSample>, String> {
+    pub fn load_hackaprompt_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(&datasets_dir.join("external/hackaprompt.json"))
     }
 

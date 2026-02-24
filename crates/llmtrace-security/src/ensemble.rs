@@ -1296,21 +1296,17 @@ fn merge_auxiliary_findings(result: &mut Vec<SecurityFinding>, aux: InjectionBal
                 .filter(|f| is_injection_finding(f))
                 .find(|f| f.metadata.get("location").cloned().unwrap_or_default() == loc)
             {
-                primary.confidence_score =
-                    (primary.confidence_score + AGREEMENT_BOOST).min(1.0);
-                primary.metadata.insert(
-                    "auxiliary_corroboration".to_string(),
-                    aux.name.to_string(),
-                );
+                primary.confidence_score = (primary.confidence_score + AGREEMENT_BOOST).min(1.0);
+                primary
+                    .metadata
+                    .insert("auxiliary_corroboration".to_string(), aux.name.to_string());
             }
         } else {
             // New detection from auxiliary only -- add with capped confidence.
             let mut out = finding;
             out.confidence_score = out.confidence_score.min(AUX_CONFIDENCE_CAP);
-            out.metadata.insert(
-                VOTING_RESULT_KEY.to_string(),
-                VOTING_AUXILIARY.to_string(),
-            );
+            out.metadata
+                .insert(VOTING_RESULT_KEY.to_string(), VOTING_AUXILIARY.to_string());
             out.metadata
                 .insert("source_detector".to_string(), aux.name.to_string());
             result.push(out);

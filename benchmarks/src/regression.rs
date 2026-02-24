@@ -423,7 +423,11 @@ pub fn check_in_the_wild_jailbreak(metrics: &BenchmarkMetrics) -> RegressionResu
 
 /// Check the Mindgard Evasion dataset (EV-025) against regression thresholds.
 pub fn check_mindgard_evasion(metrics: &BenchmarkMetrics) -> RegressionResult {
-    check_against_thresholds("Mindgard Evasion (EV-025)", metrics, &MINDGARD_EVASION_THRESHOLDS)
+    check_against_thresholds(
+        "Mindgard Evasion (EV-025)",
+        metrics,
+        &MINDGARD_EVASION_THRESHOLDS,
+    )
 }
 
 /// Check the XSTest dataset (EV-026) against regression thresholds.
@@ -433,7 +437,11 @@ pub fn check_xstest(metrics: &BenchmarkMetrics) -> RegressionResult {
 
 /// Check the JailbreakBench dataset (EV-027) against regression thresholds.
 pub fn check_jailbreakbench(metrics: &BenchmarkMetrics) -> RegressionResult {
-    check_against_thresholds("JailbreakBench (EV-027)", metrics, &JAILBREAKBENCH_THRESHOLDS)
+    check_against_thresholds(
+        "JailbreakBench (EV-027)",
+        metrics,
+        &JAILBREAKBENCH_THRESHOLDS,
+    )
 }
 
 /// Check the AdvBench dataset (EV-028) against regression thresholds.
