@@ -4,8 +4,14 @@ Comprehensive proxy stress test: accuracy, edge cases, token width, and latency.
 
 Sends a diverse mix of malicious and benign payloads through the proxy,
 then fetches security findings and computes per-category metrics.
+
+Usage:
+    python proxy_stress_test_v2.py             # sampled ~250 corpus
+    python proxy_stress_test_v2.py --full       # all samples from all datasets
+    python proxy_stress_test_v2.py --full -w 20 # 20 concurrent workers
 """
 
+import argparse
 import json
 import random
 import time
@@ -13,6 +19,7 @@ import sys
 import os
 import requests
 import statistics
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -38,8 +45,57 @@ def sample_from(
     return random.sample(data, min(n, len(data)))
 
 
-def build_corpus() -> list[dict[str, Any]]:
-    """Build a ~150-sample corpus covering all attack types and edge cases."""
+def build_corpus(full: bool = False) -> list[dict[str, Any]]:
+    """Build the evaluation corpus.
+
+    full=False: ~250-sample stratified sample (quick smoke test).
+    full=True:  every sample from every dataset file found on disk.
+    """
+    if full:
+        return _build_full_corpus()
+    return _build_sampled_corpus()
+
+
+def _load_all_datasets() -> dict[str, list[dict[str, Any]]]:
+    """Load every JSON dataset file from both core and external dirs."""
+    datasets: dict[str, list[dict[str, Any]]] = {}
+    for path in sorted(DATASETS_DIR.glob("*.json")):
+        datasets[path.stem] = load_dataset(path)
+    ext = DATASETS_DIR / "external"
+    if ext.is_dir():
+        for path in sorted(ext.glob("*.json")):
+            datasets[path.stem] = load_dataset(path)
+    return datasets
+
+
+def _build_full_corpus() -> list[dict[str, Any]]:
+    """Load ALL samples from ALL dataset files."""
+    datasets = _load_all_datasets()
+    corpus: list[dict[str, Any]] = []
+    for name, samples in datasets.items():
+        corpus.extend(samples)
+        print(f"  loaded {name}: {len(samples)} samples")
+
+    # Add synthetic edge cases
+    corpus.extend(build_edge_cases())
+
+    # Deduplicate by id (some datasets overlap)
+    seen_ids: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for s in corpus:
+        sid = s.get("id", "")
+        if sid and sid in seen_ids:
+            continue
+        if sid:
+            seen_ids.add(sid)
+        deduped.append(s)
+
+    random.shuffle(deduped)
+    return deduped
+
+
+def _build_sampled_corpus() -> list[dict[str, Any]]:
+    """Build a ~250-sample stratified corpus (original behaviour)."""
     corpus: list[dict[str, Any]] = []
 
     # ── Core datasets ──
@@ -60,7 +116,24 @@ def build_corpus() -> list[dict[str, Any]]:
     injecagent = load_dataset(ext / "injecagent_attacks.json")
     safeguard = load_dataset(ext / "safeguard_test.json")
 
-    # ── Malicious samples (~75) ──
+    def try_load(path: Path) -> list[dict[str, Any]]:
+        try:
+            return load_dataset(path)
+        except FileNotFoundError:
+            return []
+
+    wildjailbreak = try_load(ext / "wildjailbreak.json")
+    hackaprompt = try_load(ext / "hackaprompt.json")
+    in_the_wild = try_load(ext / "in_the_wild_jailbreak.json")
+    mindgard = try_load(ext / "mindgard_evasion.json")
+    xstest = try_load(ext / "xstest.json")
+    jailbreakbench = try_load(ext / "jailbreakbench.json")
+    advbench = try_load(ext / "advbench_harmful.json")
+    spml = try_load(ext / "spml_chatbot.json")
+    rubend18 = try_load(ext / "rubend18_jailbreak.json")
+    satml = try_load(ext / "satml_ctf.json")
+
+    # ── Malicious samples (~145) ──
     corpus.extend(sample_from(injections, 15, "malicious"))
     corpus.extend(sample_from(encoding, 10, "malicious"))
     corpus.extend(sample_from(cybersec, 8, "malicious"))
@@ -70,10 +143,18 @@ def build_corpus() -> list[dict[str, Any]]:
     corpus.extend(sample_from(transfer, 6, "malicious"))
     corpus.extend(sample_from(bipia, 6, "malicious"))
     corpus.extend(sample_from(injecagent, 8, "malicious"))
+    corpus.extend(sample_from(wildjailbreak, 8, "malicious"))
+    corpus.extend(sample_from(hackaprompt, 8, "malicious"))
+    corpus.extend(sample_from(in_the_wild, 8, "malicious"))
+    corpus.extend(sample_from(mindgard, 8, "malicious"))
+    corpus.extend(sample_from(jailbreakbench, 6, "malicious"))
+    corpus.extend(sample_from(advbench, 8, "malicious"))
+    corpus.extend(sample_from(spml, 8, "malicious"))
+    corpus.extend(sample_from(rubend18, 6, "malicious"))
+    corpus.extend(sample_from(satml, 8, "malicious"))
 
-    # ── Benign samples (~75) ──
+    # ── Benign samples (~95) ──
     corpus.extend(sample_from(benign, 15, "benign"))
-    # notinject: stratify by difficulty to test edge cases properly
     notinject_d1 = [s for s in notinject if s.get("difficulty") == 1]
     notinject_d2 = [s for s in notinject if s.get("difficulty") == 2]
     notinject_d3 = [s for s in notinject if s.get("difficulty") == 3]
@@ -84,10 +165,12 @@ def build_corpus() -> list[dict[str, Any]]:
     corpus.extend(sample_from(encoding, 3, "benign"))
     corpus.extend(sample_from(jackhhao, 6, "benign"))
     corpus.extend(sample_from(safeguard, 8, "benign"))
+    corpus.extend(sample_from(xstest, 10, "benign"))
+    corpus.extend(sample_from(wildjailbreak, 8, "benign"))
+    corpus.extend(sample_from(spml, 6, "benign"))
 
     # ── Edge cases: token width ──
-    edge_cases = build_edge_cases()
-    corpus.extend(edge_cases)
+    corpus.extend(build_edge_cases())
 
     random.shuffle(corpus)
     return corpus
@@ -191,8 +274,10 @@ def build_edge_cases() -> list[dict[str, Any]]:
     return cases
 
 
-def send_request(text: str, model: str = "gpt-4o-mini") -> dict[str, Any]:
-    """Send a chat completion request and measure latency."""
+def send_request(
+    text: str, model: str = "gpt-4o-mini", max_retries: int = 5
+) -> dict[str, Any]:
+    """Send a chat completion request with retry on 429/5xx."""
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {API_KEY}",
@@ -202,24 +287,59 @@ def send_request(text: str, model: str = "gpt-4o-mini") -> dict[str, Any]:
         "messages": [{"role": "user", "content": text}],
         "max_tokens": 50,
     }
-    start = time.monotonic()
-    try:
-        resp = requests.post(
-            f"{PROXY_URL}/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-        latency_ms = (time.monotonic() - start) * 1000
-        return {
-            "status_code": resp.status_code,
-            "latency_ms": round(latency_ms, 1),
-        }
-    except requests.exceptions.Timeout:
-        latency_ms = (time.monotonic() - start) * 1000
-        return {"status_code": 0, "latency_ms": round(latency_ms, 1)}
-    except requests.exceptions.ConnectionError:
-        return {"status_code": -1, "latency_ms": 0}
+    for attempt in range(max_retries + 1):
+        start = time.monotonic()
+        try:
+            resp = requests.post(
+                f"{PROXY_URL}/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60,
+            )
+            latency_ms = (time.monotonic() - start) * 1000
+            if resp.status_code == 429 or resp.status_code >= 500:
+                # Exponential backoff with jitter on retryable errors
+                if attempt < max_retries:
+                    retry_after = float(
+                        resp.headers.get("Retry-After", 2 ** attempt)
+                    )
+                    wait = min(retry_after + random.uniform(0, 1), 60)
+                    time.sleep(wait)
+                    continue
+            return {
+                "status_code": resp.status_code,
+                "latency_ms": round(latency_ms, 1),
+            }
+        except requests.exceptions.Timeout:
+            latency_ms = (time.monotonic() - start) * 1000
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
+            return {"status_code": 0, "latency_ms": round(latency_ms, 1)}
+        except requests.exceptions.ConnectionError:
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
+            return {"status_code": -1, "latency_ms": 0}
+    return {"status_code": -1, "latency_ms": 0}
+
+
+def send_one(idx: int, total: int, sample: dict[str, Any]) -> dict[str, Any]:
+    """Send a single sample and return its result dict (thread-safe)."""
+    sid = sample.get("id", f"unknown-{idx}")
+    text = sample["text"]
+    resp = send_request(text)
+    return {
+        "idx": idx,
+        "id": sid,
+        "label": sample["label"],
+        "category": sample.get("category", "?"),
+        "subcategory": sample.get("subcategory", ""),
+        "text_preview": text[:150],
+        "text_len": len(text),
+        "http_status": resp["status_code"],
+        "latency_ms": resp["latency_ms"],
+    }
 
 
 def get_tenant_id() -> str:
@@ -243,27 +363,51 @@ def get_tenant_id() -> str:
 
 
 def fetch_spans(tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
-    resp = requests.get(
-        f"{PROXY_URL}/api/v1/spans",
-        params={"limit": limit},
-        headers={"X-LLMTrace-Tenant-ID": tenant_id},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        return []
-    return resp.json().get("data", [])
+    """Fetch spans, paginating if needed for large result sets."""
+    all_spans: list[dict[str, Any]] = []
+    offset = 0
+    page_size = min(limit, 500)
+    while offset < limit:
+        fetch = min(page_size, limit - offset)
+        resp = requests.get(
+            f"{PROXY_URL}/api/v1/spans",
+            params={"limit": fetch, "offset": offset},
+            headers={"X-LLMTrace-Tenant-ID": tenant_id},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            break
+        page = resp.json().get("data", [])
+        all_spans.extend(page)
+        if len(page) < fetch:
+            break
+        offset += len(page)
+    return all_spans
 
 
-def match_finding(
-    findings: list[dict], text: str, min_time: str
+def build_span_index(
+    spans: list[dict[str, Any]], min_time: str
+) -> dict[str, dict[str, Any]]:
+    """Build a prefix-keyed index of spans for O(1) matching."""
+    index: dict[str, dict[str, Any]] = {}
+    for span in spans:
+        if span.get("start_time", "") < min_time:
+            continue
+        prompt = span.get("prompt", "")
+        if not prompt:
+            continue
+        prefix = prompt[:80]
+        # Keep the latest span for each prefix
+        if prefix not in index or span.get("start_time", "") > index[prefix].get("start_time", ""):
+            index[prefix] = span
+    return index
+
+
+def match_finding_indexed(
+    index: dict[str, dict[str, Any]], text: str
 ) -> dict[str, Any] | None:
     prefix = text[:80]
-    for f in findings:
-        if f.get("start_time", "") < min_time:
-            continue
-        if prefix in f.get("prompt", ""):
-            return f
-    return None
+    return index.get(prefix)
 
 
 def print_table_row(r: dict) -> str:
@@ -294,7 +438,95 @@ def compute_metrics(results: list[dict]) -> dict[str, Any]:
     }
 
 
+def run_serial(corpus: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Original serial execution path."""
+    results: list[dict[str, Any]] = []
+    total = len(corpus)
+    for i, sample in enumerate(corpus):
+        sid = sample.get("id", f"unknown-{i}")
+        tag = f"{sample['label']}/{sample.get('category', '?')}"
+        subcat = sample.get("subcategory", "")
+        if subcat:
+            tag += f"/{subcat}"
+        print(f"[{i+1:>5}/{total}] {sid[:28]:<28} {tag:<40} ", end="", flush=True)
+
+        resp = send_request(sample["text"])
+        print(f"HTTP {resp['status_code']:>3}  {resp['latency_ms']:>7.0f}ms")
+
+        results.append({
+            "id": sid,
+            "label": sample["label"],
+            "category": sample.get("category", "?"),
+            "subcategory": subcat,
+            "text_preview": sample["text"][:150],
+            "text_len": len(sample["text"]),
+            "http_status": resp["status_code"],
+            "latency_ms": resp["latency_ms"],
+        })
+        time.sleep(0.3)
+    return results
+
+
+def run_concurrent(
+    corpus: list[dict[str, Any]], workers: int
+) -> list[dict[str, Any]]:
+    """Concurrent execution with ThreadPoolExecutor."""
+    total = len(corpus)
+    results: list[dict[str, Any]] = [{}] * total
+    completed = 0
+    errors = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(send_one, i, total, s): i
+            for i, s in enumerate(corpus)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                result = future.result()
+                results[idx] = result
+                completed += 1
+                if result["http_status"] <= 0:
+                    errors += 1
+                if completed % 100 == 0 or completed == total:
+                    pct = completed * 100 // total
+                    print(
+                        f"  [{completed:>5}/{total}] {pct}% done, "
+                        f"{errors} errors, "
+                        f"latest: {result['id'][:24]} HTTP {result['http_status']}",
+                        flush=True,
+                    )
+            except Exception as e:
+                completed += 1
+                errors += 1
+                results[idx] = {
+                    "id": corpus[idx].get("id", f"unknown-{idx}"),
+                    "label": corpus[idx]["label"],
+                    "category": corpus[idx].get("category", "?"),
+                    "subcategory": corpus[idx].get("subcategory", ""),
+                    "text_preview": corpus[idx]["text"][:150],
+                    "text_len": len(corpus[idx]["text"]),
+                    "http_status": -1,
+                    "latency_ms": 0,
+                }
+                print(f"  ERROR sample {idx}: {e}", flush=True)
+
+    return results
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Proxy stress test")
+    parser.add_argument(
+        "--full", action="store_true",
+        help="Use ALL samples from ALL datasets instead of ~250 stratified sample",
+    )
+    parser.add_argument(
+        "-w", "--workers", type=int, default=1,
+        help="Concurrent request workers (default 1 = serial; try 15-20 for --full)",
+    )
+    args = parser.parse_args()
+
     if not API_KEY:
         print("ERROR: Set OPENAI_API_KEY env var")
         sys.exit(1)
@@ -307,7 +539,15 @@ def main() -> None:
         print(f"ERROR: Proxy not reachable at {PROXY_URL}: {e}")
         sys.exit(1)
 
-    corpus = build_corpus()
+    mode = "FULL" if args.full else "SAMPLED"
+    workers = args.workers if args.full else max(args.workers, 1)
+    # Default to 8 workers in full mode (avoids OpenAI 429 rate limits)
+    if args.full and args.workers == 1:
+        workers = 8
+        print(f"Full mode: defaulting to {workers} concurrent workers")
+
+    print(f"\nMode: {mode}, Workers: {workers}")
+    corpus = build_corpus(full=args.full)
     n_mal = sum(1 for s in corpus if s["label"] == "malicious")
     n_ben = sum(1 for s in corpus if s["label"] == "benign")
     print(f"\nCorpus: {len(corpus)} samples ({n_mal} malicious, {n_ben} benign)")
@@ -322,55 +562,38 @@ def main() -> None:
     print()
 
     run_start = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-    results: list[dict[str, Any]] = []
-    latencies: list[float] = []
 
-    for i, sample in enumerate(corpus):
-        sid = sample.get("id", f"unknown-{i}")
-        label = sample["label"]
-        cat = sample.get("category", "?")
-        subcat = sample.get("subcategory", "")
-        text = sample["text"]
+    t0 = time.monotonic()
+    if workers > 1:
+        print(f"Sending {len(corpus)} requests with {workers} concurrent workers...")
+        results = run_concurrent(corpus, workers)
+    else:
+        results = run_serial(corpus)
+    elapsed = time.monotonic() - t0
+    print(f"\nAll {len(corpus)} requests sent in {elapsed:.0f}s ({len(corpus)/elapsed:.1f} req/s)")
 
-        tag = f"{label}/{cat}"
-        if subcat:
-            tag += f"/{subcat}"
+    latencies = [r["latency_ms"] for r in results if r.get("latency_ms", 0) > 0]
 
-        print(f"[{i+1:>3}/{len(corpus)}] {sid[:28]:<28} {tag:<40} ", end="", flush=True)
+    # Wait for async storage flush -- scale wait with corpus size
+    flush_wait = min(max(15, len(corpus) // 100), 120)
+    print(f"Waiting {flush_wait}s for storage flush...")
+    time.sleep(flush_wait)
 
-        resp = send_request(text)
-        latencies.append(resp["latency_ms"])
-
-        print(f"HTTP {resp['status_code']:>3}  {resp['latency_ms']:>7.0f}ms")
-
-        results.append({
-            "id": sid,
-            "label": label,
-            "category": cat,
-            "subcategory": subcat,
-            "text_preview": text[:150],
-            "text_len": len(text),
-            "http_status": resp["status_code"],
-            "latency_ms": resp["latency_ms"],
-        })
-
-        # Small stagger to avoid overwhelming the proxy
-        time.sleep(0.3)
-
-    # Wait for async storage (4 ML models need time to finish)
-    print("\nWaiting 15s for storage flush...")
-    time.sleep(15)
-
-    # Fetch findings
+    # Fetch findings with pagination for large corpora
     tenant_id = get_tenant_id()
     print(f"Tenant ID: {tenant_id}")
-    findings = fetch_spans(tenant_id, limit=2000)
-    print(f"Retrieved {len(findings)} spans\n")
+    span_limit = max(2000, len(corpus) * 2)
+    findings = fetch_spans(tenant_id, limit=span_limit)
+    print(f"Retrieved {len(findings)} spans")
+
+    # Build index for fast matching
+    span_index = build_span_index(findings, run_start)
+    print(f"Indexed {len(span_index)} unique span prefixes\n")
 
     # Match findings to samples
     matched = 0
     for r in results:
-        span = match_finding(findings, r["text_preview"][:80], run_start)
+        span = match_finding_indexed(span_index, r["text_preview"][:80])
         if span:
             matched += 1
             r["security_score"] = span.get("security_score") or 0
@@ -524,6 +747,8 @@ def main() -> None:
         "run_time": datetime.now(timezone.utc).isoformat(),
         "config": {
             "proxy_url": PROXY_URL,
+            "mode": mode,
+            "workers": workers,
             "corpus_size": len(corpus),
             "malicious_count": n_mal,
             "benign_count": n_ben,
@@ -540,7 +765,8 @@ def main() -> None:
         "samples": results,
     }
 
-    out_path = RESULTS_DIR / "proxy_stress_test_v2.json"
+    filename = "proxy_stress_test_full.json" if args.full else "proxy_stress_test_v2.json"
+    out_path = RESULTS_DIR / filename
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)

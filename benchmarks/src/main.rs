@@ -35,7 +35,9 @@ struct Cli {
     /// Run only the specified suite(s). Omit to run all.
     /// Valid values: standard, encoding, notinject, fpr, safeguard_v2, deepset_v2,
     /// ivanleomk_v2, cyberseceval2, harmbench, ailuminate, injecagent, asb, bipia,
-    /// transfer_attack, hpi_approx, tensor_trust, jackhhao
+    /// transfer_attack, hpi_approx, tensor_trust, jackhhao, wildjailbreak,
+    /// hackaprompt, in_the_wild_jailbreak, mindgard_evasion, xstest,
+    /// jailbreakbench, advbench, spml, rubend18, satml_ctf
     #[arg(long)]
     suite: Vec<String>,
 
@@ -182,6 +184,76 @@ const EXTERNAL_SUITES: &[ExternalSuiteConfig] = &[
         loader: DatasetLoader::load_jackhhao_samples,
         regression_checker: regression::check_jackhhao,
     },
+    ExternalSuiteConfig {
+        suite_key: "wildjailbreak",
+        display_name: "WildJailbreak",
+        benchmark_name: "WildJailbreak (EV-022)",
+        loader: DatasetLoader::load_wildjailbreak_samples,
+        regression_checker: regression::check_wildjailbreak,
+    },
+    ExternalSuiteConfig {
+        suite_key: "hackaprompt",
+        display_name: "HackAPrompt",
+        benchmark_name: "HackAPrompt (EV-023)",
+        loader: DatasetLoader::load_hackaprompt_samples,
+        regression_checker: regression::check_hackaprompt,
+    },
+    ExternalSuiteConfig {
+        suite_key: "in_the_wild_jailbreak",
+        display_name: "In-the-Wild Jailbreak",
+        benchmark_name: "In-the-Wild Jailbreak (EV-024)",
+        loader: DatasetLoader::load_in_the_wild_jailbreak_samples,
+        regression_checker: regression::check_in_the_wild_jailbreak,
+    },
+    ExternalSuiteConfig {
+        suite_key: "mindgard_evasion",
+        display_name: "Mindgard Evasion",
+        benchmark_name: "Mindgard Evasion (EV-025)",
+        loader: DatasetLoader::load_mindgard_evasion_samples,
+        regression_checker: regression::check_mindgard_evasion,
+    },
+    ExternalSuiteConfig {
+        suite_key: "xstest",
+        display_name: "XSTest",
+        benchmark_name: "XSTest (EV-026)",
+        loader: DatasetLoader::load_xstest_samples,
+        regression_checker: regression::check_xstest,
+    },
+    ExternalSuiteConfig {
+        suite_key: "jailbreakbench",
+        display_name: "JailbreakBench",
+        benchmark_name: "JailbreakBench (EV-027)",
+        loader: DatasetLoader::load_jailbreakbench_samples,
+        regression_checker: regression::check_jailbreakbench,
+    },
+    ExternalSuiteConfig {
+        suite_key: "advbench",
+        display_name: "AdvBench",
+        benchmark_name: "AdvBench (EV-028)",
+        loader: DatasetLoader::load_advbench_samples,
+        regression_checker: regression::check_advbench,
+    },
+    ExternalSuiteConfig {
+        suite_key: "spml",
+        display_name: "SPML",
+        benchmark_name: "SPML (EV-029)",
+        loader: DatasetLoader::load_spml_samples,
+        regression_checker: regression::check_spml,
+    },
+    ExternalSuiteConfig {
+        suite_key: "rubend18",
+        display_name: "Rubend18",
+        benchmark_name: "Rubend18 (EV-030)",
+        loader: DatasetLoader::load_rubend18_samples,
+        regression_checker: regression::check_rubend18,
+    },
+    ExternalSuiteConfig {
+        suite_key: "satml_ctf",
+        display_name: "SaTML CTF",
+        benchmark_name: "SaTML CTF (EV-031)",
+        loader: DatasetLoader::load_satml_ctf_samples,
+        regression_checker: regression::check_satml_ctf,
+    },
 ];
 
 #[tokio::main]
@@ -309,6 +381,12 @@ async fn main() {
                 Ok((result, reg)) => {
                     all_results.push(result);
                     regression_results.push(reg);
+                }
+                Err(e) if e.contains("No such file or directory") => {
+                    eprintln!(
+                        "{} suite skipped for {}: dataset not downloaded",
+                        config.display_name, named.name
+                    );
                 }
                 Err(e) => {
                     eprintln!(

@@ -190,6 +190,62 @@ impl DatasetLoader {
         Self::load_from_file(&datasets_dir.join("external/jackhhao_jailbreak.json"))
     }
 
+    /// Load the WildJailbreak dataset (EV-022, sampled 5000).
+    pub fn load_wildjailbreak_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/wildjailbreak.json"))
+    }
+
+    /// Load the HackAPrompt competition attacks dataset (EV-023).
+    pub fn load_hackaprompt_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/hackaprompt.json"))
+    }
+
+    /// Load the in-the-wild jailbreak prompts dataset (EV-024).
+    pub fn load_in_the_wild_jailbreak_samples(
+        datasets_dir: &Path,
+    ) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/in_the_wild_jailbreak.json"))
+    }
+
+    /// Load the Mindgard evaded injection/jailbreak dataset (EV-025).
+    pub fn load_mindgard_evasion_samples(
+        datasets_dir: &Path,
+    ) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/mindgard_evasion.json"))
+    }
+
+    /// Load the XSTest over-refusal test dataset (EV-026).
+    pub fn load_xstest_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/xstest.json"))
+    }
+
+    /// Load the JailbreakBench behaviors dataset (EV-027).
+    pub fn load_jailbreakbench_samples(
+        datasets_dir: &Path,
+    ) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/jailbreakbench.json"))
+    }
+
+    /// Load the AdvBench harmful behaviors dataset (EV-028).
+    pub fn load_advbench_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/advbench_harmful.json"))
+    }
+
+    /// Load the SPML Chatbot Prompt Injection dataset (EV-029, sampled 5000).
+    pub fn load_spml_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/spml_chatbot.json"))
+    }
+
+    /// Load the Rubend18 ChatGPT Jailbreak Prompts dataset (EV-030).
+    pub fn load_rubend18_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/rubend18_jailbreak.json"))
+    }
+
+    /// Load the SaTML CTF attack interactions dataset (EV-031, sampled 5000).
+    pub fn load_satml_ctf_samples(datasets_dir: &Path) -> Result<Vec<BenchmarkSample>, String> {
+        Self::load_from_file(&datasets_dir.join("external/satml_ctf.json"))
+    }
+
     /// Load the curated training dataset (ML-014).
     pub fn load_training_dataset(path: &Path) -> Result<Vec<BenchmarkSample>, String> {
         Self::load_from_file(path)
