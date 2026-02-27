@@ -642,7 +642,7 @@ impl RegexSecurityAnalyzer {
             ),
             (
                 "roleplay_dan_identity",
-                r"(?i)\byou\s+are\s+(DAN|STAN|DUDE|evil\s+assistant|unfiltered)\b",
+                r"(?i)\byou\s+are\s+(DAN|STAN|DUDE|evil\s+assistant|unfiltered|untrammelled)\b",
                 SecuritySeverity::High,
                 0.9,
                 "is_hypothetical",
@@ -850,7 +850,7 @@ impl RegexSecurityAnalyzer {
             ),
             (
                 "no_restrictions_mode",
-                r"(?i)\b(no\s+restrictions?|without\s+(any\s+)?restrictions?|unrestricted|unfiltered)\b",
+                r"(?i)\b(no\s+restrictions?|without\s+(any\s+)?restrictions?|unrestricted|unfiltered|untrammelled)\b",
                 SecuritySeverity::Medium,
                 0.7,
                 "jailbreak",
@@ -913,6 +913,21 @@ impl RegexSecurityAnalyzer {
                 SecuritySeverity::High,
                 0.85,
                 "prompt_extraction",
+            ),
+            // --- Format manipulation / GODMODE jailbreaks ---
+            (
+                "godmode_format",
+                r"(?i)GODMODE\s*[:\.]?\s*(ENABLED|ACTIVATED|ON)",
+                SecuritySeverity::Critical,
+                0.95,
+                "jailbreak",
+            ),
+            (
+                "format_start_output_marker",
+                r"(?i)\[START\s+OUTPUT\]",
+                SecuritySeverity::High,
+                0.80,
+                "jailbreak",
             ),
             // --- Short-form injection ---
             (
