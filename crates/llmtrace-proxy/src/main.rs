@@ -429,6 +429,8 @@ async fn build_security_analyzer(
             tracing::info!("LLMTRACE_ML_PRELOAD disabled ML model preloading");
         }
     }
+    let ml_cache_dir = std::env::var("LLMTRACE_ML_CACHE_DIR")
+        .unwrap_or_else(|_| config.security_analysis.ml_cache_dir.clone());
 
     #[cfg(feature = "ml")]
     {
@@ -439,13 +441,13 @@ async fn build_security_analyzer(
             let ml_config = llmtrace_security::MLSecurityConfig {
                 model_id: config.security_analysis.ml_model.clone(),
                 threshold: config.security_analysis.ml_threshold,
-                cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                cache_dir: Some(ml_cache_dir.clone()),
             };
 
             let ner_config = if config.security_analysis.ner_enabled {
                 Some(llmtrace_security::NerConfig {
                     model_id: config.security_analysis.ner_model.clone(),
-                    cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                    cache_dir: Some(ml_cache_dir.clone()),
                 })
             } else {
                 None
@@ -455,7 +457,7 @@ async fn build_security_analyzer(
                 Some(llmtrace_security::InjecGuardConfig {
                     model_id: config.security_analysis.injecguard_model.clone(),
                     threshold: config.security_analysis.injecguard_threshold,
-                    cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                    cache_dir: Some(ml_cache_dir.clone()),
                 })
             } else {
                 None
@@ -465,7 +467,7 @@ async fn build_security_analyzer(
                 Some(llmtrace_security::PIGuardConfig {
                     model_id: config.security_analysis.piguard_model.clone(),
                     threshold: config.security_analysis.piguard_threshold,
-                    cache_dir: Some(config.security_analysis.ml_cache_dir.clone()),
+                    cache_dir: Some(ml_cache_dir.clone()),
                 })
             } else {
                 None

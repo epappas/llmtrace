@@ -20,6 +20,9 @@
 #   LLMTRACE_CLICKHOUSE_DATABASE   — override storage.clickhouse_database
 #   LLMTRACE_POSTGRES_URL          — override storage.postgres_url
 #   LLMTRACE_REDIS_URL             — override storage.redis_url
+#   LLMTRACE_ML_ENABLED            — enable/disable ML security analysis ("1"/"0")
+#   LLMTRACE_ML_PRELOAD            — enable/disable ML model preloading ("1"/"0")
+#   LLMTRACE_ML_CACHE_DIR          — override security_analysis.ml_cache_dir
 #   LLMTRACE_LOG_LEVEL             — override logging.level
 #   LLMTRACE_LOG_FORMAT            — override logging.format
 #   RUST_LOG                       — fine-grained tracing filter (e.g. "llmtrace_proxy=debug,info")
