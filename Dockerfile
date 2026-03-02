@@ -59,10 +59,12 @@ FROM alpine:latest AS runtime
 
 RUN apk add --no-cache ca-certificates tini
 
-RUN addgroup -S llmtrace && adduser -S llmtrace -G llmtrace
+RUN addgroup -g 1000 llmtrace && adduser -u 1000 -G llmtrace -S -h /home/llmtrace llmtrace
 
 COPY --from=builder /build/target/release/llmtrace-proxy /usr/local/bin/llmtrace-proxy
 COPY config.example.yaml /etc/llmtrace/config.yaml
+
+RUN mkdir -p /home/llmtrace/.cache/llmtrace/models && chown -R 1000:1000 /home/llmtrace
 
 USER llmtrace
 WORKDIR /home/llmtrace
