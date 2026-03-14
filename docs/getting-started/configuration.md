@@ -167,6 +167,34 @@ cost_caps:
   #   max_completion_tokens: 4096
 ```
 
+## Boundary Token Defense
+
+Structural prevention for indirect prompt injection. Wraps untrusted tool message content with delimiter tags before forwarding to the upstream LLM. Reduces attack success rate by ~10x (BIPIA benchmark).
+
+```yaml
+boundary_defense:
+  enabled: false          # opt-in (default: disabled)
+  shadow_mode: false      # compute metrics but forward original bytes
+  wrap_roles: ["tool"]    # message roles to wrap
+  delimiter: "llmtrace-boundary"
+  randomize_nonce: false  # random per-request nonce in tag name
+  inject_system_reminder: true
+  # system_reminder_text: "" # custom text (empty = built-in default)
+```
+
+When enabled, tool messages are transformed before forwarding:
+
+```
+Before: {"role": "tool", "content": "Paris is the capital of France."}
+After:  {"role": "tool", "content": "<llmtrace-boundary>\nParis is the capital of France.\n</llmtrace-boundary>"}
+```
+
+A system prompt reminder is also injected telling the model to treat delimited content as untrusted data.
+
+**Rollout recommendation:** Enable with `shadow_mode: true` first, monitor metrics for 24+ hours, then set `shadow_mode: false` to activate.
+
+See [Boundary Token Defense Architecture](../architecture/BOUNDARY_TOKEN_DEFENSE.md) for full design details.
+
 ## Auth (API Keys)
 
 ```yaml

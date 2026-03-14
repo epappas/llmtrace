@@ -120,6 +120,19 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
         }
     }
 
+    // Boundary defense config validation
+    let bd = &config.boundary_defense;
+    if bd.enabled {
+        if bd.delimiter.is_empty() {
+            errors.push("boundary_defense.delimiter must not be empty when enabled".to_string());
+        }
+        if bd.wrap_roles.is_empty() {
+            errors.push(
+                "boundary_defense.wrap_roles must not be empty when enabled".to_string(),
+            );
+        }
+    }
+
     // Enforcement config validation
     let enf = &config.enforcement;
     if !(0.0..=1.0).contains(&enf.min_confidence) {

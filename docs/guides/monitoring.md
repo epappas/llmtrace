@@ -42,17 +42,34 @@ curl http://localhost:8080/metrics
 
 The `/metrics` endpoint returns metrics in Prometheus exposition format.
 
-### Key Metrics
+### Core Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `llmtrace_requests_total` | Counter | Total proxy requests by status code |
-| `llmtrace_request_duration_seconds` | Histogram | Request latency distribution |
-| `llmtrace_tokens_total` | Counter | Total tokens processed (prompt + completion) |
-| `llmtrace_security_findings_total` | Counter | Security findings by type and severity |
-| `llmtrace_circuit_breaker_state` | Gauge | Circuit breaker state (0=closed, 1=half-open, 2=open) |
-| `llmtrace_active_connections` | Gauge | Current active connections |
-| `llmtrace_upstream_errors_total` | Counter | Upstream provider errors |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `llmtrace_requests_total` | Counter | `provider`, `model`, `status_code` | Total proxied LLM requests |
+| `llmtrace_request_duration_seconds` | Histogram | `provider`, `model` | Request latency distribution |
+| `llmtrace_tokens_total` | Counter | `direction`, `provider`, `model` | Total tokens (direction = `prompt` or `completion`) |
+| `llmtrace_security_findings_total` | Counter | `severity`, `finding_type` | Security findings detected |
+| `llmtrace_security_detector_latency_seconds` | Histogram | `detector` | Per-detector analysis latency |
+| `llmtrace_circuit_breaker_state` | Gauge | `subsystem`, `state` | Circuit breaker state (1.0 = active state) |
+| `llmtrace_storage_operations_total` | Counter | `operation`, `status` | Storage operations (status = `success` or `error`) |
+| `llmtrace_cost_usd_total` | Counter | `tenant`, `model` | Estimated cost in micro-USD (divide by 1,000,000) |
+| `llmtrace_anomalies_total` | Counter | `anomaly_type` | Anomalies detected |
+| `llmtrace_active_connections` | Gauge | (none) | Current active connections |
+
+### Boundary Defense Metrics
+
+These metrics track the boundary token injection defense. They are emitted when `boundary_defense.enabled: true` in config, including in shadow mode.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `llmtrace_boundary_defense_applied_total` | Counter | `provider`, `mode` | Requests where defense was applied (`mode` = `active` or `shadow`) |
+| `llmtrace_boundary_defense_messages_wrapped` | Histogram | `provider` | Number of tool messages wrapped per request |
+| `llmtrace_boundary_defense_reminder_injected_total` | Counter | `provider` | Requests where system prompt reminder was injected |
+| `llmtrace_boundary_defense_overhead_bytes` | Histogram | `provider` | Byte delta per request from boundary wrapping |
+| `llmtrace_boundary_defense_errors_total` | Counter | `error_type` | Errors in boundary pipeline (`parse_failed`, `serialize_failed`) |
+| `llmtrace_boundary_defense_skipped_total` | Counter | `reason` | Requests skipped (`disabled`, `no_tool_messages`, `unsupported_provider`) |
+| `llmtrace_boundary_defense_shadow_mode` | Gauge | (none) | 1 when shadow mode is active, 0 otherwise |
 
 ### Prometheus Scrape Config
 
@@ -92,7 +109,17 @@ rate(llmtrace_security_findings_total[5m])
 
 **Circuit Breaker State**:
 ```promql
-llmtrace_circuit_breaker_state
+llmtrace_circuit_breaker_state{state="open"}
+```
+
+**Boundary Defense -- Messages Wrapped / hour**:
+```promql
+sum(rate(llmtrace_boundary_defense_applied_total[5m])) by (provider, mode)
+```
+
+**Boundary Defense -- Error Rate**:
+```promql
+rate(llmtrace_boundary_defense_errors_total[5m])
 ```
 
 ### Alerting Thresholds
@@ -103,8 +130,9 @@ Suggested Grafana alert rules:
 |-------|-----------|----------|
 | High error rate | Error rate > 5% for 5 minutes | Critical |
 | High latency | P95 > 5s for 5 minutes | Warning |
-| Circuit breaker open | State = 2 for > 30s | Critical |
+| Circuit breaker open | `llmtrace_circuit_breaker_state{state="open"} == 1` for > 30s | Critical |
 | Security spike | Finding rate > 10/min for 5 minutes | Warning |
+| Boundary defense errors | `rate(llmtrace_boundary_defense_errors_total[5m]) > 0` for 5 minutes | Warning |
 
 ## Logging
 
@@ -145,16 +173,25 @@ Output:
 
 ## Alerting Integration
 
-LLMTrace integrates with external alerting via the [custom policies](custom-policies.md) system. Configure webhook endpoints for Slack, PagerDuty, or generic HTTP:
+LLMTrace integrates with external alerting via the [custom policies](custom-policies.md) system. Configure alert channels for Slack, PagerDuty, or generic webhooks:
 
 ```yaml
 alerts:
-  slack:
-    webhook_url: "https://hooks.slack.com/services/..."
-  pagerduty:
-    routing_key: "your-pagerduty-key"
-  webhook:
-    url: "https://your-endpoint.com/alerts"
+  enabled: true
+  channels:
+    - type: slack
+      url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+      min_severity: "Medium"
+      min_security_score: 50
+    - type: pagerduty
+      routing_key: "your-pagerduty-key"
+      min_severity: "Critical"
+      min_security_score: 90
+    - type: webhook
+      url: "https://your-endpoint.com/alerts"
+      min_severity: "High"
+      min_security_score: 70
+  cooldown_seconds: 300
 ```
 
 See [Custom Security Policies](custom-policies.md) for full alerting configuration.

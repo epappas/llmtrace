@@ -1,75 +1,126 @@
 # Production Configuration
-# Full-featured setup with PostgreSQL, ClickHouse, Redis, and comprehensive monitoring
+# Full-featured setup with ClickHouse, PostgreSQL, Redis, ML detection,
+# enforcement, cost controls, alerting, and boundary defense.
 
-# Network
 listen_addr: "0.0.0.0:8080"
 upstream_url: "https://api.openai.com"
+timeout_ms: 30000
+connection_timeout_ms: 5000
+max_connections: 1000
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 52428800
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
 
-# Storage Backends
 storage:
   profile: "production"
-  postgres_url: "postgresql://llmtrace:password@postgres:5432/llmtrace"
   clickhouse_url: "http://clickhouse:8123"
   clickhouse_database: "llmtrace"
+  postgres_url: "postgres://llmtrace:password@postgres:5432/llmtrace"
   redis_url: "redis://redis:6379"
+  auto_migrate: true
 
-# Security Analysis
-security:
-  enable_prompt_injection_detection: true
-  enable_pii_detection: true
-  enable_data_leakage_detection: true
-  enable_streaming_analysis: true
-  
-  prompt_injection:
-    sensitivity: "high"
-  
-  pii_detection:
-    types: ["email", "phone", "ssn", "credit_card"]
-    redaction_enabled: true
-
-# Rate Limiting
-rate_limiting:
-  enabled: true
-  requests_per_minute: 1000
-  burst_capacity: 2000
-  per_tenant:
-    requests_per_minute: 100
-
-# Cost Controls
-cost_control:
-  enabled: true
-  daily_budget_usd: 1000
-  per_agent_daily_budget_usd: 100
-  max_prompt_tokens: 4000
-  max_completion_tokens: 2000
-
-# Alerting
-alerts:
-  slack:
-    enabled: true
-    webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
-    channel: "#llm-alerts"
-  
-  email:
-    enabled: true
-    smtp_host: "smtp.company.com"
-    smtp_port: 587
-    from_address: "llmtrace@company.com"
-    to_addresses: ["security@company.com", "devops@company.com"]
-
-# Monitoring
-monitoring:
-  prometheus:
-    enabled: true
-    listen_addr: "0.0.0.0:9090"
-
-# Circuit Breaker
-circuit_breaker:
-  enabled: true
-  failure_threshold: 5
-  timeout_seconds: 30
-
-# Logging
 logging:
   level: "info"
   format: "json"
+
+# ML-based prompt injection detection (requires --features ml)
+security_analysis:
+  ml_enabled: true
+  ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
+  ml_threshold: 0.8
+  ml_cache_dir: "/root/.cache/huggingface/hub"
+  ml_preload: true
+  ml_download_timeout_seconds: 600
+  jailbreak_enabled: true
+  jailbreak_threshold: 0.7
+  operating_point: "balanced"
+  over_defence: false
+  injecguard_enabled: true
+  injecguard_model: "leolee99/InjecGuard"
+  injecguard_threshold: 0.85
+  piguard_enabled: true
+  piguard_model: "leolee99/PIGuard"
+  piguard_threshold: 0.85
+
+# Pre-request enforcement (block prompt injection before it reaches the LLM)
+enforcement:
+  mode: "flag"
+  analysis_depth: "fast"
+  min_severity: "high"
+  min_confidence: 0.8
+  timeout_ms: 2000
+
+# Boundary token defense (structural prevention for indirect injection)
+boundary_defense:
+  enabled: true
+  shadow_mode: false
+  wrap_roles: ["tool"]
+  delimiter: "llmtrace-boundary"
+  randomize_nonce: false
+  inject_system_reminder: true
+
+# Rate limiting
+rate_limiting:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 200
+  window_seconds: 60
+
+# Circuit breaker
+circuit_breaker:
+  enabled: true
+  failure_threshold: 10
+  recovery_timeout_ms: 30000
+  half_open_max_calls: 3
+
+# Cost estimation
+cost_estimation:
+  enabled: true
+
+# Cost caps
+cost_caps:
+  enabled: true
+  default_budget_caps:
+    - window: hourly
+      hard_limit_usd: 50.0
+      soft_limit_usd: 40.0
+    - window: daily
+      hard_limit_usd: 500.0
+      soft_limit_usd: 400.0
+
+# Alerting
+alerts:
+  enabled: true
+  channels:
+    - type: slack
+      url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+      min_severity: "Medium"
+      min_security_score: 50
+  cooldown_seconds: 300
+
+# Output safety
+output_safety:
+  enabled: true
+  toxicity_enabled: false
+  block_on_critical: false
+
+# Streaming analysis
+streaming_analysis:
+  enabled: true
+  token_interval: 50
+  output_enabled: false
+
+# Graceful shutdown
+shutdown:
+  timeout_seconds: 30
+
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3

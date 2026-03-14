@@ -346,6 +346,43 @@ output_safety:
 #   jailbreak_threshold: 0.7
 
 # ---------------------------------------------------------------------------
+# Boundary token injection defense — structural prevention for indirect
+# prompt injection via tool outputs
+# ---------------------------------------------------------------------------
+
+# When enabled, the proxy wraps untrusted message content (tool role messages)
+# with structural delimiter tags before forwarding to the upstream LLM provider.
+# This helps the model distinguish instructions from external data, reducing
+# indirect prompt injection attack success rate by ~10x (BIPIA benchmark,
+# KDD 2025: ASR from 6.17% to 0.53%).
+#
+# The defense is complementary to detection (regex + DeBERTa ensemble) — it
+# makes injections structurally harder to execute even if they evade detection.
+#
+# Rollout recommendation: enabled + shadow_mode: true first, then disable
+# shadow_mode after validating metrics for 24+ hours.
+
+# boundary_defense:
+#   # Master toggle (default: false — opt-in).
+#   enabled: false
+#   # Shadow mode: compute the modified body and record all metrics, but
+#   # forward the original bytes to upstream. Safe for production validation.
+#   shadow_mode: false
+#   # Message roles whose content will be wrapped with boundary delimiters.
+#   # For OpenAI-compatible APIs, "tool" covers tool-call results.
+#   wrap_roles: ["tool"]
+#   # Delimiter tag name. Synthetic tag unlikely to appear in real data.
+#   delimiter: "llmtrace-boundary"
+#   # Append a random hex nonce to the delimiter per request to prevent
+#   # attackers from pre-crafting payloads that close the boundary.
+#   randomize_nonce: false
+#   # Inject an explicit instruction into the system prompt telling the
+#   # model to treat delimited content as untrusted data.
+#   inject_system_reminder: true
+#   # Custom reminder text (leave empty to use built-in default).
+#   # system_reminder_text: ""
+
+# ---------------------------------------------------------------------------
 # Graceful shutdown — connection draining and task completion
 # ---------------------------------------------------------------------------
 

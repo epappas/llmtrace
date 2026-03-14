@@ -1,76 +1,143 @@
 # High Security Configuration
-# Maximum protection for sensitive environments
+# Maximum protection for sensitive environments.
+# Enables all detection layers, enforcement blocking, boundary defense
+# with nonce randomization, and aggressive alerting.
 
-# Network
 listen_addr: "0.0.0.0:8080"
 upstream_url: "https://api.openai.com"
+timeout_ms: 30000
+connection_timeout_ms: 5000
+max_connections: 1000
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 52428800
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
 
-# Storage
 storage:
   profile: "production"
-  postgres_url: "postgresql://llmtrace:password@postgres:5432/llmtrace"
+  clickhouse_url: "http://clickhouse:8123"
+  clickhouse_database: "llmtrace"
+  postgres_url: "postgres://llmtrace:password@postgres:5432/llmtrace"
   redis_url: "redis://redis:6379"
+  auto_migrate: true
 
-# Maximum Security
-security:
-  enable_prompt_injection_detection: true
-  enable_pii_detection: true
-  enable_data_leakage_detection: true
-  enable_streaming_analysis: true
-  
-  prompt_injection:
-    sensitivity: "maximum"
-    block_suspicious_requests: true
-    custom_patterns:
-      - "ignore.*previous.*instructions"
-      - "system.*prompt.*override"
-      - "jailbreak|jail break"
-      - "bypass.*safety"
-      
-  pii_detection:
-    types: ["email", "phone", "ssn", "credit_card", "passport", "driver_license"]
-    redaction_enabled: true
-    strict_mode: true
-    
-  data_leakage:
-    detect_credential_exposure: true
-    detect_system_prompt_leaks: true
-    detect_api_key_exposure: true
-
-# Strict Rate Limiting
-rate_limiting:
-  enabled: true
-  requests_per_minute: 100
-  burst_capacity: 200
-  per_tenant:
-    requests_per_minute: 10
-
-# Conservative Cost Controls
-cost_control:
-  enabled: true
-  daily_budget_usd: 100
-  per_agent_daily_budget_usd: 10
-  max_prompt_tokens: 2000
-  max_completion_tokens: 1000
-  blocked_models: ["gpt-4-turbo", "claude-3-opus"]  # Block expensive models
-
-# Immediate Security Alerts
-alerts:
-  slack:
-    enabled: true
-    webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
-    channel: "#security-alerts"
-    mention_users: ["@security-team", "@incident-response"]
-  
-  security_thresholds:
-    prompt_injection: "any"  # Alert on any security finding
-    pii_detection: "any"
-    data_leakage: "any"
-
-# Audit Logging
 logging:
   level: "debug"
   format: "json"
-  audit:
-    enabled: true
-    destination: "syslog://audit.company.com:514"
+
+# Full ML ensemble: DeBERTa + InjecGuard + PIGuard + jailbreak detection
+security_analysis:
+  ml_enabled: true
+  ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
+  ml_threshold: 0.8
+  ml_cache_dir: "/root/.cache/huggingface/hub"
+  ml_preload: true
+  ml_download_timeout_seconds: 600
+  jailbreak_enabled: true
+  jailbreak_threshold: 0.7
+  operating_point: "high_recall"
+  over_defence: true
+  injecguard_enabled: true
+  injecguard_model: "leolee99/InjecGuard"
+  injecguard_threshold: 0.85
+  piguard_enabled: true
+  piguard_model: "leolee99/PIGuard"
+  piguard_threshold: 0.85
+
+# Block prompt injection and shell injection before reaching the LLM
+enforcement:
+  mode: "block"
+  analysis_depth: "full"
+  min_severity: "high"
+  min_confidence: 0.8
+  timeout_ms: 2000
+  categories:
+    - finding_type: "prompt_injection"
+      action: "block"
+    - finding_type: "shell_injection"
+      action: "block"
+    - finding_type: "data_leakage"
+      action: "flag"
+
+# Boundary defense with nonce randomization for maximum protection
+boundary_defense:
+  enabled: true
+  shadow_mode: false
+  wrap_roles: ["tool"]
+  delimiter: "llmtrace-boundary"
+  randomize_nonce: true
+  inject_system_reminder: true
+
+# PII detection and redaction
+pii:
+  action: "alert_and_redact"
+
+# Output safety
+output_safety:
+  enabled: true
+  toxicity_enabled: true
+  toxicity_threshold: 0.7
+  block_on_critical: true
+
+# Streaming analysis with output monitoring
+streaming_analysis:
+  enabled: true
+  token_interval: 50
+  output_enabled: true
+  early_stop_on_critical: true
+
+# Strict rate limiting
+rate_limiting:
+  enabled: true
+  requests_per_second: 50
+  burst_size: 100
+  window_seconds: 60
+
+# Circuit breaker
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5
+  recovery_timeout_ms: 30000
+  half_open_max_calls: 3
+
+# Conservative cost controls
+cost_estimation:
+  enabled: true
+
+cost_caps:
+  enabled: true
+  default_budget_caps:
+    - window: hourly
+      hard_limit_usd: 10.0
+      soft_limit_usd: 8.0
+    - window: daily
+      hard_limit_usd: 100.0
+      soft_limit_usd: 80.0
+
+# Alert on any security finding
+alerts:
+  enabled: true
+  channels:
+    - type: slack
+      url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+      min_severity: "Low"
+      min_security_score: 30
+    - type: pagerduty
+      routing_key: "your-pagerduty-routing-key"
+      min_severity: "Critical"
+      min_security_score: 90
+  cooldown_seconds: 60
+
+# Graceful shutdown
+shutdown:
+  timeout_seconds: 30
+
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3

@@ -364,6 +364,20 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     let metrics = llmtrace_proxy::metrics::Metrics::new();
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // Boundary defense startup state
+    if config.boundary_defense.enabled {
+        info!(
+            shadow_mode = config.boundary_defense.shadow_mode,
+            delimiter = %config.boundary_defense.delimiter,
+            wrap_roles = ?config.boundary_defense.wrap_roles,
+            randomize_nonce = config.boundary_defense.randomize_nonce,
+            "Boundary defense enabled"
+        );
+        if config.boundary_defense.shadow_mode {
+            metrics.boundary_defense_shadow_mode.set(1);
+        }
+    }
+
     // Per-tenant rate limiter
     let rate_limiter = if config.rate_limiting.enabled {
         info!(
