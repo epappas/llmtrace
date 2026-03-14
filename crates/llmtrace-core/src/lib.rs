@@ -1062,6 +1062,9 @@ pub struct ProxyConfig {
     /// Graceful shutdown configuration.
     #[serde(default)]
     pub shutdown: ShutdownConfig,
+    /// Boundary token injection defense configuration.
+    #[serde(default)]
+    pub boundary_defense: BoundaryTokenConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1099,6 +1102,7 @@ impl Default for ProxyConfig {
             pii: PiiConfig::default(),
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
+            boundary_defense: BoundaryTokenConfig::default(),
         }
     }
 }
@@ -1884,6 +1888,69 @@ impl Default for SecurityAnalysisConfig {
             piguard_threshold: default_piguard_threshold(),
             operating_point: OperatingPoint::default(),
             over_defence: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Boundary token defense configuration
+// ---------------------------------------------------------------------------
+
+/// Configuration for the boundary token injection defense.
+///
+/// When enabled, the proxy wraps untrusted message content (tool outputs)
+/// with structural delimiter tags before forwarding to the upstream LLM
+/// provider. This reduces indirect prompt injection ASR by ~10x (BIPIA
+/// benchmark, KDD 2025).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoundaryTokenConfig {
+    /// Master toggle for the defense.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Shadow mode: compute the modified body and log metrics, but forward
+    /// original bytes to upstream. Used for validation before going live.
+    #[serde(default)]
+    pub shadow_mode: bool,
+    /// Message roles whose content will be wrapped with boundary delimiters.
+    #[serde(default = "default_boundary_wrap_roles")]
+    pub wrap_roles: Vec<String>,
+    /// Delimiter tag name used for boundary wrapping.
+    #[serde(default = "default_boundary_delimiter")]
+    pub delimiter: String,
+    /// Append a random hex nonce to the delimiter tag per request.
+    #[serde(default)]
+    pub randomize_nonce: bool,
+    /// Inject an explicit instruction into the system prompt telling
+    /// the model to treat delimited content as untrusted data.
+    #[serde(default = "default_boundary_inject_reminder")]
+    pub inject_system_reminder: bool,
+    /// Custom system reminder text. When empty, uses the built-in default.
+    #[serde(default)]
+    pub system_reminder_text: String,
+}
+
+fn default_boundary_wrap_roles() -> Vec<String> {
+    vec!["tool".to_string()]
+}
+
+fn default_boundary_delimiter() -> String {
+    "llmtrace-boundary".to_string()
+}
+
+fn default_boundary_inject_reminder() -> bool {
+    true
+}
+
+impl Default for BoundaryTokenConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shadow_mode: false,
+            wrap_roles: default_boundary_wrap_roles(),
+            delimiter: default_boundary_delimiter(),
+            randomize_nonce: false,
+            inject_system_reminder: default_boundary_inject_reminder(),
+            system_reminder_text: String::new(),
         }
     }
 }
@@ -2989,6 +3056,7 @@ mod tests {
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
             enforcement: EnforcementConfig::default(),
+            boundary_defense: BoundaryTokenConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

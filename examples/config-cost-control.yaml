@@ -1,76 +1,90 @@
-# Cost Control Configuration  
-# Focus on managing LLM expenses and preventing budget overruns
+# Cost Control Configuration
+# Focus on managing LLM expenses and preventing budget overruns.
+# Enables cost caps with per-agent budgets and token limits.
 
-# Network
 listen_addr: "0.0.0.0:8080"
 upstream_url: "https://api.openai.com"
+timeout_ms: 30000
+connection_timeout_ms: 5000
+max_connections: 1000
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 52428800
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
 
-# Storage
 storage:
   profile: "lite"
   database_path: "llmtrace.db"
 
-# Aggressive Cost Controls
-cost_control:
-  enabled: true
-  
-  # Budget Limits
-  daily_budget_usd: 500
-  weekly_budget_usd: 3000
-  monthly_budget_usd: 10000
-  
-  # Per-Agent Limits
-  per_agent_daily_budget_usd: 50
-  per_agent_weekly_budget_usd: 300
-  
-  # Per-Model Budgets
-  per_model_daily_budget_usd:
-    gpt-4: 200
-    gpt-3.5-turbo: 100
-    claude-3: 150
-  
-  # Token Limits
-  max_prompt_tokens: 3000
-  max_completion_tokens: 1500
-  
-  # Business Hours Only for Expensive Models
-  schedule:
-    business_hours_only:
-      models: ["gpt-4", "claude-3-opus"]
-      hours: "09:00-17:00"
-      timezone: "UTC"
-
-# Cost Anomaly Detection
-anomaly_detection:
-  enabled: true
-  cost:
-    threshold_multiplier: 1.5  # Alert at 50% increase
-    window_minutes: 30
-  tokens:
-    threshold_multiplier: 2.0
-    window_minutes: 15
-
-# Cost-Focused Alerts
-alerts:
-  slack:
-    enabled: true
-    webhook_url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
-    channel: "#cost-alerts"
-  
-  cost_thresholds:
-    daily_spend_percentage: 80   # Alert at 80% of budget
-    hourly_spend_usd: 50        # Alert if >$50/hour
-    single_request_usd: 5       # Alert on expensive requests
-
-# Basic Security (cost-optimized)
-security:
-  enable_prompt_injection_detection: true
-  enable_pii_detection: false  # Disabled to reduce processing cost
-  prompt_injection:
-    sensitivity: "low"
-    fast_mode: true
-
-# Minimal Logging
 logging:
   level: "warn"
   format: "json"
+
+# Cost estimation (required for cost caps)
+cost_estimation:
+  enabled: true
+
+# Aggressive cost caps
+cost_caps:
+  enabled: true
+  default_budget_caps:
+    - window: hourly
+      hard_limit_usd: 10.0
+      soft_limit_usd: 8.0
+    - window: daily
+      hard_limit_usd: 100.0
+      soft_limit_usd: 80.0
+  default_token_cap:
+    max_prompt_tokens: 4096
+    max_completion_tokens: 2048
+    max_total_tokens: 8192
+  # Per-agent overrides (keyed by X-LLMTrace-Agent-ID header)
+  # agents:
+  #   - agent_id: "heavy-agent"
+  #     budget_caps:
+  #       - window: daily
+  #         hard_limit_usd: 500.0
+  #         soft_limit_usd: 400.0
+  #     token_cap:
+  #       max_prompt_tokens: 16384
+  #       max_completion_tokens: 8192
+
+# Cost alerts
+alerts:
+  enabled: true
+  channels:
+    - type: slack
+      url: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+      min_severity: "Medium"
+      min_security_score: 50
+  cooldown_seconds: 300
+
+# Anomaly detection for cost spikes
+anomaly_detection:
+  enabled: true
+
+# Lightweight security (regex only, no ML -- saves compute)
+# security_analysis section omitted entirely -- defaults to ml_enabled: true.
+# Override with env var: LLMTRACE_ML_ENABLED=0 to disable ML for cost savings.
+
+rate_limiting:
+  enabled: true
+  requests_per_second: 100
+  burst_size: 200
+  window_seconds: 60
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 10
+  recovery_timeout_ms: 30000
+  half_open_max_calls: 3
+
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3

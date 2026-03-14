@@ -1,6 +1,6 @@
 # LLMTrace Research Landscape
 
-Last updated: 2026-02-03
+Last updated: 2026-03-07
 
 This landscape highlights tools, models, and resources relevant to LLMTrace's mission: security-aware observability for LLM systems.
 
@@ -29,4 +29,12 @@ Meta Llama-Guard-3-8B is a Llama-3.1-8B model fine-tuned for content safety clas
 ## Research Implementations
 
 InjecGuard provides official code, data, and model weights for the InjecGuard prompt guard model and documents its benchmark focus on benign, malicious, and over-defense accuracy. LLMTrace can use it as a reference model for false-positive calibration. Source: https://github.com/InjecGuard/InjecGuard
+
+## OWASP GenAI Top 10 (2025) Research
+
+Comprehensive reference catalog covering all 10 OWASP GenAI vulnerability categories with academic papers, industry research, and incident reports mapped to LLMTrace's detection capabilities. See: `docs/research/owasp-genai-top10-2025-references.md`
+
+System architecture report analyzing LLMTrace's role in the OWASP GenAI threat model with AI-engineer, MLOps-engineer, and Security-engineer perspectives. See: `docs/research/llmtrace-owasp-genai-architecture-report.md`
+
+Detailed code-level security architecture analysis with 40+ specific function references mapping OWASP categories to llmtrace-security crate components. See: `docs/security/OWASP_GENAI_TOP10_2025_ARCHITECTURE.md`
 

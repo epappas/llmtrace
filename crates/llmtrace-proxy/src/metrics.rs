@@ -64,6 +64,27 @@ pub struct Metrics {
 
     /// Currently active connections / in-flight proxy requests.
     pub active_connections: IntGauge,
+
+    /// Requests where boundary defense was applied, labelled by provider and mode.
+    pub boundary_defense_applied_total: IntCounterVec,
+
+    /// Number of messages wrapped per request, labelled by provider.
+    pub boundary_defense_messages_wrapped: HistogramVec,
+
+    /// Requests where system prompt reminder was injected, labelled by provider.
+    pub boundary_defense_reminder_injected_total: IntCounterVec,
+
+    /// Byte delta per request from boundary defense, labelled by provider.
+    pub boundary_defense_overhead_bytes: HistogramVec,
+
+    /// Errors in boundary defense pipeline, labelled by error type.
+    pub boundary_defense_errors_total: IntCounterVec,
+
+    /// Requests skipped by boundary defense, labelled by reason.
+    pub boundary_defense_skipped_total: IntCounterVec,
+
+    /// Whether shadow mode is active (1) or not (0).
+    pub boundary_defense_shadow_mode: IntGauge,
 }
 
 impl Metrics {
@@ -186,6 +207,90 @@ impl Metrics {
             .register(Box::new(active_connections.clone()))
             .expect("register active_connections");
 
+        // Boundary defense metrics
+        let boundary_defense_applied_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_boundary_defense_applied_total",
+                "Requests where boundary defense was applied",
+            ),
+            &["provider", "mode"],
+        )
+        .expect("metric: boundary_defense_applied_total");
+        registry
+            .register(Box::new(boundary_defense_applied_total.clone()))
+            .expect("register boundary_defense_applied_total");
+
+        let boundary_defense_messages_wrapped = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_boundary_defense_messages_wrapped",
+                "Number of messages wrapped per request",
+            )
+            .buckets(vec![0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0]),
+            &["provider"],
+        )
+        .expect("metric: boundary_defense_messages_wrapped");
+        registry
+            .register(Box::new(boundary_defense_messages_wrapped.clone()))
+            .expect("register boundary_defense_messages_wrapped");
+
+        let boundary_defense_reminder_injected_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_boundary_defense_reminder_injected_total",
+                "Requests where system prompt reminder was injected",
+            ),
+            &["provider"],
+        )
+        .expect("metric: boundary_defense_reminder_injected_total");
+        registry
+            .register(Box::new(boundary_defense_reminder_injected_total.clone()))
+            .expect("register boundary_defense_reminder_injected_total");
+
+        let boundary_defense_overhead_bytes = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_boundary_defense_overhead_bytes",
+                "Byte delta per request from boundary defense",
+            )
+            .buckets(vec![0.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 5000.0]),
+            &["provider"],
+        )
+        .expect("metric: boundary_defense_overhead_bytes");
+        registry
+            .register(Box::new(boundary_defense_overhead_bytes.clone()))
+            .expect("register boundary_defense_overhead_bytes");
+
+        let boundary_defense_errors_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_boundary_defense_errors_total",
+                "Errors in boundary defense pipeline",
+            ),
+            &["error_type"],
+        )
+        .expect("metric: boundary_defense_errors_total");
+        registry
+            .register(Box::new(boundary_defense_errors_total.clone()))
+            .expect("register boundary_defense_errors_total");
+
+        let boundary_defense_skipped_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_boundary_defense_skipped_total",
+                "Requests skipped by boundary defense",
+            ),
+            &["reason"],
+        )
+        .expect("metric: boundary_defense_skipped_total");
+        registry
+            .register(Box::new(boundary_defense_skipped_total.clone()))
+            .expect("register boundary_defense_skipped_total");
+
+        let boundary_defense_shadow_mode = IntGauge::new(
+            "llmtrace_boundary_defense_shadow_mode",
+            "Whether boundary defense shadow mode is active (1) or not (0)",
+        )
+        .expect("metric: boundary_defense_shadow_mode");
+        registry
+            .register(Box::new(boundary_defense_shadow_mode.clone()))
+            .expect("register boundary_defense_shadow_mode");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -208,6 +313,13 @@ impl Metrics {
             anomalies_total,
             security_detector_latency_seconds,
             active_connections,
+            boundary_defense_applied_total,
+            boundary_defense_messages_wrapped,
+            boundary_defense_reminder_injected_total,
+            boundary_defense_overhead_bytes,
+            boundary_defense_errors_total,
+            boundary_defense_skipped_total,
+            boundary_defense_shadow_mode,
         }
     }
 
@@ -306,6 +418,32 @@ impl Metrics {
         self.security_detector_latency_seconds
             .with_label_values(&[detector])
             .observe(secs);
+    }
+
+    /// Record boundary defense outcome.
+    pub fn record_boundary_defense(
+        &self,
+        provider: &str,
+        messages_wrapped: u32,
+        reminder_injected: bool,
+        overhead_bytes: i64,
+        shadow_mode: bool,
+    ) {
+        let mode = if shadow_mode { "shadow" } else { "active" };
+        self.boundary_defense_applied_total
+            .with_label_values(&[provider, mode])
+            .inc();
+        self.boundary_defense_messages_wrapped
+            .with_label_values(&[provider])
+            .observe(f64::from(messages_wrapped));
+        if reminder_injected {
+            self.boundary_defense_reminder_injected_total
+                .with_label_values(&[provider])
+                .inc();
+        }
+        self.boundary_defense_overhead_bytes
+            .with_label_values(&[provider])
+            .observe(overhead_bytes as f64);
     }
 
     /// Record detected anomalies.

@@ -110,23 +110,42 @@ impl AppState {
 // ---------------------------------------------------------------------------
 
 /// Minimal representation of an OpenAI-compatible request body.
+///
+/// The `extra` map captures all fields not explicitly modeled (e.g.
+/// `temperature`, `max_tokens`, `tools`, `top_p`) so they survive
+/// round-trip serialization when the proxy modifies the body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LLMRequestBody {
+pub(crate) struct LLMRequestBody {
     #[serde(default)]
-    model: String,
+    pub model: String,
     #[serde(default)]
-    messages: Vec<ChatMessage>,
+    pub messages: Vec<ChatMessage>,
     #[serde(default)]
-    prompt: Option<String>,
+    pub prompt: Option<String>,
     #[serde(default)]
-    stream: Option<bool>,
+    pub stream: Option<bool>,
+    /// Anthropic top-level system parameter (not in messages array).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<serde_json::Value>,
+    /// Preserve all other fields through round-trip serialization.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-/// A single chat message in OpenAI format.
+/// A single chat message (provider-agnostic).
+///
+/// `content` is `serde_json::Value` to handle plain strings (OpenAI),
+/// arrays of content blocks (multimodal / Anthropic), and null.
+/// The `extra` map preserves `tool_call_id`, `name`, `tool_calls`,
+/// and any other provider-specific fields through round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
+pub(crate) struct ChatMessage {
+    pub role: String,
+    #[serde(default)]
+    pub content: serde_json::Value,
+    /// Preserve all other fields (tool_call_id, name, etc.)
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +188,23 @@ pub(crate) fn resolve_tenant(headers: &HeaderMap) -> Option<TenantId> {
     None
 }
 
+/// Extract the text content from a `serde_json::Value` message content field.
+///
+/// Handles string content (OpenAI), array content blocks (multimodal /
+/// Anthropic), null, and other shapes gracefully.
+fn extract_content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// Concatenate all chat message contents into a single string for display/storage.
 ///
 /// Includes role prefixes (e.g. "user: Hello") so the stored trace shows
@@ -176,7 +212,7 @@ pub(crate) fn resolve_tenant(headers: &HeaderMap) -> Option<TenantId> {
 fn messages_to_prompt_text(messages: &[ChatMessage]) -> String {
     messages
         .iter()
-        .map(|m| format!("{}: {}", m.role, m.content))
+        .map(|m| format!("{}: {}", m.role, extract_content_text(&m.content)))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -189,7 +225,7 @@ fn messages_to_prompt_text(messages: &[ChatMessage]) -> String {
 fn messages_to_analysis_text(messages: &[ChatMessage]) -> String {
     messages
         .iter()
-        .map(|m| m.content.as_str())
+        .map(|m| extract_content_text(&m.content))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -447,6 +483,41 @@ pub async fn proxy_handler(
         }
     }
 
+    // --- Boundary token injection defense ---
+    let boundary_result = crate::boundary::apply_boundary_defense(
+        &body_bytes,
+        &state.config.boundary_defense,
+        &detected_provider,
+    );
+    let boundary_active = state.config.boundary_defense.enabled
+        && !state.config.boundary_defense.shadow_mode
+        && boundary_result.messages_wrapped > 0;
+
+    if boundary_result.messages_wrapped > 0 {
+        let mode = if state.config.boundary_defense.shadow_mode {
+            "shadow"
+        } else {
+            "active"
+        };
+        debug!(
+            %trace_id,
+            provider = ?detected_provider,
+            messages_wrapped = boundary_result.messages_wrapped,
+            reminder_injected = boundary_result.reminder_injected,
+            overhead_bytes = boundary_result.overhead_bytes,
+            mode,
+            "Boundary defense applied"
+        );
+        let provider_lbl = crate::metrics::provider_label(&detected_provider);
+        state.metrics.record_boundary_defense(
+            provider_lbl,
+            boundary_result.messages_wrapped,
+            boundary_result.reminder_injected,
+            boundary_result.overhead_bytes,
+            state.config.boundary_defense.shadow_mode,
+        );
+    }
+
     // Build the upstream request
     let upstream_url = build_upstream_url(&state.config, &path, query.as_deref());
 
@@ -458,9 +529,14 @@ pub async fn proxy_handler(
     // Forward all headers except `Host` (reqwest sets it) and `Accept-Encoding`
     // (the proxy needs to read uncompressed responses for security analysis and
     // trace capture; reqwest does not enable auto-decompression).
+    // When boundary defense is active, also strip `Content-Length` because the
+    // body size has changed; reqwest will set it from the new body.
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
     for (name, value) in headers.iter() {
         if name == "host" || name == "accept-encoding" {
+            continue;
+        }
+        if boundary_active && name == "content-length" {
             continue;
         }
         if let Ok(rname) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
@@ -470,7 +546,14 @@ pub async fn proxy_handler(
         }
     }
     upstream_req = upstream_req.headers(forwarded_headers);
-    upstream_req = upstream_req.body(body_bytes.to_vec());
+
+    // Forward the modified body when boundary defense is active, original otherwise
+    let forward_body = if boundary_active {
+        boundary_result.body
+    } else {
+        body_bytes.to_vec()
+    };
+    upstream_req = upstream_req.body(forward_body);
 
     // Send the request upstream
     let upstream_response = match upstream_req.send().await {
@@ -1393,17 +1476,20 @@ mod tests {
         );
     }
 
+    /// Helper to build a ChatMessage with string content and no extra fields.
+    fn chat_msg(role: &str, content: &str) -> ChatMessage {
+        ChatMessage {
+            role: role.to_string(),
+            content: serde_json::Value::String(content.to_string()),
+            extra: serde_json::Map::new(),
+        }
+    }
+
     #[test]
     fn test_messages_to_prompt_text() {
         let msgs = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: "You are helpful.".to_string(),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: "Hello!".to_string(),
-            },
+            chat_msg("system", "You are helpful."),
+            chat_msg("user", "Hello!"),
         ];
         let text = messages_to_prompt_text(&msgs);
         assert!(text.contains("system: You are helpful."));
@@ -1419,14 +1505,8 @@ mod tests {
     #[test]
     fn test_messages_to_analysis_text() {
         let msgs = vec![
-            ChatMessage {
-                role: "system".to_string(),
-                content: "You are helpful.".to_string(),
-            },
-            ChatMessage {
-                role: "user".to_string(),
-                content: "Hello!".to_string(),
-            },
+            chat_msg("system", "You are helpful."),
+            chat_msg("user", "Hello!"),
         ];
         let text = messages_to_analysis_text(&msgs);
         assert!(text.contains("You are helpful."));
@@ -1445,6 +1525,46 @@ mod tests {
     fn test_messages_to_analysis_text_empty() {
         let text = messages_to_analysis_text(&[]);
         assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_extract_content_text_string() {
+        let val = serde_json::Value::String("hello world".to_string());
+        assert_eq!(extract_content_text(&val), "hello world");
+    }
+
+    #[test]
+    fn test_extract_content_text_array() {
+        let val = serde_json::json!([
+            {"type": "text", "text": "line one"},
+            {"type": "image_url", "image_url": {"url": "http://img"}},
+            {"type": "text", "text": "line two"}
+        ]);
+        assert_eq!(extract_content_text(&val), "line one\nline two");
+    }
+
+    #[test]
+    fn test_extract_content_text_null() {
+        assert_eq!(extract_content_text(&serde_json::Value::Null), "");
+    }
+
+    #[test]
+    fn test_messages_to_analysis_text_value_content() {
+        let msgs = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: serde_json::json!([
+                    {"type": "text", "text": "What is this?"},
+                    {"type": "image_url", "image_url": {"url": "http://img"}}
+                ]),
+                extra: serde_json::Map::new(),
+            },
+            chat_msg("assistant", "It is a cat."),
+        ];
+        let text = messages_to_analysis_text(&msgs);
+        assert!(text.contains("What is this?"));
+        assert!(text.contains("It is a cat."));
+        assert!(!text.contains("user:"));
     }
 
     #[test]
