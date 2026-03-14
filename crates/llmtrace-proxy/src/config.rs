@@ -127,9 +127,7 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
             errors.push("boundary_defense.delimiter must not be empty when enabled".to_string());
         }
         if bd.wrap_roles.is_empty() {
-            errors.push(
-                "boundary_defense.wrap_roles must not be empty when enabled".to_string(),
-            );
+            errors.push("boundary_defense.wrap_roles must not be empty when enabled".to_string());
         }
     }
 

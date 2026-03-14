@@ -6,8 +6,8 @@
 pub mod alerts;
 pub mod anomaly;
 pub mod api;
-pub mod boundary;
 pub mod auth;
+pub mod boundary;
 pub mod circuit_breaker;
 pub mod compliance;
 pub mod config;
