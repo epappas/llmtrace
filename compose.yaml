@@ -84,7 +84,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8081:8081"
+      - "8080:8080"
     volumes:
       - ./config.yaml:/etc/llmtrace/config.yaml
     environment:
@@ -110,16 +110,16 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://192.168.1.107:8081}
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
       # Server-side proxy URL (container networking)
-      LLMTRACE_API_URL: "http://llmtrace-proxy:8081"
+      LLMTRACE_API_URL: "http://llmtrace-proxy:8080"
       # ClickHouse URL for direct operations (deletion)
       CLICKHOUSE_URL: "http://clickhouse:8123"
       # Client-side URL (browser → proxy)
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://192.168.1.107:8081}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       # Listen on all interfaces
       HOSTNAME: "0.0.0.0"
     depends_on:

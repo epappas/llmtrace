@@ -17,7 +17,7 @@
 set -euo pipefail
 
 PROXY_BIN="./target/release/llmtrace-proxy"
-PROXY_ADDR="127.0.0.1:8081"
+PROXY_ADDR="127.0.0.1:8080"
 UPSTREAM_URL="${UPSTREAM_URL:-http://localhost:11434}"
 DB_PATH="/tmp/llmtrace-security-test.db"
 
