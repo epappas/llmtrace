@@ -11,8 +11,8 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Response, StatusCode};
 use prometheus::{
-    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, Opts, Registry,
-    TextEncoder,
+    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts,
+    Registry, TextEncoder,
 };
 use std::sync::Arc;
 
@@ -85,6 +85,18 @@ pub struct Metrics {
 
     /// Whether shadow mode is active (1) or not (0).
     pub boundary_defense_shadow_mode: IntGauge,
+
+    /// ML sliding window chunks processed per classify call.
+    pub ml_chunks_total: HistogramVec,
+
+    /// ML inputs that hit the MAX_CHUNKS cap.
+    pub ml_input_truncated_total: IntCounterVec,
+
+    /// Response collections truncated due to max_response_size_bytes.
+    pub response_truncated_total: IntCounter,
+
+    /// Analysis text truncations due to max_analysis_text_bytes.
+    pub analysis_text_truncated_total: IntCounter,
 }
 
 impl Metrics {
@@ -291,6 +303,50 @@ impl Metrics {
             .register(Box::new(boundary_defense_shadow_mode.clone()))
             .expect("register boundary_defense_shadow_mode");
 
+        // ML long-input defense metrics
+        let ml_chunks_total = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_ml_chunks_total",
+                "ML sliding window chunks processed per classify call",
+            )
+            .buckets(vec![1.0, 2.0, 3.0, 5.0, 10.0]),
+            &["model"],
+        )
+        .expect("metric: ml_chunks_total");
+        registry
+            .register(Box::new(ml_chunks_total.clone()))
+            .expect("register ml_chunks_total");
+
+        let ml_input_truncated_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_ml_input_truncated_total",
+                "ML inputs that hit the sliding window chunk cap",
+            ),
+            &["model"],
+        )
+        .expect("metric: ml_input_truncated_total");
+        registry
+            .register(Box::new(ml_input_truncated_total.clone()))
+            .expect("register ml_input_truncated_total");
+
+        let response_truncated_total = IntCounter::new(
+            "llmtrace_response_truncated_total",
+            "Response collections truncated due to max_response_size_bytes",
+        )
+        .expect("metric: response_truncated_total");
+        registry
+            .register(Box::new(response_truncated_total.clone()))
+            .expect("register response_truncated_total");
+
+        let analysis_text_truncated_total = IntCounter::new(
+            "llmtrace_analysis_text_truncated_total",
+            "Analysis text truncations due to max_analysis_text_bytes",
+        )
+        .expect("metric: analysis_text_truncated_total");
+        registry
+            .register(Box::new(analysis_text_truncated_total.clone()))
+            .expect("register analysis_text_truncated_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -320,6 +376,10 @@ impl Metrics {
             boundary_defense_errors_total,
             boundary_defense_skipped_total,
             boundary_defense_shadow_mode,
+            ml_chunks_total,
+            ml_input_truncated_total,
+            response_truncated_total,
+            analysis_text_truncated_total,
         }
     }
 

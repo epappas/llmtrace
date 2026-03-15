@@ -1010,6 +1010,11 @@ pub struct ProxyConfig {
     pub enable_streaming: bool,
     /// Maximum request body size in bytes.
     pub max_request_size_bytes: u64,
+    /// Maximum response body size in bytes to collect for trace storage.
+    /// Responses larger than this are truncated in traces but forwarded to
+    /// the client in full.
+    #[serde(default = "default_max_response_size_bytes")]
+    pub max_response_size_bytes: u64,
     /// Security analysis timeout in milliseconds.
     pub security_analysis_timeout_ms: u64,
     /// Trace storage timeout in milliseconds.
@@ -1083,6 +1088,7 @@ impl Default for ProxyConfig {
             enable_trace_storage: true,
             enable_streaming: true,
             max_request_size_bytes: 50 * 1024 * 1024, // 50MB
+            max_response_size_bytes: default_max_response_size_bytes(),
             security_analysis_timeout_ms: 5000,
             trace_storage_timeout_ms: 10000,
             rate_limiting: RateLimitConfig::default(),
@@ -1134,6 +1140,10 @@ pub struct StorageConfig {
     /// `false` in production to require explicit `llmtrace-proxy migrate`.
     #[serde(default = "default_auto_migrate")]
     pub auto_migrate: bool,
+}
+
+fn default_max_response_size_bytes() -> u64 {
+    50 * 1024 * 1024 // 50MB
 }
 
 fn default_storage_profile() -> String {
@@ -1811,6 +1821,10 @@ pub struct SecurityAnalysisConfig {
     /// Enable over-defence suppression to reduce false positives on benign content.
     #[serde(default)]
     pub over_defence: bool,
+    /// Maximum text size (bytes) passed to the analysis pipeline.
+    /// Inputs larger than this are truncated before normalization and scanning.
+    #[serde(default = "default_max_analysis_text_bytes")]
+    pub max_analysis_text_bytes: usize,
 }
 
 fn default_ml_enabled() -> bool {
@@ -1865,6 +1879,10 @@ fn default_piguard_threshold() -> f64 {
     0.85
 }
 
+fn default_max_analysis_text_bytes() -> usize {
+    1_048_576 // 1MB
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -1888,6 +1906,7 @@ impl Default for SecurityAnalysisConfig {
             piguard_threshold: default_piguard_threshold(),
             operating_point: OperatingPoint::default(),
             over_defence: false,
+            max_analysis_text_bytes: default_max_analysis_text_bytes(),
         }
     }
 }
@@ -3007,6 +3026,7 @@ mod tests {
             enable_trace_storage: true,
             enable_streaming: true,
             max_request_size_bytes: 100 * 1024 * 1024,
+            max_response_size_bytes: default_max_response_size_bytes(),
             security_analysis_timeout_ms: 3000,
             trace_storage_timeout_ms: 5000,
             rate_limiting: RateLimitConfig::default(),
@@ -3044,6 +3064,7 @@ mod tests {
                 piguard_threshold: default_piguard_threshold(),
                 operating_point: OperatingPoint::default(),
                 over_defence: false,
+                max_analysis_text_bytes: default_max_analysis_text_bytes(),
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -3552,6 +3573,7 @@ mod tests {
             piguard_threshold: default_piguard_threshold(),
             operating_point: OperatingPoint::default(),
             over_defence: false,
+            max_analysis_text_bytes: default_max_analysis_text_bytes(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

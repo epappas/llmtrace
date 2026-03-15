@@ -114,6 +114,11 @@ enable_streaming: true
 # Maximum request body size in bytes (default: 50 MB).
 max_request_size_bytes: 52428800
 
+# Maximum response body size to collect for trace storage (bytes).
+# Responses larger than this are truncated in traces but forwarded to the
+# client in full. Default: 50MB.
+# max_response_size_bytes: 52428800
+
 # Timeout for async security analysis in milliseconds.
 security_analysis_timeout_ms: 5000
 
@@ -328,6 +333,10 @@ output_safety:
 #   ml_model: "protectai/deberta-v3-base-prompt-injection-v2"
 #   # Confidence threshold for ML detection (0.0–1.0).
 #   ml_threshold: 0.8
+#   # Maximum text size (bytes) passed to the analysis pipeline.
+#   # Inputs larger than this are truncated before normalization and
+#   # regex scanning. Default: 1MB.
+#   # max_analysis_text_bytes: 1048576
 #   # Local cache directory for downloaded ML models.
 #   ml_cache_dir: "~/.cache/llmtrace/models"
 #   # Pre-load ML models at proxy startup (eliminates cold-start latency on first request).

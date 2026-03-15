@@ -104,11 +104,14 @@ pub struct StreamingAccumulator {
     pub reported_usage: Option<SseUsage>,
     /// Whether the stream has ended (`data: [DONE]` received).
     pub done: bool,
+    /// Maximum content bytes to accumulate. Once exceeded, new tokens are
+    /// counted but not appended to `content`.
+    max_content_bytes: usize,
 }
 
 impl StreamingAccumulator {
-    /// Create a new empty accumulator.
-    pub fn new() -> Self {
+    /// Create a new empty accumulator with a content size limit.
+    pub fn with_max_content_bytes(max_content_bytes: usize) -> Self {
         Self {
             line_buffer: String::new(),
             content: String::new(),
@@ -116,7 +119,13 @@ impl StreamingAccumulator {
             first_token_received: false,
             reported_usage: None,
             done: false,
+            max_content_bytes,
         }
+    }
+
+    /// Create a new empty accumulator with no practical size limit.
+    pub fn new() -> Self {
+        Self::with_max_content_bytes(usize::MAX)
     }
 
     /// Process a raw byte chunk from the upstream response.
@@ -152,7 +161,11 @@ impl StreamingAccumulator {
                                         self.first_token_received = true;
                                         first_token_in_this_chunk = true;
                                     }
-                                    self.content.push_str(token_text);
+                                    if self.content.len() + token_text.len()
+                                        <= self.max_content_bytes
+                                    {
+                                        self.content.push_str(token_text);
+                                    }
                                     self.completion_token_count += 1;
                                 }
                             }
@@ -647,6 +660,25 @@ mod tests {
         assert!(acc.content.is_empty());
         assert!(!acc.first_token_received);
         assert!(!acc.done);
+    }
+
+    #[test]
+    fn test_accumulator_content_cap() {
+        // Limit content to 10 bytes
+        let mut acc = StreamingAccumulator::with_max_content_bytes(10);
+
+        let chunk1 =
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
+        acc.process_chunk(chunk1);
+        assert_eq!(acc.content, "Hello");
+        assert_eq!(acc.completion_token_count, 1);
+
+        // This 6-byte token would exceed the 10-byte cap
+        let chunk2 = b"data: {\"choices\":[{\"delta\":{\"content\":\" world!\"},\"finish_reason\":null}]}\n\n";
+        acc.process_chunk(chunk2);
+        // Content stays at "Hello" but token count still increments
+        assert_eq!(acc.content, "Hello");
+        assert_eq!(acc.completion_token_count, 2);
     }
 
     // ---------------------------------------------------------------

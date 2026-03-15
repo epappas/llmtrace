@@ -143,6 +143,14 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
         errors.push("enforcement.timeout_ms must be greater than 0".to_string());
     }
 
+    if config.max_response_size_bytes == 0 {
+        errors.push("max_response_size_bytes must be > 0".to_string());
+    }
+
+    if config.security_analysis.max_analysis_text_bytes == 0 {
+        errors.push("security_analysis.max_analysis_text_bytes must be > 0".to_string());
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -447,5 +455,32 @@ health_check:
         assert!(msg.contains("listen_addr"));
         assert!(msg.contains("upstream_url"));
         assert!(msg.contains("timeout_ms"));
+    }
+
+    #[test]
+    fn test_validate_config_zero_max_response_size() {
+        let config = ProxyConfig {
+            max_response_size_bytes: 0,
+            ..ProxyConfig::default()
+        };
+        let err = validate_config(&config).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("max_response_size_bytes must be > 0"));
+    }
+
+    #[test]
+    fn test_validate_config_zero_max_analysis_text() {
+        let config = ProxyConfig {
+            security_analysis: llmtrace_core::SecurityAnalysisConfig {
+                max_analysis_text_bytes: 0,
+                ..llmtrace_core::SecurityAnalysisConfig::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let err = validate_config(&config).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("security_analysis.max_analysis_text_bytes must be > 0"));
     }
 }

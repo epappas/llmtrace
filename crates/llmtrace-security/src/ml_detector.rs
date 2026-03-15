@@ -219,6 +219,12 @@ pub(crate) struct LoadedModel {
     /// Optional embedding model for feature-level fusion (ADR-013).
     /// Loaded only when `fusion_enabled` is `true`.
     pub(crate) embedding_model: Option<EmbeddingModel>,
+    /// Maximum sequence length from model config (max_position_embeddings).
+    max_seq_length: usize,
+    /// Token ID for [CLS] (or equivalent) special token.
+    cls_token_id: u32,
+    /// Token ID for [SEP] (or equivalent) special token.
+    sep_token_id: u32,
 }
 
 impl LoadedModel {
@@ -264,16 +270,44 @@ impl LoadedModel {
     }
 
     /// Classify text and return `(injection_score, predicted_label, token_count)`.
+    ///
+    /// For inputs that fit within the model's max sequence length, runs a
+    /// single forward pass. For longer inputs, uses a sliding window with
+    /// 50% overlap and returns the highest injection score across chunks.
     fn classify(&self, text: &str) -> Result<(f64, String, usize)> {
+        // Tokenize without special tokens to get raw content token count
+        let encoding = self
+            .tokenizer
+            .encode(text, false)
+            .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
+
+        let all_ids = encoding.get_ids();
+        let total_tokens = all_ids.len();
+        let max_content = self.max_seq_length.saturating_sub(2); // Reserve [CLS] + [SEP]
+
+        if total_tokens <= max_content {
+            return self.classify_single(text);
+        }
+
+        self.classify_windowed(all_ids, total_tokens, max_content)
+    }
+
+    /// Single forward pass classification (input fits within max sequence length).
+    fn classify_single(&self, text: &str) -> Result<(f64, String, usize)> {
         let encoding = self
             .tokenizer
             .encode(text, true)
             .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
 
-        let ids = encoding.get_ids();
-        let token_count = ids.len();
-        let type_ids = encoding.get_type_ids();
-        let mask = encoding.get_attention_mask();
+        let full_ids = encoding.get_ids();
+        let token_count = full_ids.len();
+
+        // Safety: clamp to model's max sequence length in case the
+        // tokenizer produces more tokens than the model can handle.
+        let len = token_count.min(self.max_seq_length);
+        let ids = &full_ids[..len];
+        let type_ids = &encoding.get_type_ids()[..len];
+        let mask = &encoding.get_attention_mask()[..len];
 
         let input_ids = Tensor::new(ids, &self.device)
             .and_then(|t| t.unsqueeze(0))
@@ -292,7 +326,6 @@ impl LoadedModel {
             .forward(&input_ids, &token_type_ids, &attention_mask)
             .map_err(|e| LLMTraceError::Security(format!("Model inference failed: {e}")))?;
 
-        // Apply softmax to get probabilities
         let probs = candle_nn::ops::softmax(&logits, candle_core::D::Minus1)
             .map_err(|e| LLMTraceError::Security(format!("Softmax failed: {e}")))?;
 
@@ -322,6 +355,146 @@ impl LoadedModel {
             .unwrap_or_else(|| format!("label_{predicted_idx}"));
 
         Ok((injection_score, predicted_label, token_count))
+    }
+
+    /// Sliding window classification for inputs exceeding max sequence length.
+    ///
+    /// Splits token IDs into overlapping chunks with 50% stride, runs each
+    /// through the model, and returns the highest injection score.
+    fn classify_windowed(
+        &self,
+        all_ids: &[u32],
+        total_tokens: usize,
+        max_content: usize,
+    ) -> Result<(f64, String, usize)> {
+        const MAX_CHUNKS: usize = 10;
+
+        let stride = max_content / 2;
+        let mut best_score: f64 = 0.0;
+        let mut best_label = String::new();
+        let mut chunks_processed: usize = 0;
+        let mut successful_chunks: usize = 0;
+        let mut offset = 0;
+
+        tracing::debug!(
+            total_tokens,
+            max_content,
+            stride,
+            "Sliding window classification"
+        );
+
+        while offset < total_tokens && chunks_processed < MAX_CHUNKS {
+            let end = (offset + max_content).min(total_tokens);
+            let chunk_ids = &all_ids[offset..end];
+
+            // Build [CLS] + chunk + [SEP]
+            let mut input_vec: Vec<u32> = Vec::with_capacity(chunk_ids.len() + 2);
+            input_vec.push(self.cls_token_id);
+            input_vec.extend_from_slice(chunk_ids);
+            input_vec.push(self.sep_token_id);
+
+            let seq_len = input_vec.len();
+
+            let input_ids = Tensor::new(&input_vec[..], &self.device)
+                .and_then(|t| t.unsqueeze(0))
+                .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+            let token_type_ids = Tensor::zeros(&[1, seq_len], DType::U32, &self.device)
+                .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+            let attention_mask = Tensor::ones(&[1, seq_len], DType::U32, &self.device)
+                .map_err(|e| LLMTraceError::Security(format!("Tensor creation failed: {e}")))?;
+
+            match self
+                .model
+                .forward(&input_ids, &token_type_ids, &attention_mask)
+            {
+                Ok(logits) => {
+                    let probs = candle_nn::ops::softmax(&logits, candle_core::D::Minus1)
+                        .map_err(|e| LLMTraceError::Security(format!("Softmax failed: {e}")))?;
+
+                    let probs_vec: Vec<f32> =
+                        probs.squeeze(0).and_then(|t| t.to_vec1()).map_err(|e| {
+                            LLMTraceError::Security(format!("Prob extraction failed: {e}"))
+                        })?;
+
+                    let score = f64::from(
+                        probs_vec
+                            .get(self.injection_label_index)
+                            .copied()
+                            .unwrap_or(0.0),
+                    );
+
+                    if score > best_score {
+                        best_score = score;
+                        let predicted_idx = probs_vec
+                            .iter()
+                            .enumerate()
+                            .max_by(|a, b| {
+                                a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        best_label = self
+                            .id2label
+                            .get(&predicted_idx)
+                            .cloned()
+                            .unwrap_or_else(|| format!("label_{predicted_idx}"));
+                    }
+
+                    successful_chunks += 1;
+                    chunks_processed += 1;
+
+                    // Short-circuit on very high confidence
+                    if score > 0.9 {
+                        tracing::debug!(
+                            chunk = chunks_processed,
+                            score,
+                            "High-confidence detection, short-circuiting"
+                        );
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        chunk = chunks_processed,
+                        error = %e,
+                        "Chunk forward pass failed, continuing"
+                    );
+                    chunks_processed += 1;
+                }
+            }
+
+            if end == total_tokens {
+                break;
+            }
+            offset += stride;
+        }
+
+        if successful_chunks == 0 {
+            return Err(LLMTraceError::Security(
+                "All chunks failed inference".to_string(),
+            ));
+        }
+
+        if best_label.is_empty() {
+            best_label = self
+                .id2label
+                .get(&0)
+                .cloned()
+                .unwrap_or_else(|| "SAFE".to_string());
+        }
+
+        tracing::debug!(
+            total_tokens,
+            chunks_processed,
+            successful_chunks,
+            best_score,
+            best_label = %best_label,
+            "Sliding window classification complete"
+        );
+
+        Ok((best_score, best_label, total_tokens))
     }
 }
 
@@ -540,9 +713,22 @@ impl MLSecurityAnalyzer {
             .and_then(|v| v.as_str())
             .unwrap_or("bert");
 
-        // Load tokenizer
+        let max_seq_length = config_json
+            .get("max_position_embeddings")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(512) as usize;
+
+        // Load tokenizer WITHOUT truncation. Length safety is enforced by
+        // classify() dispatch: short inputs go to classify_single() (bounded
+        // by max_content check), long inputs go to classify_windowed() which
+        // manually constructs chunks within max_seq_length. Global truncation
+        // would silently cap the token count in classify()'s initial encode
+        // call, preventing the sliding window from seeing the full input.
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| LLMTraceError::Security(format!("Failed to load tokenizer: {e}")))?;
+
+        let cls_token_id = tokenizer.token_to_id("[CLS]").unwrap_or(1);
+        let sep_token_id = tokenizer.token_to_id("[SEP]").unwrap_or(2);
 
         // Load weights
         let device = crate::device::select_device();
@@ -597,6 +783,9 @@ impl MLSecurityAnalyzer {
             id2label: id2label_map,
             injection_label_index,
             embedding_model,
+            max_seq_length,
+            cls_token_id,
+            sep_token_id,
         })
     }
 

@@ -795,8 +795,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             let pg_handle = self.spawn_piguard(prompt, "request.prompt");
             let ml_result = if self.ml.is_model_loaded() {
                 let ml_start = Instant::now();
-                let ml_findings = self.ml.analyze_request(prompt, context).await?;
-                Some((ml_findings, ml_start.elapsed().as_millis() as u64))
+                match self.ml.analyze_request(prompt, context).await {
+                    Ok(ml_findings) => Some((ml_findings, ml_start.elapsed().as_millis() as u64)),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "ML analyze_request failed, proceeding with regex-only"
+                        );
+                        None
+                    }
+                }
             } else {
                 None
             };
@@ -848,8 +856,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
             let pg_handle = self.spawn_piguard(response, "response.content");
             let ml_result = if self.ml.is_model_loaded() {
                 let ml_start = Instant::now();
-                let ml_findings = self.ml.analyze_response(response, context).await?;
-                Some((ml_findings, ml_start.elapsed().as_millis() as u64))
+                match self.ml.analyze_response(response, context).await {
+                    Ok(ml_findings) => Some((ml_findings, ml_start.elapsed().as_millis() as u64)),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "ML analyze_response failed, proceeding with regex-only"
+                        );
+                        None
+                    }
+                }
             } else {
                 None
             };

@@ -609,7 +609,9 @@ pub async fn proxy_handler(
         // We'll decrement active_connections at the end of this task.
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
-            Some(StreamingAccumulator::new())
+            Some(StreamingAccumulator::with_max_content_bytes(
+                state_bg.config.max_response_size_bytes as usize,
+            ))
         } else {
             None
         };
@@ -634,6 +636,8 @@ pub async fn proxy_handler(
                 None
             };
         let mut raw_collected = Vec::new();
+        let mut response_truncated = false;
+        let max_response_bytes = state_bg.config.max_response_size_bytes as usize;
         let mut ttft_ms: Option<u64> = None;
 
         while let Some(chunk) = stream.next().await {
@@ -697,7 +701,20 @@ pub async fn proxy_handler(
                             }
                         }
                     }
-                    raw_collected.extend_from_slice(&bytes);
+                    if !response_truncated {
+                        if raw_collected.len() + bytes.len() > max_response_bytes {
+                            warn!(
+                                %trace_id,
+                                collected = raw_collected.len(),
+                                limit = max_response_bytes,
+                                "Response exceeds max_response_size_bytes, truncating trace collection"
+                            );
+                            response_truncated = true;
+                            state_bg.metrics.response_truncated_total.inc();
+                        } else {
+                            raw_collected.extend_from_slice(&bytes);
+                        }
+                    }
                     if body_sender.send(Ok(bytes)).await.is_err() {
                         // Client disconnected
                         break;
@@ -786,13 +803,31 @@ pub async fn proxy_handler(
             provider::extract_tool_calls(&provider_bg, &raw_collected)
         };
 
+        // Truncate analysis text to configured limit before security analysis
+        let max_analysis = state_bg.config.security_analysis.max_analysis_text_bytes;
+        let analysis_text_final = if analysis_text_bg.len() > max_analysis {
+            warn!(
+                original_len = analysis_text_bg.len(),
+                limit = max_analysis,
+                "Truncating analysis text to max_analysis_text_bytes"
+            );
+            state_bg.metrics.analysis_text_truncated_total.inc();
+            let mut end = max_analysis;
+            while !analysis_text_bg.is_char_boundary(end) && end > 0 {
+                end -= 1;
+            }
+            analysis_text_bg[..end].to_string()
+        } else {
+            analysis_text_bg
+        };
+
         let captured = CapturedInteraction {
             trace_id,
             tenant_id,
             provider: provider_bg,
             model_name: model_name_bg,
             prompt_text: prompt_text_bg,
-            analysis_text: analysis_text_bg,
+            analysis_text: analysis_text_final,
             response_text,
             status_code: response_status.as_u16(),
             start_time,
