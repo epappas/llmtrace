@@ -774,15 +774,19 @@ pub async fn proxy_handler(
             streaming_findings.extend(out_mon.take_findings());
         }
 
+        // Extract tool calls from streaming accumulator before it is moved.
+        let streaming_tool_calls = sse_accumulator
+            .as_mut()
+            .map(|acc| acc.take_tool_calls())
+            .unwrap_or_default();
+
         // Build the captured interaction with streaming metrics if applicable
         let (response_text, prompt_tokens, completion_tokens, total_tokens) =
             if let Some(acc) = sse_accumulator {
-                (
-                    acc.content.clone(),
-                    acc.prompt_tokens(),
-                    Some(acc.final_completion_tokens()),
-                    acc.total_tokens(),
-                )
+                let prompt_tok = acc.prompt_tokens();
+                let completion_tok = acc.final_completion_tokens();
+                let total_tok = acc.total_tokens();
+                (acc.content, prompt_tok, Some(completion_tok), total_tok)
             } else {
                 let ParsedResponse { text, usage } =
                     provider::parse_response(&provider_bg, &raw_collected);
@@ -798,7 +802,7 @@ pub async fn proxy_handler(
 
         // Auto-extract tool calls from the response
         let auto_actions = if is_streaming {
-            Vec::new() // TODO: SSE tool call parsing deferred to future loop
+            streaming_tool_calls
         } else {
             provider::extract_tool_calls(&provider_bg, &raw_collected)
         };

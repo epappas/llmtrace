@@ -383,7 +383,7 @@ fn extract_anthropic_tool_calls(v: &Value) -> Vec<AgentAction> {
 }
 
 /// Truncate a string to the given byte limit, respecting UTF-8 boundaries.
-fn truncate_string(s: &str, max_bytes: usize) -> String {
+pub(crate) fn truncate_string(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         s.to_string()
     } else {

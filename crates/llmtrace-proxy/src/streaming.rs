@@ -14,10 +14,12 @@
 //! can distinguish them from the full post-stream analysis.
 
 use llmtrace_core::{
-    OutputSafetyConfig, SecurityFinding, SecuritySeverity, StreamingAnalysisConfig,
+    AgentAction, AgentActionType, OutputSafetyConfig, SecurityFinding, SecuritySeverity,
+    StreamingAnalysisConfig, AGENT_ACTION_RESULT_MAX_BYTES,
 };
 use llmtrace_security::RegexSecurityAnalyzer;
 use serde::Deserialize;
+use tracing::{debug, warn};
 
 // ---------------------------------------------------------------------------
 // SSE line parsing
@@ -73,6 +75,34 @@ pub struct SseChoice {
 pub struct SseDelta {
     /// The token text (may be absent for role-only or empty deltas).
     pub content: Option<String>,
+    /// Tool call deltas (empty vec for content-only chunks).
+    #[serde(default)]
+    pub tool_calls: Vec<SseToolCallDelta>,
+}
+
+/// A tool call delta within an SSE streaming choice.
+#[derive(Debug, Deserialize)]
+pub struct SseToolCallDelta {
+    /// Tool call index (identifies which tool call in a parallel set).
+    pub index: Option<usize>,
+    /// Tool call ID (only present in the first delta for this index).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Tool call type (only present in the first delta, typically "function").
+    #[serde(default, rename = "type")]
+    pub call_type: Option<String>,
+    /// Function details (name and/or argument fragments).
+    #[serde(default)]
+    pub function: Option<SseFunctionDelta>,
+}
+
+/// Function name and argument fragments within a tool call delta.
+#[derive(Debug, Deserialize)]
+pub struct SseFunctionDelta {
+    /// Function name (only in the first delta for this tool call).
+    pub name: Option<String>,
+    /// Incremental argument string fragment (concatenated across deltas).
+    pub arguments: Option<String>,
 }
 
 /// Token usage data that some providers include in the final chunk.
@@ -86,6 +116,22 @@ pub struct SseUsage {
 // ---------------------------------------------------------------------------
 // Streaming accumulator
 // ---------------------------------------------------------------------------
+
+/// Maximum number of distinct tool calls tracked per streaming response.
+const MAX_TOOL_CALLS: usize = 64;
+
+/// Maximum bytes for accumulated tool call arguments.
+const MAX_TOOL_CALL_ARGS_BYTES: usize = AGENT_ACTION_RESULT_MAX_BYTES;
+
+/// In-progress tool call being assembled from incremental SSE deltas.
+struct PartialToolCall {
+    id: Option<String>,
+    call_type: Option<String>,
+    name: Option<String>,
+    arguments: String,
+    /// Once set, all subsequent argument fragments are rejected.
+    args_capped: bool,
+}
 
 /// Accumulates data from a streaming SSE response.
 ///
@@ -107,6 +153,8 @@ pub struct StreamingAccumulator {
     /// Maximum content bytes to accumulate. Once exceeded, new tokens are
     /// counted but not appended to `content`.
     max_content_bytes: usize,
+    /// Tool calls accumulated from SSE deltas, indexed by tool call index.
+    tool_calls: Vec<Option<PartialToolCall>>,
 }
 
 impl StreamingAccumulator {
@@ -120,6 +168,7 @@ impl StreamingAccumulator {
             reported_usage: None,
             done: false,
             max_content_bytes,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -151,31 +200,88 @@ impl StreamingAccumulator {
             }
 
             if let Some(json_str) = extract_sse_data(&line) {
-                if let Ok(chunk) = serde_json::from_str::<SseChunk>(json_str) {
-                    // Extract content tokens
-                    for choice in &chunk.choices {
-                        if let Some(delta) = &choice.delta {
-                            if let Some(ref token_text) = delta.content {
-                                if !token_text.is_empty() {
-                                    if !self.first_token_received {
-                                        self.first_token_received = true;
-                                        first_token_in_this_chunk = true;
+                let chunk = match serde_json::from_str::<SseChunk>(json_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        debug!(error = %e, "Skipping unparseable SSE chunk");
+                        continue;
+                    }
+                };
+
+                // Extract content tokens and tool call deltas
+                for choice in &chunk.choices {
+                    if let Some(delta) = &choice.delta {
+                        if let Some(ref token_text) = delta.content {
+                            if !token_text.is_empty() {
+                                if !self.first_token_received {
+                                    self.first_token_received = true;
+                                    first_token_in_this_chunk = true;
+                                }
+                                if self.content.len() + token_text.len() <= self.max_content_bytes {
+                                    self.content.push_str(token_text);
+                                }
+                                self.completion_token_count += 1;
+                            }
+                        }
+                        // Accumulate tool call deltas
+                        for tc_delta in &delta.tool_calls {
+                            let idx = tc_delta.index.unwrap_or(0);
+                            if idx >= MAX_TOOL_CALLS {
+                                warn!(
+                                    index = idx,
+                                    limit = MAX_TOOL_CALLS,
+                                    "Dropping tool call delta: index exceeds limit"
+                                );
+                                continue;
+                            }
+                            if idx >= self.tool_calls.len() {
+                                self.tool_calls.resize_with(idx + 1, || None);
+                            }
+                            let partial =
+                                self.tool_calls[idx].get_or_insert_with(|| PartialToolCall {
+                                    id: None,
+                                    call_type: None,
+                                    name: None,
+                                    arguments: String::new(),
+                                    args_capped: false,
+                                });
+                            if let Some(ref id) = tc_delta.id {
+                                partial.id = Some(id.clone());
+                            }
+                            if let Some(ref ct) = tc_delta.call_type {
+                                partial.call_type = Some(ct.clone());
+                            }
+                            if let Some(ref func) = tc_delta.function {
+                                if let Some(ref name) = func.name {
+                                    partial.name = Some(name.clone());
+                                }
+                                if let Some(ref args) = func.arguments {
+                                    if partial.args_capped {
+                                        continue;
                                     }
-                                    if self.content.len() + token_text.len()
-                                        <= self.max_content_bytes
+                                    if partial.arguments.len() + args.len()
+                                        > MAX_TOOL_CALL_ARGS_BYTES
                                     {
-                                        self.content.push_str(token_text);
+                                        warn!(
+                                            index = idx,
+                                            current_len = partial.arguments.len(),
+                                            fragment_len = args.len(),
+                                            limit = MAX_TOOL_CALL_ARGS_BYTES,
+                                            "Tool call arguments truncated: exceeds limit"
+                                        );
+                                        partial.args_capped = true;
+                                    } else {
+                                        partial.arguments.push_str(args);
                                     }
-                                    self.completion_token_count += 1;
                                 }
                             }
                         }
                     }
+                }
 
-                    // Capture provider-reported usage from final chunk
-                    if let Some(usage) = chunk.usage {
-                        self.reported_usage = Some(usage);
-                    }
+                // Capture provider-reported usage from final chunk
+                if let Some(usage) = chunk.usage {
+                    self.reported_usage = Some(usage);
                 }
             }
         }
@@ -202,6 +308,30 @@ impl StreamingAccumulator {
     /// Get the provider-reported total token count, if available.
     pub fn total_tokens(&self) -> Option<u32> {
         self.reported_usage.as_ref().and_then(|u| u.total_tokens)
+    }
+
+    /// Drain accumulated tool call deltas and convert to `AgentAction` objects.
+    pub fn take_tool_calls(&mut self) -> Vec<AgentAction> {
+        let partials = std::mem::take(&mut self.tool_calls);
+        partials
+            .into_iter()
+            .flatten()
+            .filter(|p| p.name.is_some() || p.id.is_some())
+            .map(|p| {
+                let name = p.name.unwrap_or_else(|| "unknown".to_string());
+                let mut action = AgentAction::new(AgentActionType::ToolCall, name);
+                if !p.arguments.is_empty() {
+                    action.arguments = Some(p.arguments);
+                }
+                if let Some(id) = p.id {
+                    action.metadata.insert("tool_call_id".to_string(), id);
+                }
+                if let Some(ct) = p.call_type {
+                    action.metadata.insert("tool_type".to_string(), ct);
+                }
+                action
+            })
+            .collect()
     }
 }
 
@@ -1164,5 +1294,325 @@ mod tests {
             "Should detect toxicity in output stream; findings: {:?}",
             findings.iter().map(|f| &f.finding_type).collect::<Vec<_>>()
         );
+    }
+
+    // ---------------------------------------------------------------
+    // SSE tool call accumulation tests
+    // ---------------------------------------------------------------
+
+    /// Helper: build an SSE data line with a tool call delta.
+    fn sse_tool_call_line(
+        index: usize,
+        id: Option<&str>,
+        call_type: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+    ) -> String {
+        let mut tc = serde_json::json!({"index": index});
+        if let Some(id) = id {
+            tc["id"] = serde_json::json!(id);
+        }
+        if let Some(ct) = call_type {
+            tc["type"] = serde_json::json!(ct);
+        }
+        let mut func = serde_json::Map::new();
+        if let Some(n) = name {
+            func.insert("name".to_string(), serde_json::json!(n));
+        }
+        if let Some(a) = arguments {
+            func.insert("arguments".to_string(), serde_json::json!(a));
+        }
+        if !func.is_empty() {
+            tc["function"] = serde_json::Value::Object(func);
+        }
+        format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{}]}},\"finish_reason\":null}}]}}\n\n",
+            tc
+        )
+    }
+
+    #[test]
+    fn test_accumulator_single_tool_call() {
+        let mut acc = StreamingAccumulator::new();
+        // First chunk: id, type, name, initial args
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_abc"),
+            Some("function"),
+            Some("get_weather"),
+            Some(""),
+        );
+        acc.process_chunk(c1.as_bytes());
+        // Second chunk: args fragment
+        let c2 = sse_tool_call_line(0, None, None, None, Some("{\"loc"));
+        acc.process_chunk(c2.as_bytes());
+        // Third chunk: args fragment
+        let c3 = sse_tool_call_line(0, None, None, None, Some("ation\": \"NYC\"}"));
+        acc.process_chunk(c3.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "get_weather");
+        assert_eq!(
+            actions[0].arguments.as_deref(),
+            Some("{\"location\": \"NYC\"}")
+        );
+        assert_eq!(
+            actions[0].metadata.get("tool_call_id"),
+            Some(&"call_abc".to_string())
+        );
+        assert_eq!(
+            actions[0].metadata.get("tool_type"),
+            Some(&"function".to_string())
+        );
+    }
+
+    #[test]
+    fn test_accumulator_multiple_tool_calls() {
+        let mut acc = StreamingAccumulator::new();
+        // Tool 0: first delta
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_1"),
+            Some("function"),
+            Some("fn_a"),
+            Some("{\"x\":"),
+        );
+        acc.process_chunk(c1.as_bytes());
+        // Tool 1: first delta
+        let c2 = sse_tool_call_line(
+            1,
+            Some("call_2"),
+            Some("function"),
+            Some("fn_b"),
+            Some("{\"y\":"),
+        );
+        acc.process_chunk(c2.as_bytes());
+        // Tool 0: args continued
+        let c3 = sse_tool_call_line(0, None, None, None, Some("1}"));
+        acc.process_chunk(c3.as_bytes());
+        // Tool 1: args continued
+        let c4 = sse_tool_call_line(1, None, None, None, Some("2}"));
+        acc.process_chunk(c4.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "fn_a");
+        assert_eq!(actions[0].arguments.as_deref(), Some("{\"x\":1}"));
+        assert_eq!(actions[1].name, "fn_b");
+        assert_eq!(actions[1].arguments.as_deref(), Some("{\"y\":2}"));
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_arguments_cap() {
+        let mut acc = StreamingAccumulator::new();
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_big"),
+            Some("function"),
+            Some("big_fn"),
+            Some(""),
+        );
+        acc.process_chunk(c1.as_bytes());
+
+        // Push a string that exceeds MAX_TOOL_CALL_ARGS_BYTES
+        let big_args = "x".repeat(MAX_TOOL_CALL_ARGS_BYTES + 500);
+        let c2 = sse_tool_call_line(0, None, None, None, Some(&big_args));
+        acc.process_chunk(c2.as_bytes());
+
+        // Push more args -- should also be rejected since args_capped is set
+        let c3 = sse_tool_call_line(0, None, None, None, Some("more"));
+        acc.process_chunk(c3.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+        // The big push exceeded the cap, so it was rejected and args_capped
+        // was set. The "more" fragment is also rejected. Arguments stay empty.
+        assert_eq!(
+            actions[0].arguments, None,
+            "Arguments should be empty -- big fragment rejected and cap flag set"
+        );
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_arguments_cap_mid_accumulation() {
+        let mut acc = StreamingAccumulator::new();
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_partial"),
+            Some("function"),
+            Some("fn_partial"),
+            Some(""),
+        );
+        acc.process_chunk(c1.as_bytes());
+
+        // Push a fragment that fits
+        let small = "a".repeat(100);
+        let c2 = sse_tool_call_line(0, None, None, None, Some(&small));
+        acc.process_chunk(c2.as_bytes());
+
+        // Push a fragment that would exceed the cap
+        let overflow = "b".repeat(MAX_TOOL_CALL_ARGS_BYTES);
+        let c3 = sse_tool_call_line(0, None, None, None, Some(&overflow));
+        acc.process_chunk(c3.as_bytes());
+
+        // Push another small fragment -- should be rejected (args_capped)
+        let c4 = sse_tool_call_line(0, None, None, None, Some("tail"));
+        acc.process_chunk(c4.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+        // Only the first small fragment was accepted
+        assert_eq!(actions[0].arguments.as_deref(), Some(&*small));
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_index_cap() {
+        let mut acc = StreamingAccumulator::new();
+        // Index >= MAX_TOOL_CALLS should be skipped
+        let c1 = sse_tool_call_line(
+            MAX_TOOL_CALLS,
+            Some("call_x"),
+            Some("function"),
+            Some("fn_x"),
+            Some("{}"),
+        );
+        acc.process_chunk(c1.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert!(
+            actions.is_empty(),
+            "Tool call at index >= MAX_TOOL_CALLS should be skipped"
+        );
+    }
+
+    #[test]
+    fn test_accumulator_mixed_content_and_tool_calls() {
+        let mut acc = StreamingAccumulator::new();
+        // Chunk with content
+        let c1 =
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
+        acc.process_chunk(c1);
+        // Chunk with tool call
+        let c2 = sse_tool_call_line(
+            0,
+            Some("call_mix"),
+            Some("function"),
+            Some("do_stuff"),
+            Some("{\"a\":1}"),
+        );
+        acc.process_chunk(c2.as_bytes());
+        // Another content chunk
+        let c3 = b"data: {\"choices\":[{\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n";
+        acc.process_chunk(c3);
+
+        assert_eq!(acc.content, "Hello world");
+        assert_eq!(acc.completion_token_count, 2);
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "do_stuff");
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_no_name() {
+        let mut acc = StreamingAccumulator::new();
+        // Tool call with id but no name
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_noname"),
+            Some("function"),
+            None,
+            Some("{\"q\":\"test\"}"),
+        );
+        acc.process_chunk(c1.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "unknown");
+        assert_eq!(
+            actions[0].metadata.get("tool_call_id"),
+            Some(&"call_noname".to_string())
+        );
+    }
+
+    #[test]
+    fn test_accumulator_take_tool_calls_drains() {
+        let mut acc = StreamingAccumulator::new();
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_drain"),
+            Some("function"),
+            Some("fn_drain"),
+            Some("{}"),
+        );
+        acc.process_chunk(c1.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 1);
+
+        // Second call should return empty
+        let actions2 = acc.take_tool_calls();
+        assert!(
+            actions2.is_empty(),
+            "take_tool_calls should drain on first call"
+        );
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_sparse_indices() {
+        let mut acc = StreamingAccumulator::new();
+        // Index 0
+        let c1 = sse_tool_call_line(
+            0,
+            Some("call_0"),
+            Some("function"),
+            Some("fn_zero"),
+            Some("{}"),
+        );
+        acc.process_chunk(c1.as_bytes());
+        // Index 5 (non-contiguous)
+        let c2 = sse_tool_call_line(
+            5,
+            Some("call_5"),
+            Some("function"),
+            Some("fn_five"),
+            Some("{\"v\":5}"),
+        );
+        acc.process_chunk(c2.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].name, "fn_zero");
+        assert_eq!(actions[1].name, "fn_five");
+        assert_eq!(actions[1].arguments.as_deref(), Some("{\"v\":5}"));
+    }
+
+    #[test]
+    fn test_accumulator_tool_call_neither_id_nor_name() {
+        let mut acc = StreamingAccumulator::new();
+        // Delta with only arguments, no id, no name
+        let c1 = sse_tool_call_line(0, None, None, None, Some("{\"x\":1}"));
+        acc.process_chunk(c1.as_bytes());
+
+        let actions = acc.take_tool_calls();
+        // Filtered out: neither id nor name present
+        assert!(
+            actions.is_empty(),
+            "Delta with neither id nor name should be filtered out"
+        );
+    }
+
+    #[test]
+    fn test_accumulator_no_tool_calls_returns_empty() {
+        let mut acc = StreamingAccumulator::new();
+        // Content-only stream
+        let c1 = b"data: {\"choices\":[{\"delta\":{\"content\":\"Just text\"},\"finish_reason\":null}]}\n\n";
+        acc.process_chunk(c1);
+        let c2 = b"data: [DONE]\n\n";
+        acc.process_chunk(c2);
+
+        let actions = acc.take_tool_calls();
+        assert!(actions.is_empty());
     }
 }
