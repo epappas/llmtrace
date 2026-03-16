@@ -552,6 +552,18 @@ impl TraceSpan {
 // Agent action types
 // ---------------------------------------------------------------------------
 
+/// Truncate a string to at most `max_bytes` bytes, respecting UTF-8 boundaries.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Maximum size in bytes for captured action results (stdout, response bodies, etc.).
 pub const AGENT_ACTION_RESULT_MAX_BYTES: usize = 4096;
 
@@ -658,7 +670,8 @@ impl AgentAction {
     /// Set the result, truncating to [`AGENT_ACTION_RESULT_MAX_BYTES`].
     pub fn with_result(mut self, result: String) -> Self {
         if result.len() > AGENT_ACTION_RESULT_MAX_BYTES {
-            self.result = Some(result[..AGENT_ACTION_RESULT_MAX_BYTES].to_string());
+            self.result =
+                Some(truncate_to_byte_limit(&result, AGENT_ACTION_RESULT_MAX_BYTES).to_string());
         } else {
             self.result = Some(result);
         }
@@ -3948,5 +3961,75 @@ mod tests {
     fn test_proxy_config_default_includes_pii() {
         let config = ProxyConfig::default();
         assert_eq!(config.pii.action, PiiAction::AlertOnly);
+    }
+
+    // -----------------------------------------------------------------------
+    // truncate_to_byte_limit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_truncate_within_limit() {
+        assert_eq!(truncate_to_byte_limit("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_limit() {
+        assert_eq!(truncate_to_byte_limit("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_ascii_exceeds_limit() {
+        assert_eq!(truncate_to_byte_limit("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_2byte_utf8_at_boundary() {
+        let s = "h\u{00E9}llo"; // h(1) + e-acute(2) + l(1) + l(1) + o(1) = 6 bytes
+        assert_eq!(s.as_bytes().len(), 6);
+        // Truncating at 2 would split the e-acute - backs up to 1
+        assert_eq!(truncate_to_byte_limit(s, 2), "h");
+        // Truncating at 3 includes "h" + e-acute exactly
+        assert_eq!(truncate_to_byte_limit(s, 3), "h\u{00E9}");
+    }
+
+    #[test]
+    fn test_truncate_4byte_utf8_at_boundary() {
+        // U+1F600 (grinning face) is 4 bytes: F0 9F 98 80
+        let s = "a\u{1F600}b";
+        assert_eq!(s.as_bytes().len(), 6); // a=1, emoji=4, b=1
+                                           // Truncating at 2, 3, or 4 should all back up to byte 1 ("a")
+        assert_eq!(truncate_to_byte_limit(s, 2), "a");
+        assert_eq!(truncate_to_byte_limit(s, 3), "a");
+        assert_eq!(truncate_to_byte_limit(s, 4), "a");
+        // Truncating at 5 should include "a" + the 4-byte char
+        assert_eq!(truncate_to_byte_limit(s, 5), "a\u{1F600}");
+    }
+
+    #[test]
+    fn test_truncate_empty_string() {
+        assert_eq!(truncate_to_byte_limit("", 10), "");
+    }
+
+    #[test]
+    fn test_truncate_zero_limit() {
+        assert_eq!(truncate_to_byte_limit("hello", 0), "");
+    }
+
+    #[test]
+    fn test_agent_action_result_truncation_utf8_safety() {
+        // Build a string where a multi-byte char straddles AGENT_ACTION_RESULT_MAX_BYTES.
+        // Fill with ASCII up to limit-1 then add a 2-byte char.
+        let padding = "x".repeat(AGENT_ACTION_RESULT_MAX_BYTES - 1);
+        let input = format!("{}\u{00E9}", padding); // 2-byte char at boundary
+        assert!(input.len() > AGENT_ACTION_RESULT_MAX_BYTES);
+
+        // Must not panic
+        let action =
+            AgentAction::new(AgentActionType::ToolCall, "test".to_string()).with_result(input);
+        let result = action.result.unwrap();
+        assert!(result.len() <= AGENT_ACTION_RESULT_MAX_BYTES);
+        assert!(result.is_char_boundary(result.len()));
+        // Should have backed up, keeping only the ASCII padding
+        assert_eq!(result.len(), AGENT_ACTION_RESULT_MAX_BYTES - 1);
     }
 }

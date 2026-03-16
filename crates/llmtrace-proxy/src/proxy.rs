@@ -15,8 +15,8 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::StreamExt;
 use llmtrace_core::{
-    AgentAction, AnalysisContext, LLMProvider, ProxyConfig, SecurityAnalyzer, SecurityFinding,
-    Storage, TenantId, TraceEvent, TraceSpan,
+    truncate_to_byte_limit, AgentAction, AnalysisContext, LLMProvider, ProxyConfig,
+    SecurityAnalyzer, SecurityFinding, Storage, TenantId, TraceEvent, TraceSpan,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -816,11 +816,7 @@ pub async fn proxy_handler(
                 "Truncating analysis text to max_analysis_text_bytes"
             );
             state_bg.metrics.analysis_text_truncated_total.inc();
-            let mut end = max_analysis;
-            while !analysis_text_bg.is_char_boundary(end) && end > 0 {
-                end -= 1;
-            }
-            analysis_text_bg[..end].to_string()
+            truncate_to_byte_limit(&analysis_text_bg, max_analysis).to_string()
         } else {
             analysis_text_bg
         };

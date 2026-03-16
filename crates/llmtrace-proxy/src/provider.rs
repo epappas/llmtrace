@@ -9,7 +9,7 @@
 //! and response text extraction.
 
 use axum::http::HeaderMap;
-use llmtrace_core::{AgentAction, AgentActionType, LLMProvider};
+use llmtrace_core::{truncate_to_byte_limit, AgentAction, AgentActionType, LLMProvider};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -310,9 +310,10 @@ fn extract_openai_tool_calls(v: &Value) -> Vec<AgentAction> {
                         .as_str()
                         .unwrap_or("unknown")
                         .to_string();
-                    let arguments = tc["function"]["arguments"]
-                        .as_str()
-                        .map(|s| truncate_string(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES));
+                    let arguments = tc["function"]["arguments"].as_str().map(|s| {
+                        truncate_to_byte_limit(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES)
+                            .to_string()
+                    });
                     let mut action = AgentAction::new(AgentActionType::ToolCall, name);
                     action.arguments = arguments;
                     if let Some(id) = tc["id"].as_str() {
@@ -333,9 +334,10 @@ fn extract_openai_tool_calls(v: &Value) -> Vec<AgentAction> {
             if message["function_call"].is_object() {
                 let fc = &message["function_call"];
                 let name = fc["name"].as_str().unwrap_or("unknown").to_string();
-                let arguments = fc["arguments"]
-                    .as_str()
-                    .map(|s| truncate_string(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES));
+                let arguments = fc["arguments"].as_str().map(|s| {
+                    truncate_to_byte_limit(s, llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES)
+                        .to_string()
+                });
                 let mut action = AgentAction::new(AgentActionType::ToolCall, name);
                 action.arguments = arguments;
                 action
@@ -360,10 +362,13 @@ fn extract_anthropic_tool_calls(v: &Value) -> Vec<AgentAction> {
             if block["type"].as_str() == Some("tool_use") {
                 let name = block["name"].as_str().unwrap_or("unknown").to_string();
                 let arguments = if block["input"].is_object() {
-                    Some(truncate_string(
-                        &block["input"].to_string(),
-                        llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES,
-                    ))
+                    Some(
+                        truncate_to_byte_limit(
+                            &block["input"].to_string(),
+                            llmtrace_core::AGENT_ACTION_RESULT_MAX_BYTES,
+                        )
+                        .to_string(),
+                    )
                 } else {
                     None
                 };
@@ -380,20 +385,6 @@ fn extract_anthropic_tool_calls(v: &Value) -> Vec<AgentAction> {
     }
 
     actions
-}
-
-/// Truncate a string to the given byte limit, respecting UTF-8 boundaries.
-pub(crate) fn truncate_string(s: &str, max_bytes: usize) -> String {
-    if s.len() <= max_bytes {
-        s.to_string()
-    } else {
-        // Find a valid UTF-8 boundary
-        let mut end = max_bytes;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        s[..end].to_string()
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1030,26 +1021,5 @@ mod tests {
     fn test_extract_tool_calls_empty_body() {
         let actions = extract_tool_calls(&LLMProvider::OpenAI, b"");
         assert!(actions.is_empty());
-    }
-
-    #[test]
-    fn test_truncate_string_within_limit() {
-        assert_eq!(truncate_string("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_string_exceeds_limit() {
-        let result = truncate_string("hello world", 5);
-        assert_eq!(result, "hello");
-    }
-
-    #[test]
-    fn test_truncate_string_respects_utf8() {
-        // "héllo" — 'é' is 2 bytes in UTF-8, so total is 6 bytes
-        let s = "héllo";
-        let result = truncate_string(s, 3);
-        // Truncating at byte 3 would be in the middle of 'l',
-        // so should include "hé" (3 bytes)
-        assert_eq!(result, "hé");
     }
 }
