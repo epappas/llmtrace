@@ -132,6 +132,7 @@ struct LoadedInjecGuard {
     device: Device,
     id2label: HashMap<usize, String>,
     injection_label_index: usize,
+    max_seq_length: usize,
 }
 
 impl LoadedInjecGuard {
@@ -142,10 +143,16 @@ impl LoadedInjecGuard {
             .encode(text, true)
             .map_err(|e| LLMTraceError::Security(format!("Tokenization failed: {e}")))?;
 
-        let ids = encoding.get_ids();
-        let token_count = ids.len();
-        let type_ids = encoding.get_type_ids();
-        let mask = encoding.get_attention_mask();
+        let all_ids = encoding.get_ids();
+        let token_count = all_ids.len();
+        let all_type_ids = encoding.get_type_ids();
+        let all_mask = encoding.get_attention_mask();
+
+        // Truncate to max_seq_length to prevent OOB errors on long inputs
+        let len = token_count.min(self.max_seq_length);
+        let ids = &all_ids[..len];
+        let type_ids = &all_type_ids[..len];
+        let mask = &all_mask[..len];
 
         let input_ids = Tensor::new(ids, &self.device)
             .and_then(|t| t.unsqueeze(0))
@@ -344,6 +351,11 @@ impl InjecGuardAnalyzer {
         let config_json: serde_json::Value = serde_json::from_str(&config_str)
             .map_err(|e| LLMTraceError::Security(format!("Failed to parse config.json: {e}")))?;
 
+        let max_seq_length = config_json
+            .get("max_position_embeddings")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(512) as usize;
+
         let model_type = config_json
             .get("model_type")
             .and_then(|v| v.as_str())
@@ -439,6 +451,7 @@ impl InjecGuardAnalyzer {
             device,
             id2label,
             injection_label_index,
+            max_seq_length,
         })
     }
 

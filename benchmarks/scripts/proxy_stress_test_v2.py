@@ -385,6 +385,14 @@ def fetch_spans(tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
     return all_spans
 
 
+def _strip_role_prefix(prompt: str) -> str:
+    """Strip role prefixes (e.g. 'user: ', 'system: ') from stored prompts."""
+    for prefix in ("user: ", "system: ", "assistant: "):
+        if prompt.startswith(prefix):
+            return prompt[len(prefix):]
+    return prompt
+
+
 def build_span_index(
     spans: list[dict[str, Any]], min_time: str
 ) -> dict[str, dict[str, Any]]:
@@ -396,7 +404,8 @@ def build_span_index(
         prompt = span.get("prompt", "")
         if not prompt:
             continue
-        prefix = prompt[:80]
+        stripped = _strip_role_prefix(prompt)
+        prefix = stripped[:80]
         # Keep the latest span for each prefix
         if prefix not in index or span.get("start_time", "") > index[prefix].get("start_time", ""):
             index[prefix] = span
@@ -650,11 +659,13 @@ def main() -> None:
     for r in sorted(results, key=lambda x: (-x["security_score"], x["label"])):
         print(print_table_row(r))
 
-    # ── Overall metrics ──
-    m = compute_metrics(results)
+    # ── Overall metrics (injection detection only, excluding harmful_content) ──
+    injection_results = [r for r in results if r.get("category") != "harmful_content"]
+    harmful_results = [r for r in results if r.get("category") == "harmful_content"]
+    m = compute_metrics(injection_results)
     print()
     print("=" * 80)
-    print("OVERALL METRICS")
+    print("OVERALL METRICS (injection detection -- excludes harmful_content)")
     print("=" * 80)
     print(f"Total:       {m['total']}")
     print(f"TP: {m['tp']:>3}   TN: {m['tn']:>3}   FP: {m['fp']:>3}   FN: {m['fn']:>3}")
@@ -700,6 +711,25 @@ def main() -> None:
             n_tn = sum(1 for r in group if r["classification"] == "TN")
             print(f"  {diff:<30} TN: {n_tn:>3}  FP: {n_fp:>3}  FPR: {n_fp/(n_fp+n_tn):.0%}" if (n_fp+n_tn) > 0 else f"  {diff:<30} no data")
 
+    # ── Harmful content (out of scope) ──
+    if harmful_results:
+        print()
+        print("=" * 80)
+        print("HARMFUL CONTENT (out of scope for injection detection)")
+        print("=" * 80)
+        hc_groups: dict[str, list[dict]] = {}
+        for r in harmful_results:
+            src = r.get("id", "").split("-")[0] or "unknown"
+            hc_groups.setdefault(src, []).append(r)
+        for src in sorted(hc_groups):
+            group = hc_groups[src]
+            detected = sum(1 for r in group if r["security_score"] >= threshold)
+            total_hc = len(group)
+            print(
+                f"  {src}: Detected {detected}/{total_hc} ({detected*100//total_hc if total_hc else 0}%)"
+                f" -- expected: these are not injection attacks"
+            )
+
     # ── Performance metrics ──
     print()
     print("=" * 80)
@@ -714,9 +744,9 @@ def main() -> None:
         print(f"  Max:    {max(latencies):>8.0f}")
         print(f"  Total:  {sum(latencies)/1000:>8.1f}s for {len(latencies)} requests")
 
-    # ── Error detail ──
-    fps = [r for r in results if r["classification"] == "FP"]
-    fns = [r for r in results if r["classification"] == "FN"]
+    # ── Error detail (injection-only) ──
+    fps = [r for r in injection_results if r["classification"] == "FP"]
+    fns = [r for r in injection_results if r["classification"] == "FN"]
 
     if fps:
         print()
