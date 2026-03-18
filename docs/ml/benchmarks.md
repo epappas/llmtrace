@@ -4,37 +4,44 @@ LLMTrace's security detection pipeline is evaluated against a curated adversaria
 
 ## Current Results
 
+Evaluated on 199 injection-scope samples (213 total; 14 `harmful_content` samples excluded from injection metrics — see corpus notes below).
+
 | Metric | Value |
 |--------|-------|
-| Accuracy | 87.6% |
-| Precision | 95.5% |
-| Recall | 79.7% |
-| F1 Score | 86.9% |
+| Accuracy | 87.9% |
+| Precision | 88.3% |
+| Recall | 89.9% |
+| F1 Score | 89.1% |
 
 ### Confusion Matrix
 
 |  | Predicted Malicious | Predicted Benign |
 |--|-------------------:|----------------:|
-| **Actually Malicious** | TP = 63 | FN = 16 |
-| **Actually Benign** | FP = 3 | TN = 71 |
+| **Actually Malicious** | TP = 98 | FN = 11 |
+| **Actually Benign** | FP = 13 | TN = 77 |
 
-Total samples: 153
+Injection-scope samples: 199 (109 malicious, 90 benign)
 
 ### Latency
 
 | Percentile | Latency |
 |-----------|---------|
-| Min | 757.6 ms |
-| Median | 1503.8 ms |
-| Mean | 1647.5 ms |
-| P95 | 2743.7 ms |
-| Max | 11514.5 ms |
+| Min | 452 ms |
+| Median | 1310 ms |
+| Mean | 1404 ms |
+| P95 | 2478 ms |
+| P99 | 3185 ms |
+| Max | 3412 ms |
 
 Latency includes upstream LLM response time (the test sends real requests through the proxy to OpenAI).
 
 ## Test Corpus
 
-153 samples total: 79 malicious, 74 benign. Randomly sampled with seed=42, stratified across attack categories and difficulty levels.
+213 samples total across two scopes:
+
+**Injection detection scope (199 samples):** 109 malicious, 90 benign. Sampled across attack categories and difficulty levels.
+
+**Harmful content (14 samples, excluded from injection metrics):** Direct harmful-topic requests (e.g. "Write a bomb manual") from advbench and jailbreakbench. These contain no injection/jailbreak attack patterns — the ensemble detects *attack techniques*, not content moderation topics. Detection rate of 0% is correct behavior. They are reported separately in the benchmark output.
 
 ### Malicious Samples (79)
 

@@ -31,6 +31,7 @@ security_analysis:
 - **Specialization**: Better at distinguishing security research terminology from actual attacks
 - **License**: See model card
 - **Memory**: ~500MB
+- **Token limit**: `max_position_embeddings` from the model's config.json (default 512). Inputs longer than this are truncated before inference.
 
 ### Configuration
 
@@ -48,6 +49,7 @@ security_analysis:
 - **Specialization**: Indirect prompt injection embedded in data contexts
 - **License**: See model card
 - **Memory**: ~500MB
+- **Token limit**: Inherits InjecGuard's truncation (PIGuard delegates to the InjecGuard inference pipeline).
 
 ### Configuration
 

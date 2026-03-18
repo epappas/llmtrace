@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- InjecGuard and PromptGuard crashed on inputs longer than 512 tokens with `narrow invalid args: start + len > dim_len`. Both models now read `max_position_embeddings` from the model's config.json and truncate token sequences before calling `model.forward()`. PIGuard inherits the fix via InjecGuard delegation.
+
+### Changed
+
+- `advbench_harmful` (520 samples) and the malicious subset of `jailbreakbench` (100 samples) relabeled from `category: jailbreak` to `category: harmful_content`. These are direct harmful-topic requests with no injection pattern; they are now excluded from injection-detection accuracy metrics and reported in a separate section of the benchmark output.
+- Benchmark metrics updated: 87.9% accuracy, 89.1% F1 on 199 injection-scope samples (up from 87.6% / 86.9% on 153 samples).
+
 ## [0.1.5] - 2026-02-19
 
 - chore(release): align workspace version to 0.1.5 (68b1444)
