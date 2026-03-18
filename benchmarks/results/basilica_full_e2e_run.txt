@@ -1,0 +1,497 @@
+/usr/local/lib/python3.10/dist-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.2.2) or chardet (7.0.0)/charset_normalizer (3.3.2) doesn't match a supported version!
+  warnings.warn(
+Proxy status: healthy, ML: loaded
+
+Mode: FULL, Workers: 8
+  loaded benign_samples: 110 samples
+  loaded encoding_evasion: 24 samples
+  loaded injection_samples: 117 samples
+  loaded notinject_samples: 339 samples
+  loaded advbench_harmful: 520 samples
+  loaded ailuminate_demo: 1200 samples
+  loaded asb_attacks: 400 samples
+  loaded bipia_indirect: 400 samples
+  loaded cyberseceval2_pi: 251 samples
+  loaded deepset_all: 662 samples
+  loaded deepset_v2: 355 samples
+  loaded harmbench_behaviors: 400 samples
+  loaded hpi_attack_approx: 55 samples
+  loaded in_the_wild_jailbreak: 2071 samples
+  loaded injecagent_attacks: 2108 samples
+  loaded ivanleomk_all: 917 samples
+  loaded ivanleomk_v2: 610 samples
+  loaded jackhhao_jailbreak: 1306 samples
+  loaded jailbreakbench: 200 samples
+  loaded rubend18_jailbreak: 79 samples
+  loaded safeguard_test: 2060 samples
+  loaded satml_ctf: 5000 samples
+  loaded spml_chatbot: 5000 samples
+  loaded tensor_trust_attacks: 1000 samples
+  loaded transfer_attack_samples: 100 samples
+  loaded xstest: 450 samples
+
+Corpus: 25742 samples (20189 malicious, 5553 benign)
+  benign/academic: 2
+  benign/advice: 4
+  benign/art: 1
+  benign/benign: 4416
+  benign/benign_code: 50
+  benign/benign_context: 10
+  benign/benign_email: 50
+  benign/benign_simple: 8
+  benign/benign_table: 100
+  benign/benign_triggerword: 12
+  benign/civics: 1
+  benign/coding_help: 5
+  benign/cooking: 4
+  benign/crafts: 1
+  benign/creative: 2
+  benign/critical_thinking: 1
+  benign/design: 1
+  benign/economics: 2
+  benign/edge_case: 4
+  benign/encoding_evasion: 4
+  benign/explanation: 4
+  benign/factual_question: 6
+  benign/finance: 5
+  benign/fitness: 2
+  benign/games: 1
+  benign/gardening: 2
+  benign/health: 5
+  benign/history: 4
+  benign/language: 1
+  benign/math: 3
+  benign/music: 1
+  benign/over_defense: 789
+  benign/parenting: 1
+  benign/pets: 1
+  benign/philosophy: 2
+  benign/planning: 1
+  benign/practical: 4
+  benign/productivity: 3
+  benign/psychology: 1
+  benign/recommendation: 7
+  benign/science: 9
+  benign/security_advice: 1
+  benign/summary: 1
+  benign/sustainability: 2
+  benign/technical: 10
+  benign/technology: 1
+  benign/translation: 1
+  benign/wellness: 2
+  benign/writing_help: 5
+  malicious/Base Encoding: 10
+  malicious/Blocking Internet Connection: 5
+  malicious/Bringing Down Hosts and Servers (Denial of Service): 5
+  malicious/Business Intelligence: 8
+  malicious/Compromising Computers: 5
+  malicious/Conversational Agent: 13
+  malicious/Corrupting an Operating System: 6
+  malicious/Data Eavesdropping: 8
+  malicious/Data Security Harm: 374
+  malicious/Disruptive Attack: 200
+  malicious/Emoji Substitution: 6
+  malicious/Encrypting Documents and Demanding Ransom (Ransomware): 10
+  malicious/Entertainment: 3
+  malicious/Financial Data: 204
+  malicious/Financial Harm: 306
+  malicious/Information Dissemination: 8
+  malicious/Introduce System Fingerprinting: 8
+  malicious/Keylogging: 11
+  malicious/Language Translation: 12
+  malicious/Marketing & Advertising: 6
+  malicious/Misinformation & Propaganda: 9
+  malicious/Others: 510
+  malicious/Physical Data: 374
+  malicious/Physical Harm: 340
+  malicious/Research Assistance: 7
+  malicious/Reverse Text: 6
+  malicious/Scams & Fraud: 7
+  malicious/Screen Scraping: 9
+  malicious/Sentiment Analysis: 6
+  malicious/Stealthy Attack: 200
+  malicious/Substitution Ciphers: 14
+  malicious/Task Automation: 7
+  malicious/Traffic Analysis: 11
+  malicious/char_substitution: 8
+  malicious/chemical_biological: 56
+  malicious/code_execution: 8
+  malicious/composite_attack: 8
+  malicious/copyright: 100
+  malicious/cse: 100
+  malicious/cybercrime_intrusion: 67
+  malicious/data_exfiltration: 7
+  malicious/delimiter_manipulation: 6
+  malicious/dfm: 100
+  malicious/different_user_input_language: 25
+  malicious/direct_override: 12
+  malicious/edge_case: 4
+  malicious/encoding_evasion: 26
+  malicious/few_shot_attack: 11
+  malicious/formatting: 6
+  malicious/harassment_bullying: 25
+  malicious/harmful: 22
+  malicious/harmful_content: 620
+  malicious/hte: 100
+  malicious/hypothetical_scenario: 13
+  malicious/ignore_previous_instructions: 25
+  malicious/illegal: 65
+  malicious/indirect_injection: 6
+  malicious/indirect_reference: 13
+  malicious/ipv: 100
+  malicious/iwp: 100
+  malicious/jailbreak: 7821
+  malicious/many_shot_attack: 7
+  malicious/misinformation_disinformation: 65
+  malicious/mixed_techniques: 33
+  malicious/multi_turn_injection: 6
+  malicious/multi_turn_persistence: 3
+  malicious/ncr: 100
+  malicious/obfuscation: 8
+  malicious/output_formatting_manipulation: 17
+  malicious/overload_with_information: 20
+  malicious/paraphrase: 8
+  malicious/payload_splitting: 9
+  malicious/persuasion: 26
+  malicious/prompt_extraction: 427
+  malicious/prompt_hijacking: 573
+  malicious/prompt_injection: 6039
+  malicious/prv: 100
+  malicious/repeated_token_attack: 6
+  malicious/role_injection: 1
+  malicious/role_play: 6
+  malicious/roleplay_jailbreak: 6
+  malicious/spc_ele: 24
+  malicious/spc_fin: 26
+  malicious/spc_hlt: 26
+  malicious/spc_lgl: 24
+  malicious/src: 100
+  malicious/ssh: 100
+  malicious/subtle_injection: 8
+  malicious/sxc_prn: 100
+  malicious/synonym_substitution: 8
+  malicious/system_mode: 19
+  malicious/token_smuggling: 13
+  malicious/tool_agent_manipulation: 5
+  malicious/vcr: 100
+  malicious/virtualization: 14
+
+Sending 25742 requests with 8 concurrent workers...
+  [  100/25742] 0% done, 0 errors, latest: ivanleomk-00217 HTTP 200
+  [  200/25742] 0% done, 0 errors, latest: spml-02999 HTTP 200
+  [  300/25742] 1% done, 0 errors, latest: injecagent-ds_base-01502 HTTP 200
+  [  400/25742] 1% done, 0 errors, latest: spml-02387 HTTP 500
+  [  500/25742] 1% done, 0 errors, latest: ivanleomk-00791 HTTP 200
+  [  600/25742] 2% done, 0 errors, latest: jackhhao-00180 HTTP 200
+  [  700/25742] 2% done, 0 errors, latest: spml-04054 HTTP 200
+  [  800/25742] 3% done, 0 errors, latest: spml-01448 HTTP 200
+  [  900/25742] 3% done, 0 errors, latest: jackhhao-00588 HTTP 200
+  [ 1000/25742] 3% done, 0 errors, latest: spml-04624 HTTP 200
+  [ 1100/25742] 4% done, 0 errors, latest: rubend18-00006 HTTP 200
+  [ 1200/25742] 4% done, 0 errors, latest: ivanleomk-00122 HTTP 200
+  [ 1300/25742] 5% done, 0 errors, latest: cyberseceval2-00084 HTTP 200
+  [ 1400/25742] 5% done, 0 errors, latest: jackhhao-01042 HTTP 200
+  [ 1500/25742] 5% done, 0 errors, latest: spml-03317 HTTP 500
+  [ 1600/25742] 6% done, 0 errors, latest: satml_ctf-01357 HTTP 200
+  [ 1700/25742] 6% done, 0 errors, latest: satml_ctf-04025 HTTP 200
+  [ 1800/25742] 6% done, 0 errors, latest: advbench-00320 HTTP 500
+  [ 1900/25742] 7% done, 0 errors, latest: spml-04991 HTTP 200
+  [ 2000/25742] 7% done, 0 errors, latest: safeguard-00895 HTTP 200
+  [ 2100/25742] 8% done, 0 errors, latest: inj-015 HTTP 200
+  [ 2200/25742] 8% done, 0 errors, latest: in_the_wild-01640 HTTP 500
+  [ 2300/25742] 8% done, 0 errors, latest: advbench-00096 HTTP 200
+  [ 2400/25742] 9% done, 0 errors, latest: satml_ctf-00291 HTTP 200
+  [ 2500/25742] 9% done, 0 errors, latest: satml_ctf-03706 HTTP 200
+  [ 2600/25742] 10% done, 0 errors, latest: satml_ctf-01281 HTTP 200
+  [ 2700/25742] 10% done, 0 errors, latest: satml_ctf-03875 HTTP 200
+  [ 2800/25742] 10% done, 0 errors, latest: in_the_wild-00810 HTTP 200
+  [ 2900/25742] 11% done, 0 errors, latest: in_the_wild-01040 HTTP 200
+  [ 3000/25742] 11% done, 0 errors, latest: safeguard-00637 HTTP 200
+  [ 3100/25742] 12% done, 0 errors, latest: spml-02594 HTTP 200
+  [ 3200/25742] 12% done, 0 errors, latest: satml_ctf-00529 HTTP 200
+  [ 3300/25742] 12% done, 0 errors, latest: ni-128 HTTP 200
+  [ 3400/25742] 13% done, 0 errors, latest: safeguard-00234 HTTP 200
+  [ 3500/25742] 13% done, 0 errors, latest: spml-02963 HTTP 200
+  [ 3600/25742] 13% done, 0 errors, latest: satml_ctf-00240 HTTP 200
+  [ 3700/25742] 14% done, 0 errors, latest: satml_ctf-00422 HTTP 200
+  [ 3800/25742] 14% done, 0 errors, latest: safeguard-00517 HTTP 200
+  [ 3900/25742] 15% done, 0 errors, latest: spml-02284 HTTP 200
+  [ 4000/25742] 15% done, 0 errors, latest: spml-00255 HTTP 200
+  [ 4100/25742] 15% done, 0 errors, latest: deepset-00203 HTTP 200
+  [ 4200/25742] 16% done, 0 errors, latest: ivanleomk-00677 HTTP 200
+  [ 4300/25742] 16% done, 0 errors, latest: ni-188 HTTP 200
+  [ 4400/25742] 17% done, 0 errors, latest: safeguard-01115 HTTP 200
+  [ 4500/25742] 17% done, 0 errors, latest: ivanleomk-00166 HTTP 200
+  [ 4600/25742] 17% done, 0 errors, latest: in_the_wild-01892 HTTP 200
+  [ 4700/25742] 18% done, 0 errors, latest: safeguard-02035 HTTP 200
+  [ 4800/25742] 18% done, 0 errors, latest: spml-01905 HTTP 200
+  [ 4900/25742] 19% done, 0 errors, latest: safeguard-01306 HTTP 200
+  [ 5000/25742] 19% done, 0 errors, latest: spml-03839 HTTP 200
+  [ 5100/25742] 19% done, 0 errors, latest: safeguard-01137 HTTP 200
+  [ 5200/25742] 20% done, 0 errors, latest: jackhhao-01121 HTTP 200
+  [ 5300/25742] 20% done, 0 errors, latest: injecagent-ds_base-01226 HTTP 200
+  [ 5400/25742] 20% done, 0 errors, latest: ivanleomk-00664 HTTP 200
+  [ 5500/25742] 21% done, 0 errors, latest: xstest-313 HTTP 200
+  [ 5600/25742] 21% done, 0 errors, latest: spml-01160 HTTP 200
+  [ 5700/25742] 22% done, 0 errors, latest: spml-04896 HTTP 200
+  [ 5800/25742] 22% done, 0 errors, latest: safeguard-00286 HTTP 200
+  [ 5900/25742] 22% done, 0 errors, latest: ivanleomk-00669 HTTP 200
+  [ 6000/25742] 23% done, 0 errors, latest: in_the_wild-00559 HTTP 200
+  [ 6100/25742] 23% done, 0 errors, latest: deepset-00025 HTTP 200
+  [ 6200/25742] 24% done, 0 errors, latest: advbench-00285 HTTP 200
+  [ 6300/25742] 24% done, 0 errors, latest: satml_ctf-01978 HTTP 200
+  [ 6400/25742] 24% done, 0 errors, latest: injecagent-dh_base-00033 HTTP 200
+  [ 6500/25742] 25% done, 0 errors, latest: satml_ctf-02817 HTTP 200
+  [ 6600/25742] 25% done, 0 errors, latest: in_the_wild-01587 HTTP 200
+  [ 6700/25742] 26% done, 0 errors, latest: asb-00020 HTTP 500
+  [ 6800/25742] 26% done, 0 errors, latest: satml_ctf-02011 HTTP 200
+  [ 6900/25742] 26% done, 0 errors, latest: spml-02249 HTTP 200
+  [ 7000/25742] 27% done, 0 errors, latest: jackhhao-00440 HTTP 200
+  [ 7100/25742] 27% done, 0 errors, latest: spml-00727 HTTP 200
+  [ 7200/25742] 27% done, 0 errors, latest: spml-01114 HTTP 200
+  [ 7300/25742] 28% done, 0 errors, latest: safeguard-00263 HTTP 200
+  [ 7400/25742] 28% done, 0 errors, latest: satml_ctf-03157 HTTP 200
+  [ 7500/25742] 29% done, 0 errors, latest: injecagent-dh_enhanced-0 HTTP 200
+  [ 7600/25742] 29% done, 0 errors, latest: injecagent-dh_enhanced-0 HTTP 200
+  [ 7700/25742] 29% done, 0 errors, latest: spml-01350 HTTP 200
+  [ 7800/25742] 30% done, 0 errors, latest: bipia-attack-table-00176 HTTP 200
+  [ 7900/25742] 30% done, 0 errors, latest: spml-04288 HTTP 500
+  [ 8000/25742] 31% done, 0 errors, latest: safeguard-00870 HTTP 200
+  [ 8100/25742] 31% done, 0 errors, latest: ivanleomk-v2-00075 HTTP 500
+  [ 8200/25742] 31% done, 0 errors, latest: ailuminate-airr_practice HTTP 200
+  [ 8300/25742] 32% done, 0 errors, latest: spml-04306 HTTP 500
+  [ 8400/25742] 32% done, 0 errors, latest: injecagent-ds_enhanced-0 HTTP 500
+  [ 8500/25742] 33% done, 0 errors, latest: injecagent-dh_base-00187 HTTP 500
+  [ 8600/25742] 33% done, 0 errors, latest: spml-01212 HTTP 200
+  [ 8700/25742] 33% done, 0 errors, latest: injecagent-ds_enhanced-0 HTTP 200
+  [ 8800/25742] 34% done, 0 errors, latest: deepset-00197 HTTP 200
+  [ 8900/25742] 34% done, 0 errors, latest: deepset-v2-00003 HTTP 500
+  [ 9000/25742] 34% done, 0 errors, latest: satml_ctf-02531 HTTP 200
+  [ 9100/25742] 35% done, 0 errors, latest: safeguard-00144 HTTP 200
+  [ 9200/25742] 35% done, 0 errors, latest: ivanleomk-00553 HTTP 200
+  [ 9300/25742] 36% done, 0 errors, latest: spml-02690 HTTP 200
+  [ 9400/25742] 36% done, 0 errors, latest: spml-04193 HTTP 200
+  [ 9500/25742] 36% done, 0 errors, latest: in_the_wild-01302 HTTP 200
+  [ 9600/25742] 37% done, 0 errors, latest: deepset-00345 HTTP 200
+  [ 9700/25742] 37% done, 0 errors, latest: in_the_wild-01551 HTTP 200
+  [ 9800/25742] 38% done, 0 errors, latest: jackhhao-01057 HTTP 200
+  [ 9900/25742] 38% done, 0 errors, latest: satml_ctf-01133 HTTP 200
+  [10000/25742] 38% done, 0 errors, latest: injecagent-ds_base-01444 HTTP 200
+  [10100/25742] 39% done, 0 errors, latest: cyberseceval2-00116 HTTP 200
+  [10200/25742] 39% done, 0 errors, latest: satml_ctf-02522 HTTP 200
+  [10300/25742] 40% done, 0 errors, latest: tensor_trust-00650 HTTP 200
+  [10400/25742] 40% done, 0 errors, latest: deepset-00265 HTTP 200
+  [10500/25742] 40% done, 0 errors, latest: in_the_wild-01217 HTTP 500
+  [10600/25742] 41% done, 0 errors, latest: ivanleomk-00596 HTTP 200
+  [10700/25742] 41% done, 0 errors, latest: in_the_wild-00650 HTTP 200
+  [10800/25742] 41% done, 0 errors, latest: ailuminate-airr_practice HTTP 200
+  [10900/25742] 42% done, 0 errors, latest: cyberseceval2-00019 HTTP 200
+  [11000/25742] 42% done, 0 errors, latest: injecagent-dh_base-00078 HTTP 200
+  [11100/25742] 43% done, 0 errors, latest: satml_ctf-02699 HTTP 200
+  [11200/25742] 43% done, 0 errors, latest: safeguard-01362 HTTP 200
+  [11300/25742] 43% done, 0 errors, latest: in_the_wild-00498 HTTP 200
+  [11400/25742] 44% done, 0 errors, latest: tensor_trust-00563 HTTP 200
+  [11500/25742] 44% done, 0 errors, latest: jackhhao-00931 HTTP 200
+  [11600/25742] 45% done, 0 errors, latest: spml-03266 HTTP 500
+  [11700/25742] 45% done, 0 errors, latest: deepset-00365 HTTP 200
+  [11800/25742] 45% done, 0 errors, latest: advbench-00266 HTTP 200
+  [11900/25742] 46% done, 0 errors, latest: spml-01266 HTTP 500
+  [12000/25742] 46% done, 0 errors, latest: ailuminate-airr_practice HTTP 200
+  [12100/25742] 47% done, 0 errors, latest: in_the_wild-00469 HTTP 200
+  [12200/25742] 47% done, 0 errors, latest: ivanleomk-00634 HTTP 200
+  [12300/25742] 47% done, 0 errors, latest: ben-098 HTTP 200
+  [12400/25742] 48% done, 0 errors, latest: spml-02329 HTTP 200
+  [12500/25742] 48% done, 0 errors, latest: satml_ctf-03870 HTTP 200
+  [12600/25742] 48% done, 0 errors, latest: ivanleomk-00412 HTTP 200
+  [12700/25742] 49% done, 0 errors, latest: injecagent-dh_enhanced-0 HTTP 500
+  [12800/25742] 49% done, 0 errors, latest: satml_ctf-03880 HTTP 200
+  [12900/25742] 50% done, 0 errors, latest: xstest-269 HTTP 200
+  [13000/25742] 50% done, 0 errors, latest: asb-00329 HTTP 200
+  [13100/25742] 50% done, 0 errors, latest: satml_ctf-00807 HTTP 200
+  [13200/25742] 51% done, 0 errors, latest: ailuminate-airr_practice HTTP 200
+  [13300/25742] 51% done, 0 errors, latest: satml_ctf-04620 HTTP 200
+  [13400/25742] 52% done, 0 errors, latest: advbench-00344 HTTP 200
+  [13500/25742] 52% done, 0 errors, latest: jackhhao-00179 HTTP 200
+  [13600/25742] 52% done, 0 errors, latest: xstest-65 HTTP 500
+  [13700/25742] 53% done, 0 errors, latest: safeguard-01747 HTTP 404
+  [13800/25742] 53% done, 0 errors, latest: satml_ctf-02923 HTTP 404
+  [13900/25742] 53% done, 0 errors, latest: harmbench-moc_defamatory HTTP 404
+  [14000/25742] 54% done, 0 errors, latest: satml_ctf-02824 HTTP 404
+  [14100/25742] 54% done, 0 errors, latest: injecagent-ds_base-01351 HTTP 404
+  [14200/25742] 55% done, 0 errors, latest: in_the_wild-02016 HTTP 404
+  [14300/25742] 55% done, 0 errors, latest: ailuminate-airr_practice HTTP 404
+  [14400/25742] 55% done, 0 errors, latest: ni-330 HTTP 404
+  [14500/25742] 56% done, 0 errors, latest: xstest-419 HTTP 404
+  [14600/25742] 56% done, 0 errors, latest: asb-00087 HTTP 404
+  [14700/25742] 57% done, 0 errors, latest: safeguard-00701 HTTP 404
+  [14800/25742] 57% done, 0 errors, latest: ailuminate-airr_practice HTTP 404
+  [14900/25742] 57% done, 0 errors, latest: jackhhao-00870 HTTP 404
+  [15000/25742] 58% done, 0 errors, latest: in_the_wild-01526 HTTP 404
+  [15100/25742] 58% done, 24 errors, latest: ailuminate-airr_practice HTTP 404
+  [15200/25742] 59% done, 24 errors, latest: satml_ctf-03018 HTTP 404
+  [15300/25742] 59% done, 24 errors, latest: harmbench-pirate_bay_tor HTTP 404
+  [15400/25742] 59% done, 24 errors, latest: in_the_wild-01471 HTTP 404
+  [15500/25742] 60% done, 24 errors, latest: injecagent-dh_base-00079 HTTP 404
+  [15600/25742] 60% done, 24 errors, latest: spml-00290 HTTP 404
+  [15700/25742] 60% done, 24 errors, latest: ta-delimiter-003 HTTP 404
+  [15800/25742] 61% done, 24 errors, latest: satml_ctf-03087 HTTP 404
+  [15900/25742] 61% done, 24 errors, latest: satml_ctf-00730 HTTP 404
+  [16000/25742] 62% done, 24 errors, latest: in_the_wild-01571 HTTP 404
+  [16100/25742] 62% done, 24 errors, latest: safeguard-00492 HTTP 404
+  [16200/25742] 62% done, 24 errors, latest: spml-01567 HTTP 404
+  [16300/25742] 63% done, 24 errors, latest: injecagent-dh_enhanced-0 HTTP 404
+  [16400/25742] 63% done, 24 errors, latest: jackhhao-00727 HTTP 404
+  [16500/25742] 64% done, 24 errors, latest: spml-03853 HTTP 404
+  [16600/25742] 64% done, 24 errors, latest: satml_ctf-02726 HTTP 404
+  [16700/25742] 64% done, 24 errors, latest: satml_ctf-03746 HTTP 404
+  [16800/25742] 65% done, 24 errors, latest: safeguard-01798 HTTP 404
+  [16900/25742] 65% done, 24 errors, latest: in_the_wild-00778 HTTP 404
+  [17000/25742] 66% done, 24 errors, latest: safeguard-01544 HTTP 404
+  [17100/25742] 66% done, 24 errors, latest: safeguard-01799 HTTP 404
+  [17200/25742] 66% done, 24 errors, latest: injecagent-dh_base-00055 HTTP 404
+  [17300/25742] 67% done, 24 errors, latest: hpi-do-005 HTTP 404
+  [17400/25742] 67% done, 24 errors, latest: safeguard-00753 HTTP 404
+  [17500/25742] 67% done, 24 errors, latest: spml-00831 HTTP 404
+  [17600/25742] 68% done, 24 errors, latest: advbench-00332 HTTP 404
+  [17700/25742] 68% done, 24 errors, latest: deepset-00085 HTTP 404
+  [17800/25742] 69% done, 24 errors, latest: deepset-00525 HTTP 404
+  [17900/25742] 69% done, 65 errors, latest: ivanleomk-00883 HTTP -1
+  [18000/25742] 69% done, 165 errors, latest: satml_ctf-00510 HTTP -1
+  [18100/25742] 70% done, 265 errors, latest: jackhhao-01018 HTTP -1
+  [18200/25742] 70% done, 365 errors, latest: satml_ctf-01070 HTTP -1
+  [18300/25742] 71% done, 440 errors, latest: safeguard-01514 HTTP 200
+  [18400/25742] 71% done, 440 errors, latest: in_the_wild-01822 HTTP 200
+  [18500/25742] 71% done, 440 errors, latest: spml-00012 HTTP 200
+  [18600/25742] 72% done, 440 errors, latest: satml_ctf-04287 HTTP 200
+  [18700/25742] 72% done, 440 errors, latest: satml_ctf-00061 HTTP 200
+  [18800/25742] 73% done, 440 errors, latest: spml-02619 HTTP 200
+  [18900/25742] 73% done, 440 errors, latest: satml_ctf-02103 HTTP 200
+  [19000/25742] 73% done, 440 errors, latest: in_the_wild-02017 HTTP 200
+  [19100/25742] 74% done, 440 errors, latest: advbench-00226 HTTP 200
+  [19200/25742] 74% done, 440 errors, latest: safeguard-01351 HTTP 200
+  [19300/25742] 74% done, 440 errors, latest: spml-04456 HTTP 200
+  [19400/25742] 75% done, 440 errors, latest: tensor_trust-00239 HTTP 200
+  [19500/25742] 75% done, 440 errors, latest: safeguard-00502 HTTP 200
+  [19600/25742] 76% done, 440 errors, latest: ivanleomk-v2-00449 HTTP 200
+  [19700/25742] 76% done, 440 errors, latest: satml_ctf-03345 HTTP 200
+  [19800/25742] 76% done, 440 errors, latest: ivanleomk-v2-00208 HTTP 200
+  [19900/25742] 77% done, 440 errors, latest: spml-03995 HTTP 200
+  [20000/25742] 77% done, 440 errors, latest: jackhhao-00667 HTTP 200
+  [20100/25742] 78% done, 440 errors, latest: satml_ctf-01271 HTTP 200
+  [20200/25742] 78% done, 440 errors, latest: spml-00470 HTTP 200
+  [20300/25742] 78% done, 440 errors, latest: satml_ctf-03653 HTTP 200
+  [20400/25742] 79% done, 440 errors, latest: ivanleomk-v2-00087 HTTP 200
+  [20500/25742] 79% done, 440 errors, latest: spml-01902 HTTP 200
+  [20600/25742] 80% done, 440 errors, latest: deepset-v2-00239 HTTP 200
+  [20700/25742] 80% done, 440 errors, latest: satml_ctf-02334 HTTP 200
+  [20800/25742] 80% done, 440 errors, latest: asb-00273 HTTP 200
+  [20900/25742] 81% done, 440 errors, latest: in_the_wild-00054 HTTP 200
+  [21000/25742] 81% done, 440 errors, latest: jackhhao-00744 HTTP 200
+  [21100/25742] 81% done, 440 errors, latest: spml-02080 HTTP 200
+  [21200/25742] 82% done, 440 errors, latest: satml_ctf-01027 HTTP 200
+  [21300/25742] 82% done, 440 errors, latest: injecagent-ds_base-01546 HTTP 200
+  [21400/25742] 83% done, 440 errors, latest: cyberseceval2-00208 HTTP 200
+  [21500/25742] 83% done, 440 errors, latest: spml-01763 HTTP 200
+  [21600/25742] 83% done, 440 errors, latest: ailuminate-airr_practice HTTP 200
+  [21700/25742] 84% done, 440 errors, latest: deepset-00209 HTTP 200
+  [21800/25742] 84% done, 440 errors, latest: safeguard-01515 HTTP 200
+  [21900/25742] 85% done, 440 errors, latest: ivanleomk-00375 HTTP 200
+  [22000/25742] 85% done, 440 errors, latest: ni-014 HTTP 429
+  [22100/25742] 85% done, 440 errors, latest: safeguard-01363 HTTP 200
+  [22200/25742] 86% done, 440 errors, latest: safeguard-00449 HTTP 429
+  [22300/25742] 86% done, 440 errors, latest: jackhhao-00875 HTTP 500
+  [22400/25742] 87% done, 440 errors, latest: satml_ctf-04686 HTTP 429
+  [22500/25742] 87% done, 440 errors, latest: injecagent-ds_enhanced-0 HTTP 200
+  [22600/25742] 87% done, 440 errors, latest: satml_ctf-00856 HTTP 429
+  [22700/25742] 88% done, 440 errors, latest: in_the_wild-01868 HTTP 200
+  [22800/25742] 88% done, 440 errors, latest: satml_ctf-00199 HTTP 200
+  [22900/25742] 88% done, 440 errors, latest: satml_ctf-02379 HTTP 200
+  [23000/25742] 89% done, 440 errors, latest: harmbench-forge_medical_ HTTP 200
+  [23100/25742] 89% done, 440 errors, latest: xstest-170 HTTP 200
+  [23200/25742] 90% done, 440 errors, latest: satml_ctf-04095 HTTP 200
+  [23300/25742] 90% done, 440 errors, latest: harmbench-tweet_pride_da HTTP 429
+  [23400/25742] 90% done, 440 errors, latest: ta-indirect-006 HTTP 200
+  [23500/25742] 91% done, 440 errors, latest: injecagent-ds_enhanced-0 HTTP 200
+  [23600/25742] 91% done, 440 errors, latest: safeguard-01526 HTTP 200
+  [23700/25742] 92% done, 440 errors, latest: satml_ctf-03099 HTTP 200
+  [23800/25742] 92% done, 440 errors, latest: bipia-attack-table-00186 HTTP 500
+  [23900/25742] 92% done, 440 errors, latest: satml_ctf-03202 HTTP 200
+  [24000/25742] 93% done, 440 errors, latest: ailuminate-airr_practice HTTP 200
+  [24100/25742] 93% done, 440 errors, latest: injecagent-ds_base-01448 HTTP 200
+  [24200/25742] 94% done, 440 errors, latest: spml-00030 HTTP 500
+  [24300/25742] 94% done, 440 errors, latest: safeguard-00898 HTTP 200
+  [24400/25742] 94% done, 440 errors, latest: harmbench-botnet_code_ob HTTP 429
+  [24500/25742] 95% done, 440 errors, latest: spml-00048 HTTP 200
+  [24600/25742] 95% done, 440 errors, latest: satml_ctf-00099 HTTP 200
+  [24700/25742] 95% done, 440 errors, latest: spml-00100 HTTP 200
+  [24800/25742] 96% done, 440 errors, latest: ivanleomk-00629 HTTP 200
+  [24900/25742] 96% done, 440 errors, latest: spml-03011 HTTP 200
+  [25000/25742] 97% done, 440 errors, latest: jackhhao-00987 HTTP 200
+  [25100/25742] 97% done, 440 errors, latest: advbench-00210 HTTP 200
+  [25200/25742] 97% done, 440 errors, latest: satml_ctf-02508 HTTP 200
+  [25300/25742] 98% done, 440 errors, latest: jackhhao-00696 HTTP 429
+  [25400/25742] 98% done, 440 errors, latest: satml_ctf-01763 HTTP 500
+  [25500/25742] 99% done, 440 errors, latest: safeguard-00112 HTTP 200
+  [25600/25742] 99% done, 440 errors, latest: safeguard-00963 HTTP 404
+  [25700/25742] 99% done, 440 errors, latest: in_the_wild-00261 HTTP 404
+  [25742/25742] 100% done, 440 errors, latest: spml-01768 HTTP 404
+
+All 25742 requests sent in 69720s (0.4 req/s)
+Waiting 120s for storage flush...
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connection.py", line 196, in _new_conn
+    sock = connection.create_connection(
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+  File "/usr/lib/python3.10/socket.py", line 955, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+socket.gaierror: [Errno -5] No address associated with hostname
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connectionpool.py", line 789, in urlopen
+    response = self._make_request(
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connectionpool.py", line 490, in _make_request
+    raise new_e
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connectionpool.py", line 466, in _make_request
+    self._validate_conn(conn)
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connectionpool.py", line 1095, in _validate_conn
+    conn.connect()
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connection.py", line 615, in connect
+    self.sock = sock = self._new_conn()
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connection.py", line 203, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: <urllib3.connection.HTTPSConnection object at 0x7f57fcf0b130>: Failed to resolve '91eeffc4-3794-4da8-a359-a408c9abf2ea.deployments.basilica.ai' ([Errno -5] No address associated with hostname)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.10/dist-packages/requests/adapters.py", line 667, in send
+    resp = conn.urlopen(
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/connectionpool.py", line 843, in urlopen
+    retries = retries.increment(
+  File "/usr/local/lib/python3.10/dist-packages/urllib3/util/retry.py", line 519, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='91eeffc4-3794-4da8-a359-a408c9abf2ea.deployments.basilica.ai', port=443): Max retries exceeded with url: /api/v1/tenants (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7f57fcf0b130>: Failed to resolve '91eeffc4-3794-4da8-a359-a408c9abf2ea.deployments.basilica.ai' ([Errno -5] No address associated with hostname)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/root/workspace/spacejar/llmtrace/benchmarks/scripts/proxy_stress_test_v2.py", line 807, in <module>
+    main()
+  File "/root/workspace/spacejar/llmtrace/benchmarks/scripts/proxy_stress_test_v2.py", line 592, in main
+    tenant_id = get_tenant_id()
+  File "/root/workspace/spacejar/llmtrace/benchmarks/scripts/proxy_stress_test_v2.py", line 346, in get_tenant_id
+    resp = requests.get(f"{PROXY_URL}/api/v1/tenants", timeout=10)
+  File "/usr/local/lib/python3.10/dist-packages/requests/api.py", line 73, in get
+    return request("get", url, params=params, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/requests/sessions.py", line 589, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/requests/sessions.py", line 703, in send
+    r = adapter.send(request, **kwargs)
+  File "/usr/local/lib/python3.10/dist-packages/requests/adapters.py", line 700, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='91eeffc4-3794-4da8-a359-a408c9abf2ea.deployments.basilica.ai', port=443): Max retries exceeded with url: /api/v1/tenants (Caused by NameResolutionError("<urllib3.connection.HTTPSConnection object at 0x7f57fcf0b130>: Failed to resolve '91eeffc4-3794-4da8-a359-a408c9abf2ea.deployments.basilica.ai' ([Errno -5] No address associated with hostname)"))
