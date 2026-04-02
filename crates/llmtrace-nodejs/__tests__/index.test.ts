@@ -91,7 +91,7 @@ describe('SecurityAnalyzer', () => {
   });
 
   test('detects SSN', () => {
-    const findings = analyzer.analyzePrompt('My SSN is 123-45-6789');
+    const findings = analyzer.analyzePrompt('My SSN is 456-78-9012');
     expect(findings.some((f: Finding) => f.findingType === 'pii_detected')).toBe(true);
   });
 
