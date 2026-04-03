@@ -12,7 +12,8 @@
 # ---------------------------------------------------------------------------
 FROM rust:alpine AS builder
 
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static build-base protobuf-dev curl
+RUN apk upgrade --no-cache && \
+    apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static build-base protobuf-dev curl
 
 WORKDIR /build
 
@@ -57,7 +58,8 @@ RUN cargo build --release --bin llmtrace-proxy
 # ---------------------------------------------------------------------------
 FROM alpine:latest AS runtime
 
-RUN apk add --no-cache ca-certificates tini
+RUN apk upgrade --no-cache && \
+    apk add --no-cache ca-certificates tini
 
 RUN addgroup -g 1000 llmtrace && adduser -u 1000 -G llmtrace -S -h /home/llmtrace llmtrace
 
