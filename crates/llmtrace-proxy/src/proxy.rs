@@ -4,6 +4,7 @@
 //! the upstream, captures the response, and spawns async background tasks for
 //! trace storage and security analysis.
 
+use crate::action_router::ActionRouter;
 use crate::circuit_breaker::CircuitBreaker;
 use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
@@ -78,6 +79,8 @@ pub struct AppState {
     pub cost_tracker: Option<crate::cost_caps::CostTracker>,
     /// Anomaly detector (`None` if anomaly detection is disabled).
     pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
+    /// Action orchestrator for routing enforcement actions.
+    pub action_router: ActionRouter,
     /// In-memory store for compliance reports (legacy — reports are now also
     /// persisted to MetadataRepository).
     pub report_store: crate::compliance::ReportStore,
@@ -283,6 +286,18 @@ pub async fn proxy_handler(
     let agent_id = extract_agent_id(&headers);
     let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
 
+    let source_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .and_then(|s| s.trim().parse::<std::net::IpAddr>().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+        });
+
     // Fetch tenant configuration (best-effort)
     let tenant_config = state
         .metadata()
@@ -314,6 +329,17 @@ pub async fn proxy_handler(
         tokio::spawn(async move {
             crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &name).await;
         });
+    }
+
+    // --- Pre-request IP blocking (Action Router) ---
+    if state
+        .action_router
+        .is_ip_blocked(source_ip, &Some(Arc::clone(&state.storage.cache)))
+        .await
+    {
+        warn!(%trace_id, ?source_ip, "Request blocked by IP reputation (Action Router)");
+        state.metrics.active_connections.dec();
+        return crate::enforcement::blocked_response("IP blocked by enforcement action", &[]);
     }
 
     // --- Per-tenant rate limiting ---
@@ -461,7 +487,7 @@ pub async fn proxy_handler(
             model_name: model_name.clone(),
             parameters: std::collections::HashMap::new(),
         };
-        let decision = crate::enforcement::run_enforcement(
+        let (mut decision, pre_findings) = crate::enforcement::run_enforcement(
             &analysis_text,
             &enf_context,
             &state.config.enforcement,
@@ -469,6 +495,24 @@ pub async fn proxy_handler(
             &state.fast_analyzer,
         )
         .await;
+
+        let action_ctx = crate::action_router::ActionContext {
+            trace_id,
+            tenant_id,
+            findings: &pre_findings,
+            source_ip,
+            model_name: model_name.clone(),
+            provider: detected_provider.clone(),
+            execution_mode: crate::action_router::ExecutionMode::Inline,
+            cache: Some(Arc::clone(&state.storage.cache)),
+            metrics: Some(state.metrics.clone()),
+        };
+
+        decision = state
+            .action_router
+            .execute_inline(decision, &action_ctx)
+            .await;
+
         match decision {
             crate::enforcement::EnforcementDecision::Block { reason, findings } => {
                 warn!(%trace_id, %reason, "Security enforcement blocked request");
@@ -905,6 +949,23 @@ pub async fn proxy_handler(
                 security_findings.extend(anomaly_findings);
             }
         }
+
+        // --- Execute async Enforcement Actions ---
+        let async_action_ctx = crate::action_router::ActionContext {
+            trace_id: captured.trace_id,
+            tenant_id: captured.tenant_id,
+            findings: &security_findings,
+            source_ip,
+            model_name: captured.model_name.clone(),
+            provider: captured.provider.clone(),
+            execution_mode: crate::action_router::ExecutionMode::Async,
+            cache: Some(Arc::clone(&state_bg.storage.cache)),
+            metrics: Some(state_bg.metrics.clone()),
+        };
+        state_bg
+            .action_router
+            .execute_async(&async_action_ctx)
+            .await;
 
         // --- Alert engine: fire-and-forget webhook notification ---
         if let Some(ref engine) = state_bg.alert_engine {

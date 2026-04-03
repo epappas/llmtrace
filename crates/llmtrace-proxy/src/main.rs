@@ -344,6 +344,11 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         &config.anomaly_detection,
         Arc::clone(&storage.cache),
     );
+    let action_router = llmtrace_proxy::action_router::ActionRouter::new(
+        &config.action_router,
+        Some(Arc::clone(&storage.cache)),
+        client.clone(),
+    );
 
     if let Some(ref engine) = alert_engine {
         info!(
@@ -406,6 +411,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         alert_engine,
         cost_tracker,
         anomaly_detector,
+        action_router,
         report_store,
         rate_limiter,
         ml_status,

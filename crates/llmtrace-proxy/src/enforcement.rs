@@ -149,14 +149,14 @@ pub async fn run_enforcement(
     config: &EnforcementConfig,
     full_analyzer: &Arc<dyn SecurityAnalyzer>,
     fast_analyzer: &Arc<dyn SecurityAnalyzer>,
-) -> EnforcementDecision {
+) -> (EnforcementDecision, Vec<SecurityFinding>) {
     // Log mode with no per-category overrides = skip analysis entirely
     if config.mode == EnforcementMode::Log && config.categories.is_empty() {
-        return EnforcementDecision::Allow;
+        return (EnforcementDecision::Allow, vec![]);
     }
 
     if analysis_text.is_empty() {
-        return EnforcementDecision::Allow;
+        return (EnforcementDecision::Allow, vec![]);
     }
 
     let analyzer: &Arc<dyn SecurityAnalyzer> = match config.analysis_depth {
@@ -172,19 +172,19 @@ pub async fn run_enforcement(
         Ok(Ok(findings)) => findings,
         Ok(Err(e)) => {
             warn!("Enforcement analysis failed (fail-open): {e}");
-            return EnforcementDecision::Allow;
+            return (EnforcementDecision::Allow, vec![]);
         }
         Err(_) => {
             warn!(
                 timeout_ms = config.timeout_ms,
                 "Enforcement analysis timed out (fail-open)"
             );
-            return EnforcementDecision::Allow;
+            return (EnforcementDecision::Allow, vec![]);
         }
     };
 
     if findings.is_empty() {
-        return EnforcementDecision::Allow;
+        return (EnforcementDecision::Allow, vec![]);
     }
 
     info!(
@@ -192,7 +192,7 @@ pub async fn run_enforcement(
         "Enforcement pre-analysis detected findings"
     );
 
-    evaluate_enforcement(&findings, config)
+    (evaluate_enforcement(&findings, config), findings)
 }
 
 // ---------------------------------------------------------------------------

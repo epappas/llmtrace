@@ -875,6 +875,11 @@ mod tests {
             alert_engine: None,
             cost_tracker: None,
             anomaly_detector: None,
+            action_router: crate::action_router::ActionRouter::new(
+                &llmtrace_core::ActionRouterConfig::default(),
+                None,
+                reqwest::Client::new(),
+            ),
             report_store: crate::compliance::new_report_store(),
             rate_limiter: None,
             ml_status: crate::proxy::MlModelStatus::Disabled,
@@ -918,6 +923,11 @@ mod tests {
             alert_engine: None,
             cost_tracker: None,
             anomaly_detector: None,
+            action_router: crate::action_router::ActionRouter::new(
+                &llmtrace_core::ActionRouterConfig::default(),
+                None,
+                reqwest::Client::new(),
+            ),
             report_store: crate::compliance::new_report_store(),
             rate_limiter: None,
             ml_status: crate::proxy::MlModelStatus::Disabled,

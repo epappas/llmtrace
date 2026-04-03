@@ -3,6 +3,7 @@
 //! Re-exports the core proxy types and handlers so that integration tests
 //! and other crates can programmatically construct a proxy router.
 
+pub mod action_router;
 pub mod alerts;
 pub mod anomaly;
 pub mod api;
@@ -26,6 +27,7 @@ pub mod streaming;
 pub mod tenant_api;
 
 // Re-export key types for convenience
+pub use action_router::ActionRouter;
 pub use alerts::AlertEngine;
 pub use anomaly::AnomalyDetector;
 pub use circuit_breaker::CircuitBreaker;

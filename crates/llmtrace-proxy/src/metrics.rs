@@ -97,6 +97,9 @@ pub struct Metrics {
 
     /// Analysis text truncations due to max_analysis_text_bytes.
     pub analysis_text_truncated_total: IntCounter,
+
+    /// Total enforcement actions executed by the router.
+    pub action_executions_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -347,6 +350,19 @@ impl Metrics {
             .register(Box::new(analysis_text_truncated_total.clone()))
             .expect("register analysis_text_truncated_total");
 
+        // ActionRouter metrics
+        let action_executions_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_action_executions_total",
+                "Total enforcement actions executed by the router",
+            ),
+            &["action_type", "status", "mode"],
+        )
+        .expect("metric: action_executions_total");
+        registry
+            .register(Box::new(action_executions_total.clone()))
+            .expect("register action_executions_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -380,6 +396,7 @@ impl Metrics {
             ml_input_truncated_total,
             response_truncated_total,
             analysis_text_truncated_total,
+            action_executions_total,
         }
     }
 
@@ -506,7 +523,7 @@ impl Metrics {
             .observe(overhead_bytes as f64);
     }
 
-    /// Record detected anomalies.
+    /// Record anomalies detected.
     pub fn record_anomalies(&self, findings: &[llmtrace_core::SecurityFinding]) {
         for f in findings {
             if let Some(anomaly_type) = f.metadata.get("anomaly_type") {
@@ -515,6 +532,13 @@ impl Metrics {
                     .inc();
             }
         }
+    }
+
+    /// Record enforcement action execution
+    pub fn record_action_execution(&self, action_type: &str, status: &str, mode: &str) {
+        self.action_executions_total
+            .with_label_values(&[action_type, status, mode])
+            .inc();
     }
 }
 
