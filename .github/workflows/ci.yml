@@ -24,6 +24,31 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Audit Node.js dependencies
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: NPM Audit (Dashboard)
+        run: cd dashboard && npm audit
+      - name: NPM Audit (Node bindings)
+        run: cd crates/llmtrace-nodejs && npm audit
+
+      # Audit Rust dependencies
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Cargo Audit
+        run: cargo audit
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
