@@ -100,6 +100,12 @@ pub struct Metrics {
 
     /// Total enforcement actions executed by the router.
     pub action_executions_total: IntCounterVec,
+    /// Action execution latency in seconds.
+    pub action_latency_seconds: HistogramVec,
+    /// Currently active IP blocks recorded by this proxy instance.
+    pub ip_blocks_active: IntGauge,
+    /// Total action-rule matches by finding type and action type.
+    pub action_rule_matches_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -363,6 +369,40 @@ impl Metrics {
             .register(Box::new(action_executions_total.clone()))
             .expect("register action_executions_total");
 
+        let action_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_action_latency_seconds",
+                "Per-action execution latency in seconds",
+            )
+            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.5, 1.0, 5.0]),
+            &["action_type"],
+        )
+        .expect("metric: action_latency_seconds");
+        registry
+            .register(Box::new(action_latency_seconds.clone()))
+            .expect("register action_latency_seconds");
+
+        let ip_blocks_active = IntGauge::new(
+            "llmtrace_ip_blocks_active",
+            "Currently blocked IPs recorded by this proxy instance",
+        )
+        .expect("metric: ip_blocks_active");
+        registry
+            .register(Box::new(ip_blocks_active.clone()))
+            .expect("register ip_blocks_active");
+
+        let action_rule_matches_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_action_rule_matches_total",
+                "Rule match frequency by finding type and action type",
+            ),
+            &["finding_type", "action_type"],
+        )
+        .expect("metric: action_rule_matches_total");
+        registry
+            .register(Box::new(action_rule_matches_total.clone()))
+            .expect("register action_rule_matches_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -397,6 +437,9 @@ impl Metrics {
             response_truncated_total,
             analysis_text_truncated_total,
             action_executions_total,
+            action_latency_seconds,
+            ip_blocks_active,
+            action_rule_matches_total,
         }
     }
 
@@ -538,6 +581,20 @@ impl Metrics {
     pub fn record_action_execution(&self, action_type: &str, status: &str, mode: &str) {
         self.action_executions_total
             .with_label_values(&[action_type, status, mode])
+            .inc();
+    }
+
+    /// Record enforcement action latency.
+    pub fn record_action_latency(&self, action_type: &str, duration: std::time::Duration) {
+        self.action_latency_seconds
+            .with_label_values(&[action_type])
+            .observe(duration.as_secs_f64());
+    }
+
+    /// Record a matched router rule.
+    pub fn record_action_rule_match(&self, finding_type: &str, action_type: &str) {
+        self.action_rule_matches_total
+            .with_label_values(&[finding_type, action_type])
             .inc();
     }
 }
@@ -810,5 +867,24 @@ mod tests {
             .with_label_values(&["security", "closed"])
             .get();
         assert_eq!(closed_security, 1.0);
+    }
+
+    #[test]
+    fn test_action_metrics_are_recorded() {
+        let m = Metrics::new();
+        m.record_action_execution("webhook", "success", "async");
+        m.record_action_latency("webhook", std::time::Duration::from_millis(25));
+        m.record_action_rule_match("prompt_injection", "webhook");
+        m.ip_blocks_active.inc();
+
+        let text = m.gather_text().unwrap();
+        assert!(text.contains("llmtrace_action_executions_total"));
+        assert!(text.contains("action_type=\"webhook\""));
+        assert!(text.contains("status=\"success\""));
+        assert!(text.contains("mode=\"async\""));
+        assert!(text.contains("llmtrace_action_latency_seconds"));
+        assert!(text.contains("llmtrace_ip_blocks_active"));
+        assert!(text.contains("llmtrace_action_rule_matches_total"));
+        assert!(text.contains("finding_type=\"prompt_injection\""));
     }
 }
