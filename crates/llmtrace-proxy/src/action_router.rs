@@ -495,20 +495,6 @@ mod tests {
     use super::*;
     use llmtrace_core::SecuritySeverity;
 
-    fn test_ctx<'a>(findings: &'a [SecurityFinding]) -> ActionContext<'a> {
-        ActionContext {
-            trace_id: Default::default(),
-            tenant_id: TenantId(Default::default()),
-            findings,
-            source_ip: None,
-            model_name: "".into(),
-            provider: llmtrace_core::LLMProvider::OpenAI,
-            execution_mode: ExecutionMode::Inline,
-            cache: None,
-            metrics: None,
-        }
-    }
-
     fn finding(t: &str, s: SecuritySeverity, c: f64) -> SecurityFinding {
         SecurityFinding::new(s, t.to_string(), "desc".into(), c)
     }
