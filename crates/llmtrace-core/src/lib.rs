@@ -1083,6 +1083,9 @@ pub struct ProxyConfig {
     /// Boundary token injection defense configuration.
     #[serde(default)]
     pub boundary_defense: BoundaryTokenConfig,
+    /// Action router / orchestrator configuration.
+    #[serde(default)]
+    pub action_router: ActionRouterConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1122,6 +1125,102 @@ impl Default for ProxyConfig {
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
+            action_router: ActionRouterConfig::default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Action Router types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionRouterConfig {
+    #[serde(default = "default_action_router_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_action_router_actions")]
+    pub default_actions: Vec<String>,
+    #[serde(default)]
+    pub ip_block: IpBlockActionConfig,
+    #[serde(default)]
+    pub rules: Vec<ActionRuleConfig>,
+    #[serde(default)]
+    pub webhook: WebhookActionConfig,
+    #[serde(default)]
+    pub judge_route: JudgeRouteActionConfig,
+}
+
+fn default_action_router_enabled() -> bool {
+    false
+}
+
+fn default_action_router_actions() -> Vec<String> {
+    vec!["log".to_string()]
+}
+
+impl Default for ActionRouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_action_router_enabled(),
+            default_actions: default_action_router_actions(),
+            ip_block: IpBlockActionConfig::default(),
+            rules: vec![],
+            webhook: WebhookActionConfig::default(),
+            judge_route: JudgeRouteActionConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IpBlockActionConfig {
+    pub ttl_seconds: u64,
+    pub max_offenses: u32,
+}
+
+impl Default for IpBlockActionConfig {
+    fn default() -> Self {
+        Self {
+            ttl_seconds: 3600,
+            max_offenses: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionRuleConfig {
+    pub finding_type: Option<String>,
+    pub min_severity: SecuritySeverity,
+    pub min_confidence: f64,
+    pub actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookActionConfig {
+    #[serde(default)]
+    pub url: String,
+    pub timeout_ms: u64,
+}
+
+impl Default for WebhookActionConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            timeout_ms: 5000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeRouteActionConfig {
+    pub inline_await: bool,
+    pub inline_timeout_ms: u64,
+}
+
+impl Default for JudgeRouteActionConfig {
+    fn default() -> Self {
+        Self {
+            inline_await: false,
+            inline_timeout_ms: 10000,
         }
     }
 }
@@ -3090,6 +3189,7 @@ mod tests {
             output_safety: OutputSafetyConfig::default(),
             shutdown: ShutdownConfig::default(),
             enforcement: EnforcementConfig::default(),
+            action_router: ActionRouterConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
         };
 

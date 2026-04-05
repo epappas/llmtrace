@@ -70,6 +70,11 @@ async fn build_proxy(upstream_url: &str) -> (Arc<AppState>, Router) {
         alert_engine: None,
         cost_tracker: None,
         anomaly_detector: None,
+        action_router: llmtrace_proxy::action_router::ActionRouter::new(
+            &llmtrace_core::ActionRouterConfig::default(),
+            None,
+            reqwest::Client::new(),
+        ),
         report_store: llmtrace_proxy::compliance::new_report_store(),
         rate_limiter: None,
         ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,

@@ -147,6 +147,25 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
         errors.push("max_response_size_bytes must be > 0".to_string());
     }
 
+    // ActionRouter config validation
+    let ar = &config.action_router;
+    if ar.enabled {
+        if ar.webhook.timeout_ms == 0 {
+            errors.push("action_router.webhook.timeout_ms must be greater than 0".to_string());
+        }
+        if ar.judge_route.inline_timeout_ms == 0 {
+            errors.push(
+                "action_router.judge_route.inline_timeout_ms must be greater than 0".to_string(),
+            );
+        }
+        if ar.webhook.url.is_empty() && ar.default_actions.iter().any(|a| a == "webhook") {
+            errors.push(
+                "action_router.webhook.url must not be empty if webhook action is enabled"
+                    .to_string(),
+            );
+        }
+    }
+
     if config.security_analysis.max_analysis_text_bytes == 0 {
         errors.push("security_analysis.max_analysis_text_bytes must be > 0".to_string());
     }
