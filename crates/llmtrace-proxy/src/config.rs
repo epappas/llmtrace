@@ -150,6 +150,12 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
     // ActionRouter config validation
     let ar = &config.action_router;
     if ar.enabled {
+        if ar.ip_block.ttl_seconds == 0 {
+            errors.push("action_router.ip_block.ttl_seconds must be greater than 0".to_string());
+        }
+        if ar.ip_block.max_offenses == 0 {
+            errors.push("action_router.ip_block.max_offenses must be greater than 0".to_string());
+        }
         if ar.webhook.timeout_ms == 0 {
             errors.push("action_router.webhook.timeout_ms must be greater than 0".to_string());
         }
@@ -158,7 +164,12 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
                 "action_router.judge_route.inline_timeout_ms must be greater than 0".to_string(),
             );
         }
-        if ar.webhook.url.is_empty() && ar.default_actions.iter().any(|a| a == "webhook") {
+        let webhook_referenced = ar.default_actions.iter().any(|a| a == "webhook")
+            || ar
+                .rules
+                .iter()
+                .any(|rule| rule.actions.iter().any(|action| action == "webhook"));
+        if ar.webhook.url.is_empty() && webhook_referenced {
             errors.push(
                 "action_router.webhook.url must not be empty if webhook action is enabled"
                     .to_string(),
@@ -406,6 +417,35 @@ health_check:
         };
         let err = validate_config(&config).unwrap_err();
         assert!(err.to_string().contains("timeout_ms"));
+    }
+
+    #[test]
+    fn test_validate_config_action_router_invalid_values() {
+        let mut config = ProxyConfig::default();
+        config.listen_addr = "127.0.0.1:8080".to_string();
+        config.upstream_url = "http://localhost:11434".to_string();
+        config.timeout_ms = 1000;
+        config.connection_timeout_ms = 1000;
+        config.max_response_size_bytes = 1024;
+        config.security_analysis.max_analysis_text_bytes = 1024;
+        config.action_router.enabled = true;
+        config.action_router.ip_block.ttl_seconds = 0;
+        config.action_router.ip_block.max_offenses = 0;
+        config.action_router.webhook.timeout_ms = 0;
+        config.action_router.judge_route.inline_timeout_ms = 0;
+        config.action_router.rules = vec![llmtrace_core::ActionRuleConfig {
+            finding_type: Some("prompt_injection".to_string()),
+            min_severity: llmtrace_core::SecuritySeverity::High,
+            min_confidence: 0.8,
+            actions: vec!["webhook".to_string()],
+        }];
+
+        let err = validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("action_router.ip_block.ttl_seconds"));
+        assert!(err.contains("action_router.ip_block.max_offenses"));
+        assert!(err.contains("action_router.webhook.timeout_ms"));
+        assert!(err.contains("action_router.judge_route.inline_timeout_ms"));
+        assert!(err.contains("action_router.webhook.url"));
     }
 
     #[test]
