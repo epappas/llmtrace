@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: llmtrace-proxy
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - proxy:8080
+
+  - job_name: nginx
+    metrics_path: /health
+    static_configs:
+      - targets:
+          - nginx:80

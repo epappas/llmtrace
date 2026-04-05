@@ -1,0 +1,43 @@
+# ============================================================================
+# LLMTrace Helm Chart — ML / GPU Overlay
+# ============================================================================
+
+proxy:
+  enableSecurityAnalysis: true
+
+  securityAnalysis:
+    mlEnabled: true
+    mlModel: "protectai/deberta-v3-base-prompt-injection-v2"
+    mlThreshold: 0.8
+    mlPreload: true
+    jailbreakEnabled: true
+    operatingPoint: "balanced"
+
+  modelCache:
+    enabled: true
+    size: 10Gi
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+      nvidia.com/gpu: "1"
+
+  nodeSelector:
+    accelerator: nvidia
+
+  tolerations:
+    - key: "nvidia.com/gpu"
+      operator: "Exists"
+      effect: "NoSchedule"
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  prometheusRule:
+    enabled: true

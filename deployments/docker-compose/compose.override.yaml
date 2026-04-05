@@ -1,0 +1,14 @@
+services:
+  proxy:
+    environment:
+      RUST_LOG: debug
+      LLMTRACE_ML_PRELOAD: 0
+    ports:
+      - "8080:8080"
+
+  dashboard:
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+
+  nginx:
+    ports: []

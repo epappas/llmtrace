@@ -1,0 +1,8 @@
+services:
+  proxy:
+    environment:
+      LLMTRACE_ML_ENABLED: 1
+      LLMTRACE_ML_PRELOAD: 1
+    gpus: all
+    mem_limit: 8g
+    cpus: 6

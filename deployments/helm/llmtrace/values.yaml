@@ -52,6 +52,20 @@ proxy:
   # -- Max request body size (bytes, default 50 MB)
   maxRequestSizeBytes: 52428800
 
+  # -- Max response body size retained in traces (bytes)
+  maxResponseSizeBytes: 10485760
+
+  # -- Security analysis timeout (ms)
+  securityAnalysisTimeoutMs: 5000
+
+  # -- Trace storage timeout (ms)
+  traceStorageTimeoutMs: 10000
+
+  tls:
+    enabled: false
+    certFile: ""
+    keyFile: ""
+
   # -- gRPC ingestion gateway
   grpc:
     enabled: false
@@ -93,6 +107,97 @@ proxy:
   # -- Cost caps
   costCaps:
     enabled: false
+
+  # -- Cost estimation configuration
+  costEstimation:
+    enabled: true
+    pricingFile: ""
+    customModels: {}
+
+  # -- Security analysis configuration
+  securityAnalysis:
+    mlEnabled: true
+    mlModel: "protectai/deberta-v3-base-prompt-injection-v2"
+    mlThreshold: 0.8
+    mlCacheDir: "/home/llmtrace/.cache/llmtrace/models"
+    mlPreload: true
+    mlDownloadTimeoutSeconds: 300
+    nerEnabled: false
+    nerModel: "dslim/bert-base-NER"
+    fusionEnabled: false
+    fusionModelPath: ""
+    jailbreakEnabled: true
+    jailbreakThreshold: 0.7
+    injecguardEnabled: false
+    injecguardModel: "leolee99/InjecGuard"
+    injecguardThreshold: 0.85
+    piguardEnabled: false
+    piguardModel: "leolee99/PIGuard"
+    piguardThreshold: 0.85
+    operatingPoint: "balanced"
+    overDefence: false
+    maxAnalysisTextBytes: 1048576
+
+  # -- Enforcement configuration
+  enforcement:
+    mode: "log"
+    analysisDepth: "fast"
+    minSeverity: "High"
+    minConfidence: 0.8
+    timeoutMs: 2000
+    categories: []
+
+  # -- Streaming analysis configuration
+  streamingAnalysis:
+    enabled: false
+    tokenInterval: 50
+    outputEnabled: false
+    earlyStopOnCritical: false
+
+  # -- Output safety configuration
+  outputSafety:
+    enabled: false
+    toxicityEnabled: false
+    toxicityThreshold: 0.7
+    blockOnCritical: false
+    hallucinationEnabled: false
+    hallucinationModel: "vectara/hallucination_evaluation_model"
+    hallucinationThreshold: 0.5
+    hallucinationMinResponseLength: 50
+
+  # -- Boundary token defense configuration
+  boundaryDefense:
+    enabled: false
+    shadowMode: false
+    wrapRoles:
+      - tool
+    delimiter: "llmtrace-boundary"
+    randomizeNonce: false
+    injectSystemReminder: true
+    systemReminderText: ""
+
+  # -- Graceful shutdown configuration
+  shutdown:
+    timeoutSeconds: 30
+
+  # -- Optional model cache PVC mounted into the proxy container
+  modelCache:
+    enabled: false
+    existingClaim: ""
+    mountPath: "/home/llmtrace/.cache/llmtrace/models"
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    initContainer:
+      enabled: false
+      image: ""
+      command: []
+      args: []
+      env: []
+
+  # -- Extra raw YAML appended to config.yaml for forward-compatible config injection
+  extraConfig: ""
 
   # -- Additional environment variables for the proxy container
   extraEnv: []
@@ -179,6 +284,22 @@ service:
   # -- gRPC port (enabled only when proxy.grpc.enabled)
   grpcPort: 50051
   annotations: {}
+
+# ============================================================================
+# Monitoring
+# ============================================================================
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 15s
+    scrapeTimeout: 10s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    namespace: ""
+    labels: {}
 
 # ============================================================================
 # Ingress
