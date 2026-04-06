@@ -23,14 +23,22 @@ data:
     connection_timeout_ms: {{ .Values.proxy.connectionTimeoutMs }}
     max_connections: {{ .Values.proxy.maxConnections }}
     max_request_size_bytes: {{ .Values.proxy.maxRequestSizeBytes }}
+    max_response_size_bytes: {{ .Values.proxy.maxResponseSizeBytes }}
 
-    enable_tls: false
+    enable_tls: {{ .Values.proxy.tls.enabled }}
+    {{- if .Values.proxy.tls.certFile }}
+    tls_cert_file: {{ .Values.proxy.tls.certFile | quote }}
+    {{- end }}
+    {{- if .Values.proxy.tls.keyFile }}
+    tls_key_file: {{ .Values.proxy.tls.keyFile | quote }}
+    {{- end }}
+
     enable_security_analysis: {{ .Values.proxy.enableSecurityAnalysis }}
     enable_trace_storage: {{ .Values.proxy.enableTraceStorage }}
     enable_streaming: {{ .Values.proxy.enableStreaming }}
 
-    security_analysis_timeout_ms: 5000
-    trace_storage_timeout_ms: 10000
+    security_analysis_timeout_ms: {{ .Values.proxy.securityAnalysisTimeoutMs }}
+    trace_storage_timeout_ms: {{ .Values.proxy.traceStorageTimeoutMs }}
 
     rate_limiting:
       enabled: {{ .Values.proxy.rateLimiting.enabled }}
@@ -44,6 +52,13 @@ data:
       recovery_timeout_ms: {{ .Values.proxy.circuitBreaker.recoveryTimeoutMs }}
       half_open_max_calls: {{ .Values.proxy.circuitBreaker.halfOpenMaxCalls }}
 
+    health_check:
+      enabled: true
+      path: "/health"
+      interval_seconds: 10
+      timeout_ms: 5000
+      retries: 3
+
     alerts:
       enabled: {{ .Values.proxy.alerts.enabled }}
       webhook_url: {{ .Values.proxy.alerts.webhookUrl | quote }}
@@ -51,16 +66,92 @@ data:
       min_security_score: {{ .Values.proxy.alerts.minSecurityScore }}
       cooldown_seconds: {{ .Values.proxy.alerts.cooldownSeconds }}
 
+    cost_estimation:
+      enabled: {{ .Values.proxy.costEstimation.enabled }}
+      {{- if .Values.proxy.costEstimation.pricingFile }}
+      pricing_file: {{ .Values.proxy.costEstimation.pricingFile | quote }}
+      {{- end }}
+      {{- if .Values.proxy.costEstimation.customModels }}
+      custom_models:
+{{ toYaml .Values.proxy.costEstimation.customModels | nindent 8 }}
+      {{- else }}
+      custom_models: {}
+      {{- end }}
+
     cost_caps:
       enabled: {{ .Values.proxy.costCaps.enabled }}
+
+    security_analysis:
+      ml_enabled: {{ .Values.proxy.securityAnalysis.mlEnabled }}
+      ml_model: {{ .Values.proxy.securityAnalysis.mlModel | quote }}
+      ml_threshold: {{ .Values.proxy.securityAnalysis.mlThreshold }}
+      ml_cache_dir: {{ .Values.proxy.securityAnalysis.mlCacheDir | quote }}
+      ml_preload: {{ .Values.proxy.securityAnalysis.mlPreload }}
+      ml_download_timeout_seconds: {{ .Values.proxy.securityAnalysis.mlDownloadTimeoutSeconds }}
+      ner_enabled: {{ .Values.proxy.securityAnalysis.nerEnabled }}
+      ner_model: {{ .Values.proxy.securityAnalysis.nerModel | quote }}
+      fusion_enabled: {{ .Values.proxy.securityAnalysis.fusionEnabled }}
+      {{- if .Values.proxy.securityAnalysis.fusionModelPath }}
+      fusion_model_path: {{ .Values.proxy.securityAnalysis.fusionModelPath | quote }}
+      {{- end }}
+      jailbreak_enabled: {{ .Values.proxy.securityAnalysis.jailbreakEnabled }}
+      jailbreak_threshold: {{ .Values.proxy.securityAnalysis.jailbreakThreshold }}
+      injecguard_enabled: {{ .Values.proxy.securityAnalysis.injecguardEnabled }}
+      injecguard_model: {{ .Values.proxy.securityAnalysis.injecguardModel | quote }}
+      injecguard_threshold: {{ .Values.proxy.securityAnalysis.injecguardThreshold }}
+      piguard_enabled: {{ .Values.proxy.securityAnalysis.piguardEnabled }}
+      piguard_model: {{ .Values.proxy.securityAnalysis.piguardModel | quote }}
+      piguard_threshold: {{ .Values.proxy.securityAnalysis.piguardThreshold }}
+      operating_point: {{ .Values.proxy.securityAnalysis.operatingPoint | quote }}
+      over_defence: {{ .Values.proxy.securityAnalysis.overDefence }}
+      max_analysis_text_bytes: {{ .Values.proxy.securityAnalysis.maxAnalysisTextBytes }}
+
+    enforcement:
+      mode: {{ .Values.proxy.enforcement.mode | quote }}
+      analysis_depth: {{ .Values.proxy.enforcement.analysisDepth | quote }}
+      min_severity: {{ .Values.proxy.enforcement.minSeverity | quote }}
+      min_confidence: {{ .Values.proxy.enforcement.minConfidence }}
+      timeout_ms: {{ .Values.proxy.enforcement.timeoutMs }}
+      {{- if .Values.proxy.enforcement.categories }}
+      categories:
+{{ toYaml .Values.proxy.enforcement.categories | nindent 8 }}
+      {{- else }}
+      categories: []
+      {{- end }}
 
     grpc:
       enabled: {{ .Values.proxy.grpc.enabled }}
       listen_addr: {{ .Values.proxy.grpc.listenAddr | quote }}
 
-    health_check:
-      enabled: true
-      path: "/health"
-      interval_seconds: 10
-      timeout_ms: 5000
-      retries: 3
+    streaming_analysis:
+      enabled: {{ .Values.proxy.streamingAnalysis.enabled }}
+      token_interval: {{ .Values.proxy.streamingAnalysis.tokenInterval }}
+      output_enabled: {{ .Values.proxy.streamingAnalysis.outputEnabled }}
+      early_stop_on_critical: {{ .Values.proxy.streamingAnalysis.earlyStopOnCritical }}
+
+    output_safety:
+      enabled: {{ .Values.proxy.outputSafety.enabled }}
+      toxicity_enabled: {{ .Values.proxy.outputSafety.toxicityEnabled }}
+      toxicity_threshold: {{ .Values.proxy.outputSafety.toxicityThreshold }}
+      block_on_critical: {{ .Values.proxy.outputSafety.blockOnCritical }}
+      hallucination_enabled: {{ .Values.proxy.outputSafety.hallucinationEnabled }}
+      hallucination_model: {{ .Values.proxy.outputSafety.hallucinationModel | quote }}
+      hallucination_threshold: {{ .Values.proxy.outputSafety.hallucinationThreshold }}
+      hallucination_min_response_length: {{ .Values.proxy.outputSafety.hallucinationMinResponseLength }}
+
+    shutdown:
+      timeout_seconds: {{ .Values.proxy.shutdown.timeoutSeconds }}
+
+    boundary_defense:
+      enabled: {{ .Values.proxy.boundaryDefense.enabled }}
+      shadow_mode: {{ .Values.proxy.boundaryDefense.shadowMode }}
+      wrap_roles:
+{{ toYaml .Values.proxy.boundaryDefense.wrapRoles | nindent 8 }}
+      delimiter: {{ .Values.proxy.boundaryDefense.delimiter | quote }}
+      randomize_nonce: {{ .Values.proxy.boundaryDefense.randomizeNonce }}
+      inject_system_reminder: {{ .Values.proxy.boundaryDefense.injectSystemReminder }}
+      system_reminder_text: {{ .Values.proxy.boundaryDefense.systemReminderText | quote }}
+
+    {{- if .Values.proxy.extraConfig }}
+{{ tpl .Values.proxy.extraConfig . | nindent 4 }}
+    {{- end }}

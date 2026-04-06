@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: LLMTrace
+    orgId: 1
+    folder: LLMTrace
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

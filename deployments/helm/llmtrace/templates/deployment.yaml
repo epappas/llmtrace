@@ -34,6 +34,27 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.proxy.terminationGracePeriodSeconds | default 60 }}
       securityContext:
         {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
+      {{- if .Values.proxy.modelCache.initContainer.enabled }}
+      initContainers:
+        - name: model-cache-init
+          image: {{ .Values.proxy.modelCache.initContainer.image | default (include "llmtrace.proxyImage" .) }}
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          {{- with .Values.proxy.modelCache.initContainer.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.proxy.modelCache.initContainer.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.proxy.modelCache.initContainer.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: {{ .Values.proxy.modelCache.mountPath | quote }}
+      {{- end }}
       containers:
         - name: proxy
           image: {{ include "llmtrace.proxyImage" . }}
@@ -65,6 +86,10 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if or .Values.proxy.modelCache.enabled .Values.proxy.modelCache.existingClaim }}
+            - name: model-cache
+              mountPath: {{ .Values.proxy.modelCache.mountPath | quote }}
+            {{- end }}
           {{- with .Values.proxy.startupProbe }}
           startupProbe:
             {{- toYaml . | nindent 12 }}
@@ -81,6 +106,11 @@ spec:
             name: {{ include "llmtrace.fullname" . }}-config
         - name: tmp
           emptyDir: {}
+        {{- if or .Values.proxy.modelCache.enabled .Values.proxy.modelCache.existingClaim }}
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ .Values.proxy.modelCache.existingClaim | default (printf "%s-model-cache" (include "llmtrace.fullname" .)) }}
+        {{- end }}
       {{- with .Values.proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

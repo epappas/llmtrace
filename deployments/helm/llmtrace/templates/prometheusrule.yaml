@@ -1,0 +1,52 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "llmtrace.fullname" . }}
+  namespace: {{ .Values.monitoring.prometheusRule.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "llmtrace.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: {{ include "llmtrace.fullname" . }}.rules
+      rules:
+        - alert: LLMTraceProxyDown
+          expr: up{job="{{ include "llmtrace.fullname" . }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LLMTrace proxy is down"
+            description: "Prometheus has not been able to scrape the LLMTrace proxy for 5 minutes."
+        - alert: LLMTraceHighErrorRate
+          expr: |
+            sum(rate(llmtrace_requests_total{status_code=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(llmtrace_requests_total[5m])), 1)
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "LLMTrace proxy error rate is above 5%"
+            description: "The proxy has been returning 5xx responses above the 5% threshold for 5 minutes."
+        - alert: LLMTraceCircuitBreakerOpen
+          expr: llmtrace_circuit_breaker_state{state="open"} == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LLMTrace circuit breaker is open"
+            description: "One or more LLMTrace subsystems have been in circuit-breaker open state for over 1 minute."
+        - alert: LLMTraceHighCriticalSecurityFindingRate
+          expr: sum(rate(llmtrace_security_findings_total{severity="Critical"}[1m])) > 10
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LLMTrace critical finding rate is high"
+            description: "Critical security findings exceeded 10 per minute."
+{{- end }}

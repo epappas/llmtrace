@@ -1,0 +1,18 @@
+{{- if and .Values.proxy.modelCache.enabled (not .Values.proxy.modelCache.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "llmtrace.fullname" . }}-model-cache
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmtrace.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.proxy.modelCache.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.proxy.modelCache.size | quote }}
+  {{- if .Values.proxy.modelCache.storageClassName }}
+  storageClassName: {{ .Values.proxy.modelCache.storageClassName | quote }}
+  {{- end }}
+{{- end }}

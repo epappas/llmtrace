@@ -1,0 +1,146 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-llmtrace}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    networks:
+      - llmtrace-backend
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-llmtrace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llmtrace}
+      POSTGRES_DB: ${POSTGRES_DB:-llmtrace}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmtrace} -d ${POSTGRES_DB:-llmtrace}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - llmtrace-backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    volumes:
+      - redis-data:/data
+    networks:
+      - llmtrace-backend
+
+  proxy:
+    image: ${PROXY_IMAGE:-ghcr.io/epappas/llmtrace-proxy:latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    env_file:
+      - .env
+    environment:
+      LLMTRACE_CONFIG: ${LLMTRACE_CONFIG:-/etc/llmtrace/config.yaml}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../../config.yaml:/etc/llmtrace/config.yaml:ro
+      - model-cache:/home/llmtrace/.cache/llmtrace/models
+    cpus: 4
+    mem_limit: 4g
+    networks:
+      - llmtrace-backend
+      - llmtrace-frontend
+
+  dashboard:
+    image: ghcr.io/epappas/llmtrace-dashboard:${VERSION:-latest}
+    build:
+      context: ../../dashboard
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://llmtrace.example.com}
+    restart: unless-stopped
+    environment:
+      HOSTNAME: ${HOSTNAME:-0.0.0.0}
+      LLMTRACE_API_URL: http://proxy:8080
+      CLICKHOUSE_URL: http://clickhouse:8123
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://llmtrace.example.com}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+    depends_on:
+      proxy:
+        condition: service_healthy
+    networks:
+      - llmtrace-backend
+      - llmtrace-frontend
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      proxy:
+        condition: service_healthy
+      dashboard:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_PATH:-./nginx/certs/tls.crt}:/etc/nginx/certs/tls.crt:ro
+      - ${TLS_KEY_PATH:-./nginx/certs/tls.key}:/etc/nginx/certs/tls.key:ro
+    networks:
+      - llmtrace-frontend
+
+networks:
+  llmtrace-backend:
+    name: llmtrace-backend
+    internal: true
+  llmtrace-frontend:
+    name: llmtrace-frontend
+
+volumes:
+  clickhouse-data:
+  postgres-data:
+  redis-data:
+  model-cache:
+  grafana-data:

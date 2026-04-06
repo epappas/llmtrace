@@ -50,6 +50,12 @@ proxy:
   costCaps:
     enabled: true
 
+  costEstimation:
+    enabled: true
+
+  shutdown:
+    timeoutSeconds: 30
+
   resources:
     requests:
       cpu: 500m
@@ -108,6 +114,17 @@ autoscaling:
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
+
+# ============================================================================
+# Monitoring
+# ============================================================================
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  prometheusRule:
+    enabled: true
 
 # ============================================================================
 # Secrets — override via --set or external secrets manager

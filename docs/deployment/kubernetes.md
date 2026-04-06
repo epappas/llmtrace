@@ -61,6 +61,20 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set secrets.postgresUrl="postgres://llmtrace:YOUR_SECURE_PASSWORD@llmtrace-postgresql:5432/llmtrace"
 ```
 
+### 4a. Install (ML / GPU Overlay)
+
+Use the ML overlay when you want a persistent model cache, GPU limits, and
+Prometheus Operator resources:
+
+```bash
+helm install llmtrace ./deployments/helm/llmtrace \
+  --namespace llmtrace \
+  --create-namespace \
+  -f ./deployments/helm/llmtrace/values-production.yaml \
+  -f ./deployments/helm/llmtrace/values-ml.yaml \
+  --set proxy.image.repository=ghcr.io/epappas/llmtrace-proxy
+```
+
 ### 5. Verify
 
 ```bash
@@ -116,6 +130,14 @@ curl http://localhost:8080/health
 | `proxy.maxConnections` | Max concurrent connections | `1000` |
 | `proxy.logging.level` | Log level | `info` |
 | `proxy.logging.format` | Log format (`text` or `json`) | `json` |
+| `proxy.securityAnalysis.*` | ML detector, model cache, and threshold tuning | see `values.yaml` |
+| `proxy.enforcement.*` | Pre-request enforcement policy | see `values.yaml` |
+| `proxy.streamingAnalysis.*` | Incremental streaming analysis | see `values.yaml` |
+| `proxy.outputSafety.*` | Output toxicity and hallucination controls | see `values.yaml` |
+| `proxy.boundaryDefense.*` | Boundary token defense controls | see `values.yaml` |
+| `proxy.shutdown.timeoutSeconds` | Graceful shutdown budget | `30` |
+| `proxy.modelCache.*` | Persistent model cache PVC + init container | see `values.yaml` |
+| `proxy.extraConfig` | Raw YAML appended to `config.yaml` | `""` |
 
 ### Service & Networking
 
@@ -137,6 +159,14 @@ curl http://localhost:8080/health
 | `autoscaling.maxReplicas` | Maximum replicas | `10` |
 | `autoscaling.targetCPUUtilizationPercentage` | CPU target | `70` |
 | `autoscaling.targetMemoryUtilizationPercentage` | Memory target | `80` |
+
+### Monitoring
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `monitoring.enabled` | Master toggle for monitoring resources | `false` |
+| `monitoring.serviceMonitor.enabled` | Create `ServiceMonitor` for `/metrics` | `false` |
+| `monitoring.prometheusRule.enabled` | Create alerting rules | `false` |
 
 ### Secrets
 
