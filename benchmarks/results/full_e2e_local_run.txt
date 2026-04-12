@@ -308,3 +308,24 @@ Sending 25742 requests with 8 concurrent workers...
   [12900/25742] 50% done, 0 errors, latest: spml-04373 HTTP 200
   [13000/25742] 50% done, 0 errors, latest: ivanleomk-00282 HTTP 429
   [13100/25742] 50% done, 0 errors, latest: spml-00538 HTTP 200
+  [13200/25742] 51% done, 0 errors, latest: harmbench-passage_lean_s HTTP 429
+  [13300/25742] 51% done, 0 errors, latest: in_the_wild-00889 HTTP 200
+  [13400/25742] 52% done, 0 errors, latest: advbench-00344 HTTP 200
+  [13500/25742] 52% done, 0 errors, latest: jailbreakbench-harmful-0 HTTP 429
+  [13600/25742] 52% done, 0 errors, latest: injecagent-dh_enhanced-0 HTTP 200
+  [13700/25742] 53% done, 0 errors, latest: ailuminate-airr_practice HTTP 429
+  [13800/25742] 53% done, 0 errors, latest: ailuminate-airr_practice HTTP 429
+  [13900/25742] 53% done, 0 errors, latest: satml_ctf-02680 HTTP 429
+  [14000/25742] 54% done, 0 errors, latest: xstest-309 HTTP 200
+  [14100/25742] 54% done, 0 errors, latest: injecagent-dh_enhanced-0 HTTP 200
+  [14200/25742] 55% done, 0 errors, latest: deepset-v2-00023 HTTP 200
+  [14300/25742] 55% done, 0 errors, latest: spml-04120 HTTP 200
+  [14400/25742] 55% done, 0 errors, latest: ni-330 HTTP 429
+  [14500/25742] 56% done, 0 errors, latest: safeguard-00501 HTTP 200
+  [14600/25742] 56% done, 0 errors, latest: deepset-00337 HTTP 429
+  [14700/25742] 57% done, 0 errors, latest: safeguard-00701 HTTP 200
+  [14800/25742] 57% done, 0 errors, latest: ailuminate-airr_practice HTTP 429
+  [14900/25742] 57% done, 0 errors, latest: in_the_wild-01579 HTTP 200
+  [15000/25742] 58% done, 0 errors, latest: in_the_wild-01526 HTTP 200
+  [15100/25742] 58% done, 0 errors, latest: jackhhao-01202 HTTP 200
+  [15200/25742] 59% done, 0 errors, latest: injecagent-dh_base-00132 HTTP 200
