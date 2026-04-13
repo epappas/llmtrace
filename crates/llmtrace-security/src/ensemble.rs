@@ -8,9 +8,11 @@
 //!
 //! This module is only available when the `ml` feature is enabled.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use llmtrace_core::{
     AnalysisContext, LLMTraceError, Result, SecurityAnalyzer, SecurityFinding, SecuritySeverity,
@@ -71,12 +73,26 @@ pub struct EnsembleSecurityAnalyzer {
     /// ML confidence threshold for the fusion path (legacy — prefer `thresholds`).
     fusion_threshold: f64,
     /// Per-category resolved thresholds based on the active operating point.
-    thresholds: ResolvedThresholds,
-    /// Whether over-defence suppression logic is enabled.
+    ///
+    /// Wrapped in `Arc<ArcSwap<_>>` so the admin API can swap in a new
+    /// `ResolvedThresholds` at runtime when `operating_point` is toggled,
+    /// without reconstructing the ensemble (issue #42).
+    thresholds: Arc<ArcSwap<ResolvedThresholds>>,
+    /// Runtime gate for the ML analyzer's contribution to voting.
+    ///
+    /// When `false`, the voting path skips ML inference even if the model
+    /// is loaded. Shared across requests via `Arc<AtomicBool>` and
+    /// toggled by the feature-flag admin API (issue #42).
+    ml_enabled: Arc<AtomicBool>,
+    /// Runtime gate for InjecGuard's contribution to voting.
+    injecguard_enabled: Arc<AtomicBool>,
+    /// Runtime gate for PIGuard's contribution to voting.
+    piguard_enabled: Arc<AtomicBool>,
+    /// Runtime gate for over-defence suppression logic.
     ///
     /// When `true`, the analyzer applies heuristics to suppress findings
     /// that are likely false positives (e.g. security research terminology).
-    over_defence_enabled: bool,
+    over_defence_enabled: Arc<AtomicBool>,
     /// Whether to permit security research terminology without triggering.
     ///
     /// When `true`, terms like "prompt injection", "jailbreak", etc. used in
@@ -84,6 +100,112 @@ pub struct EnsembleSecurityAnalyzer {
     allow_security_research: bool,
     /// Lightweight tracker for recent detection rates.
     fp_tracker: FalsePositiveTracker,
+}
+
+/// Runtime handle for toggling ensemble feature flags from outside the
+/// crate without holding a direct reference to the `EnsembleSecurityAnalyzer`
+/// trait object.
+///
+/// Obtained via [`EnsembleSecurityAnalyzer::runtime_handle`]. All setters
+/// are lock-free atomic stores; the proxy's feature-flag admin API uses
+/// this to implement `PUT /api/v1/config/features/:feature` without
+/// downcasting through `Arc<dyn SecurityAnalyzer>` (issue #42).
+///
+/// Use [`EnsembleRuntimeHandle::inert`] on code paths that do not build
+/// an actual ensemble (e.g. the regex-only fallback path when ML fails to
+/// load). The inert handle owns fresh standalone atomics so flag writes
+/// still succeed, but no analyzer reads them — matching the "store-only"
+/// semantics documented for `llm_judge_enabled` in issue #42.
+#[derive(Clone)]
+pub struct EnsembleRuntimeHandle {
+    ml_enabled: Arc<AtomicBool>,
+    injecguard_enabled: Arc<AtomicBool>,
+    piguard_enabled: Arc<AtomicBool>,
+    over_defence_enabled: Arc<AtomicBool>,
+    thresholds: Arc<ArcSwap<ResolvedThresholds>>,
+    jailbreak_enabled: Arc<AtomicBool>,
+}
+
+impl EnsembleRuntimeHandle {
+    /// Construct an inert handle for code paths that do not build an
+    /// actual ensemble. All setters still succeed (writing to standalone
+    /// atomics), but nothing reads them.
+    #[must_use]
+    pub fn inert() -> Self {
+        Self {
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            jailbreak_enabled: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn set_ml(&self, enabled: bool) {
+        self.ml_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_injecguard(&self, enabled: bool) {
+        self.injecguard_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_piguard(&self, enabled: bool) {
+        self.piguard_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_over_defence(&self, enabled: bool) {
+        self.over_defence_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_jailbreak(&self, enabled: bool) {
+        self.jailbreak_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_operating_point(&self, point: OperatingPoint) {
+        self.thresholds
+            .store(Arc::new(ResolvedThresholds::from_operating_point(
+                &point, None,
+            )));
+    }
+
+    /// Returns the shared jailbreak flag. Used by the proxy to construct
+    /// a second `RegexSecurityAnalyzer` (the standalone `fast_analyzer`)
+    /// that reads the same atomic as the ensemble's inner regex.
+    #[must_use]
+    pub fn jailbreak_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.jailbreak_enabled)
+    }
+
+    /// Read the live ml-enabled state. Test helper.
+    #[must_use]
+    pub fn ml(&self) -> bool {
+        self.ml_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Read the live injecguard-enabled state. Test helper.
+    #[must_use]
+    pub fn injecguard(&self) -> bool {
+        self.injecguard_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Read the live piguard-enabled state. Test helper.
+    #[must_use]
+    pub fn piguard(&self) -> bool {
+        self.piguard_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Read the live over-defence state. Test helper.
+    #[must_use]
+    pub fn over_defence(&self) -> bool {
+        self.over_defence_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Read the live jailbreak-enabled state. Test helper.
+    #[must_use]
+    pub fn jailbreak(&self) -> bool {
+        self.jailbreak_enabled.load(Ordering::Relaxed)
+    }
 }
 
 impl EnsembleSecurityAnalyzer {
@@ -107,8 +229,11 @@ impl EnsembleSecurityAnalyzer {
             piguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         })
@@ -140,8 +265,11 @@ impl EnsembleSecurityAnalyzer {
             piguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         })
@@ -186,8 +314,11 @@ impl EnsembleSecurityAnalyzer {
             piguard: None,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         })
@@ -241,8 +372,11 @@ impl EnsembleSecurityAnalyzer {
             piguard,
             fusion_classifier: None,
             fusion_threshold: ml_config.threshold,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         })
@@ -324,8 +458,11 @@ impl EnsembleSecurityAnalyzer {
             piguard: None,
             fusion_classifier,
             fusion_threshold: ml_config.threshold,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         })
@@ -345,17 +482,21 @@ impl EnsembleSecurityAnalyzer {
             piguard: None,
             fusion_classifier: None,
             fusion_threshold: 0.8,
-            thresholds: ResolvedThresholds::default(),
-            over_defence_enabled: false,
+            thresholds: Arc::new(ArcSwap::from_pointee(ResolvedThresholds::default())),
+            ml_enabled: Arc::new(AtomicBool::new(true)),
+            injecguard_enabled: Arc::new(AtomicBool::new(true)),
+            piguard_enabled: Arc::new(AtomicBool::new(true)),
+            over_defence_enabled: Arc::new(AtomicBool::new(false)),
             allow_security_research: false,
             fp_tracker: FalsePositiveTracker::default(),
         }
     }
 
-    /// Returns `true` if the ML model is loaded and contributing to the ensemble.
+    /// Returns `true` if the ML model is loaded and the runtime toggle
+    /// permits its contribution to the ensemble.
     #[must_use]
     pub fn is_ml_active(&self) -> bool {
-        self.ml.is_model_loaded()
+        self.ml_active()
     }
 
     /// Returns `true` if the NER model is loaded and contributing PII findings.
@@ -364,16 +505,18 @@ impl EnsembleSecurityAnalyzer {
         self.ner.is_some()
     }
 
-    /// Returns `true` if the InjecGuard model is loaded and contributing to voting.
+    /// Returns `true` if the InjecGuard model is loaded AND the runtime
+    /// toggle permits its contribution to voting.
     #[must_use]
     pub fn is_injecguard_active(&self) -> bool {
-        self.injecguard.is_some()
+        self.injecguard_active()
     }
 
-    /// Returns `true` if the PIGuard model is loaded and contributing to voting.
+    /// Returns `true` if the PIGuard model is loaded AND the runtime
+    /// toggle permits its contribution to voting.
     #[must_use]
     pub fn is_piguard_active(&self) -> bool {
-        self.piguard.is_some()
+        self.piguard_active()
     }
 
     /// Returns `true` if feature-level fusion is active (ADR-013).
@@ -385,7 +528,7 @@ impl EnsembleSecurityAnalyzer {
     /// Returns `true` if over-defence suppression is enabled.
     #[must_use]
     pub fn is_over_defence_enabled(&self) -> bool {
-        self.over_defence_enabled
+        self.over_defence_enabled.load(Ordering::Relaxed)
     }
 
     /// Returns `true` if security research terminology is permitted.
@@ -394,10 +537,13 @@ impl EnsembleSecurityAnalyzer {
         self.allow_security_research
     }
 
-    /// Returns a reference to the current resolved thresholds.
+    /// Returns a snapshot of the current resolved thresholds.
+    ///
+    /// Returned as an owned `Arc` because the backing `ArcSwap` is lock-free
+    /// and can be swapped at runtime by the feature-flag admin API.
     #[must_use]
-    pub fn thresholds(&self) -> &ResolvedThresholds {
-        &self.thresholds
+    pub fn thresholds(&self) -> Arc<ResolvedThresholds> {
+        self.thresholds.load_full()
     }
 
     /// Returns a mutable reference to the false-positive tracker.
@@ -408,11 +554,24 @@ impl EnsembleSecurityAnalyzer {
     /// Set the operating point, re-resolving all per-category thresholds.
     ///
     /// This replaces the current thresholds with the defaults for the given
-    /// operating point.
+    /// operating point. The swap goes through the `ArcSwap` so runtime
+    /// toggles via the feature-flag API and construction-time builders use
+    /// the same mechanism.
     #[must_use]
-    pub fn with_operating_point(mut self, point: OperatingPoint) -> Self {
-        self.thresholds = ResolvedThresholds::from_operating_point(&point, None);
+    pub fn with_operating_point(self, point: OperatingPoint) -> Self {
+        self.set_operating_point(point);
         self
+    }
+
+    /// Runtime-friendly setter for the operating point.
+    ///
+    /// Used by [`EnsembleRuntimeHandle::set_operating_point`] when the admin
+    /// feature-flag API toggles the flag. Lock-free atomic swap.
+    pub fn set_operating_point(&self, point: OperatingPoint) {
+        self.thresholds
+            .store(Arc::new(ResolvedThresholds::from_operating_point(
+                &point, None,
+            )));
     }
 
     /// Override a single per-category threshold by name.
@@ -421,8 +580,10 @@ impl EnsembleSecurityAnalyzer {
     /// `"toxicity"`, `"data_leakage"`.  Unknown categories are silently
     /// ignored.
     #[must_use]
-    pub fn with_threshold_override(mut self, category: &str, threshold: f64) -> Self {
-        self.thresholds.apply_single_override(category, threshold);
+    pub fn with_threshold_override(self, category: &str, threshold: f64) -> Self {
+        let mut next = (**self.thresholds.load()).clone();
+        next.apply_single_override(category, threshold);
+        self.thresholds.store(Arc::new(next));
         self
     }
 
@@ -432,8 +593,8 @@ impl EnsembleSecurityAnalyzer {
     /// that are likely false positives (e.g. benign educational content
     /// discussing security topics).
     #[must_use]
-    pub fn with_over_defence(mut self, enabled: bool) -> Self {
-        self.over_defence_enabled = enabled;
+    pub fn with_over_defence(self, enabled: bool) -> Self {
+        self.over_defence_enabled.store(enabled, Ordering::Relaxed);
         self
     }
 
@@ -447,25 +608,43 @@ impl EnsembleSecurityAnalyzer {
         self
     }
 
+    /// Returns a cloned runtime handle that lets external callers (e.g. the
+    /// proxy's feature-flag admin API) flip the ensemble's analyzer toggles
+    /// and operating point at runtime without holding a direct reference to
+    /// the `EnsembleSecurityAnalyzer` trait object (issue #42).
+    #[must_use]
+    pub fn runtime_handle(&self) -> EnsembleRuntimeHandle {
+        EnsembleRuntimeHandle {
+            ml_enabled: Arc::clone(&self.ml_enabled),
+            injecguard_enabled: Arc::clone(&self.injecguard_enabled),
+            piguard_enabled: Arc::clone(&self.piguard_enabled),
+            over_defence_enabled: Arc::clone(&self.over_defence_enabled),
+            thresholds: Arc::clone(&self.thresholds),
+            jailbreak_enabled: self.regex.jailbreak_flag(),
+        }
+    }
+
     /// Apply FPR-calibrated thresholds from a [`CalibrationReport`] (IS-006).
     ///
     /// Overwrites per-category thresholds with the values calibrated for the
     /// specified FPR target. Categories not present in the report retain
     /// their current values.
     #[must_use]
-    pub fn with_fpr_calibration(mut self, report: &CalibrationReport, target: &FprTarget) -> Self {
-        self.thresholds = report.to_resolved_thresholds(target, &self.thresholds);
+    pub fn with_fpr_calibration(self, report: &CalibrationReport, target: &FprTarget) -> Self {
+        let current = self.thresholds.load_full();
+        let next = report.to_resolved_thresholds(target, &current);
+        self.thresholds.store(Arc::new(next));
         self
     }
 
     /// Filter findings that fall below the resolved threshold for their type.
     fn filter_by_thresholds(&self, findings: Vec<SecurityFinding>) -> Vec<SecurityFinding> {
+        let thresholds = self.thresholds.load();
         let before = findings.len();
         let kept: Vec<SecurityFinding> = findings
             .into_iter()
             .filter(|f| {
-                let dominated = self
-                    .thresholds
+                let dominated = thresholds
                     .threshold_for_finding_type(&f.finding_type)
                     .is_some_and(|t| f.confidence_score < t);
                 if dominated {
@@ -493,7 +672,7 @@ impl EnsembleSecurityAnalyzer {
     /// corroboration exists. Non-injection findings (PII, toxicity, etc.) pass
     /// through unconditionally.
     fn apply_over_defence(&self, findings: Vec<SecurityFinding>) -> Vec<SecurityFinding> {
-        if !self.over_defence_enabled {
+        if !self.over_defence_enabled.load(Ordering::Relaxed) {
             return findings;
         }
         // With 3+ ballots (IG/PG active), majority voting handles FP control
@@ -540,7 +719,7 @@ impl EnsembleSecurityAnalyzer {
         findings: &mut Vec<SecurityFinding>,
         context: &AnalysisContext,
     ) {
-        if findings.iter().any(is_injection_finding) || !self.ml.is_model_loaded() {
+        if findings.iter().any(is_injection_finding) || !self.ml_active() {
             return;
         }
         for payload in crate::encoding::try_decode_evasions(text) {
@@ -558,13 +737,16 @@ impl EnsembleSecurityAnalyzer {
 
     /// Spawn InjecGuard inference on the tokio blocking pool.
     ///
-    /// Returns `None` when InjecGuard is not loaded. The returned handle
-    /// yields `(Result<findings>, latency_ms)`.
+    /// Returns `None` when InjecGuard is not loaded OR the runtime toggle
+    /// disables it. The returned handle yields `(Result<findings>, latency_ms)`.
     fn spawn_injecguard(
         &self,
         text: &str,
         location: &'static str,
     ) -> Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>> {
+        if !self.injecguard_enabled.load(Ordering::Relaxed) {
+            return None;
+        }
         self.injecguard.as_ref().map(|ig| {
             let ig = Arc::clone(ig);
             let text = text.to_string();
@@ -577,11 +759,17 @@ impl EnsembleSecurityAnalyzer {
     }
 
     /// Spawn PIGuard inference on the tokio blocking pool.
+    ///
+    /// Returns `None` when PIGuard is not loaded OR the runtime toggle
+    /// disables it.
     fn spawn_piguard(
         &self,
         text: &str,
         location: &'static str,
     ) -> Option<tokio::task::JoinHandle<(Result<Vec<SecurityFinding>>, u64)>> {
+        if !self.piguard_enabled.load(Ordering::Relaxed) {
+            return None;
+        }
         self.piguard.as_ref().map(|pg| {
             let pg = Arc::clone(pg);
             let text = text.to_string();
@@ -591,6 +779,26 @@ impl EnsembleSecurityAnalyzer {
                 (findings, start.elapsed().as_millis() as u64)
             })
         })
+    }
+
+    /// Returns `true` if the ML model is loaded AND the runtime toggle
+    /// permits it (issue #42).
+    #[inline]
+    fn ml_active(&self) -> bool {
+        self.ml_enabled.load(Ordering::Relaxed) && self.ml.is_model_loaded()
+    }
+
+    /// Returns `true` if InjecGuard is loaded AND the runtime toggle
+    /// permits it.
+    #[inline]
+    fn injecguard_active(&self) -> bool {
+        self.injecguard_enabled.load(Ordering::Relaxed) && self.injecguard.is_some()
+    }
+
+    /// Returns `true` if PIGuard is loaded AND the runtime toggle permits it.
+    #[inline]
+    fn piguard_active(&self) -> bool {
+        self.piguard_enabled.load(Ordering::Relaxed) && self.piguard.is_some()
     }
 
     /// Build ballots, await InjecGuard/PIGuard, log diagnostics, and run majority voting.
@@ -715,7 +923,7 @@ impl EnsembleSecurityAnalyzer {
         // Add fusion injection finding if above threshold.
         // Prefer the per-category injection threshold; fall back to the legacy
         // fusion_threshold for backward compatibility (use whichever is higher).
-        let effective_threshold = self.thresholds.injection.max(self.fusion_threshold);
+        let effective_threshold = self.thresholds.load().injection.max(self.fusion_threshold);
         if injection_score >= effective_threshold {
             let severity = if injection_score >= 0.95 {
                 SecuritySeverity::Critical
@@ -784,16 +992,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         let regex_ms = regex_start.elapsed().as_millis() as u64;
 
         let has_ml_detectors =
-            self.ml.is_model_loaded() || self.injecguard.is_some() || self.piguard.is_some();
+            self.ml_active() || self.injecguard_active() || self.piguard_active();
 
-        let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
+        let mut combined = if self.fusion_classifier.is_some() && self.ml_active() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(prompt, &regex_findings, "request.prompt")?
         } else if has_ml_detectors {
             // Majority voting path (ML-006 / ML-004)
             let ig_handle = self.spawn_injecguard(prompt, "request.prompt");
             let pg_handle = self.spawn_piguard(prompt, "request.prompt");
-            let ml_result = if self.ml.is_model_loaded() {
+            let ml_result = if self.ml_active() {
                 let ml_start = Instant::now();
                 match self.ml.analyze_request(prompt, context).await {
                     Ok(ml_findings) => Some((ml_findings, ml_start.elapsed().as_millis() as u64)),
@@ -845,16 +1053,16 @@ impl SecurityAnalyzer for EnsembleSecurityAnalyzer {
         let regex_ms = regex_start.elapsed().as_millis() as u64;
 
         let has_ml_detectors =
-            self.ml.is_model_loaded() || self.injecguard.is_some() || self.piguard.is_some();
+            self.ml_active() || self.injecguard_active() || self.piguard_active();
 
-        let mut combined = if self.fusion_classifier.is_some() && self.ml.is_model_loaded() {
+        let mut combined = if self.fusion_classifier.is_some() && self.ml_active() {
             // Feature-level fusion path (ADR-013)
             self.analyze_with_fusion(response, &regex_findings, "response.content")?
         } else if has_ml_detectors {
             // Majority voting path (ML-006 / ML-004)
             let ig_handle = self.spawn_injecguard(response, "response.content");
             let pg_handle = self.spawn_piguard(response, "response.content");
-            let ml_result = if self.ml.is_model_loaded() {
+            let ml_result = if self.ml_active() {
                 let ml_start = Instant::now();
                 match self.ml.analyze_response(response, context).await {
                     Ok(ml_findings) => Some((ml_findings, ml_start.elapsed().as_millis() as u64)),
@@ -1910,6 +2118,87 @@ mod tests {
         tracker.record(false);
         assert_eq!(tracker.total_in_window(), 2);
         assert_eq!(tracker.flagged_in_window(), 1);
+    }
+
+    // -- Runtime handle (issue #42) ---------------------------------------
+
+    #[test]
+    fn test_runtime_handle_default_values() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let rh = ensemble.runtime_handle();
+        assert!(rh.ml());
+        assert!(rh.injecguard());
+        assert!(rh.piguard());
+        assert!(!rh.over_defence());
+        assert!(rh.jailbreak());
+    }
+
+    #[test]
+    fn test_runtime_handle_set_ml_is_observed_by_is_ml_active() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        // regex_only() uses a fallback ML analyzer that never reports loaded,
+        // so is_ml_active() is always false. We assert the toggle still
+        // round-trips through the handle so the proxy API can observe it.
+        let rh = ensemble.runtime_handle();
+        rh.set_ml(false);
+        assert!(!rh.ml());
+        rh.set_ml(true);
+        assert!(rh.ml());
+    }
+
+    #[test]
+    fn test_runtime_handle_set_over_defence_toggles_is_over_defence_enabled() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        assert!(!ensemble.is_over_defence_enabled());
+
+        let rh = ensemble.runtime_handle();
+        rh.set_over_defence(true);
+        assert!(ensemble.is_over_defence_enabled());
+
+        rh.set_over_defence(false);
+        assert!(!ensemble.is_over_defence_enabled());
+    }
+
+    #[test]
+    fn test_runtime_handle_set_operating_point_updates_live_thresholds() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let t_initial = ensemble.thresholds();
+        assert!((t_initial.injection - 0.75).abs() < f64::EPSILON);
+
+        let rh = ensemble.runtime_handle();
+        rh.set_operating_point(OperatingPoint::HighPrecision);
+        let t_hp = ensemble.thresholds();
+        assert!((t_hp.injection - 0.90).abs() < f64::EPSILON);
+
+        rh.set_operating_point(OperatingPoint::HighRecall);
+        let t_hr = ensemble.thresholds();
+        assert!((t_hr.injection - 0.50).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_runtime_handle_jailbreak_is_shared_with_inner_regex() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let rh = ensemble.runtime_handle();
+        // The handle's jailbreak_flag() Arc must point at the same atomic
+        // the ensemble's inner RegexSecurityAnalyzer reads on every request.
+        let inner_flag = ensemble.regex.jailbreak_flag();
+        assert!(Arc::ptr_eq(&inner_flag, &rh.jailbreak_flag()));
+
+        rh.set_jailbreak(false);
+        assert!(!rh.jailbreak());
+        assert!(!inner_flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_inert_runtime_handle_isolated_from_ensemble() {
+        let ensemble = EnsembleSecurityAnalyzer::regex_only();
+        let real = ensemble.runtime_handle();
+        let inert = EnsembleRuntimeHandle::inert();
+
+        inert.set_ml(false);
+        // The inert handle's flag is a standalone Arc, so the real
+        // ensemble must not observe the store.
+        assert!(real.ml());
     }
 
     // -- FPR calibration integration (IS-006) -----------------------------

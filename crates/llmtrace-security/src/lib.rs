@@ -107,7 +107,7 @@ pub mod thresholds;
 pub mod toxicity_detector;
 
 #[cfg(feature = "ml")]
-pub use ensemble::EnsembleSecurityAnalyzer;
+pub use ensemble::{EnsembleRuntimeHandle, EnsembleSecurityAnalyzer};
 #[cfg(feature = "ml")]
 pub use feature_extraction::{extract_heuristic_features, HEURISTIC_FEATURE_DIM};
 #[cfg(feature = "ml")]
@@ -403,6 +403,11 @@ pub struct RegexSecurityAnalyzer {
     base64_candidate_regex: Regex,
     /// Dedicated jailbreak detector (runs alongside injection detection)
     jailbreak_detector: JailbreakDetector,
+    /// Runtime toggle for jailbreak detection, shared with the ensemble's
+    /// regex analyzer and the proxy's `fast_analyzer` via `Arc`. The admin
+    /// feature-flag API flips this atomic to turn jailbreak detection on
+    /// or off at runtime (issue #42).
+    jailbreak_enabled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Synonym-expanded injection patterns (matched against stemmed text)
     synonym_patterns: Vec<DetectionPattern>,
     /// P2SQL injection detection patterns
@@ -414,11 +419,40 @@ pub struct RegexSecurityAnalyzer {
 impl RegexSecurityAnalyzer {
     /// Create a new regex-based security analyzer with all detection patterns compiled.
     ///
+    /// The returned instance owns a fresh `jailbreak_enabled` atomic initialised
+    /// to `true`. Callers that need to share the toggle with another analyzer
+    /// (e.g. an ensemble's inner regex and a standalone `fast_analyzer`) should
+    /// clone the flag via [`RegexSecurityAnalyzer::jailbreak_flag`] and pass it
+    /// to a second instance via [`RegexSecurityAnalyzer::new_with_jailbreak_flag`].
+    ///
     /// # Errors
     ///
     /// Returns an error if any regex pattern fails to compile.
     pub fn new() -> Result<Self> {
         Self::with_jailbreak_config(JailbreakConfig::default())
+    }
+
+    /// Create a new regex-based security analyzer that reads its jailbreak
+    /// toggle from a caller-supplied atomic. Used by the proxy to share one
+    /// flag between the ensemble's inner regex analyzer and the standalone
+    /// fast-path analyzer so that runtime toggles affect both (issue #42).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any regex pattern fails to compile.
+    pub fn new_with_jailbreak_flag(
+        flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<Self> {
+        let mut analyzer = Self::with_jailbreak_config(JailbreakConfig::default())?;
+        analyzer.jailbreak_enabled = flag;
+        Ok(analyzer)
+    }
+
+    /// Returns a clone of the `Arc` guarding jailbreak detection. Callers can
+    /// use this to wire a second `RegexSecurityAnalyzer` to the same runtime
+    /// toggle.
+    pub fn jailbreak_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.jailbreak_enabled)
     }
 
     /// Create a new regex-based security analyzer with custom jailbreak configuration.
@@ -446,6 +480,7 @@ impl RegexSecurityAnalyzer {
             leakage_patterns,
             base64_candidate_regex,
             jailbreak_detector,
+            jailbreak_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             synonym_patterns,
             p2sql_patterns,
             header_patterns,
@@ -2188,9 +2223,15 @@ impl SecurityAnalyzer for RegexSecurityAnalyzer {
         findings.extend(self.detect_context_flooding(&normalised));
 
         // Dedicated jailbreak detection (runs alongside injection detection —
-        // a text can be BOTH a prompt injection AND a jailbreak attempt)
-        let jailbreak_result = self.jailbreak_detector.detect(&normalised);
-        findings.extend(jailbreak_result.findings);
+        // a text can be BOTH a prompt injection AND a jailbreak attempt).
+        // Runtime-gated via `jailbreak_enabled` (issue #42).
+        if self
+            .jailbreak_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            let jailbreak_result = self.jailbreak_detector.detect(&normalised);
+            findings.extend(jailbreak_result.findings);
+        }
 
         // Tag all request findings with their location
         for finding in &mut findings {

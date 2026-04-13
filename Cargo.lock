@@ -2470,6 +2470,7 @@ dependencies = [
 name = "llmtrace-security"
 version = "0.1.5"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "base64 0.22.1",
  "candle-core",
