@@ -1086,6 +1086,14 @@ pub struct ProxyConfig {
     /// Action router / orchestrator configuration.
     #[serde(default)]
     pub action_router: ActionRouterConfig,
+    /// Runtime-toggleable flag for the LLM Judge analysis tier (#43).
+    ///
+    /// Store-only placeholder: the backend does not yet exist, so this
+    /// flag round-trips through the runtime config and the feature-flags
+    /// API but does not gate any behavior. Issue #43 will wire it to the
+    /// real judge pipeline.
+    #[serde(default)]
+    pub llm_judge_enabled: bool,
 }
 
 impl Default for ProxyConfig {
@@ -1126,6 +1134,7 @@ impl Default for ProxyConfig {
             shutdown: ShutdownConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
             action_router: ActionRouterConfig::default(),
+            llm_judge_enabled: false,
         }
     }
 }
