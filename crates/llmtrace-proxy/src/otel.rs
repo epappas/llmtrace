@@ -663,18 +663,17 @@ pub async fn ingest_traces(
     }
 
     // Read body bytes
-    let body_bytes =
-        match axum::body::to_bytes(body, cfg.max_request_size_bytes as usize).await {
-            Ok(b) => b,
-            Err(e) => {
-                warn!("OTEL ingest: failed to read body: {e}");
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": "Failed to read request body"})),
-                )
-                    .into_response();
-            }
-        };
+    let body_bytes = match axum::body::to_bytes(body, cfg.max_request_size_bytes as usize).await {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("OTEL ingest: failed to read body: {e}");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Failed to read request body"})),
+            )
+                .into_response();
+        }
+    };
 
     // Determine content type
     let content_type = headers

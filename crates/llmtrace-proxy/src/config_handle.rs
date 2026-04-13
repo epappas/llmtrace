@@ -111,7 +111,10 @@ mod tests {
     fn load_returns_current_value() {
         let handle = ConfigHandle::new(test_config(), None, None);
         let snap = handle.load();
-        assert_eq!(snap.max_request_size_bytes, test_config().max_request_size_bytes);
+        assert_eq!(
+            snap.max_request_size_bytes,
+            test_config().max_request_size_bytes
+        );
     }
 
     #[test]

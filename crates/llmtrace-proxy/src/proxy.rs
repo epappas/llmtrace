@@ -383,18 +383,14 @@ pub async fn proxy_handler(
     );
 
     // Read the request body
-    let body_bytes = match axum::body::to_bytes(
-        req.into_body(),
-        cfg.max_request_size_bytes as usize,
-    )
-    .await
-    {
-        Ok(b) => b,
-        Err(e) => {
-            warn!(%trace_id, "Failed to read request body: {}", e);
-            return error_response(StatusCode::BAD_REQUEST, "Failed to read request body");
-        }
-    };
+    let body_bytes =
+        match axum::body::to_bytes(req.into_body(), cfg.max_request_size_bytes as usize).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(%trace_id, "Failed to read request body: {}", e);
+                return error_response(StatusCode::BAD_REQUEST, "Failed to read request body");
+            }
+        };
 
     // Parse LLM metadata from the body (best-effort — don't fail if parse fails)
     let llm_body: Option<LLMRequestBody> = serde_json::from_slice(&body_bytes).ok();
@@ -684,10 +680,7 @@ pub async fn proxy_handler(
         // Respect monitoring_scope: disable if InputOnly.
         let mut output_monitor =
             if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
-                StreamingOutputMonitor::new(
-                    &cfg_bg.streaming_analysis,
-                    &cfg_bg.output_safety,
-                )
+                StreamingOutputMonitor::new(&cfg_bg.streaming_analysis, &cfg_bg.output_safety)
             } else {
                 None
             };
