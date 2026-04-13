@@ -2366,6 +2366,7 @@ name = "llmtrace"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-stream",
  "async-trait",
  "axum 0.7.9",

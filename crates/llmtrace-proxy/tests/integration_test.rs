@@ -71,7 +71,7 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
     );
 
     let state = Arc::new(AppState {
-        config,
+        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
         client,
         storage,
         security,

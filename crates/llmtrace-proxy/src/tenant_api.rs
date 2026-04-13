@@ -652,7 +652,7 @@ mod tests {
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),

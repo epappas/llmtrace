@@ -6,6 +6,7 @@
 
 use crate::action_router::ActionRouter;
 use crate::circuit_breaker::CircuitBreaker;
+use crate::config_handle::ConfigHandle;
 use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
 use crate::streaming::{StreamingAccumulator, StreamingOutputMonitor, StreamingSecurityMonitor};
@@ -57,8 +58,13 @@ pub enum MlModelStatus {
 
 /// Shared state threaded through axum handlers via [`State`].
 pub struct AppState {
-    /// Proxy configuration.
-    pub config: ProxyConfig,
+    /// Runtime-mutable proxy configuration.
+    ///
+    /// Reads are lock-free via [`arc_swap::ArcSwap`]. Callers that need
+    /// the config across an `.await` must use `config_handle.snapshot()`
+    /// (an `Arc<ProxyConfig>`) instead of `load()` because the `Guard`
+    /// returned by `load()` is `!Send`.
+    pub config_handle: ConfigHandle,
     /// HTTP client for forwarding requests upstream.
     pub client: Client,
     /// Composite storage (traces, metadata, cache).
@@ -258,6 +264,9 @@ pub async fn proxy_handler(
     state.metrics.active_connections.inc();
     let start_time = Utc::now();
     let trace_id = Uuid::new_v4();
+    // Snapshot the live config for this request. `Arc<ProxyConfig>` is
+    // `Send + 'static`, so it can cross `await` points freely.
+    let cfg = state.config_handle.snapshot();
 
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -272,7 +281,7 @@ pub async fn proxy_handler(
     let tenant_id = match tenant_id_opt {
         Some(id) if !id.0.is_nil() => id,
         _ => {
-            if state.config.auth.enabled {
+            if cfg.auth.enabled {
                 // This shouldn't be reached if auth_middleware is working correctly
                 warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
                 return error_response(StatusCode::UNAUTHORIZED, "Authentication required");
@@ -284,7 +293,7 @@ pub async fn proxy_handler(
 
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);
-    let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
+    let detected_provider = provider::detect_provider(&headers, &cfg.upstream_url, &path);
 
     let source_ip = headers
         .get("x-forwarded-for")
@@ -313,7 +322,7 @@ pub async fn proxy_handler(
     // Auto-create tenant on first request (best-effort, non-blocking).
     // If auth is enabled, only create if we have an authenticated tenant.
     // If auth is disabled, we still auto-create the "Unknown" tenant.
-    if !state.config.auth.enabled || tenant_id_opt.is_some() {
+    if !cfg.auth.enabled || tenant_id_opt.is_some() {
         let state_ac = Arc::clone(&state);
         let name = if tenant_id_opt.is_some() {
             _api_key
@@ -376,7 +385,7 @@ pub async fn proxy_handler(
     // Read the request body
     let body_bytes = match axum::body::to_bytes(
         req.into_body(),
-        state.config.max_request_size_bytes as usize,
+        cfg.max_request_size_bytes as usize,
     )
     .await
     {
@@ -478,7 +487,7 @@ pub async fn proxy_handler(
 
     // --- Pre-request security enforcement ---
     let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
-    if state.config.enable_security_analysis {
+    if cfg.enable_security_analysis {
         let enf_context = AnalysisContext {
             tenant_id,
             trace_id,
@@ -490,7 +499,7 @@ pub async fn proxy_handler(
         let (mut decision, pre_findings) = crate::enforcement::run_enforcement(
             &analysis_text,
             &enf_context,
-            &state.config.enforcement,
+            &cfg.enforcement,
             &state.security,
             &state.fast_analyzer,
         )
@@ -530,15 +539,15 @@ pub async fn proxy_handler(
     // --- Boundary token injection defense ---
     let boundary_result = crate::boundary::apply_boundary_defense(
         &body_bytes,
-        &state.config.boundary_defense,
+        &cfg.boundary_defense,
         &detected_provider,
     );
-    let boundary_active = state.config.boundary_defense.enabled
-        && !state.config.boundary_defense.shadow_mode
+    let boundary_active = cfg.boundary_defense.enabled
+        && !cfg.boundary_defense.shadow_mode
         && boundary_result.messages_wrapped > 0;
 
     if boundary_result.messages_wrapped > 0 {
-        let mode = if state.config.boundary_defense.shadow_mode {
+        let mode = if cfg.boundary_defense.shadow_mode {
             "shadow"
         } else {
             "active"
@@ -558,12 +567,12 @@ pub async fn proxy_handler(
             boundary_result.messages_wrapped,
             boundary_result.reminder_injected,
             boundary_result.overhead_bytes,
-            state.config.boundary_defense.shadow_mode,
+            cfg.boundary_defense.shadow_mode,
         );
     }
 
     // Build the upstream request
-    let upstream_url = build_upstream_url(&state.config, &path, query.as_deref());
+    let upstream_url = build_upstream_url(&cfg, &path, query.as_deref());
 
     let mut upstream_req = state.client.request(
         reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::POST),
@@ -650,11 +659,14 @@ pub async fn proxy_handler(
         // Hold the task guard for the lifetime of this background task so the
         // shutdown coordinator knows when all in-flight work has drained.
         let _guard = task_guard;
+        // Snapshot the live config once for the entire background task so
+        // all reads are consistent with a single version of the config.
+        let cfg_bg = state_bg.config_handle.snapshot();
         // We'll decrement active_connections at the end of this task.
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
             Some(StreamingAccumulator::with_max_content_bytes(
-                state_bg.config.max_response_size_bytes as usize,
+                cfg_bg.max_response_size_bytes as usize,
             ))
         } else {
             None
@@ -664,7 +676,7 @@ pub async fn proxy_handler(
         // Respect monitoring_scope: disable if OutputOnly.
         let mut streaming_monitor =
             if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
-                StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
+                StreamingSecurityMonitor::new(&cfg_bg.streaming_analysis)
             } else {
                 None
             };
@@ -673,15 +685,15 @@ pub async fn proxy_handler(
         let mut output_monitor =
             if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
                 StreamingOutputMonitor::new(
-                    &state_bg.config.streaming_analysis,
-                    &state_bg.config.output_safety,
+                    &cfg_bg.streaming_analysis,
+                    &cfg_bg.output_safety,
                 )
             } else {
                 None
             };
         let mut raw_collected = Vec::new();
         let mut response_truncated = false;
-        let max_response_bytes = state_bg.config.max_response_size_bytes as usize;
+        let max_response_bytes = cfg_bg.max_response_size_bytes as usize;
         let mut ttft_ms: Option<u64> = None;
 
         while let Some(chunk) = stream.next().await {
@@ -852,7 +864,7 @@ pub async fn proxy_handler(
         };
 
         // Truncate analysis text to configured limit before security analysis
-        let max_analysis = state_bg.config.security_analysis.max_analysis_text_bytes;
+        let max_analysis = cfg_bg.security_analysis.max_analysis_text_bytes;
         let analysis_text_final = if analysis_text_bg.len() > max_analysis {
             warn!(
                 original_len = analysis_text_bg.len(),
@@ -1094,7 +1106,8 @@ async fn run_security_analysis(
     state: &Arc<AppState>,
     captured: &CapturedInteraction,
 ) -> Vec<SecurityFinding> {
-    if !state.config.enable_security_analysis {
+    let cfg = state.config_handle.snapshot();
+    if !cfg.enable_security_analysis {
         return Vec::new();
     }
     if !state.security_breaker.allow().await {
@@ -1112,7 +1125,7 @@ async fn run_security_analysis(
         parameters: std::collections::HashMap::new(),
     };
 
-    let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
+    let timeout = std::time::Duration::from_millis(cfg.security_analysis_timeout_ms);
 
     // Respect monitoring_scope: pass empty string for parts we shouldn't monitor
     let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
@@ -1169,7 +1182,7 @@ async fn run_security_analysis(
                 .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             warn!(
                 trace_id = %captured.trace_id,
-                timeout_ms = state.config.security_analysis_timeout_ms,
+                timeout_ms = cfg.security_analysis_timeout_ms,
                 "Security analysis timed out"
             );
             Vec::new()
@@ -1178,12 +1191,12 @@ async fn run_security_analysis(
 
     // --- Output safety analysis (R6) ---
     // Respect monitoring_scope: skip if InputOnly.
-    if state.config.output_safety.enabled
+    if cfg.output_safety.enabled
         && !captured.response_text.is_empty()
         && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly
     {
         let output_analyzer =
-            llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);
+            llmtrace_security::OutputAnalyzer::new_with_fallback(&cfg.output_safety);
         let result = output_analyzer.analyze_output(&captured.response_text);
         if !result.findings.is_empty() {
             info!(
@@ -1208,7 +1221,7 @@ async fn run_trace_capture(
     captured: &CapturedInteraction,
     security_findings: &[SecurityFinding],
 ) {
-    if !state.config.enable_trace_storage {
+    if !state.config_handle.load().enable_trace_storage {
         return;
     }
     if !state.storage_breaker.allow().await {

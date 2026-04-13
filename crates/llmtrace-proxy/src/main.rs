@@ -200,7 +200,7 @@ async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
     // Optionally start the gRPC ingestion gateway in a background task.
     // The gRPC server shares the same cancellation token so it drains
     // gracefully when a shutdown signal arrives.
-    if state.config.grpc.enabled {
+    if state.config_handle.load().grpc.enabled {
         let grpc_state = Arc::clone(&state);
         tokio::spawn(async move {
             if let Err(e) = llmtrace_proxy::run_grpc_server(grpc_state).await {
@@ -400,7 +400,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
     };
 
     Ok(Arc::new(AppState {
-        config,
+        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
         client,
         storage,
         security,

@@ -92,9 +92,11 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
+    let cfg = state.config_handle.snapshot();
+
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
-    if !state.config.auth.enabled {
+    if !cfg.auth.enabled {
         let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
         let ctx = AuthContext {
             tenant_id,
@@ -150,7 +152,7 @@ pub async fn auth_middleware(
 
     if let Some(token) = token {
         // Check bootstrap admin key first
-        if let Some(ref admin_key) = state.config.auth.admin_key {
+        if let Some(ref admin_key) = cfg.auth.admin_key {
             if token == admin_key.as_str() {
                 // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
                 let tenant_id = resolve_tenant_from_header(headers).unwrap_or_default();
@@ -698,7 +700,7 @@ mod tests {
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),

@@ -179,7 +179,7 @@ pub fn proto_to_trace_span(proto: &TraceSpanProto) -> Option<TraceSpan> {
 /// Same pattern as the OTEL ingestion endpoint — returns an empty vec when
 /// analysis is disabled or the circuit breaker is open.
 async fn analyze_span(state: &Arc<AppState>, span: &TraceSpan) -> Vec<SecurityFinding> {
-    if !state.config.enable_security_analysis {
+    if !state.config_handle.load().enable_security_analysis {
         return Vec::new();
     }
     if !state.security_breaker.allow().await {
@@ -390,7 +390,7 @@ pub fn build_grpc_server(
 ///
 /// Returns `Ok(())` when the server shuts down (e.g., via signal or error).
 pub async fn run_grpc_server(state: Arc<AppState>) -> anyhow::Result<()> {
-    let addr = state.config.grpc.listen_addr.parse()?;
+    let addr = state.config_handle.load().grpc.listen_addr.parse()?;
     let shutdown_token = state.shutdown.token();
     let service = build_grpc_server(state);
 
@@ -442,7 +442,7 @@ mod tests {
         let cost_estimator = CostEstimator::new(&config.cost_estimation);
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),

@@ -12,6 +12,7 @@ pub mod boundary;
 pub mod circuit_breaker;
 pub mod compliance;
 pub mod config;
+pub mod config_handle;
 pub mod cost;
 pub mod cost_caps;
 pub mod enforcement;

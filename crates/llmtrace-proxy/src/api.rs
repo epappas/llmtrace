@@ -940,8 +940,9 @@ pub async fn get_live_config(
     if let Some(err) = require_role_operator(&auth) {
         return err;
     }
+    let cfg = state.config_handle.snapshot();
     Json(LiveConfigResponse {
-        config: redacted_live_config(&state.config),
+        config: redacted_live_config(&cfg),
     })
     .into_response()
 }
@@ -988,7 +989,7 @@ mod tests {
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
@@ -1048,7 +1049,7 @@ mod tests {
             crate::cost_caps::CostTracker::new(&cost_cap_config, Arc::clone(&storage.cache));
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
