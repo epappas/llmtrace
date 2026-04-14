@@ -40,7 +40,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::config_handle::ConfigUpdateError;
-use crate::feature_flags::{apply_single, FeatureFlags, FeatureValue, ValidationError};
+use crate::feature_flags::{
+    apply_single, write_runtime_overlay, FeatureFlags, FeatureValue, ValidationError,
+};
 use crate::proxy::AppState;
 
 // ---------------------------------------------------------------------------
@@ -149,6 +151,83 @@ fn map_update_error(err: ConfigUpdateError) -> Response {
     }
 }
 
+/// Every field name exposed on [`FeatureFlags`]. Used to drive diff
+/// iteration when emitting audit events and metrics.
+const FEATURE_NAMES: &[&str] = &[
+    "analyzer_ml_enabled",
+    "analyzer_injecguard_enabled",
+    "analyzer_piguard_enabled",
+    "analyzer_jailbreak_enabled",
+    "enforcement_mode",
+    "boundary_defense_enabled",
+    "boundary_defense_shadow_mode",
+    "rate_limiting_enabled",
+    "cost_caps_enabled",
+    "operating_point",
+    "over_defence",
+    "llm_judge_enabled",
+];
+
+/// Emit one structured audit log line per changed field and bump the
+/// Prometheus counter labelled by feature name. Runs after the atomic
+/// swap + runtime-handle replay so the audit event reflects the
+/// already-observable new state.
+fn record_audit_and_metrics(
+    state: &AppState,
+    auth: &AuthContext,
+    prev: &FeatureFlags,
+    next: &FeatureFlags,
+) {
+    let actor = auth
+        .key_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "bootstrap-admin".to_string());
+    let actor_role = format!("{:?}", auth.role).to_lowercase();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    for name in FEATURE_NAMES {
+        let Some(prev_val) = extract_feature_value(prev, name) else {
+            continue;
+        };
+        let Some(next_val) = extract_feature_value(next, name) else {
+            continue;
+        };
+        if feature_values_equal(&prev_val, &next_val) {
+            continue;
+        }
+        state
+            .metrics
+            .feature_flag_updates_total
+            .with_label_values(&[name])
+            .inc();
+        tracing::info!(
+            event = "feature_flag_changed",
+            actor = %actor,
+            actor_role = %actor_role,
+            feature = %name,
+            old_value = %feature_value_display(&prev_val),
+            new_value = %feature_value_display(&next_val),
+            timestamp = %timestamp,
+            "runtime feature flag updated"
+        );
+    }
+}
+
+fn feature_values_equal(a: &FeatureValue, b: &FeatureValue) -> bool {
+    match (a, b) {
+        (FeatureValue::Bool(x), FeatureValue::Bool(y)) => x == y,
+        (FeatureValue::String(x), FeatureValue::String(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn feature_value_display(v: &FeatureValue) -> String {
+    match v {
+        FeatureValue::Bool(b) => b.to_string(),
+        FeatureValue::String(s) => s.clone(),
+    }
+}
+
 /// Diff `prev` against `next` and replay the changes on the ensemble's
 /// runtime handle so the security analyzer's atomic gates pick up the
 /// new state on the very next request.
@@ -216,6 +295,30 @@ fn collect_warnings(prev: &FeatureFlags, next: &FeatureFlags) -> Vec<String> {
         );
     }
     out
+}
+
+/// Persist the current feature-flag snapshot to the sidecar overlay
+/// file, if configured. Returns a warning string on failure so the API
+/// response can surface the problem without returning an HTTP error —
+/// FR-04 of issue #42 explicitly requires the in-memory change to
+/// still apply even when disk persistence fails.
+fn persist_overlay(state: &AppState, flags: &FeatureFlags) -> Option<String> {
+    let path = state.config_handle.persist_path()?;
+    match write_runtime_overlay(path, flags) {
+        Ok(()) => None,
+        Err(e) => {
+            state.metrics.config_persist_errors_total.inc();
+            tracing::error!(
+                event = "config_persist_failed",
+                path = %path.display(),
+                error = %e,
+                "Failed to persist runtime feature flag overlay"
+            );
+            Some(format!(
+                "runtime overlay persistence failed: {e}; change applied in memory only"
+            ))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +413,11 @@ pub async fn update_feature(
 
     let next_flags = FeatureFlags::from_config(&new_arc);
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    let warnings = collect_warnings(&prev_flags, &next_flags);
+    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags);
+    let mut warnings = collect_warnings(&prev_flags, &next_flags);
+    if let Some(msg) = persist_overlay(&state, &next_flags) {
+        warnings.push(msg);
+    }
 
     let resp = UpdateFeatureResponse {
         updated: feature.clone(),
@@ -363,7 +470,11 @@ pub async fn bulk_update_features(
 
     let next_flags = FeatureFlags::from_config(&new_arc);
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    let warnings = collect_warnings(&prev_flags, &next_flags);
+    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags);
+    let mut warnings = collect_warnings(&prev_flags, &next_flags);
+    if let Some(msg) = persist_overlay(&state, &next_flags) {
+        warnings.push(msg);
+    }
 
     let resp = BulkUpdateResponse {
         features: next_flags,
@@ -393,6 +504,12 @@ mod tests {
     use tower::ServiceExt;
 
     async fn test_state() -> Arc<AppState> {
+        test_state_with_persistence(None).await
+    }
+
+    async fn test_state_with_persistence(
+        persist_path: Option<std::path::PathBuf>,
+    ) -> Arc<AppState> {
         let storage = StorageProfile::Memory.build().await.unwrap();
         let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
         let client = reqwest::Client::new();
@@ -417,7 +534,7 @@ mod tests {
             crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
 
         Arc::new(AppState {
-            config_handle: ConfigHandle::new(config, None, None),
+            config_handle: ConfigHandle::new(config, None, persist_path),
             client,
             storage,
             fast_analyzer: security.clone(),
@@ -710,6 +827,176 @@ mod tests {
         // Inert handle still records the writes.
         assert!(!state.ensemble_runtime.ml());
         assert!(state.ensemble_runtime.over_defence());
+    }
+
+    #[tokio::test]
+    async fn put_single_persists_overlay_to_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let overlay_path = tmp.path().join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path.clone())).await;
+        let app = admin_router(state.clone());
+
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(overlay_path.exists(), "sidecar overlay must be written");
+
+        let loaded = crate::feature_flags::load_runtime_overlay(&overlay_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.enforcement_mode, "block");
+    }
+
+    #[tokio::test]
+    async fn put_single_persistence_failure_returns_warning() {
+        // Point persistence at a path whose parent is a regular file
+        // (not a directory), so create_dir_all/write both fail.
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let overlay_path = blocker.join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path)).await;
+        let app = admin_router(state);
+
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let warnings = body["warnings"].as_array().unwrap();
+        assert!(
+            warnings.iter().any(|w| w
+                .as_str()
+                .unwrap()
+                .contains("runtime overlay persistence failed")),
+            "expected persistence-failure warning, got {:?}",
+            warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn put_bulk_persists_overlay_to_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let overlay_path = tmp.path().join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path.clone())).await;
+        let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
+        flags.cost_caps_enabled = true;
+        flags.over_defence = true;
+
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features",
+                serde_json::json!({"features": flags}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let loaded = crate::feature_flags::load_runtime_overlay(&overlay_path)
+            .unwrap()
+            .unwrap();
+        assert!(loaded.cost_caps_enabled);
+        assert!(loaded.over_defence);
+    }
+
+    #[tokio::test]
+    async fn put_single_bumps_feature_flag_metric() {
+        let state = test_state().await;
+        let app = admin_router(state.clone());
+        let _ = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        let val = state
+            .metrics
+            .feature_flag_updates_total
+            .with_label_values(&["enforcement_mode"])
+            .get();
+        assert_eq!(val, 1);
+    }
+
+    #[tokio::test]
+    async fn put_bulk_bumps_counter_once_per_changed_field() {
+        let state = test_state().await;
+        let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
+        // Flip three fields in one bulk request.
+        flags.cost_caps_enabled = true;
+        flags.over_defence = true;
+        flags.enforcement_mode = "flag".to_string();
+
+        let app = admin_router(state.clone());
+        let _ = app
+            .oneshot(admin_put(
+                "/api/v1/config/features",
+                serde_json::json!({"features": flags}),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_updates_total
+                .with_label_values(&["cost_caps_enabled"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_updates_total
+                .with_label_values(&["over_defence"])
+                .get(),
+            1
+        );
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_updates_total
+                .with_label_values(&["enforcement_mode"])
+                .get(),
+            1
+        );
+        // Unchanged fields MUST NOT bump the counter.
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_updates_total
+                .with_label_values(&["operating_point"])
+                .get(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn persistence_failure_bumps_error_counter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let overlay_path = blocker.join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path)).await;
+        let app = admin_router(state.clone());
+        let _ = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(state.metrics.config_persist_errors_total.get(), 1);
     }
 
     #[tokio::test]

@@ -21,6 +21,8 @@
 //! through the config but no subsystem consumes it; issue #43 will wire
 //! it through.
 
+use std::path::Path;
+
 use axum::http::StatusCode;
 use llmtrace_core::{EnforcementMode, OperatingPoint, ProxyConfig};
 use serde::{Deserialize, Serialize};
@@ -356,6 +358,55 @@ fn validate_transition_for_config(config: &ProxyConfig) -> Result<(), Validation
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Sidecar overlay persistence (phase 3 of issue #42)
+// ---------------------------------------------------------------------------
+
+/// Errors emitted by the sidecar overlay load/write helpers.
+#[derive(Debug, Error)]
+pub enum OverlayError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("YAML parse error: {0}")]
+    Parse(#[from] serde_yaml::Error),
+}
+
+/// Load the runtime feature-flag overlay from `path`.
+///
+/// Returns `Ok(None)` when the file does not exist (this is the
+/// common "fresh install" case — the operator hasn't toggled anything
+/// yet). Returns `Err` for other I/O or parse failures so the startup
+/// path can surface a descriptive warning instead of silently ignoring
+/// corrupted state.
+pub fn load_runtime_overlay(path: &Path) -> Result<Option<FeatureFlags>, OverlayError> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            let flags: FeatureFlags = serde_yaml::from_str(&contents)?;
+            Ok(Some(flags))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(OverlayError::Io(e)),
+    }
+}
+
+/// Write the runtime feature-flag overlay to `path` atomically.
+///
+/// The serialized YAML is first staged to `<path>.tmp` and then
+/// renamed into place so a crash mid-flush cannot leave a torn file
+/// for the next startup.
+pub fn write_runtime_overlay(path: &Path, flags: &FeatureFlags) -> Result<(), OverlayError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let tmp = path.with_extension("yaml.tmp");
+    let yaml = serde_yaml::to_string(flags)?;
+    std::fs::write(&tmp, yaml)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +589,61 @@ mod tests {
         cfg.security_analysis.operating_point = OperatingPoint::HighRecall;
         let flags = FeatureFlags::from_config(&cfg);
         assert_eq!(flags.operating_point, "high_recall");
+    }
+
+    // -- Sidecar overlay persistence --------------------------------------
+
+    #[test]
+    fn runtime_overlay_load_missing_file_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("no_such.yaml");
+        let result = load_runtime_overlay(&path).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn runtime_overlay_write_then_load_roundtrips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.runtime.yaml");
+        let mut cfg = defaults();
+        cfg.enforcement.mode = EnforcementMode::Block;
+        cfg.boundary_defense.enabled = true;
+        cfg.boundary_defense.shadow_mode = true;
+        let flags = FeatureFlags::from_config(&cfg);
+
+        write_runtime_overlay(&path, &flags).unwrap();
+        assert!(path.exists());
+
+        let loaded = load_runtime_overlay(&path).unwrap().unwrap();
+        assert_eq!(loaded, flags);
+    }
+
+    #[test]
+    fn runtime_overlay_write_is_atomic_rename() {
+        // Writing over an existing file must replace it atomically.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.runtime.yaml");
+        let flags_a = FeatureFlags::from_config(&defaults());
+        write_runtime_overlay(&path, &flags_a).unwrap();
+
+        let mut cfg_b = defaults();
+        cfg_b.cost_caps.enabled = true;
+        let flags_b = FeatureFlags::from_config(&cfg_b);
+        write_runtime_overlay(&path, &flags_b).unwrap();
+
+        let loaded = load_runtime_overlay(&path).unwrap().unwrap();
+        assert_eq!(loaded, flags_b);
+        // No stray tmp file left behind.
+        let tmp_path = path.with_extension("yaml.tmp");
+        assert!(!tmp_path.exists());
+    }
+
+    #[test]
+    fn runtime_overlay_load_invalid_yaml_returns_err() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.runtime.yaml");
+        std::fs::write(&path, "this: is: not: valid: yaml: [unclosed").unwrap();
+        let err = load_runtime_overlay(&path).unwrap_err();
+        assert!(matches!(err, OverlayError::Parse(_)));
     }
 }

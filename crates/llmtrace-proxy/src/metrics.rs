@@ -106,6 +106,20 @@ pub struct Metrics {
     pub ip_blocks_active: IntGauge,
     /// Total action-rule matches by finding type and action type.
     pub action_rule_matches_total: IntCounterVec,
+
+    /// Feature flag updates by feature name (issue #42).
+    ///
+    /// Incremented once per changed field in a PUT request to
+    /// `/api/v1/config/features`. Bulk updates increment once per
+    /// differing field, not once per request, so dashboards can
+    /// distinguish which flags are getting toggled hot.
+    pub feature_flag_updates_total: IntCounterVec,
+
+    /// Failed writes of the sidecar `config.runtime.yaml` overlay.
+    ///
+    /// A non-zero value means the in-memory change took effect but the
+    /// next proxy restart will revert it.
+    pub config_persist_errors_total: IntCounter,
 }
 
 impl Metrics {
@@ -403,6 +417,27 @@ impl Metrics {
             .register(Box::new(action_rule_matches_total.clone()))
             .expect("register action_rule_matches_total");
 
+        let feature_flag_updates_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_updates_total",
+                "Total runtime feature-flag updates, labelled by feature name",
+            ),
+            &["feature"],
+        )
+        .expect("metric: feature_flag_updates_total");
+        registry
+            .register(Box::new(feature_flag_updates_total.clone()))
+            .expect("register feature_flag_updates_total");
+
+        let config_persist_errors_total = IntCounter::new(
+            "llmtrace_config_persist_errors_total",
+            "Total failures writing the runtime feature-flag sidecar overlay",
+        )
+        .expect("metric: config_persist_errors_total");
+        registry
+            .register(Box::new(config_persist_errors_total.clone()))
+            .expect("register config_persist_errors_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -440,6 +475,8 @@ impl Metrics {
             action_latency_seconds,
             ip_blocks_active,
             action_rule_matches_total,
+            feature_flag_updates_total,
+            config_persist_errors_total,
         }
     }
 

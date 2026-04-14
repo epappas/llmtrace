@@ -39,6 +39,16 @@ struct Cli {
     #[arg(short, long, global = true, env = "LLMTRACE_CONFIG")]
     config: Option<PathBuf>,
 
+    /// Path to the sidecar `config.runtime.yaml` overlay written by the
+    /// feature-flag admin API (issue #42).
+    ///
+    /// Takes precedence over the `LLMTRACE_RUNTIME_CONFIG` env var and
+    /// the auto-derived `config.runtime.yaml` next to `--config`. If
+    /// none of the three resolve, runtime persistence is disabled and
+    /// PUTs to `/api/v1/config/features` apply in memory only.
+    #[arg(long, global = true, env = "LLMTRACE_RUNTIME_CONFIG")]
+    runtime_config: Option<PathBuf>,
+
     /// Override log level (trace, debug, info, warn, error).
     #[arg(long, global = true, env = "LLMTRACE_LOG_LEVEL")]
     log_level: Option<String>,
@@ -50,6 +60,19 @@ struct Cli {
     /// Subcommand to run. If omitted, starts the proxy server.
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+/// Resolve the sidecar runtime-overlay path with the documented
+/// precedence: explicit CLI / env flag wins, otherwise derive from the
+/// base `--config` parent directory, otherwise `None` (persistence
+/// disabled).
+fn resolve_runtime_overlay_path(cli: &Cli) -> Option<PathBuf> {
+    if let Some(path) = &cli.runtime_config {
+        return Some(path.clone());
+    }
+    cli.config
+        .as_ref()
+        .and_then(|p| p.parent().map(|dir| dir.join("config.runtime.yaml")))
 }
 
 /// CLI subcommands.
@@ -71,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Load, merge, and validate configuration
     let config = load_and_merge_config(&cli)?;
+    let runtime_overlay_path = resolve_runtime_overlay_path(&cli);
 
     match cli.command {
         Some(Commands::Validate) => run_validate(&config),
@@ -81,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             init_logging(&config)?;
             config::validate_config(&config)?;
-            run_proxy(config).await
+            run_proxy(config, runtime_overlay_path).await
         }
     }
 }
@@ -90,13 +114,16 @@ async fn main() -> anyhow::Result<()> {
 // Configuration loading
 // ---------------------------------------------------------------------------
 
-/// Load configuration from file/defaults, then apply env var and CLI overrides.
+/// Load configuration from file/defaults, then apply the runtime
+/// sidecar overlay, then env var overrides, then CLI flag overrides.
 ///
 /// Precedence (highest wins):
 /// 1. CLI flags (`--log-level`, `--log-format`)
 /// 2. Environment variables (`LLMTRACE_LISTEN_ADDR`, etc.)
-/// 3. Config file values
-/// 4. Built-in defaults
+/// 3. Sidecar runtime overlay (`config.runtime.yaml` written by the
+///    `/api/v1/config/features` admin API — issue #42)
+/// 4. Config file values (`--config`)
+/// 5. Built-in defaults
 fn load_and_merge_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     let mut config = match &cli.config {
         Some(path) => {
@@ -109,6 +136,33 @@ fn load_and_merge_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
             ProxyConfig::default()
         }
     };
+
+    // Apply the sidecar feature-flag overlay, if present. This sits
+    // between the base config file and env/CLI overrides so operator
+    // environment still wins over any runtime toggles.
+    if let Some(overlay_path) = resolve_runtime_overlay_path(cli) {
+        match llmtrace_proxy::feature_flags::load_runtime_overlay(&overlay_path) {
+            Ok(Some(flags)) => {
+                eprintln!(
+                    "Applying runtime feature-flag overlay from {}",
+                    overlay_path.display()
+                );
+                if let Err(e) = flags.apply_to_config(&mut config) {
+                    eprintln!(
+                        "Runtime overlay {} contains an invalid flag combination ({e}); ignoring",
+                        overlay_path.display()
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "Failed to load runtime overlay {}: {e}; continuing with base config",
+                    overlay_path.display()
+                );
+            }
+        }
+    }
 
     // Apply environment variable overrides
     config::apply_env_overrides(&mut config);
@@ -182,19 +236,23 @@ async fn run_migrate(config: &ProxyConfig) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Start the proxy server.
-async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
+async fn run_proxy(
+    config: ProxyConfig,
+    runtime_overlay_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
     info!(
         listen_addr = %config.listen_addr,
         upstream_url = %config.upstream_url,
         storage_profile = %config.storage.profile,
         shutdown_timeout_seconds = config.shutdown.timeout_seconds,
+        runtime_overlay_path = ?runtime_overlay_path,
         "Starting LLMTrace proxy server"
     );
 
     let listen_addr = config.listen_addr.clone();
 
     // Build shared application state (includes the ShutdownCoordinator)
-    let state = build_app_state(config).await?;
+    let state = build_app_state(config, runtime_overlay_path).await?;
     let coordinator = state.shutdown.clone();
 
     // Optionally start the gRPC ingestion gateway in a background task.
@@ -280,7 +338,10 @@ fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
 ///
 /// Includes a [`ShutdownCoordinator`] initialised from the config's
 /// `shutdown.timeout_seconds`.
-async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
+async fn build_app_state(
+    config: ProxyConfig,
+    runtime_overlay_path: Option<PathBuf>,
+) -> anyhow::Result<Arc<AppState>> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(
             config.connection_timeout_ms,
@@ -406,7 +467,11 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
 
     Ok(Arc::new(AppState {
-        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
+        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(
+            config,
+            None,
+            runtime_overlay_path,
+        ),
         client,
         storage,
         security,
@@ -789,7 +854,7 @@ mod tests {
 
     /// Build a test router with default config (in-memory storage).
     async fn test_app() -> Router {
-        let state = build_app_state(memory_config()).await.unwrap();
+        let state = build_app_state(memory_config(), None).await.unwrap();
         build_router(state)
     }
 
@@ -827,7 +892,7 @@ mod tests {
             },
             ..ProxyConfig::default()
         };
-        let state = build_app_state(config).await.unwrap();
+        let state = build_app_state(config, None).await.unwrap();
         let app = build_router(state);
 
         let body = serde_json::json!({
@@ -849,13 +914,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_app_state_succeeds() {
-        let state = build_app_state(memory_config()).await;
+        let state = build_app_state(memory_config(), None).await;
         assert!(state.is_ok());
     }
 
     #[test]
     fn test_load_and_merge_config_defaults() {
         let cli = Cli {
+            runtime_config: None,
             config: None,
             log_level: None,
             log_format: None,
@@ -870,6 +936,7 @@ mod tests {
     #[test]
     fn test_load_and_merge_config_cli_overrides() {
         let cli = Cli {
+            runtime_config: None,
             config: None,
             log_level: Some("debug".to_string()),
             log_format: Some("json".to_string()),
@@ -962,6 +1029,7 @@ logging:
         f.write_all(yaml.as_bytes()).unwrap();
 
         let cli = Cli {
+            runtime_config: None,
             config: Some(f.path().to_path_buf()),
             log_level: None,
             log_format: None,
