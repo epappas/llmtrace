@@ -16,6 +16,7 @@ pub mod config_handle;
 pub mod cost;
 pub mod cost_caps;
 pub mod enforcement;
+pub mod feature_flags;
 pub mod grpc;
 pub mod metrics;
 pub mod openapi;
