@@ -6,7 +6,7 @@
 //! capture, async security analysis, and circuit-breaker degradation.
 
 use axum::middleware;
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, post, put};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
@@ -671,6 +671,16 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/config/live",
             get(llmtrace_proxy::api::get_live_config),
+        )
+        // Runtime feature flag admin API (issue #42)
+        .route(
+            "/api/v1/config/features",
+            get(llmtrace_proxy::feature_flags_api::get_features)
+                .put(llmtrace_proxy::feature_flags_api::bulk_update_features),
+        )
+        .route(
+            "/api/v1/config/features/:feature",
+            put(llmtrace_proxy::feature_flags_api::update_feature),
         )
         .route("/api/v1/traces", get(llmtrace_proxy::api::list_traces))
         .route(

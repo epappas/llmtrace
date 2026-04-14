@@ -54,6 +54,9 @@ impl Modify for SecurityAddon {
         crate::compliance::generate_report,
         crate::compliance::get_report,
         crate::compliance::list_reports,
+        crate::feature_flags_api::get_features,
+        crate::feature_flags_api::update_feature,
+        crate::feature_flags_api::bulk_update_features,
     ),
     modifiers(&SecurityAddon),
     tags(
