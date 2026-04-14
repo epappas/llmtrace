@@ -3200,6 +3200,7 @@ mod tests {
             enforcement: EnforcementConfig::default(),
             action_router: ActionRouterConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
+            llm_judge_enabled: false,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
