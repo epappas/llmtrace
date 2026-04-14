@@ -327,18 +327,25 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     // Build the security analyzer — attempt ML warm-up if enabled and compiled
-    let (security, ml_status) = build_security_analyzer(&config).await?;
+    let (security, ml_status, ensemble_runtime) = build_security_analyzer(&config).await?;
 
-    // Regex-only analyzer for fast-path enforcement (near-zero latency)
+    // Regex-only analyzer for fast-path enforcement (near-zero latency).
+    // Shares the jailbreak toggle with the ensemble's inner regex analyzer
+    // via the runtime handle so runtime flag flips affect both (#42).
     let fast_analyzer: Arc<dyn llmtrace_core::SecurityAnalyzer> = Arc::new(
-        llmtrace_security::RegexSecurityAnalyzer::new()
-            .map_err(|e| anyhow::anyhow!("Failed to build fast analyzer: {e}"))?,
+        llmtrace_security::RegexSecurityAnalyzer::new_with_jailbreak_flag(
+            ensemble_runtime.jailbreak_flag(),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to build fast analyzer: {e}"))?,
     );
 
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
     let alert_engine = AlertEngine::from_config(&config.alerts, client.clone());
+    // Always construct the cost tracker so the runtime feature-flag API
+    // can toggle cost caps on and off without restart (#42). Hot-path
+    // call sites gate usage on the live `cfg.cost_caps.enabled`.
     let cost_tracker = CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
     let anomaly_detector = llmtrace_proxy::anomaly::AnomalyDetector::new(
         &config.anomaly_detection,
@@ -357,7 +364,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
             engine.channel_count(),
         );
     }
-    if cost_tracker.is_some() {
+    if cost_tracker.is_enabled() {
         info!("Cost cap enforcement enabled");
     }
     if anomaly_detector.is_some() {
@@ -383,27 +390,27 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         }
     }
 
-    // Per-tenant rate limiter
-    let rate_limiter = if config.rate_limiting.enabled {
+    // Always construct the per-tenant rate limiter so the runtime
+    // feature-flag API can toggle rate limiting on and off without
+    // restart (#42). Hot-path call sites gate usage on the live
+    // `cfg.rate_limiting.enabled`.
+    if config.rate_limiting.enabled {
         info!(
             rps = config.rate_limiting.requests_per_second,
             burst = config.rate_limiting.burst_size,
             overrides = config.rate_limiting.tenant_overrides.len(),
             "Per-tenant rate limiting enabled"
         );
-        Some(llmtrace_proxy::RateLimiter::new(
-            &config.rate_limiting,
-            Arc::clone(&storage.cache),
-        ))
-    } else {
-        None
-    };
+    }
+    let rate_limiter =
+        llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
 
     Ok(Arc::new(AppState {
         config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
         client,
         storage,
         security,
+        ensemble_runtime,
         fast_analyzer,
         storage_breaker,
         security_breaker,
@@ -430,7 +437,11 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 /// On failure, it falls back to the regex-only analyzer and logs a warning.
 async fn build_security_analyzer(
     config: &ProxyConfig,
-) -> anyhow::Result<(Arc<dyn SecurityAnalyzer>, MlModelStatus)> {
+) -> anyhow::Result<(
+    Arc<dyn SecurityAnalyzer>,
+    MlModelStatus,
+    Arc<llmtrace_security::EnsembleRuntimeHandle>,
+)> {
     // Optional runtime overrides (useful for local stacks and CI).
     // These do not modify the loaded config; they only affect analyzer wiring.
     let mut ml_enabled = config.security_analysis.ml_enabled;
@@ -553,7 +564,18 @@ async fn build_security_analyzer(
                     let ensemble = ensemble
                         .with_operating_point(op)
                         .with_over_defence(config.security_analysis.over_defence);
-                    Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))
+                    // Initialise the runtime handle from config so the
+                    // starting state matches what the operator asked for.
+                    let handle = ensemble.runtime_handle();
+                    handle.set_ml(config.security_analysis.ml_enabled);
+                    handle.set_injecguard(config.security_analysis.injecguard_enabled);
+                    handle.set_piguard(config.security_analysis.piguard_enabled);
+                    handle.set_jailbreak(config.security_analysis.jailbreak_enabled);
+                    Ok((
+                        Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>,
+                        status,
+                        Arc::new(handle),
+                    ))
                 }
                 Ok(Err(e)) => {
                     let err_msg = format!("{e}");
@@ -567,6 +589,7 @@ async fn build_security_analyzer(
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                         MlModelStatus::Failed { error: err_msg },
+                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
                 }
                 Err(_) => {
@@ -584,6 +607,7 @@ async fn build_security_analyzer(
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                         MlModelStatus::Failed { error: err_msg },
+                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
                 }
             }
@@ -595,6 +619,7 @@ async fn build_security_analyzer(
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                 MlModelStatus::Disabled,
+                Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
         } else {
             let regex = RegexSecurityAnalyzer::new()
@@ -602,6 +627,7 @@ async fn build_security_analyzer(
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                 MlModelStatus::Disabled,
+                Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
         }
     }
@@ -614,6 +640,7 @@ async fn build_security_analyzer(
         Ok((
             Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
             MlModelStatus::Disabled,
+            Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
         ))
     }
 }

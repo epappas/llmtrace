@@ -71,6 +71,11 @@ pub struct AppState {
     pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
+    /// Runtime handle for toggling ensemble feature flags from the admin
+    /// API (issue #42). When the ensemble is not constructed (regex-only
+    /// fallback path), this is an inert handle whose writes round-trip
+    /// but are not observed.
+    pub ensemble_runtime: Arc<llmtrace_security::EnsembleRuntimeHandle>,
     /// Regex-only security analyzer for fast-path enforcement.
     pub fast_analyzer: Arc<dyn SecurityAnalyzer>,
     /// Circuit breaker for the storage subsystem.
@@ -81,8 +86,12 @@ pub struct AppState {
     pub cost_estimator: CostEstimator,
     /// Alert engine for webhook notifications (`None` if alerts are disabled).
     pub alert_engine: Option<crate::alerts::AlertEngine>,
-    /// Cost cap tracker (`None` if cost caps are disabled).
-    pub cost_tracker: Option<crate::cost_caps::CostTracker>,
+    /// Cost cap tracker.
+    ///
+    /// Always constructed so that toggling `cost_caps_enabled` at runtime
+    /// via the feature-flag admin API takes effect without restart (#42).
+    /// Hot-path call sites gate usage on `cfg.cost_caps.enabled`.
+    pub cost_tracker: crate::cost_caps::CostTracker,
     /// Anomaly detector (`None` if anomaly detection is disabled).
     pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
     /// Action orchestrator for routing enforcement actions.
@@ -90,8 +99,13 @@ pub struct AppState {
     /// In-memory store for compliance reports (legacy — reports are now also
     /// persisted to MetadataRepository).
     pub report_store: crate::compliance::ReportStore,
-    /// Per-tenant rate limiter (`None` if rate limiting is disabled).
-    pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
+    /// Per-tenant rate limiter.
+    ///
+    /// Always constructed so that toggling `rate_limiting_enabled` at
+    /// runtime via the feature-flag admin API takes effect without
+    /// restart (#42). Hot-path call sites gate usage on
+    /// `cfg.rate_limiting.enabled`.
+    pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
     /// Shutdown coordinator for graceful shutdown and task tracking.
@@ -352,8 +366,10 @@ pub async fn proxy_handler(
     }
 
     // --- Per-tenant rate limiting ---
-    if let Some(ref limiter) = state.rate_limiter {
-        match limiter.check(tenant_id).await {
+    // The limiter is always constructed; the runtime feature-flag API
+    // can toggle `rate_limiting.enabled` per-request via `ConfigHandle`.
+    if cfg.rate_limiting.enabled {
+        match state.rate_limiter.check(tenant_id).await {
             crate::rate_limit::RateLimitResult::Exceeded {
                 retry_after_secs,
                 limit,
@@ -420,7 +436,10 @@ pub async fn proxy_handler(
         .unwrap_or_default();
 
     // --- Pre-request cost cap enforcement ---
-    if let Some(ref tracker) = state.cost_tracker {
+    // The tracker is always constructed; the runtime feature-flag API
+    // can toggle `cost_caps.enabled` per-request via `ConfigHandle`.
+    if cfg.cost_caps.enabled {
+        let tracker = &state.cost_tracker;
         // Token cap (best-effort from request body — max_tokens field)
         let req_max_tokens: Option<u32> = llm_body
             .as_ref()
@@ -890,7 +909,7 @@ pub async fn proxy_handler(
         };
 
         // --- Async spend recording for cost caps ---
-        if let Some(ref tracker) = state_bg.cost_tracker {
+        if cfg_bg.cost_caps.enabled {
             let estimated = state_bg.cost_estimator.estimate_cost(
                 &captured.provider,
                 &captured.model_name,
@@ -898,7 +917,8 @@ pub async fn proxy_handler(
                 captured.completion_tokens,
             );
             if let Some(cost) = estimated {
-                tracker
+                state_bg
+                    .cost_tracker
                     .record_spend(captured.tenant_id, agent_id_bg.as_deref(), cost)
                     .await;
             }

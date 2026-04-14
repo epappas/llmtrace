@@ -441,17 +441,23 @@ mod tests {
         let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
         let cost_estimator = CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
             config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -459,7 +465,7 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),

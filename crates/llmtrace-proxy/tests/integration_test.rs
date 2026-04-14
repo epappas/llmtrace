@@ -70,21 +70,26 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
         reqwest::Client::new(),
     );
 
+    let cost_tracker =
+        llmtrace_proxy::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+    let rate_limiter =
+        llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
     let state = Arc::new(AppState {
         config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
         client,
         storage,
         security,
+        ensemble_runtime: Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
         fast_analyzer,
         storage_breaker,
         security_breaker,
         cost_estimator,
         alert_engine: None,
-        cost_tracker: None,
+        cost_tracker,
         anomaly_detector: None,
         action_router,
         report_store: llmtrace_proxy::compliance::new_report_store(),
-        rate_limiter: None,
+        rate_limiter,
         ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,
         shutdown: llmtrace_proxy::shutdown::ShutdownCoordinator::new(30),
         metrics: llmtrace_proxy::metrics::Metrics::new(),

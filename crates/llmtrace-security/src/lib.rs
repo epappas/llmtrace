@@ -77,6 +77,7 @@ pub use session_analyzer::{SessionAnalysisResult, SessionAnalyzer, SessionAnalyz
 pub mod device;
 #[cfg(feature = "ml")]
 pub mod ensemble;
+pub mod ensemble_runtime;
 #[cfg(feature = "ml")]
 pub mod feature_extraction;
 #[cfg(feature = "ml")]
@@ -101,13 +102,13 @@ pub mod output_analyzer;
 pub mod piguard;
 #[cfg(feature = "ml")]
 pub mod prompt_guard;
-#[cfg(feature = "ml")]
 pub mod thresholds;
 #[cfg(feature = "ml")]
 pub mod toxicity_detector;
 
 #[cfg(feature = "ml")]
-pub use ensemble::{EnsembleRuntimeHandle, EnsembleSecurityAnalyzer};
+pub use ensemble::EnsembleSecurityAnalyzer;
+pub use ensemble_runtime::EnsembleRuntimeHandle;
 #[cfg(feature = "ml")]
 pub use feature_extraction::{extract_heuristic_features, HEURISTIC_FEATURE_DIM};
 #[cfg(feature = "ml")]
@@ -139,7 +140,6 @@ pub use piguard::{PIGuardAnalyzer, PIGuardConfig};
 pub use prompt_guard::{
     PromptGuardAnalyzer, PromptGuardConfig, PromptGuardResult, PromptGuardVariant,
 };
-#[cfg(feature = "ml")]
 pub use thresholds::{FalsePositiveTracker, OperatingPoint, ResolvedThresholds};
 #[cfg(feature = "ml")]
 pub use toxicity_detector::ToxicityDetector;
