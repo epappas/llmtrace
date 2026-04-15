@@ -477,10 +477,34 @@ pub enum OverlayError {
 ///
 /// Returns `Ok(None)` when the file does not exist (this is the
 /// common "fresh install" case — the operator hasn't toggled anything
+/// Hard ceiling on the sidecar overlay file size in bytes. The
+/// `FeatureFlags` struct serializes to well under 2 KiB; a 64 KiB
+/// cap leaves generous headroom for future fields while refusing to
+/// process files whose size suggests corruption, pathological
+/// symlinks (e.g. into `/dev/zero`), or an attempt to exhaust memory
+/// at startup via a large YAML document. Issue #42 M3.
+const OVERLAY_MAX_BYTES: u64 = 64 * 1024;
+
 /// yet). Returns `Err` for other I/O or parse failures so the startup
 /// path can surface a descriptive warning instead of silently ignoring
 /// corrupted state.
 pub fn load_runtime_overlay(path: &Path) -> Result<Option<FeatureFlags>, OverlayError> {
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(OverlayError::Io(e)),
+    };
+    if meta.len() > OVERLAY_MAX_BYTES {
+        return Err(OverlayError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "runtime overlay file {} exceeds {OVERLAY_MAX_BYTES} byte cap (got {} bytes); \
+                 refusing to parse as defence against billion-laughs-style resource exhaustion",
+                path.display(),
+                meta.len()
+            ),
+        )));
+    }
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let flags: FeatureFlags = serde_yaml::from_str(&contents)?;
@@ -491,21 +515,32 @@ pub fn load_runtime_overlay(path: &Path) -> Result<Option<FeatureFlags>, Overlay
     }
 }
 
-/// Write the runtime feature-flag overlay to `path` atomically.
+/// Write the runtime feature-flag overlay to `path` atomically via
+/// `tempfile::NamedTempFile`.
 ///
-/// The serialized YAML is first staged to `<path>.tmp` and then
-/// renamed into place so a crash mid-flush cannot leave a torn file
-/// for the next startup.
+/// `NamedTempFile::new_in` opens with `O_CREAT | O_EXCL` and a random
+/// suffix, refusing to follow a pre-planted symlink at a deterministic
+/// staging path (issue #42 H1). `persist` then does an atomic
+/// `rename(2)` into place so a crash mid-flush cannot leave a torn
+/// file for the next startup.
 pub fn write_runtime_overlay(path: &Path, flags: &FeatureFlags) -> Result<(), OverlayError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    use std::io::Write;
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    if !parent.exists() {
+        std::fs::create_dir_all(&parent)?;
     }
-    let tmp = path.with_extension("yaml.tmp");
     let yaml = serde_yaml::to_string(flags)?;
-    std::fs::write(&tmp, yaml)?;
-    std::fs::rename(&tmp, path)?;
+    let mut tmp = tempfile::NamedTempFile::new_in(&parent)?;
+    tmp.write_all(yaml.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    // `persist` consumes the NamedTempFile and performs an atomic
+    // rename. On success the caller observes a fully-written file at
+    // `path`; on failure the tempfile is preserved for manual recovery
+    // but the target path is untouched.
+    tmp.persist(path).map_err(|e| OverlayError::Io(e.error))?;
     Ok(())
 }
 
@@ -735,9 +770,20 @@ mod tests {
 
         let loaded = load_runtime_overlay(&path).unwrap().unwrap();
         assert_eq!(loaded, flags_b);
-        // No stray tmp file left behind.
-        let tmp_path = path.with_extension("yaml.tmp");
-        assert!(!tmp_path.exists());
+        // NamedTempFile uses a randomised suffix; after persist the
+        // only file in the parent should be the target itself, not a
+        // left-over staging file. Enforce that explicitly.
+        let parent = path.parent().unwrap();
+        let lingering: Vec<_> = std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| *p != path)
+            .collect();
+        assert!(
+            lingering.is_empty(),
+            "unexpected lingering files after overlay persist: {:?}",
+            lingering
+        );
     }
 
     #[test]
@@ -747,5 +793,26 @@ mod tests {
         std::fs::write(&path, "this: is: not: valid: yaml: [unclosed").unwrap();
         let err = load_runtime_overlay(&path).unwrap_err();
         assert!(matches!(err, OverlayError::Parse(_)));
+    }
+
+    #[test]
+    fn runtime_overlay_load_oversize_file_returns_err() {
+        // A 96 KiB file exceeds the OVERLAY_MAX_BYTES 64 KiB ceiling
+        // and must be rejected without being parsed. Guards against
+        // billion-laughs-style YAML resource exhaustion at startup.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.runtime.yaml");
+        // Valid YAML mapping but padded with a comment that balloons
+        // file size well past the cap.
+        let payload = format!("analyzer_ml_enabled: false\n# {}\n", "x".repeat(96 * 1024));
+        std::fs::write(&path, payload).unwrap();
+        let err = load_runtime_overlay(&path).unwrap_err();
+        match err {
+            OverlayError::Io(e) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::InvalidData);
+                assert!(e.to_string().contains("64 KiB") || e.to_string().contains("65536"));
+            }
+            other => panic!("expected Io(InvalidData), got {other:?}"),
+        }
     }
 }

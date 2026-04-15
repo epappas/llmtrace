@@ -41,7 +41,7 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Extension, Json,
 };
@@ -148,7 +148,23 @@ fn api_error(status: StatusCode, error_type: &str, message: &str) -> Response {
             error_type: error_type.to_string(),
         },
     };
-    (status, Json(body)).into_response()
+    no_store_json_response(status, Json(body))
+}
+
+/// Emit a `Cache-Control: no-store` JSON response.
+///
+/// Every feature-flag admin endpoint returns dynamic state that must
+/// not be cached by intermediaries, browser admin UIs, or HTTP
+/// caching layers (issue #42 M1 — RFC 9111 §5.2.2.5 "no-store").
+/// Centralising the header in this helper keeps every success and
+/// error response consistent.
+fn no_store_json_response<T: serde::Serialize>(status: StatusCode, body: Json<T>) -> Response {
+    (
+        status,
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        body,
+    )
+        .into_response()
 }
 
 fn require_admin(auth: &AuthContext) -> Option<Response> {
@@ -186,51 +202,59 @@ fn feature_value_display(v: &FeatureValue) -> String {
 }
 
 /// Whether a flag's runtime toggle would be observable on the next
-/// request, based on startup state.
+/// request, based on startup ML loading state AND the live feature-
+/// flag values.
 ///
-/// Analyzer flags require the corresponding ML model to be loaded at
-/// startup; flipping them from an off-at-startup state is a silent
-/// no-op (documented in issue #42), and this is how operators detect
-/// that. The ensemble tuning knobs (`operating_point`, `over_defence`)
-/// are effective only when **at least one** ML analyzer is loaded —
-/// on a pure-regex deployment the ensemble short-circuits and these
-/// knobs have no effect even though `ml_status == Loaded`. HOT flags
-/// are always effective.
-///
-/// `llm_judge_enabled` is always `false` — the store-only contract is
-/// explicit, not an operational surprise.
-fn feature_is_effective(ml_status: &MlModelStatus, id: FeatureId) -> bool {
+/// - Analyzer flags (`analyzer_ml_enabled`, `analyzer_injecguard_enabled`,
+///   `analyzer_piguard_enabled`) require the corresponding ML model
+///   to be loaded at startup; flipping them from an off-at-startup
+///   state is a silent no-op.
+/// - The ensemble tuning knobs (`operating_point`, `over_defence`)
+///   are effective only when at least one ML analyzer is **both**
+///   loaded at startup AND currently enabled via its live flag. An
+///   operator who toggles all three MLs off via the API and then
+///   PUTs `operating_point=high_precision` must see `effective=false`
+///   because the ensemble short-circuits at the voting site when
+///   `ml_active() || injecguard_active() || piguard_active()` is
+///   false (issue #42 M4).
+/// - HOT flags are always effective.
+/// - `llm_judge_enabled` is always `false` — the store-only contract
+///   is explicit, not an operational surprise.
+fn feature_is_effective(ml_status: &MlModelStatus, live: &FeatureFlags, id: FeatureId) -> bool {
     use FeatureId::*;
+    // True iff the corresponding ML sub-model was loaded at startup.
+    let ml_loaded = matches!(
+        ml_status,
+        MlModelStatus::Loaded {
+            prompt_injection: true,
+            ..
+        }
+    );
+    let ig_loaded = matches!(
+        ml_status,
+        MlModelStatus::Loaded {
+            injecguard: true,
+            ..
+        }
+    );
+    let pg_loaded = matches!(ml_status, MlModelStatus::Loaded { piguard: true, .. });
+    // True iff the corresponding analyzer is both loaded AND live-
+    // enabled. This is the exact condition the ensemble checks at
+    // the voting site (ml_active / injecguard_active / piguard_active).
+    let ml_active = ml_loaded && live.analyzer_ml_enabled;
+    let ig_active = ig_loaded && live.analyzer_injecguard_enabled;
+    let pg_active = pg_loaded && live.analyzer_piguard_enabled;
+    let any_ml_active = ml_active || ig_active || pg_active;
+
     match id {
-        AnalyzerMlEnabled => matches!(
-            ml_status,
-            MlModelStatus::Loaded {
-                prompt_injection: true,
-                ..
-            }
-        ),
-        AnalyzerInjecguardEnabled => matches!(
-            ml_status,
-            MlModelStatus::Loaded {
-                injecguard: true,
-                ..
-            }
-        ),
-        AnalyzerPiguardEnabled => matches!(ml_status, MlModelStatus::Loaded { piguard: true, .. }),
-        // The ensemble short-circuits when none of the three ML
-        // sub-models is loaded, so the ensemble-tuning knobs only
-        // affect scoring when at least one is active. Flagging them
-        // effective on a pure-regex deployment would lie to operators.
-        OperatingPoint | OverDefence => matches!(
-            ml_status,
-            MlModelStatus::Loaded {
-                prompt_injection: true,
-                ..
-            } | MlModelStatus::Loaded {
-                injecguard: true,
-                ..
-            } | MlModelStatus::Loaded { piguard: true, .. }
-        ),
+        AnalyzerMlEnabled => ml_loaded,
+        AnalyzerInjecguardEnabled => ig_loaded,
+        AnalyzerPiguardEnabled => pg_loaded,
+        // Ensemble tuning knobs are inert when every contributing
+        // analyzer is either unloaded or live-disabled — the
+        // ensemble short-circuits before reading the threshold or
+        // over-defence atomic.
+        OperatingPoint | OverDefence => any_ml_active,
         LlmJudgeEnabled => false,
         AnalyzerJailbreakEnabled
         | EnforcementMode
@@ -251,12 +275,17 @@ fn feature_overridden_by(_id: FeatureId) -> Option<String> {
 }
 
 /// Project the rich [`FeatureFlagsView`] from a live config snapshot +
-/// startup ML status.
+/// startup ML status. `feature_is_effective` cross-references the
+/// live `flags` for the ensemble tuning knobs so the projection
+/// reflects the current state, not just what was loaded at startup.
 fn build_view(flags: FeatureFlags, ml_status: &MlModelStatus) -> FeatureFlagsView {
     let mut effective = BTreeMap::new();
     let mut overridden_by = BTreeMap::new();
     for id in FeatureId::ALL {
-        effective.insert(id.name().to_string(), feature_is_effective(ml_status, *id));
+        effective.insert(
+            id.name().to_string(),
+            feature_is_effective(ml_status, &flags, *id),
+        );
         overridden_by.insert(id.name().to_string(), feature_overridden_by(*id));
     }
     FeatureFlagsView {
@@ -390,12 +419,19 @@ fn reset_audit_debounce() {
 /// Emit structured audit log lines, bump the Prometheus counter, update
 /// the state gauges, and persist a forensic [`AuditEvent`] per changed
 /// field.
+///
+/// Returns a list of warnings, one per dropped AuditEvent. Any non-
+/// empty warning list means the mutation was already applied live
+/// but at least one forensic record is missing from the metadata
+/// store — the caller MUST surface these strings in the response
+/// body (issue #42 C2) so operators can trigger a manual backfill
+/// or alert on `llmtrace_audit_event_dropped_total`.
 async fn record_audit_and_metrics(
     state: &AppState,
     auth: &AuthContext,
     prev: &FeatureFlags,
     next: &FeatureFlags,
-) {
+) -> Vec<String> {
     let actor = auth
         .key_id
         .map(|id| id.to_string())
@@ -404,6 +440,7 @@ async fn record_audit_and_metrics(
     let timestamp_str = timestamp.to_rfc3339();
 
     let diffs: Vec<(FeatureId, FeatureValue, FeatureValue)> = diff_flags(prev, next).collect();
+    let mut dropped_audit_warnings: Vec<String> = Vec::new();
 
     // Metrics — state gauges and per-feature update counter — fire on
     // every diff without rate limiting.
@@ -449,12 +486,31 @@ async fn record_audit_and_metrics(
             timestamp,
         };
         if let Err(e) = state.metadata().record_audit_event(&event).await {
-            tracing::warn!(
+            state
+                .metrics
+                .audit_event_dropped_total
+                .with_label_values(&["feature_flag_changed"])
+                .inc();
+            tracing::error!(
+                event = "audit_event_dropped",
                 feature = %name,
-                "Failed to persist feature_flag_changed audit event: {e}"
+                actor = %actor,
+                error = %e,
+                "Failed to persist feature_flag_changed audit event. \
+                 Mutation already applied to live traffic. Alert on \
+                 llmtrace_audit_event_dropped_total and trigger a \
+                 manual backfill or compliance follow-up."
             );
+            dropped_audit_warnings.push(format!(
+                "forensic audit event for '{name}' was NOT persisted to metadata store \
+                 ({e}); the runtime change has taken effect but no durable record exists \
+                 — escalate per docs/runbooks/feature-flags.md and check \
+                 llmtrace_audit_event_dropped_total"
+            ));
         }
     }
+
+    dropped_audit_warnings
 }
 
 /// Diff `prev` against `next` and replay the changes on the ensemble's
@@ -607,7 +663,7 @@ pub async fn get_features(
     let cfg = state.config_handle.snapshot();
     let flags = FeatureFlags::from_config(&cfg);
     let view = build_view(flags, &state.ml_status);
-    Json(view).into_response()
+    no_store_json_response(StatusCode::OK, Json(view))
 }
 
 /// `PUT /api/v1/config/features/:feature` — toggle one feature.
@@ -673,12 +729,19 @@ pub async fn update_feature(
     };
 
     let next_flags = FeatureFlags::from_config(&new_arc);
+    let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
+    let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
     let view = build_view(next_flags.clone(), &state.ml_status);
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
-    if let Some(msg) = persist_overlay(&state, &next_flags) {
-        warnings.push(msg);
+    warnings.append(&mut dropped_audit);
+    // Short-circuit disk persistence on zero-diff — a no-op PUT
+    // (identical value) should not rewrite the overlay file or
+    // surface a spurious persistence warning (issue #42 M2).
+    if has_diff {
+        if let Some(msg) = persist_overlay(&state, &next_flags) {
+            warnings.push(msg);
+        }
     }
 
     let resp = UpdateFeatureResponse {
@@ -687,7 +750,7 @@ pub async fn update_feature(
         view,
         warnings,
     };
-    (StatusCode::OK, Json(resp)).into_response()
+    no_store_json_response(StatusCode::OK, Json(resp))
 }
 
 /// `PUT /api/v1/config/features` — atomic bulk update.
@@ -727,16 +790,21 @@ pub async fn bulk_update_features(
     };
 
     let next_flags = FeatureFlags::from_config(&new_arc);
+    let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
+    let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
     let view = build_view(next_flags.clone(), &state.ml_status);
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
-    if let Some(msg) = persist_overlay(&state, &next_flags) {
-        warnings.push(msg);
+    warnings.append(&mut dropped_audit);
+    // Zero-diff bulk PUT is a no-op at the disk layer (issue #42 M2).
+    if has_diff {
+        if let Some(msg) = persist_overlay(&state, &next_flags) {
+            warnings.push(msg);
+        }
     }
 
     let resp = BulkUpdateResponse { view, warnings };
-    (StatusCode::OK, Json(resp)).into_response()
+    no_store_json_response(StatusCode::OK, Json(resp))
 }
 
 #[cfg(test)]
@@ -1454,5 +1522,328 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    // -- M1: Cache-Control ------------------------------------------------
+
+    #[tokio::test]
+    async fn get_features_emits_cache_control_no_store() {
+        let state = test_state().await;
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_get("/api/v1/config/features"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cc = resp
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .expect("Cache-Control header must be present")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(cc, "no-store");
+    }
+
+    #[tokio::test]
+    async fn put_single_emits_cache_control_no_store() {
+        let state = test_state().await;
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let cc = resp.headers().get(header::CACHE_CONTROL).unwrap();
+        assert_eq!(cc.to_str().unwrap(), "no-store");
+    }
+
+    #[tokio::test]
+    async fn put_single_error_emits_cache_control_no_store() {
+        // Error responses must also carry the header so intermediaries
+        // never cache a stale failure envelope.
+        let state = test_state().await;
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/no_such_flag",
+                serde_json::json!({"value": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let cc = resp.headers().get(header::CACHE_CONTROL).unwrap();
+        assert_eq!(cc.to_str().unwrap(), "no-store");
+    }
+
+    // -- M2: zero-diff short-circuit on persist ---------------------------
+
+    #[tokio::test]
+    async fn put_single_no_diff_does_not_persist_overlay() {
+        // Default enforcement_mode is "log". PUTting "log" again is a
+        // no-op; the overlay file MUST NOT be written and the
+        // response MUST NOT contain a persistence warning even when
+        // the overlay path is on a read-only-parent (simulated by
+        // pointing at a path whose parent is a regular file).
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let overlay_path = blocker.join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path.clone())).await;
+
+        let app = admin_router(state.clone());
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "log"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        // No persistence failure warning despite the broken path —
+        // because we short-circuited before touching the disk.
+        let warnings = body["warnings"].as_array().unwrap();
+        assert!(
+            warnings.iter().all(|w| !w
+                .as_str()
+                .unwrap()
+                .contains("runtime overlay persistence failed")),
+            "expected no persistence-failure warnings for a no-op PUT, got {:?}",
+            warnings
+        );
+        // Persist error counter must be 0.
+        assert_eq!(state.metrics.config_persist_errors_total.get(), 0);
+        // The overlay file must not exist.
+        assert!(!overlay_path.exists());
+    }
+
+    #[tokio::test]
+    async fn put_bulk_no_diff_does_not_persist_overlay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let overlay_path = tmp.path().join("config.runtime.yaml");
+        let state = test_state_with_persistence(Some(overlay_path.clone())).await;
+        let flags = FeatureFlags::from_config(&state.config_handle.snapshot());
+
+        let app = admin_router(state.clone());
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features",
+                serde_json::json!({"features": flags}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        // No diff means no overlay file was written.
+        assert!(!overlay_path.exists());
+    }
+
+    // -- M4: feature_is_effective cross-checks live flags ----------------
+
+    #[test]
+    fn feature_is_effective_operating_point_respects_live_ml_flags() {
+        let ml_all = MlModelStatus::Loaded {
+            prompt_injection: true,
+            ner: false,
+            injecguard: true,
+            piguard: true,
+            load_time_ms: 0,
+        };
+        let mut flags = FeatureFlags::from_config(&ProxyConfig::default());
+        // All three ML analyzers enabled → operating_point is effective.
+        flags.analyzer_ml_enabled = true;
+        flags.analyzer_injecguard_enabled = true;
+        flags.analyzer_piguard_enabled = true;
+        assert!(feature_is_effective(
+            &ml_all,
+            &flags,
+            FeatureId::OperatingPoint
+        ));
+        assert!(feature_is_effective(
+            &ml_all,
+            &flags,
+            FeatureId::OverDefence
+        ));
+        // Toggle all three off → operating_point / over_defence go
+        // inert even though the models are still loaded at startup.
+        flags.analyzer_ml_enabled = false;
+        flags.analyzer_injecguard_enabled = false;
+        flags.analyzer_piguard_enabled = false;
+        assert!(!feature_is_effective(
+            &ml_all,
+            &flags,
+            FeatureId::OperatingPoint
+        ));
+        assert!(!feature_is_effective(
+            &ml_all,
+            &flags,
+            FeatureId::OverDefence
+        ));
+    }
+
+    // -- C1: /health reason_code sanitisation ----------------------------
+
+    #[test]
+    fn runtime_overlay_reason_code_from_io_error() {
+        use crate::proxy::RuntimeOverlayReasonCode;
+        let perm = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            RuntimeOverlayReasonCode::from_io_error(&perm),
+            RuntimeOverlayReasonCode::PermissionDenied
+        );
+        let nf = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            RuntimeOverlayReasonCode::from_io_error(&nf),
+            RuntimeOverlayReasonCode::ParentMissing
+        );
+        let rofs = std::io::Error::from_raw_os_error(30);
+        assert_eq!(
+            RuntimeOverlayReasonCode::from_io_error(&rofs),
+            RuntimeOverlayReasonCode::ReadOnlyFilesystem
+        );
+        let other = std::io::Error::new(std::io::ErrorKind::Other, "something else");
+        assert_eq!(
+            RuntimeOverlayReasonCode::from_io_error(&other),
+            RuntimeOverlayReasonCode::Unknown
+        );
+        assert_eq!(
+            RuntimeOverlayReasonCode::ReadOnlyFilesystem.as_str(),
+            "read_only_filesystem"
+        );
+    }
+
+    // -- C2: audit-event drop warning ------------------------------------
+
+    #[tokio::test]
+    async fn put_surfaces_audit_drop_warning_and_bumps_counter() {
+        use async_trait::async_trait;
+        use llmtrace_core::{
+            ApiKeyRecord, AuditEvent, AuditQuery, ComplianceReportRecord, LLMTraceError,
+            MetadataRepository, ReportQuery, Result as CoreResult, Storage, Tenant, TenantConfig,
+            TenantId,
+        };
+
+        /// Metadata repo whose `record_audit_event` deterministically
+        /// fails. Every other method is `unimplemented!()` because the
+        /// test only exercises the audit-event path — if any other
+        /// method gets called we want a loud panic, not a silent bug.
+        struct FailingAudit;
+
+        #[async_trait]
+        impl MetadataRepository for FailingAudit {
+            async fn record_audit_event(&self, _event: &AuditEvent) -> CoreResult<()> {
+                Err(LLMTraceError::Storage(
+                    "simulated audit store failure".into(),
+                ))
+            }
+            async fn health_check(&self) -> CoreResult<()> {
+                Ok(())
+            }
+            async fn create_tenant(&self, _: &Tenant) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call create_tenant")
+            }
+            async fn get_tenant(&self, _: TenantId) -> CoreResult<Option<Tenant>> {
+                Ok(None)
+            }
+            async fn get_tenant_by_token(&self, _: &str) -> CoreResult<Option<Tenant>> {
+                Ok(None)
+            }
+            async fn update_tenant(&self, _: &Tenant) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call update_tenant")
+            }
+            async fn list_tenants(&self) -> CoreResult<Vec<Tenant>> {
+                Ok(Vec::new())
+            }
+            async fn delete_tenant(&self, _: TenantId) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call delete_tenant")
+            }
+            async fn get_tenant_config(&self, _: TenantId) -> CoreResult<Option<TenantConfig>> {
+                Ok(None)
+            }
+            async fn upsert_tenant_config(&self, _: &TenantConfig) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call upsert_tenant_config")
+            }
+            async fn query_audit_events(&self, _: &AuditQuery) -> CoreResult<Vec<AuditEvent>> {
+                Ok(Vec::new())
+            }
+            async fn create_api_key(&self, _: &ApiKeyRecord) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call create_api_key")
+            }
+            async fn get_api_key_by_hash(&self, _: &str) -> CoreResult<Option<ApiKeyRecord>> {
+                Ok(None)
+            }
+            async fn list_api_keys(&self, _: TenantId) -> CoreResult<Vec<ApiKeyRecord>> {
+                Ok(Vec::new())
+            }
+            async fn revoke_api_key(&self, _: uuid::Uuid) -> CoreResult<bool> {
+                Ok(false)
+            }
+            async fn store_report(&self, _: &ComplianceReportRecord) -> CoreResult<()> {
+                unimplemented!("audit-drop test does not call store_report")
+            }
+            async fn get_report(
+                &self,
+                _: uuid::Uuid,
+            ) -> CoreResult<Option<ComplianceReportRecord>> {
+                Ok(None)
+            }
+            async fn list_reports(
+                &self,
+                _: &ReportQuery,
+            ) -> CoreResult<Vec<ComplianceReportRecord>> {
+                Ok(Vec::new())
+            }
+        }
+
+        // Build state, then swap metadata for FailingAudit while
+        // reusing the memory traces/cache backends.
+        let state = test_state().await;
+        let real = Arc::try_unwrap(state)
+            .ok()
+            .unwrap_or_else(|| panic!("test_state must produce an uncontended Arc for swap"));
+        let failing: Arc<dyn MetadataRepository> = Arc::new(FailingAudit);
+        let swapped_state = Arc::new(AppState {
+            storage: Storage {
+                traces: real.storage.traces,
+                metadata: failing,
+                cache: real.storage.cache,
+            },
+            ..real
+        });
+
+        let before = swapped_state
+            .metrics
+            .audit_event_dropped_total
+            .with_label_values(&["feature_flag_changed"])
+            .get();
+
+        let app = admin_router(swapped_state.clone());
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let warnings = body["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("forensic audit event")),
+            "expected forensic audit drop warning, got {:?}",
+            warnings
+        );
+
+        let after = swapped_state
+            .metrics
+            .audit_event_dropped_total
+            .with_label_values(&["feature_flag_changed"])
+            .get();
+        assert_eq!(after - before, 1);
     }
 }

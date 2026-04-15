@@ -31,6 +31,55 @@ use uuid::Uuid;
 // Shared application state
 // ---------------------------------------------------------------------------
 
+/// Stable, operator-facing reason code for a non-writable runtime
+/// overlay path. The raw `std::io::Error` message is intentionally NOT
+/// exposed to unauthenticated `/health` callers (would leak the
+/// filesystem layout); it is only logged server-side at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeOverlayReasonCode {
+    /// Filesystem reports read-only (mount option or ConfigMap mount).
+    ReadOnlyFilesystem,
+    /// Filesystem accepts writes but the proxy process lacks permission.
+    PermissionDenied,
+    /// The resolved parent directory does not exist and cannot be
+    /// created (for example, points at a non-existent path under a
+    /// read-only parent).
+    ParentMissing,
+    /// Any other I/O error — intentionally coarse so the wire shape
+    /// does not leak kernel-specific strings to unauthenticated
+    /// callers.
+    Unknown,
+}
+
+impl RuntimeOverlayReasonCode {
+    /// Wire representation used in the `/health` JSON body.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadOnlyFilesystem => "read_only_filesystem",
+            Self::PermissionDenied => "permission_denied",
+            Self::ParentMissing => "parent_missing",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Infer the stable reason code from a raw `std::io::Error`.
+    /// Returns `Unknown` when the OS-level classification is not
+    /// actionable. `EROFS` (errno 30 on Linux / 30 on macOS) is
+    /// detected via `raw_os_error()` so we do not need an explicit
+    /// libc dependency; this keeps the check portable and coarse on
+    /// non-POSIX targets (which will just report `Unknown`).
+    pub fn from_io_error(err: &std::io::Error) -> Self {
+        const EROFS: i32 = 30;
+        match err.kind() {
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::NotFound => Self::ParentMissing,
+            _ if err.raw_os_error() == Some(EROFS) => Self::ReadOnlyFilesystem,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// Writability state of the sidecar runtime overlay path at startup.
 ///
 /// Computed by `main::probe_runtime_overlay_writable` and surfaced on
@@ -50,10 +99,13 @@ pub enum RuntimeOverlayStatus {
     Writable,
     /// The runtime overlay path resolved but the filesystem rejected
     /// the startup probe. Admin PUTs will apply in memory but will
-    /// NOT persist — pod restart silently reverts.
+    /// NOT persist — pod restart silently reverts. Only the stable
+    /// reason code is exposed via `/health`; the raw filesystem
+    /// error is logged server-side.
     NotWritable {
-        /// Filesystem error captured by the startup probe.
-        reason: String,
+        /// Stable operator-facing reason code, safe to expose on the
+        /// unauthenticated `/health` endpoint.
+        reason_code: RuntimeOverlayReasonCode,
     },
 }
 
@@ -1447,11 +1499,15 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             "persistence": true,
             "writable": true,
         }),
-        RuntimeOverlayStatus::NotWritable { reason } => serde_json::json!({
+        // Only expose the stable reason code; the raw filesystem
+        // error was logged server-side at startup. /health is on the
+        // unauthenticated skip-list so we must not leak paths or
+        // errno strings (issue #42 C1).
+        RuntimeOverlayStatus::NotWritable { reason_code } => serde_json::json!({
             "status": "not_writable",
             "persistence": false,
             "writable": false,
-            "reason": reason,
+            "reason_code": reason_code.as_str(),
         }),
     };
 

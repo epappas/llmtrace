@@ -341,31 +341,80 @@ fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
 ///
 /// Also probes the runtime feature-flag overlay path for writability
 /// and logs a loud WARN if persistence will silently fail (common
-/// under read-only Kubernetes ConfigMap mounts).
-fn probe_runtime_overlay_writable(path: &std::path::Path) -> Result<(), String> {
+/// under read-only Kubernetes ConfigMap mounts). The probe uses
+/// `tempfile::NamedTempFile` for a symlink-resistant test (the crate
+/// opens with `O_EXCL | O_CREAT` and randomizes the suffix), writes
+/// a small non-empty payload so per-file-quota / fs-full surfaces
+/// immediately, and automatically cleans up via the tempfile `Drop`
+/// impl.
+///
+/// On failure the tuple `(ReasonCode, String)` is returned — the code
+/// is stored on `AppState` and surfaced on `/health`, the string goes
+/// straight into the startup WARN log so operators still get the raw
+/// diagnostic server-side.
+fn probe_runtime_overlay_writable(
+    path: &std::path::Path,
+) -> Result<(), (llmtrace_proxy::proxy::RuntimeOverlayReasonCode, String)> {
+    use llmtrace_proxy::proxy::RuntimeOverlayReasonCode;
+    use std::io::Write;
+
     let parent = match path.parent() {
         Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
         _ => std::path::PathBuf::from("."),
     };
     if !parent.exists() {
         if let Err(e) = std::fs::create_dir_all(&parent) {
-            return Err(format!(
-                "runtime overlay parent {} is not creatable: {e}",
-                parent.display()
+            let code = RuntimeOverlayReasonCode::from_io_error(&e);
+            return Err((
+                code,
+                format!(
+                    "runtime overlay parent {} is not creatable: {e}",
+                    parent.display()
+                ),
             ));
         }
     }
-    let probe = parent.join(".llmtrace_probe.tmp");
-    match std::fs::write(&probe, b"") {
-        Ok(()) => {
-            let _ = std::fs::remove_file(&probe);
-            Ok(())
+
+    // Create a randomised tempfile in the target parent, write a
+    // small payload, flush, and let the `NamedTempFile` destructor
+    // remove it. Symlinks planted at a deterministic path cannot
+    // redirect this write.
+    let mut tmp = match tempfile::NamedTempFile::new_in(&parent) {
+        Ok(t) => t,
+        Err(e) => {
+            let code = RuntimeOverlayReasonCode::from_io_error(&e);
+            return Err((
+                code,
+                format!(
+                    "runtime overlay parent {} is not writable: {e}",
+                    parent.display()
+                ),
+            ));
         }
-        Err(e) => Err(format!(
-            "runtime overlay parent {} is not writable: {e}",
-            parent.display()
-        )),
+    };
+    if let Err(e) = tmp.write_all(b"llmtrace_probe\n") {
+        let code = RuntimeOverlayReasonCode::from_io_error(&e);
+        return Err((
+            code,
+            format!(
+                "runtime overlay parent {} failed probe write: {e}",
+                parent.display()
+            ),
+        ));
     }
+    if let Err(e) = tmp.as_file().sync_all() {
+        let code = RuntimeOverlayReasonCode::from_io_error(&e);
+        return Err((
+            code,
+            format!(
+                "runtime overlay parent {} failed probe fsync: {e}",
+                parent.display()
+            ),
+        ));
+    }
+    // Tempfile is closed and removed when `tmp` drops at end of scope.
+    drop(tmp);
+    Ok(())
 }
 
 async fn build_app_state(
@@ -512,10 +561,16 @@ async fn build_app_state(
                 );
                 llmtrace_proxy::proxy::RuntimeOverlayStatus::Writable
             }
-            Err(reason) => {
+            Err((reason_code, reason_log)) => {
+                // The raw `reason_log` (with path + errno) is logged
+                // server-side only. /health exposes only the stable
+                // `reason_code.as_str()` to avoid leaking the
+                // filesystem layout to unauthenticated callers
+                // (issue #42 C1).
                 tracing::warn!(
                     runtime_overlay = %path.display(),
-                    reason = %reason,
+                    reason_code = %reason_code.as_str(),
+                    reason = %reason_log,
                     "Runtime feature-flag overlay path is not writable. \
                      Admin PUTs to /api/v1/config/features will still apply \
                      in memory but the sidecar will NOT persist across \
@@ -524,7 +579,7 @@ async fn build_app_state(
                      emptyDir or writable volume at the runtime overlay \
                      parent directory to enable persistence."
                 );
-                llmtrace_proxy::proxy::RuntimeOverlayStatus::NotWritable { reason }
+                llmtrace_proxy::proxy::RuntimeOverlayStatus::NotWritable { reason_code }
             }
         },
     };

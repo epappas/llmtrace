@@ -134,6 +134,13 @@ pub struct Metrics {
     /// A non-zero value means the in-memory change took effect but the
     /// next proxy restart will revert it.
     pub config_persist_errors_total: IntCounter,
+
+    /// Forensic audit events that could not be persisted to the
+    /// metadata store, labelled by event type. A non-zero value on
+    /// `{event_type="feature_flag_changed"}` means a feature flag
+    /// mutation was applied to live traffic without a durable audit
+    /// record — alert on this in production dashboards. Issue #42 C2.
+    pub audit_event_dropped_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -476,6 +483,18 @@ impl Metrics {
             .register(Box::new(config_persist_errors_total.clone()))
             .expect("register config_persist_errors_total");
 
+        let audit_event_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_audit_event_dropped_total",
+                "Total forensic AuditEvent writes that failed to persist, by event type",
+            ),
+            &["event_type"],
+        )
+        .expect("metric: audit_event_dropped_total");
+        registry
+            .register(Box::new(audit_event_dropped_total.clone()))
+            .expect("register audit_event_dropped_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -517,6 +536,7 @@ impl Metrics {
             feature_flag_bool_state,
             feature_flag_string_state,
             config_persist_errors_total,
+            audit_event_dropped_total,
         }
     }
 
