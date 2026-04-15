@@ -663,6 +663,11 @@ pub async fn proxy_handler(
     // Spawn a task that reads from the upstream stream and fans out to both
     // the client response and a background buffer for trace capture.
     let state_bg = Arc::clone(&state);
+    // Share the SAME config snapshot with the background task so the
+    // request path and its streaming tail observe a single, coherent
+    // version of the config. An admin PUT landing mid-request will be
+    // picked up on the next request, not in the middle of this one.
+    let cfg_bg = Arc::clone(&cfg);
     let prompt_text_bg = prompt_text.clone();
     let analysis_text_bg = analysis_text;
     let model_name_bg = model_name.clone();
@@ -674,9 +679,6 @@ pub async fn proxy_handler(
         // Hold the task guard for the lifetime of this background task so the
         // shutdown coordinator knows when all in-flight work has drained.
         let _guard = task_guard;
-        // Snapshot the live config once for the entire background task so
-        // all reads are consistent with a single version of the config.
-        let cfg_bg = state_bg.config_handle.snapshot();
         // We'll decrement active_connections at the end of this task.
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {

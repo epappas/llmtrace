@@ -338,6 +338,36 @@ fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
 ///
 /// Includes a [`ShutdownCoordinator`] initialised from the config's
 /// `shutdown.timeout_seconds`.
+///
+/// Also probes the runtime feature-flag overlay path for writability
+/// and logs a loud WARN if persistence will silently fail (common
+/// under read-only Kubernetes ConfigMap mounts).
+fn probe_runtime_overlay_writable(path: &std::path::Path) -> Result<(), String> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    if !parent.exists() {
+        if let Err(e) = std::fs::create_dir_all(&parent) {
+            return Err(format!(
+                "runtime overlay parent {} is not creatable: {e}",
+                parent.display()
+            ));
+        }
+    }
+    let probe = parent.join(".llmtrace_probe.tmp");
+    match std::fs::write(&probe, b"") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "runtime overlay parent {} is not writable: {e}",
+            parent.display()
+        )),
+    }
+}
+
 async fn build_app_state(
     config: ProxyConfig,
     runtime_overlay_path: Option<PathBuf>,
@@ -466,7 +496,33 @@ async fn build_app_state(
     let rate_limiter =
         llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
 
-    Ok(Arc::new(AppState {
+    // Warn loudly if the runtime overlay path is configured but the
+    // filesystem refuses writes. Operators running under a read-only
+    // ConfigMap mount will otherwise see silent failures at the first
+    // admin PUT (see #42 runbook entry "runtime overlay didn't persist").
+    if let Some(ref path) = runtime_overlay_path {
+        match probe_runtime_overlay_writable(path) {
+            Ok(()) => {
+                info!(
+                    runtime_overlay = %path.display(),
+                    "Runtime feature-flag overlay path is writable"
+                );
+            }
+            Err(reason) => {
+                tracing::warn!(
+                    runtime_overlay = %path.display(),
+                    reason = %reason,
+                    "Runtime feature-flag overlay path is not writable. \
+                     Admin PUTs to /api/v1/config/features will still apply \
+                     in memory but the sidecar will NOT persist across \
+                     restarts. Mount an emptyDir or writable volume at the \
+                     runtime overlay parent directory to enable persistence."
+                );
+            }
+        }
+    }
+
+    let state = Arc::new(AppState {
         config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(
             config,
             None,
@@ -490,7 +546,17 @@ async fn build_app_state(
         shutdown,
         metrics,
         ready,
-    }))
+    });
+
+    // Seed the per-flag state metric so dashboards reflect the
+    // startup configuration immediately, without waiting for the first
+    // admin PUT.
+    llmtrace_proxy::feature_flags_api::init_state_metrics(
+        &state,
+        &llmtrace_proxy::feature_flags::FeatureFlags::from_config(&state.config_handle.snapshot()),
+    );
+
+    Ok(state)
 }
 
 /// Build the security analyzer, pre-loading ML models at startup by default.

@@ -64,8 +64,117 @@ pub struct FeatureFlags {
     pub llm_judge_enabled: bool,
 }
 
+/// Canonical identifier for every flag exposed on [`FeatureFlags`].
+///
+/// Drives a single-source-of-truth table: `apply_single`, the audit
+/// log diff in [`crate::feature_flags_api`], and the feature metadata
+/// helpers (`name`, `read`, `kind`) all go through this enum so adding
+/// a flag is a single-site change inside `impl FeatureId`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureId {
+    AnalyzerMlEnabled,
+    AnalyzerInjecguardEnabled,
+    AnalyzerPiguardEnabled,
+    AnalyzerJailbreakEnabled,
+    EnforcementMode,
+    BoundaryDefenseEnabled,
+    BoundaryDefenseShadowMode,
+    RateLimitingEnabled,
+    CostCapsEnabled,
+    OperatingPoint,
+    OverDefence,
+    LlmJudgeEnabled,
+}
+
+/// Kind of value a feature flag accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureKind {
+    Bool,
+    String,
+}
+
+impl FeatureId {
+    /// Every flag in declaration order. The audit differ, metrics
+    /// recorder, and GET projection all iterate this slice.
+    pub const ALL: &'static [FeatureId] = &[
+        FeatureId::AnalyzerMlEnabled,
+        FeatureId::AnalyzerInjecguardEnabled,
+        FeatureId::AnalyzerPiguardEnabled,
+        FeatureId::AnalyzerJailbreakEnabled,
+        FeatureId::EnforcementMode,
+        FeatureId::BoundaryDefenseEnabled,
+        FeatureId::BoundaryDefenseShadowMode,
+        FeatureId::RateLimitingEnabled,
+        FeatureId::CostCapsEnabled,
+        FeatureId::OperatingPoint,
+        FeatureId::OverDefence,
+        FeatureId::LlmJudgeEnabled,
+    ];
+
+    /// Wire name as it appears in URLs, JSON, and Prometheus labels.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AnalyzerMlEnabled => "analyzer_ml_enabled",
+            Self::AnalyzerInjecguardEnabled => "analyzer_injecguard_enabled",
+            Self::AnalyzerPiguardEnabled => "analyzer_piguard_enabled",
+            Self::AnalyzerJailbreakEnabled => "analyzer_jailbreak_enabled",
+            Self::EnforcementMode => "enforcement_mode",
+            Self::BoundaryDefenseEnabled => "boundary_defense_enabled",
+            Self::BoundaryDefenseShadowMode => "boundary_defense_shadow_mode",
+            Self::RateLimitingEnabled => "rate_limiting_enabled",
+            Self::CostCapsEnabled => "cost_caps_enabled",
+            Self::OperatingPoint => "operating_point",
+            Self::OverDefence => "over_defence",
+            Self::LlmJudgeEnabled => "llm_judge_enabled",
+        }
+    }
+
+    /// Kind of value this flag accepts over the wire.
+    #[must_use]
+    pub fn kind(&self) -> FeatureKind {
+        match self {
+            Self::EnforcementMode | Self::OperatingPoint => FeatureKind::String,
+            _ => FeatureKind::Bool,
+        }
+    }
+
+    /// Resolve a flag by wire name. Returns `None` for unknown names
+    /// and for the always-on `analyzer_regex_enabled` (the API handler
+    /// handles immutable names separately so it can return a distinct
+    /// error category).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|id| id.name() == name)
+    }
+
+    /// Project the current value of this flag from a [`FeatureFlags`]
+    /// snapshot.
+    #[must_use]
+    pub fn read(&self, flags: &FeatureFlags) -> FeatureValue {
+        match self {
+            Self::AnalyzerMlEnabled => FeatureValue::Bool(flags.analyzer_ml_enabled),
+            Self::AnalyzerInjecguardEnabled => {
+                FeatureValue::Bool(flags.analyzer_injecguard_enabled)
+            }
+            Self::AnalyzerPiguardEnabled => FeatureValue::Bool(flags.analyzer_piguard_enabled),
+            Self::AnalyzerJailbreakEnabled => FeatureValue::Bool(flags.analyzer_jailbreak_enabled),
+            Self::EnforcementMode => FeatureValue::String(flags.enforcement_mode.clone()),
+            Self::BoundaryDefenseEnabled => FeatureValue::Bool(flags.boundary_defense_enabled),
+            Self::BoundaryDefenseShadowMode => {
+                FeatureValue::Bool(flags.boundary_defense_shadow_mode)
+            }
+            Self::RateLimitingEnabled => FeatureValue::Bool(flags.rate_limiting_enabled),
+            Self::CostCapsEnabled => FeatureValue::Bool(flags.cost_caps_enabled),
+            Self::OperatingPoint => FeatureValue::String(flags.operating_point.clone()),
+            Self::OverDefence => FeatureValue::Bool(flags.over_defence),
+            Self::LlmJudgeEnabled => FeatureValue::Bool(flags.llm_judge_enabled),
+        }
+    }
+}
+
 /// Untagged value accepted by `PUT /api/v1/config/features/:feature`.
-#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema, PartialEq)]
 #[serde(untagged)]
 pub enum FeatureValue {
     Bool(bool),
@@ -253,73 +362,66 @@ pub fn apply_single(
     feature: &str,
     value: FeatureValue,
 ) -> Result<(), ValidationError> {
-    match feature {
-        "analyzer_regex_enabled" => Err(ValidationError::Immutable("analyzer_regex_enabled")),
-        "analyzer_ml_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.security_analysis.ml_enabled = v;
-            Ok(())
-        }
-        "analyzer_injecguard_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.security_analysis.injecguard_enabled = v;
-            Ok(())
-        }
-        "analyzer_piguard_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.security_analysis.piguard_enabled = v;
-            Ok(())
-        }
-        "analyzer_jailbreak_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.security_analysis.jailbreak_enabled = v;
-            Ok(())
-        }
-        "enforcement_mode" => {
-            let s = require_string(feature, &value)?;
-            config.enforcement.mode = parse_enforcement_mode(s)?;
-            Ok(())
-        }
-        "boundary_defense_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.boundary_defense.enabled = v;
-            // Re-validate transition: shadow_mode without enabled is invalid.
-            validate_transition_for_config(config)?;
-            Ok(())
-        }
-        "boundary_defense_shadow_mode" => {
-            let v = require_bool(feature, &value)?;
-            config.boundary_defense.shadow_mode = v;
-            validate_transition_for_config(config)?;
-            Ok(())
-        }
-        "rate_limiting_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.rate_limiting.enabled = v;
-            Ok(())
-        }
-        "cost_caps_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.cost_caps.enabled = v;
-            Ok(())
-        }
-        "operating_point" => {
-            let s = require_string(feature, &value)?;
-            config.security_analysis.operating_point = parse_operating_point(s)?;
-            Ok(())
-        }
-        "over_defence" => {
-            let v = require_bool(feature, &value)?;
-            config.security_analysis.over_defence = v;
-            Ok(())
-        }
-        "llm_judge_enabled" => {
-            let v = require_bool(feature, &value)?;
-            config.llm_judge_enabled = v;
-            Ok(())
-        }
-        unknown => Err(ValidationError::UnknownFeature(unknown.to_string())),
+    // The always-on regex analyzer is not in the `FeatureId` surface
+    // (it is omitted from `FeatureFlags` entirely), so we catch
+    // attempts to mutate it here for a clearer error category than
+    // `UnknownFeature`.
+    if feature == "analyzer_regex_enabled" {
+        return Err(ValidationError::Immutable("analyzer_regex_enabled"));
     }
+    let id = FeatureId::from_name(feature)
+        .ok_or_else(|| ValidationError::UnknownFeature(feature.to_string()))?;
+    apply_feature_id(config, id, value)
+}
+
+fn apply_feature_id(
+    config: &mut ProxyConfig,
+    id: FeatureId,
+    value: FeatureValue,
+) -> Result<(), ValidationError> {
+    let name = id.name();
+    match id {
+        FeatureId::AnalyzerMlEnabled => {
+            config.security_analysis.ml_enabled = require_bool(name, &value)?;
+        }
+        FeatureId::AnalyzerInjecguardEnabled => {
+            config.security_analysis.injecguard_enabled = require_bool(name, &value)?;
+        }
+        FeatureId::AnalyzerPiguardEnabled => {
+            config.security_analysis.piguard_enabled = require_bool(name, &value)?;
+        }
+        FeatureId::AnalyzerJailbreakEnabled => {
+            config.security_analysis.jailbreak_enabled = require_bool(name, &value)?;
+        }
+        FeatureId::EnforcementMode => {
+            config.enforcement.mode = parse_enforcement_mode(require_string(name, &value)?)?;
+        }
+        FeatureId::BoundaryDefenseEnabled => {
+            config.boundary_defense.enabled = require_bool(name, &value)?;
+            validate_transition_for_config(config)?;
+        }
+        FeatureId::BoundaryDefenseShadowMode => {
+            config.boundary_defense.shadow_mode = require_bool(name, &value)?;
+            validate_transition_for_config(config)?;
+        }
+        FeatureId::RateLimitingEnabled => {
+            config.rate_limiting.enabled = require_bool(name, &value)?;
+        }
+        FeatureId::CostCapsEnabled => {
+            config.cost_caps.enabled = require_bool(name, &value)?;
+        }
+        FeatureId::OperatingPoint => {
+            config.security_analysis.operating_point =
+                parse_operating_point(require_string(name, &value)?)?;
+        }
+        FeatureId::OverDefence => {
+            config.security_analysis.over_defence = require_bool(name, &value)?;
+        }
+        FeatureId::LlmJudgeEnabled => {
+            config.llm_judge_enabled = require_bool(name, &value)?;
+        }
+    }
+    Ok(())
 }
 
 fn require_bool(feature: &str, value: &FeatureValue) -> Result<bool, ValidationError> {

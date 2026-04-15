@@ -6,14 +6,38 @@
 
 use arc_swap::ArcSwap;
 use llmtrace_core::ProxyConfig;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// Lock-free read guard returned by [`ConfigHandle::load`].
+///
+/// Wraps `arc_swap::Guard<Arc<ProxyConfig>>` so the `arc_swap` type
+/// never appears in the public `llmtrace_proxy` API surface. Callers
+/// access fields via `Deref` (`guard.grpc.enabled`); the guard is
+/// `!Send` — callers crossing an `.await` should use
+/// [`ConfigHandle::snapshot`] instead.
+pub struct ConfigLoadGuard(arc_swap::Guard<Arc<ProxyConfig>>);
+
+impl Deref for ConfigLoadGuard {
+    type Target = ProxyConfig;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
 /// Error returned when a config mutation fails validation.
+///
+/// Generic over the mutator's error type so callers do not have to
+/// encode typed validation failures into opaque strings. The API
+/// handler passes its own [`ValidationError`](crate::feature_flags::ValidationError)
+/// here directly without a prefix-encoding dance.
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigUpdateError {
+pub enum ConfigUpdateError<E: std::fmt::Debug + std::fmt::Display> {
     #[error("validation failed: {0}")]
-    Validation(String),
+    Validation(E),
     #[error("writer lock poisoned")]
     Poisoned,
 }
@@ -52,14 +76,18 @@ impl ConfigHandle {
     }
 
     /// Lock-free read. The returned guard must not cross an `.await`
-    /// boundary because it is `!Send`.
+    /// boundary because it is `!Send`. Callers needing a
+    /// `Send + 'static` value should use [`ConfigHandle::snapshot`]
+    /// instead.
     #[inline]
-    pub fn load(&self) -> arc_swap::Guard<Arc<ProxyConfig>> {
-        self.inner.load()
+    #[must_use]
+    pub fn load(&self) -> ConfigLoadGuard {
+        ConfigLoadGuard(self.inner.load())
     }
 
     /// Full `Arc` clone of the current config. Cheap, `Send + 'static`.
     #[inline]
+    #[must_use]
     pub fn snapshot(&self) -> Arc<ProxyConfig> {
         self.inner.load_full()
     }
@@ -68,13 +96,17 @@ impl ConfigHandle {
     ///
     /// The mutator receives a mutable clone of the live config. If it
     /// returns `Ok(())`, the clone is swapped into place and returned to
-    /// the caller. If it returns `Err`, the live config is untouched.
+    /// the caller. If it returns `Err(E)`, the live config is untouched
+    /// and the typed error is propagated as
+    /// [`ConfigUpdateError::Validation`].
+    ///
     /// Writers are serialized via an internal mutex so two concurrent
     /// callers cannot each base on the same snapshot and overwrite each
     /// other.
-    pub fn update<F>(&self, mutator: F) -> Result<Arc<ProxyConfig>, ConfigUpdateError>
+    pub fn update<F, E>(&self, mutator: F) -> Result<Arc<ProxyConfig>, ConfigUpdateError<E>>
     where
-        F: FnOnce(&mut ProxyConfig) -> Result<(), String>,
+        F: FnOnce(&mut ProxyConfig) -> Result<(), E>,
+        E: std::fmt::Debug + std::fmt::Display,
     {
         let _guard = self
             .write_lock
@@ -88,10 +120,12 @@ impl ConfigHandle {
         Ok(new_arc)
     }
 
+    #[must_use]
     pub fn config_path(&self) -> Option<&PathBuf> {
         self.config_path.as_ref()
     }
 
+    #[must_use]
     pub fn persist_path(&self) -> Option<&PathBuf> {
         self.persist_path.as_ref()
     }
@@ -120,7 +154,7 @@ mod tests {
     #[test]
     fn update_applies_mutation() {
         let handle = ConfigHandle::new(test_config(), None, None);
-        let result = handle.update(|c| {
+        let result = handle.update::<_, String>(|c| {
             c.max_request_size_bytes = 12345;
             Ok(())
         });
@@ -132,7 +166,7 @@ mod tests {
     fn update_rollback_on_validation_error() {
         let handle = ConfigHandle::new(test_config(), None, None);
         let original = handle.snapshot().max_request_size_bytes;
-        let result = handle.update(|c| {
+        let result = handle.update::<_, String>(|c| {
             c.max_request_size_bytes = 9999;
             Err("nope".to_string())
         });
@@ -148,7 +182,7 @@ mod tests {
             .map(|_| {
                 let h = handle.clone();
                 thread::spawn(move || {
-                    h.update(|c| {
+                    h.update::<_, String>(|c| {
                         c.max_request_size_bytes += 1;
                         Ok(())
                     })
@@ -161,5 +195,42 @@ mod tests {
         }
         let expected = test_config().max_request_size_bytes + n as u64;
         assert_eq!(handle.snapshot().max_request_size_bytes, expected);
+    }
+
+    #[test]
+    fn concurrent_mixed_results_no_partial_state() {
+        // Half the writers fail validation. The live state must reflect
+        // exactly the successful writes and no intermediate value.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let handle = Arc::new(ConfigHandle::new(test_config(), None, None));
+        let successes = Arc::new(AtomicU64::new(0));
+        let n = 200usize;
+        let threads: Vec<_> = (0..n)
+            .map(|i| {
+                let h = handle.clone();
+                let s = successes.clone();
+                thread::spawn(move || {
+                    // Even tasks succeed, odd tasks fail validation.
+                    let result = h.update::<_, String>(|c| {
+                        c.max_request_size_bytes += 1;
+                        if i % 2 == 0 {
+                            Ok(())
+                        } else {
+                            Err("intentional failure".to_string())
+                        }
+                    });
+                    if result.is_ok() {
+                        s.fetch_add(1, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let success_count = successes.load(Ordering::Relaxed);
+        let expected = test_config().max_request_size_bytes + success_count;
+        assert_eq!(handle.snapshot().max_request_size_bytes, expected);
+        assert_eq!(success_count, (n / 2) as u64);
     }
 }

@@ -11,8 +11,8 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Response, StatusCode};
 use prometheus::{
-    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts,
-    Registry, TextEncoder,
+    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
+    IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::sync::Arc;
 
@@ -114,6 +114,20 @@ pub struct Metrics {
     /// differing field, not once per request, so dashboards can
     /// distinguish which flags are getting toggled hot.
     pub feature_flag_updates_total: IntCounterVec,
+
+    /// Current runtime value of every bool-typed feature flag (0 or 1).
+    ///
+    /// Dashboards query this gauge to display the live state of
+    /// `analyzer_*_enabled`, `boundary_defense_*`, `rate_limiting_enabled`,
+    /// `cost_caps_enabled`, `over_defence`, and `llm_judge_enabled` without
+    /// hitting `/api/v1/config/features`.
+    pub feature_flag_bool_state: IntGaugeVec,
+
+    /// Current runtime value of every string-typed feature flag as an
+    /// info metric. One (feature, value) combination per flag is set to
+    /// 1 at a time; on change the old combination is zeroed so stale
+    /// label pairs do not accumulate.
+    pub feature_flag_string_state: IntGaugeVec,
 
     /// Failed writes of the sidecar `config.runtime.yaml` overlay.
     ///
@@ -429,6 +443,30 @@ impl Metrics {
             .register(Box::new(feature_flag_updates_total.clone()))
             .expect("register feature_flag_updates_total");
 
+        let feature_flag_bool_state = IntGaugeVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_bool_state",
+                "Current runtime value of each bool-typed feature flag (0 or 1)",
+            ),
+            &["feature"],
+        )
+        .expect("metric: feature_flag_bool_state");
+        registry
+            .register(Box::new(feature_flag_bool_state.clone()))
+            .expect("register feature_flag_bool_state");
+
+        let feature_flag_string_state = IntGaugeVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_string_state",
+                "Info metric for string-typed feature flags; the active (feature,value) pair is 1",
+            ),
+            &["feature", "value"],
+        )
+        .expect("metric: feature_flag_string_state");
+        registry
+            .register(Box::new(feature_flag_string_state.clone()))
+            .expect("register feature_flag_string_state");
+
         let config_persist_errors_total = IntCounter::new(
             "llmtrace_config_persist_errors_total",
             "Total failures writing the runtime feature-flag sidecar overlay",
@@ -476,6 +514,8 @@ impl Metrics {
             ip_blocks_active,
             action_rule_matches_total,
             feature_flag_updates_total,
+            feature_flag_bool_state,
+            feature_flag_string_state,
             config_persist_errors_total,
         }
     }

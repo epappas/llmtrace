@@ -3,30 +3,41 @@
 //! Three routes, all gated by `ApiKeyRole::Admin`:
 //!
 //! - `GET    /api/v1/config/features`             — list the current
-//!   [`FeatureFlags`] snapshot.
+//!   [`FeatureFlagsView`] (values + `effective` + `overridden_by`).
 //! - `PUT    /api/v1/config/features/:feature`    — toggle one flag.
 //! - `PUT    /api/v1/config/features`             — atomic bulk update.
 //!
 //! Validation runs inside the [`crate::config_handle::ConfigHandle::update`]
-//! closure, so a single rule violation rolls back automatically and the
-//! live config is never observed in a half-updated state. After a
+//! closure (generic over the typed `ValidationError` — no string
+//! prefix-encoding), so a single rule violation rolls back automatically
+//! and the live config is never observed in a half-updated state. After a
 //! successful swap, [`apply_runtime_effects`] diffs the previous and
 //! next [`FeatureFlags`] and replays the changes onto
 //! [`llmtrace_security::EnsembleRuntimeHandle`] so the ensemble's atomic
 //! gates and operating-point thresholds reflect the new state on the
 //! very next request.
 //!
-//! ## Error encoding through `ConfigHandle::update`
+//! Each successful swap also:
 //!
-//! The mutator closure passed to `ConfigHandle::update` returns
-//! `Result<(), String>`, but Phase 2 needs to distinguish 400 vs 422
-//! responses. We prefix-encode the HTTP status into the error string
-//! (`"400:unknown feature: foo"`, `"422:..."`) and parse the prefix
-//! back at the handler boundary. This keeps the `ConfigHandle` API
-//! agnostic of HTTP semantics while still preserving the typed
-//! `ValidationError::http_status` mapping.
+//! - Bumps `llmtrace_feature_flag_updates_total{feature}` once per
+//!   differing field.
+//! - Updates the `llmtrace_feature_flag_bool_state{feature}` /
+//!   `llmtrace_feature_flag_string_state{feature,value}` info gauges so
+//!   dashboards can show the live state without scraping the API.
+//! - Writes a structured `tracing::info!` audit line (rate-limited 1/s
+//!   per `(actor, feature)` to protect against pathological toggle
+//!   loops — the counter and forensic AuditEvent persistence are NOT
+//!   rate-limited).
+//! - Persists an [`llmtrace_core::AuditEvent`] via
+//!   `state.metadata().record_audit_event(...)` so the change is
+//!   queryable long after log rotation.
+//! - Writes the `config.runtime.yaml` sidecar overlay on disk.
+//!   Disk-write failures are non-fatal (in-memory change still applies)
+//!   and surface as a warning in the response body, matching FR-04.
 
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Path, State},
@@ -34,16 +45,28 @@ use axum::{
     response::{IntoResponse, Response},
     Extension, Json,
 };
-use llmtrace_core::{ApiKeyRole, AuthContext, ProxyConfig};
+use llmtrace_core::{ApiKeyRole, AuditEvent, AuthContext, ProxyConfig};
 use llmtrace_security::OperatingPoint;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::config_handle::ConfigUpdateError;
 use crate::feature_flags::{
-    apply_single, write_runtime_overlay, FeatureFlags, FeatureValue, ValidationError,
+    apply_single, write_runtime_overlay, FeatureFlags, FeatureId, FeatureKind, FeatureValue,
+    ValidationError,
 };
-use crate::proxy::AppState;
+use crate::proxy::{AppState, MlModelStatus};
+
+/// Debounce window for structured audit log emission. Counter and
+/// forensic AuditEvent persistence are NOT gated by this.
+const AUDIT_LOG_DEBOUNCE: Duration = Duration::from_secs(1);
+
+/// Shared last-emission timestamps keyed by `"actor|feature"`. Lazily
+/// initialised; lives for the process lifetime.
+fn audit_debounce_state() -> &'static Mutex<HashMap<String, Instant>> {
+    static STATE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -55,12 +78,27 @@ pub struct UpdateFeatureRequest {
     pub value: FeatureValue,
 }
 
+/// Rich view of every feature flag exposed by the admin API.
+///
+/// The `values` map is the raw flag state (same field shape as the
+/// legacy `FeatureFlags` struct). `effective` answers the operational
+/// question "would flipping this flag actually change behavior on the
+/// next request?". `overridden_by` names the higher-precedence config
+/// layer (env/cli) that is currently shadowing the runtime value, if
+/// any — it is `null` for the common case.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct FeatureFlagsView {
+    pub values: FeatureFlags,
+    pub effective: BTreeMap<String, bool>,
+    pub overridden_by: BTreeMap<String, Option<String>>,
+}
+
 /// Successful response from a single-feature PUT.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UpdateFeatureResponse {
     pub updated: String,
     pub previous: FeatureValue,
-    pub features: FeatureFlags,
+    pub view: FeatureFlagsView,
     pub warnings: Vec<String>,
 }
 
@@ -73,7 +111,7 @@ pub struct BulkUpdateRequest {
 /// Successful response from a bulk PUT.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct BulkUpdateResponse {
-    pub features: FeatureFlags,
+    pub view: FeatureFlagsView,
     pub warnings: Vec<String>,
 }
 
@@ -115,109 +153,18 @@ fn require_admin(auth: &AuthContext) -> Option<Response> {
     }
 }
 
-/// Encode a [`ValidationError`] for transport through
-/// `ConfigHandle::update`'s `Result<(), String>` channel. The HTTP
-/// status, error type, and message are joined with `|` so the handler
-/// can decode them at the boundary without losing typing.
-fn encode_validation_error(e: &ValidationError) -> String {
-    format!("{}|{}|{}", e.http_status().as_u16(), e.error_type(), e)
-}
-
-/// Decode an error string produced by [`encode_validation_error`].
-/// Returns `(status, error_type, message)`.
-fn decode_validation_error(raw: &str) -> (StatusCode, String, String) {
-    let mut parts = raw.splitn(3, '|');
-    let status = parts
-        .next()
-        .and_then(|s| s.parse::<u16>().ok())
-        .and_then(|c| StatusCode::from_u16(c).ok())
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let error_type = parts.next().unwrap_or("validation_error").to_string();
-    let message = parts.next().unwrap_or(raw).to_string();
-    (status, error_type, message)
-}
-
-fn map_update_error(err: ConfigUpdateError) -> Response {
+fn map_update_error(err: ConfigUpdateError<ValidationError>) -> Response {
     match err {
-        ConfigUpdateError::Validation(s) => {
-            let (status, etype, msg) = decode_validation_error(&s);
-            api_error(status, &etype, &msg)
+        ConfigUpdateError::Validation(e) => {
+            let status = e.http_status();
+            let etype = e.error_type();
+            api_error(status, etype, &e.to_string())
         }
         ConfigUpdateError::Poisoned => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "config_lock_poisoned",
             "Config writer lock is poisoned; restart the proxy",
         ),
-    }
-}
-
-/// Every field name exposed on [`FeatureFlags`]. Used to drive diff
-/// iteration when emitting audit events and metrics.
-const FEATURE_NAMES: &[&str] = &[
-    "analyzer_ml_enabled",
-    "analyzer_injecguard_enabled",
-    "analyzer_piguard_enabled",
-    "analyzer_jailbreak_enabled",
-    "enforcement_mode",
-    "boundary_defense_enabled",
-    "boundary_defense_shadow_mode",
-    "rate_limiting_enabled",
-    "cost_caps_enabled",
-    "operating_point",
-    "over_defence",
-    "llm_judge_enabled",
-];
-
-/// Emit one structured audit log line per changed field and bump the
-/// Prometheus counter labelled by feature name. Runs after the atomic
-/// swap + runtime-handle replay so the audit event reflects the
-/// already-observable new state.
-fn record_audit_and_metrics(
-    state: &AppState,
-    auth: &AuthContext,
-    prev: &FeatureFlags,
-    next: &FeatureFlags,
-) {
-    let actor = auth
-        .key_id
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| "bootstrap-admin".to_string());
-    let actor_role = format!("{:?}", auth.role).to_lowercase();
-    let timestamp = chrono::Utc::now().to_rfc3339();
-
-    for name in FEATURE_NAMES {
-        let Some(prev_val) = extract_feature_value(prev, name) else {
-            continue;
-        };
-        let Some(next_val) = extract_feature_value(next, name) else {
-            continue;
-        };
-        if feature_values_equal(&prev_val, &next_val) {
-            continue;
-        }
-        state
-            .metrics
-            .feature_flag_updates_total
-            .with_label_values(&[name])
-            .inc();
-        tracing::info!(
-            event = "feature_flag_changed",
-            actor = %actor,
-            actor_role = %actor_role,
-            feature = %name,
-            old_value = %feature_value_display(&prev_val),
-            new_value = %feature_value_display(&next_val),
-            timestamp = %timestamp,
-            "runtime feature flag updated"
-        );
-    }
-}
-
-fn feature_values_equal(a: &FeatureValue, b: &FeatureValue) -> bool {
-    match (a, b) {
-        (FeatureValue::Bool(x), FeatureValue::Bool(y)) => x == y,
-        (FeatureValue::String(x), FeatureValue::String(y)) => x == y,
-        _ => false,
     }
 }
 
@@ -228,71 +175,331 @@ fn feature_value_display(v: &FeatureValue) -> String {
     }
 }
 
+/// Whether a flag's runtime toggle would be observable on the next
+/// request, based on startup state.
+///
+/// Analyzer flags require the corresponding ML model to be loaded at
+/// startup; flipping them from an off-at-startup state is a silent
+/// no-op (documented in issue #42), and this is how operators detect
+/// that. The ensemble tuning knobs (`operating_point`, `over_defence`)
+/// are effective whenever an ensemble was built, regardless of per-
+/// analyzer loading. HOT flags are always effective.
+///
+/// `llm_judge_enabled` is always `false` — the store-only contract is
+/// explicit, not an operational surprise.
+fn feature_is_effective(ml_status: &MlModelStatus, id: FeatureId) -> bool {
+    use FeatureId::*;
+    match id {
+        AnalyzerMlEnabled => matches!(
+            ml_status,
+            MlModelStatus::Loaded {
+                prompt_injection: true,
+                ..
+            }
+        ),
+        AnalyzerInjecguardEnabled => matches!(
+            ml_status,
+            MlModelStatus::Loaded {
+                injecguard: true,
+                ..
+            }
+        ),
+        AnalyzerPiguardEnabled => matches!(ml_status, MlModelStatus::Loaded { piguard: true, .. }),
+        OperatingPoint | OverDefence => matches!(ml_status, MlModelStatus::Loaded { .. }),
+        LlmJudgeEnabled => false,
+        AnalyzerJailbreakEnabled
+        | EnforcementMode
+        | BoundaryDefenseEnabled
+        | BoundaryDefenseShadowMode
+        | RateLimitingEnabled
+        | CostCapsEnabled => true,
+    }
+}
+
+/// Placeholder for ENV/CLI shadow detection. Today no env var or CLI
+/// flag overrides a feature-flag field, so this always returns `None`.
+/// When future env vars are wired into `config::apply_env_overrides`,
+/// add the detection here so operators get immediate visibility that
+/// a PUT they made has no effect at restart.
+fn feature_overridden_by(_id: FeatureId) -> Option<String> {
+    None
+}
+
+/// Project the rich [`FeatureFlagsView`] from a live config snapshot +
+/// startup ML status.
+fn build_view(flags: FeatureFlags, ml_status: &MlModelStatus) -> FeatureFlagsView {
+    let mut effective = BTreeMap::new();
+    let mut overridden_by = BTreeMap::new();
+    for id in FeatureId::ALL {
+        effective.insert(id.name().to_string(), feature_is_effective(ml_status, *id));
+        overridden_by.insert(id.name().to_string(), feature_overridden_by(*id));
+    }
+    FeatureFlagsView {
+        values: flags,
+        effective,
+        overridden_by,
+    }
+}
+
+/// Iterate over the locked [`FeatureId::ALL`] slice, yielding
+/// `(id, prev, next)` triples only for fields whose values differ.
+fn diff_flags<'a>(
+    prev: &'a FeatureFlags,
+    next: &'a FeatureFlags,
+) -> impl Iterator<Item = (FeatureId, FeatureValue, FeatureValue)> + 'a {
+    FeatureId::ALL.iter().filter_map(move |&id| {
+        let p = id.read(prev);
+        let n = id.read(next);
+        if p == n {
+            None
+        } else {
+            Some((id, p, n))
+        }
+    })
+}
+
+/// Refresh the Prometheus state gauges for every feature in the
+/// `diff` iteration. Called after a successful swap.
+fn update_state_metrics(state: &AppState, prev: &FeatureFlags, next: &FeatureFlags) {
+    for (id, old_val, new_val) in diff_flags(prev, next) {
+        match id.kind() {
+            FeatureKind::Bool => {
+                let v = matches!(new_val, FeatureValue::Bool(true));
+                state
+                    .metrics
+                    .feature_flag_bool_state
+                    .with_label_values(&[id.name()])
+                    .set(i64::from(v));
+            }
+            FeatureKind::String => {
+                if let FeatureValue::String(old) = &old_val {
+                    let _ = state
+                        .metrics
+                        .feature_flag_string_state
+                        .remove_label_values(&[id.name(), old.as_str()]);
+                }
+                if let FeatureValue::String(new) = &new_val {
+                    state
+                        .metrics
+                        .feature_flag_string_state
+                        .with_label_values(&[id.name(), new.as_str()])
+                        .set(1);
+                }
+            }
+        }
+    }
+}
+
+/// Initial snapshot of the state metrics, called from `build_app_state`
+/// so dashboards show the correct values from process start.
+pub fn init_state_metrics(state: &AppState, flags: &FeatureFlags) {
+    for id in FeatureId::ALL {
+        let val = id.read(flags);
+        match id.kind() {
+            FeatureKind::Bool => {
+                let v = matches!(val, FeatureValue::Bool(true));
+                state
+                    .metrics
+                    .feature_flag_bool_state
+                    .with_label_values(&[id.name()])
+                    .set(i64::from(v));
+            }
+            FeatureKind::String => {
+                if let FeatureValue::String(s) = &val {
+                    state
+                        .metrics
+                        .feature_flag_string_state
+                        .with_label_values(&[id.name(), s.as_str()])
+                        .set(1);
+                }
+            }
+        }
+    }
+}
+
+/// Return `true` when enough time has elapsed since the last audit log
+/// emission for this `(actor, feature)` pair to warrant a new tracing
+/// line. Prevents log spam from pathological toggle loops without
+/// suppressing the counter or persisted AuditEvent.
+fn should_log_audit(actor: &str, feature: &str) -> bool {
+    let key = format!("{actor}|{feature}");
+    let now = Instant::now();
+    let map = audit_debounce_state();
+    let mut guard = match map.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    match guard.get(&key) {
+        Some(last) if now.duration_since(*last) < AUDIT_LOG_DEBOUNCE => false,
+        _ => {
+            guard.insert(key, now);
+            true
+        }
+    }
+}
+
+#[cfg(test)]
+fn reset_audit_debounce() {
+    let map = audit_debounce_state();
+    if let Ok(mut guard) = map.lock() {
+        guard.clear();
+    }
+}
+
+/// Emit structured audit log lines, bump the Prometheus counter, update
+/// the state gauges, and persist a forensic [`AuditEvent`] per changed
+/// field.
+async fn record_audit_and_metrics(
+    state: &AppState,
+    auth: &AuthContext,
+    prev: &FeatureFlags,
+    next: &FeatureFlags,
+) {
+    let actor = auth
+        .key_id
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| "bootstrap-admin".to_string());
+    let timestamp = chrono::Utc::now();
+    let timestamp_str = timestamp.to_rfc3339();
+
+    let diffs: Vec<(FeatureId, FeatureValue, FeatureValue)> = diff_flags(prev, next).collect();
+
+    // Metrics — state gauges and per-feature update counter — fire on
+    // every diff without rate limiting.
+    update_state_metrics(state, prev, next);
+
+    for (id, prev_val, next_val) in &diffs {
+        let name = id.name();
+        state
+            .metrics
+            .feature_flag_updates_total
+            .with_label_values(&[name])
+            .inc();
+
+        let old_display = feature_value_display(prev_val);
+        let new_display = feature_value_display(next_val);
+
+        if should_log_audit(&actor, name) {
+            tracing::info!(
+                event = "feature_flag_changed",
+                actor = %actor,
+                actor_role = %auth.role,
+                feature = %name,
+                old_value = %old_display,
+                new_value = %new_display,
+                timestamp = %timestamp_str,
+                "runtime feature flag updated"
+            );
+        }
+
+        // Forensic AuditEvent — always persisted, never rate-limited.
+        let event = AuditEvent {
+            id: uuid::Uuid::new_v4(),
+            tenant_id: auth.tenant_id,
+            event_type: "feature_flag_changed".to_string(),
+            actor: actor.clone(),
+            resource: format!("feature/{name}"),
+            data: serde_json::json!({
+                "feature": name,
+                "old_value": old_display,
+                "new_value": new_display,
+                "actor_role": auth.role.to_string(),
+            }),
+            timestamp,
+        };
+        if let Err(e) = state.metadata().record_audit_event(&event).await {
+            tracing::warn!(
+                feature = %name,
+                "Failed to persist feature_flag_changed audit event: {e}"
+            );
+        }
+    }
+}
+
 /// Diff `prev` against `next` and replay the changes on the ensemble's
 /// runtime handle so the security analyzer's atomic gates pick up the
 /// new state on the very next request.
 fn apply_runtime_effects(state: &AppState, prev: &FeatureFlags, next: &FeatureFlags) {
     let rh = &state.ensemble_runtime;
-    if prev.analyzer_ml_enabled != next.analyzer_ml_enabled {
-        rh.set_ml(next.analyzer_ml_enabled);
-    }
-    if prev.analyzer_injecguard_enabled != next.analyzer_injecguard_enabled {
-        rh.set_injecguard(next.analyzer_injecguard_enabled);
-    }
-    if prev.analyzer_piguard_enabled != next.analyzer_piguard_enabled {
-        rh.set_piguard(next.analyzer_piguard_enabled);
-    }
-    if prev.analyzer_jailbreak_enabled != next.analyzer_jailbreak_enabled {
-        rh.set_jailbreak(next.analyzer_jailbreak_enabled);
-    }
-    if prev.over_defence != next.over_defence {
-        rh.set_over_defence(next.over_defence);
-    }
-    if prev.operating_point != next.operating_point {
-        // Already validated by apply_to_config / apply_single, so this
-        // map is infallible at this point.
-        let point = match next.operating_point.as_str() {
-            "balanced" => OperatingPoint::Balanced,
-            "high_recall" => OperatingPoint::HighRecall,
-            "high_precision" => OperatingPoint::HighPrecision,
-            _ => return,
-        };
-        rh.set_operating_point(point);
+    for (id, _old, new_val) in diff_flags(prev, next) {
+        match id {
+            FeatureId::AnalyzerMlEnabled => {
+                if let FeatureValue::Bool(b) = new_val {
+                    rh.set_ml(b);
+                }
+            }
+            FeatureId::AnalyzerInjecguardEnabled => {
+                if let FeatureValue::Bool(b) = new_val {
+                    rh.set_injecguard(b);
+                }
+            }
+            FeatureId::AnalyzerPiguardEnabled => {
+                if let FeatureValue::Bool(b) = new_val {
+                    rh.set_piguard(b);
+                }
+            }
+            FeatureId::AnalyzerJailbreakEnabled => {
+                if let FeatureValue::Bool(b) = new_val {
+                    rh.set_jailbreak(b);
+                }
+            }
+            FeatureId::OverDefence => {
+                if let FeatureValue::Bool(b) = new_val {
+                    rh.set_over_defence(b);
+                }
+            }
+            FeatureId::OperatingPoint => {
+                if let FeatureValue::String(s) = new_val {
+                    let point = match s.as_str() {
+                        "balanced" => OperatingPoint::Balanced,
+                        "high_recall" => OperatingPoint::HighRecall,
+                        "high_precision" => OperatingPoint::HighPrecision,
+                        _ => continue,
+                    };
+                    rh.set_operating_point(point);
+                }
+            }
+            // HOT flags and the store-only llm_judge_enabled need no
+            // runtime side effect: they are read per-request from the
+            // live config snapshot (or, in llm_judge's case, by the
+            // future #43 implementation).
+            FeatureId::EnforcementMode
+            | FeatureId::BoundaryDefenseEnabled
+            | FeatureId::BoundaryDefenseShadowMode
+            | FeatureId::RateLimitingEnabled
+            | FeatureId::CostCapsEnabled
+            | FeatureId::LlmJudgeEnabled => {}
+        }
     }
 }
 
-/// Pick the typed [`FeatureValue`] for `feature` out of a [`FeatureFlags`]
-/// snapshot. Used to populate the `previous` field of the single-feature
-/// response. Returns `None` for unknown names.
-fn extract_feature_value(flags: &FeatureFlags, feature: &str) -> Option<FeatureValue> {
-    match feature {
-        "analyzer_ml_enabled" => Some(FeatureValue::Bool(flags.analyzer_ml_enabled)),
-        "analyzer_injecguard_enabled" => {
-            Some(FeatureValue::Bool(flags.analyzer_injecguard_enabled))
-        }
-        "analyzer_piguard_enabled" => Some(FeatureValue::Bool(flags.analyzer_piguard_enabled)),
-        "analyzer_jailbreak_enabled" => Some(FeatureValue::Bool(flags.analyzer_jailbreak_enabled)),
-        "enforcement_mode" => Some(FeatureValue::String(flags.enforcement_mode.clone())),
-        "boundary_defense_enabled" => Some(FeatureValue::Bool(flags.boundary_defense_enabled)),
-        "boundary_defense_shadow_mode" => {
-            Some(FeatureValue::Bool(flags.boundary_defense_shadow_mode))
-        }
-        "rate_limiting_enabled" => Some(FeatureValue::Bool(flags.rate_limiting_enabled)),
-        "cost_caps_enabled" => Some(FeatureValue::Bool(flags.cost_caps_enabled)),
-        "operating_point" => Some(FeatureValue::String(flags.operating_point.clone())),
-        "over_defence" => Some(FeatureValue::Bool(flags.over_defence)),
-        "llm_judge_enabled" => Some(FeatureValue::Bool(flags.llm_judge_enabled)),
-        _ => None,
-    }
-}
-
-fn collect_warnings(prev: &FeatureFlags, next: &FeatureFlags) -> Vec<String> {
+fn collect_warnings(
+    prev: &FeatureFlags,
+    next: &FeatureFlags,
+    view: &FeatureFlagsView,
+) -> Vec<String> {
     let mut out = Vec::new();
     if next.llm_judge_enabled && !prev.llm_judge_enabled {
         out.push(
             "llm_judge backend not implemented yet; flag stored but no analyzer reads it (see #43)"
                 .to_string(),
         );
+    }
+    for (id, _old, _new) in diff_flags(prev, next) {
+        let name = id.name();
+        if view.effective.get(name) == Some(&false) {
+            out.push(format!(
+                "flag '{name}' is inert: the backing subsystem was not loaded at startup; \
+                 the value is persisted but no request will observe it until the proxy restarts \
+                 with the corresponding startup configuration"
+            ));
+        }
+        if let Some(Some(source)) = view.overridden_by.get(name) {
+            out.push(format!(
+                "flag '{name}' is currently shadowed by '{source}'; the runtime value is persisted \
+                 but a process restart will be overridden by the {source} layer"
+            ));
+        }
     }
     out
 }
@@ -330,7 +537,7 @@ fn persist_overlay(state: &AppState, flags: &FeatureFlags) -> Option<String> {
     get,
     path = "/api/v1/config/features",
     responses(
-        (status = 200, description = "Current feature flag values", body = FeatureFlags),
+        (status = 200, description = "Current feature flag view", body = FeatureFlagsView),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "Forbidden", body = ApiError),
     ),
@@ -345,7 +552,9 @@ pub async fn get_features(
         return err;
     }
     let cfg = state.config_handle.snapshot();
-    Json(FeatureFlags::from_config(&cfg)).into_response()
+    let flags = FeatureFlags::from_config(&cfg);
+    let view = build_view(flags, &state.ml_status);
+    Json(view).into_response()
 }
 
 /// `PUT /api/v1/config/features/:feature` — toggle one feature.
@@ -378,33 +587,32 @@ pub async fn update_feature(
 
     let prev_cfg = state.config_handle.snapshot();
     let prev_flags = FeatureFlags::from_config(&prev_cfg);
-    let previous = match extract_feature_value(&prev_flags, &feature) {
+
+    // Surface immutable / unknown names with their specific error
+    // categories before touching the config handle.
+    if feature == "analyzer_regex_enabled" {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "immutable",
+            "feature 'analyzer_regex_enabled' is immutable",
+        );
+    }
+    let previous = match FeatureId::from_name(&feature).map(|id| id.read(&prev_flags)) {
         Some(v) => v,
         None => {
-            // analyzer_regex_enabled is the only "known but immutable"
-            // name; everything else hits unknown_feature.
-            if feature == "analyzer_regex_enabled" {
-                return api_error(
-                    StatusCode::BAD_REQUEST,
-                    "immutable",
-                    "feature 'analyzer_regex_enabled' is immutable",
-                );
-            }
             return api_error(
                 StatusCode::BAD_REQUEST,
                 "unknown_feature",
                 &format!("unknown feature: {feature}"),
-            );
+            )
         }
     };
-    let new_value = body.value.clone();
 
-    let result = state.config_handle.update(|cfg: &mut ProxyConfig| {
-        match apply_single(cfg, &feature, body.value) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(encode_validation_error(&e)),
-        }
-    });
+    let result = state
+        .config_handle
+        .update::<_, ValidationError>(|cfg: &mut ProxyConfig| {
+            apply_single(cfg, &feature, body.value)
+        });
 
     let new_arc = match result {
         Ok(arc) => arc,
@@ -413,19 +621,19 @@ pub async fn update_feature(
 
     let next_flags = FeatureFlags::from_config(&new_arc);
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags);
-    let mut warnings = collect_warnings(&prev_flags, &next_flags);
+    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
+    let view = build_view(next_flags.clone(), &state.ml_status);
+    let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     if let Some(msg) = persist_overlay(&state, &next_flags) {
         warnings.push(msg);
     }
 
     let resp = UpdateFeatureResponse {
-        updated: feature.clone(),
+        updated: feature,
         previous,
-        features: next_flags,
+        view,
         warnings,
     };
-    let _ = new_value; // silence unused warning when the body is logged elsewhere
     (StatusCode::OK, Json(resp)).into_response()
 }
 
@@ -456,12 +664,9 @@ pub async fn bulk_update_features(
     let prev_cfg = state.config_handle.snapshot();
     let prev_flags = FeatureFlags::from_config(&prev_cfg);
 
-    let result = state.config_handle.update(|cfg: &mut ProxyConfig| {
-        match body.features.apply_to_config(cfg) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(encode_validation_error(&e)),
-        }
-    });
+    let result = state
+        .config_handle
+        .update::<_, ValidationError>(|cfg: &mut ProxyConfig| body.features.apply_to_config(cfg));
 
     let new_arc = match result {
         Ok(arc) => arc,
@@ -470,16 +675,14 @@ pub async fn bulk_update_features(
 
     let next_flags = FeatureFlags::from_config(&new_arc);
     apply_runtime_effects(&state, &prev_flags, &next_flags);
-    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags);
-    let mut warnings = collect_warnings(&prev_flags, &next_flags);
+    record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
+    let view = build_view(next_flags.clone(), &state.ml_status);
+    let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     if let Some(msg) = persist_overlay(&state, &next_flags) {
         warnings.push(msg);
     }
 
-    let resp = BulkUpdateResponse {
-        features: next_flags,
-        warnings,
-    };
+    let resp = BulkUpdateResponse { view, warnings };
     (StatusCode::OK, Json(resp)).into_response()
 }
 
@@ -487,7 +690,6 @@ pub async fn bulk_update_features(
 mod tests {
     use super::*;
     use crate::config_handle::ConfigHandle;
-    use crate::feature_flags::FeatureFlags;
     use axum::{
         body::{to_bytes, Body},
         http::Request,
@@ -495,8 +697,8 @@ mod tests {
         Router,
     };
     use llmtrace_core::{
-        ApiKeyRole, AuthContext, EnforcementMode, OperatingPoint, ProxyConfig, SecurityAnalyzer,
-        StorageConfig, TenantId,
+        ApiKeyRole, AuthContext, EnforcementMode, OperatingPoint as CoreOperatingPoint,
+        ProxyConfig, SecurityAnalyzer, StorageConfig, TenantId,
     };
     use llmtrace_security::{EnsembleRuntimeHandle, RegexSecurityAnalyzer};
     use llmtrace_storage::StorageProfile;
@@ -510,6 +712,7 @@ mod tests {
     async fn test_state_with_persistence(
         persist_path: Option<std::path::PathBuf>,
     ) -> Arc<AppState> {
+        reset_audit_debounce();
         let storage = StorageProfile::Memory.build().await.unwrap();
         let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
         let client = reqwest::Client::new();
@@ -611,7 +814,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_features_returns_defaults() {
+    async fn get_features_returns_defaults_and_view_shape() {
         let state = test_state().await;
         let app = admin_router(state);
         let resp = app
@@ -620,10 +823,22 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
-        // Defaults from ProxyConfig::default()
-        assert_eq!(body["enforcement_mode"], "log");
-        assert_eq!(body["operating_point"], "balanced");
-        assert_eq!(body["llm_judge_enabled"], false);
+        assert_eq!(body["values"]["enforcement_mode"], "log");
+        assert_eq!(body["values"]["operating_point"], "balanced");
+        assert_eq!(body["values"]["llm_judge_enabled"], false);
+        // effective + overridden_by maps exist for every flag
+        let effective = body["effective"].as_object().unwrap();
+        assert!(effective.contains_key("enforcement_mode"));
+        // llm_judge_enabled is always inert (store-only)
+        assert_eq!(effective["llm_judge_enabled"], false);
+        // analyzer_ml_enabled is inert when ml_status is Disabled
+        assert_eq!(effective["analyzer_ml_enabled"], false);
+        // HOT flags are always effective
+        assert_eq!(effective["enforcement_mode"], true);
+        assert_eq!(effective["rate_limiting_enabled"], true);
+        // overridden_by is null for every flag today
+        let overridden_by = body["overridden_by"].as_object().unwrap();
+        assert!(overridden_by.values().all(|v| v.is_null()));
     }
 
     #[tokio::test]
@@ -655,9 +870,7 @@ mod tests {
         let body = body_json(resp).await;
         assert_eq!(body["updated"], "enforcement_mode");
         assert_eq!(body["previous"], "log");
-        assert_eq!(body["features"]["enforcement_mode"], "block");
-
-        // The live config must reflect the change.
+        assert_eq!(body["view"]["values"]["enforcement_mode"], "block");
         assert_eq!(
             state.config_handle.snapshot().enforcement.mode,
             EnforcementMode::Block
@@ -665,7 +878,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn put_single_operating_point_high_precision_propagates_to_runtime_handle() {
+    async fn put_single_operating_point_propagates_to_runtime_handle() {
         let state = test_state().await;
         let app = admin_router(state.clone());
         let resp = app
@@ -682,7 +895,7 @@ mod tests {
                 .snapshot()
                 .security_analysis
                 .operating_point,
-            OperatingPoint::HighPrecision
+            CoreOperatingPoint::HighPrecision
         );
     }
 
@@ -780,18 +993,41 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         let warnings = body["warnings"].as_array().unwrap();
-        assert!(!warnings.is_empty());
-        assert!(warnings[0].as_str().unwrap().contains("llm_judge"));
+        assert!(warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("llm_judge")));
+    }
+
+    #[tokio::test]
+    async fn put_single_analyzer_ml_enabled_surfaces_inert_warning() {
+        // test_state() builds ml_status = Disabled, so flipping
+        // analyzer_ml_enabled true should be persisted but surface an
+        // inert-subsystem warning.
+        let state = test_state().await;
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/analyzer_ml_enabled",
+                serde_json::json!({"value": false}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let warnings = body["warnings"].as_array().unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("inert")));
+        assert_eq!(body["view"]["effective"]["analyzer_ml_enabled"], false);
     }
 
     #[tokio::test]
     async fn put_bulk_atomic_rollback_on_validation_error() {
         let state = test_state().await;
-        // Build a known-bad bulk body: shadow_mode true with enabled false.
         let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
-        flags.enforcement_mode = "block".to_string(); // valid change
+        flags.enforcement_mode = "block".to_string();
         flags.boundary_defense_enabled = false;
-        flags.boundary_defense_shadow_mode = true; // invalid combo
+        flags.boundary_defense_shadow_mode = true;
 
         let app = admin_router(state.clone());
         let resp = app
@@ -802,8 +1038,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
-
-        // The valid change must NOT have been applied — atomic rollback.
         let snap = state.config_handle.snapshot();
         assert_eq!(snap.enforcement.mode, EnforcementMode::Log);
     }
@@ -824,7 +1058,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        // Inert handle still records the writes.
         assert!(!state.ensemble_runtime.ml());
         assert!(state.ensemble_runtime.over_defence());
     }
@@ -835,7 +1068,6 @@ mod tests {
         let overlay_path = tmp.path().join("config.runtime.yaml");
         let state = test_state_with_persistence(Some(overlay_path.clone())).await;
         let app = admin_router(state.clone());
-
         let resp = app
             .oneshot(admin_put(
                 "/api/v1/config/features/enforcement_mode",
@@ -844,8 +1076,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert!(overlay_path.exists(), "sidecar overlay must be written");
-
+        assert!(overlay_path.exists());
         let loaded = crate::feature_flags::load_runtime_overlay(&overlay_path)
             .unwrap()
             .unwrap();
@@ -854,15 +1085,12 @@ mod tests {
 
     #[tokio::test]
     async fn put_single_persistence_failure_returns_warning() {
-        // Point persistence at a path whose parent is a regular file
-        // (not a directory), so create_dir_all/write both fail.
         let tmp = tempfile::tempdir().unwrap();
         let blocker = tmp.path().join("blocker");
         std::fs::write(&blocker, "").unwrap();
         let overlay_path = blocker.join("config.runtime.yaml");
         let state = test_state_with_persistence(Some(overlay_path)).await;
         let app = admin_router(state);
-
         let resp = app
             .oneshot(admin_put(
                 "/api/v1/config/features/enforcement_mode",
@@ -873,14 +1101,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         let warnings = body["warnings"].as_array().unwrap();
-        assert!(
-            warnings.iter().any(|w| w
-                .as_str()
-                .unwrap()
-                .contains("runtime overlay persistence failed")),
-            "expected persistence-failure warning, got {:?}",
-            warnings
-        );
+        assert!(warnings.iter().any(|w| w
+            .as_str()
+            .unwrap()
+            .contains("runtime overlay persistence failed")));
     }
 
     #[tokio::test]
@@ -891,7 +1115,6 @@ mod tests {
         let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
         flags.cost_caps_enabled = true;
         flags.over_defence = true;
-
         let app = admin_router(state);
         let resp = app
             .oneshot(admin_put(
@@ -901,7 +1124,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-
         let loaded = crate::feature_flags::load_runtime_overlay(&overlay_path)
             .unwrap()
             .unwrap();
@@ -932,11 +1154,9 @@ mod tests {
     async fn put_bulk_bumps_counter_once_per_changed_field() {
         let state = test_state().await;
         let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
-        // Flip three fields in one bulk request.
         flags.cost_caps_enabled = true;
         flags.over_defence = true;
         flags.enforcement_mode = "flag".to_string();
-
         let app = admin_router(state.clone());
         let _ = app
             .oneshot(admin_put(
@@ -945,7 +1165,6 @@ mod tests {
             ))
             .await
             .unwrap();
-
         assert_eq!(
             state
                 .metrics
@@ -970,7 +1189,6 @@ mod tests {
                 .get(),
             1
         );
-        // Unchanged fields MUST NOT bump the counter.
         assert_eq!(
             state
                 .metrics
@@ -997,6 +1215,114 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(state.metrics.config_persist_errors_total.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn bool_state_gauge_tracks_live_flag() {
+        let state = test_state().await;
+        // Initialize to defaults so the gauge reflects them even without
+        // going through an API call.
+        init_state_metrics(
+            &state,
+            &FeatureFlags::from_config(&state.config_handle.snapshot()),
+        );
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_bool_state
+                .with_label_values(&["cost_caps_enabled"])
+                .get(),
+            0
+        );
+        let app = admin_router(state.clone());
+        let _ = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/cost_caps_enabled",
+                serde_json::json!({"value": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_bool_state
+                .with_label_values(&["cost_caps_enabled"])
+                .get(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn string_state_gauge_moves_label_combination_on_change() {
+        let state = test_state().await;
+        init_state_metrics(
+            &state,
+            &FeatureFlags::from_config(&state.config_handle.snapshot()),
+        );
+        // Default is "log" initially -> gauge value 1.
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_string_state
+                .with_label_values(&["enforcement_mode", "log"])
+                .get(),
+            1
+        );
+        let app = admin_router(state.clone());
+        let _ = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/enforcement_mode",
+                serde_json::json!({"value": "block"}),
+            ))
+            .await
+            .unwrap();
+        // Old combo was removed (get returns 0 because a newly-vivified
+        // child on a removed label resets), new combo is 1.
+        assert_eq!(
+            state
+                .metrics
+                .feature_flag_string_state
+                .with_label_values(&["enforcement_mode", "block"])
+                .get(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn put_persists_forensic_audit_event() {
+        let state = test_state().await;
+        let tenant_id = admin_extension().tenant_id;
+        // The test_state admin_extension() TenantId isn't the one in
+        // the request — the handler reads auth.tenant_id from the
+        // Extension we set. Re-read by constructing a fresh extension
+        // and sharing its tenant across the request and the query.
+        let auth = AuthContext {
+            tenant_id,
+            role: ApiKeyRole::Admin,
+            key_id: None,
+        };
+        let req = Request::builder()
+            .method("PUT")
+            .uri("/api/v1/config/features/enforcement_mode")
+            .header("content-type", "application/json")
+            .extension(auth)
+            .body(Body::from(
+                serde_json::to_vec(&serde_json::json!({"value": "flag"})).unwrap(),
+            ))
+            .unwrap();
+        let app = admin_router(state.clone());
+        let _ = app.oneshot(req).await.unwrap();
+
+        let query = llmtrace_core::AuditQuery::new(tenant_id);
+        let events = state
+            .metadata()
+            .query_audit_events(&query)
+            .await
+            .unwrap_or_default();
+        let matched = events.iter().any(|e| {
+            e.event_type == "feature_flag_changed" && e.resource == "feature/enforcement_mode"
+        });
+        assert!(matched, "expected forensic audit event, got {:?}", events);
     }
 
     #[tokio::test]
