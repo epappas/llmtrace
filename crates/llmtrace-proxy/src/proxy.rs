@@ -31,6 +31,32 @@ use uuid::Uuid;
 // Shared application state
 // ---------------------------------------------------------------------------
 
+/// Writability state of the sidecar runtime overlay path at startup.
+///
+/// Computed by `main::probe_runtime_overlay_writable` and surfaced on
+/// the `/health` endpoint so Kubernetes readiness probes and
+/// operators can detect the silent-revert trap where the base
+/// `--config` lives in a read-only ConfigMap mount and the derived
+/// `config.runtime.yaml` inherits the mount (issue #42 B2).
+#[derive(Debug, Clone)]
+pub enum RuntimeOverlayStatus {
+    /// No runtime overlay path was resolved — the proxy was started
+    /// without `--config` / `--runtime-config` and persistence is
+    /// intentionally disabled.
+    Disabled,
+    /// The runtime overlay path resolved and the filesystem accepts
+    /// writes. Admin PUTs to `/api/v1/config/features` will persist
+    /// across restarts.
+    Writable,
+    /// The runtime overlay path resolved but the filesystem rejected
+    /// the startup probe. Admin PUTs will apply in memory but will
+    /// NOT persist — pod restart silently reverts.
+    NotWritable {
+        /// Filesystem error captured by the startup probe.
+        reason: String,
+    },
+}
+
 /// Status of ML model loading at startup.
 #[derive(Debug, Clone)]
 pub enum MlModelStatus {
@@ -108,6 +134,14 @@ pub struct AppState {
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
+    /// Writability of the sidecar runtime overlay path at startup.
+    ///
+    /// Computed once by `build_app_state` via a probe write; the
+    /// `/health` endpoint exposes the result so operators and
+    /// Kubernetes readiness probes can catch the silent-revert trap
+    /// where the base `--config` lives in a read-only ConfigMap mount
+    /// and the derived `config.runtime.yaml` inherits the mount.
+    pub runtime_overlay_status: RuntimeOverlayStatus,
     /// Shutdown coordinator for graceful shutdown and task tracking.
     pub shutdown: crate::shutdown::ShutdownCoordinator,
     /// Prometheus metrics collectors.
@@ -1402,6 +1436,25 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
         ("degraded", StatusCode::OK)
     };
 
+    let runtime_overlay = match &state.runtime_overlay_status {
+        RuntimeOverlayStatus::Disabled => serde_json::json!({
+            "status": "disabled",
+            "persistence": false,
+            "writable": false,
+        }),
+        RuntimeOverlayStatus::Writable => serde_json::json!({
+            "status": "writable",
+            "persistence": true,
+            "writable": true,
+        }),
+        RuntimeOverlayStatus::NotWritable { reason } => serde_json::json!({
+            "status": "not_writable",
+            "persistence": false,
+            "writable": false,
+            "reason": reason,
+        }),
+    };
+
     let body = serde_json::json!({
         "status": status_label,
         "starting": !is_ready,
@@ -1416,6 +1469,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             "circuit_breaker": format!("{:?}", security_circuit),
         },
         "ml": ml_status,
+        "runtime_overlay": runtime_overlay,
     });
 
     Response::builder()

@@ -91,6 +91,7 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
         report_store: llmtrace_proxy::compliance::new_report_store(),
         rate_limiter,
         ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,
+        runtime_overlay_status: llmtrace_proxy::proxy::RuntimeOverlayStatus::Disabled,
         shutdown: llmtrace_proxy::shutdown::ShutdownCoordinator::new(30),
         metrics: llmtrace_proxy::metrics::Metrics::new(),
         ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

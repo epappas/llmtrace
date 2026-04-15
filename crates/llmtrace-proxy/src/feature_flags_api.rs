@@ -61,8 +61,18 @@ use crate::proxy::{AppState, MlModelStatus};
 /// forensic AuditEvent persistence are NOT gated by this.
 const AUDIT_LOG_DEBOUNCE: Duration = Duration::from_secs(1);
 
+/// Hard cap on the number of distinct `(actor, feature)` debounce
+/// entries kept in memory. When the cap is reached the next write
+/// triggers a sweep that evicts every entry whose last emission is
+/// older than `AUDIT_LOG_DEBOUNCE * 10`, and — if the map is still
+/// over-capacity afterwards — drains it wholesale. Rotating API keys
+/// against a long-lived proxy would otherwise grow the map without
+/// bound.
+const AUDIT_DEBOUNCE_MAX_ENTRIES: usize = 4096;
+
 /// Shared last-emission timestamps keyed by `"actor|feature"`. Lazily
-/// initialised; lives for the process lifetime.
+/// initialised; lives for the process lifetime but is periodically
+/// swept by [`should_log_audit`] so it cannot grow unbounded.
 fn audit_debounce_state() -> &'static Mutex<HashMap<String, Instant>> {
     static STATE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
     STATE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -182,8 +192,10 @@ fn feature_value_display(v: &FeatureValue) -> String {
 /// startup; flipping them from an off-at-startup state is a silent
 /// no-op (documented in issue #42), and this is how operators detect
 /// that. The ensemble tuning knobs (`operating_point`, `over_defence`)
-/// are effective whenever an ensemble was built, regardless of per-
-/// analyzer loading. HOT flags are always effective.
+/// are effective only when **at least one** ML analyzer is loaded —
+/// on a pure-regex deployment the ensemble short-circuits and these
+/// knobs have no effect even though `ml_status == Loaded`. HOT flags
+/// are always effective.
 ///
 /// `llm_judge_enabled` is always `false` — the store-only contract is
 /// explicit, not an operational surprise.
@@ -205,7 +217,20 @@ fn feature_is_effective(ml_status: &MlModelStatus, id: FeatureId) -> bool {
             }
         ),
         AnalyzerPiguardEnabled => matches!(ml_status, MlModelStatus::Loaded { piguard: true, .. }),
-        OperatingPoint | OverDefence => matches!(ml_status, MlModelStatus::Loaded { .. }),
+        // The ensemble short-circuits when none of the three ML
+        // sub-models is loaded, so the ensemble-tuning knobs only
+        // affect scoring when at least one is active. Flagging them
+        // effective on a pure-regex deployment would lie to operators.
+        OperatingPoint | OverDefence => matches!(
+            ml_status,
+            MlModelStatus::Loaded {
+                prompt_injection: true,
+                ..
+            } | MlModelStatus::Loaded {
+                injecguard: true,
+                ..
+            } | MlModelStatus::Loaded { piguard: true, .. }
+        ),
         LlmJudgeEnabled => false,
         AnalyzerJailbreakEnabled
         | EnforcementMode
@@ -321,6 +346,13 @@ pub fn init_state_metrics(state: &AppState, flags: &FeatureFlags) {
 /// emission for this `(actor, feature)` pair to warrant a new tracing
 /// line. Prevents log spam from pathological toggle loops without
 /// suppressing the counter or persisted AuditEvent.
+///
+/// The underlying map is bounded to [`AUDIT_DEBOUNCE_MAX_ENTRIES`]
+/// entries. When capacity is reached, old entries (older than
+/// `AUDIT_LOG_DEBOUNCE * 10`) are swept first; if the map is still
+/// full after the sweep (pathological case — e.g. many active
+/// rotating API keys) it is drained wholesale so the process cannot
+/// grow without bound.
 fn should_log_audit(actor: &str, feature: &str) -> bool {
     let key = format!("{actor}|{feature}");
     let now = Instant::now();
@@ -329,6 +361,15 @@ fn should_log_audit(actor: &str, feature: &str) -> bool {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
+
+    if guard.len() >= AUDIT_DEBOUNCE_MAX_ENTRIES {
+        let stale_cutoff = AUDIT_LOG_DEBOUNCE * 10;
+        guard.retain(|_, last| now.duration_since(*last) < stale_cutoff);
+        if guard.len() >= AUDIT_DEBOUNCE_MAX_ENTRIES {
+            guard.clear();
+        }
+    }
+
     match guard.get(&key) {
         Some(last) if now.duration_since(*last) < AUDIT_LOG_DEBOUNCE => false,
         _ => {
@@ -485,9 +526,21 @@ fn collect_warnings(
                 .to_string(),
         );
     }
-    for (id, _old, _new) in diff_flags(prev, next) {
+    for (id, _old, new_val) in diff_flags(prev, next) {
         let name = id.name();
-        if view.effective.get(name) == Some(&false) {
+        // Only warn about inert bool flags when the operator is
+        // trying to ENABLE a subsystem that isn't loaded. Flipping an
+        // already-off ML analyzer to `false` is a no-op that matches
+        // the on-disk state — no need to scare the operator.
+        // String flags (operating_point) always warn on diff when
+        // inert because changing their value is always a positive
+        // intent to reconfigure.
+        let direction_warrants_inert_warning = match &new_val {
+            FeatureValue::Bool(true) => true,
+            FeatureValue::Bool(false) => false,
+            FeatureValue::String(_) => true,
+        };
+        if direction_warrants_inert_warning && view.effective.get(name) == Some(&false) {
             out.push(format!(
                 "flag '{name}' is inert: the backing subsystem was not loaded at startup; \
                  the value is persisted but no request will observe it until the proxy restarts \
@@ -757,6 +810,7 @@ mod tests {
             report_store: crate::compliance::new_report_store(),
             rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -999,10 +1053,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn put_single_analyzer_ml_enabled_surfaces_inert_warning() {
-        // test_state() builds ml_status = Disabled, so flipping
-        // analyzer_ml_enabled true should be persisted but surface an
-        // inert-subsystem warning.
+    async fn put_single_analyzer_ml_enabled_enable_surfaces_inert_warning() {
+        // test_state() builds ml_status = Disabled. Default config has
+        // analyzer_ml_enabled = true, so flip it off first and then
+        // attempt to re-enable; the true-direction flip should emit
+        // the inert warning because no ML model was loaded at startup.
+        let state = test_state().await;
+        state
+            .config_handle
+            .update::<_, ValidationError>(|c| {
+                c.security_analysis.ml_enabled = false;
+                Ok(())
+            })
+            .unwrap();
+        let app = admin_router(state);
+        let resp = app
+            .oneshot(admin_put(
+                "/api/v1/config/features/analyzer_ml_enabled",
+                serde_json::json!({"value": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let warnings = body["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.as_str().unwrap().contains("inert")),
+            "expected inert warning on true-direction flip against Disabled ML, got {:?}",
+            warnings
+        );
+        assert_eq!(body["view"]["effective"]["analyzer_ml_enabled"], false);
+    }
+
+    #[tokio::test]
+    async fn put_single_analyzer_ml_enabled_disable_does_not_warn() {
+        // Disabling an already-off ML analyzer on a Disabled ml_status
+        // box should NOT surface an inert warning — the operator's
+        // intent (off) matches the runtime state (off). Flipping the
+        // default true -> false is a no-op with respect to inert
+        // semantics.
         let state = test_state().await;
         let app = admin_router(state);
         let resp = app
@@ -1015,10 +1106,13 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_json(resp).await;
         let warnings = body["warnings"].as_array().unwrap();
-        assert!(warnings
-            .iter()
-            .any(|w| w.as_str().unwrap().contains("inert")));
-        assert_eq!(body["view"]["effective"]["analyzer_ml_enabled"], false);
+        assert!(
+            warnings
+                .iter()
+                .all(|w| !w.as_str().unwrap().contains("inert")),
+            "disable direction should not emit inert warning, got {:?}",
+            warnings
+        );
     }
 
     #[tokio::test]
@@ -1323,6 +1417,25 @@ mod tests {
             e.event_type == "feature_flag_changed" && e.resource == "feature/enforcement_mode"
         });
         assert!(matched, "expected forensic audit event, got {:?}", events);
+    }
+
+    #[test]
+    fn audit_debounce_map_is_bounded() {
+        // Fill the debounce map past AUDIT_DEBOUNCE_MAX_ENTRIES with
+        // unique (actor, feature) pairs and assert the state map size
+        // never exceeds the cap after the next write.
+        reset_audit_debounce();
+        for i in 0..(AUDIT_DEBOUNCE_MAX_ENTRIES + 500) {
+            let actor = format!("actor-{i}");
+            let _ = should_log_audit(&actor, "enforcement_mode");
+        }
+        let map = audit_debounce_state();
+        let guard = map.lock().unwrap();
+        assert!(
+            guard.len() <= AUDIT_DEBOUNCE_MAX_ENTRIES,
+            "debounce map grew beyond cap: {}",
+            guard.len()
+        );
     }
 
     #[tokio::test]

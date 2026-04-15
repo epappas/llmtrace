@@ -499,14 +499,18 @@ async fn build_app_state(
     // Warn loudly if the runtime overlay path is configured but the
     // filesystem refuses writes. Operators running under a read-only
     // ConfigMap mount will otherwise see silent failures at the first
-    // admin PUT (see #42 runbook entry "runtime overlay didn't persist").
-    if let Some(ref path) = runtime_overlay_path {
-        match probe_runtime_overlay_writable(path) {
+    // admin PUT. The probe result is also cached on AppState and
+    // surfaced via /health so Kubernetes readiness probes can fail
+    // fast on the silent-revert trap (see docs/runbooks/feature-flags.md).
+    let runtime_overlay_status = match runtime_overlay_path.as_ref() {
+        None => llmtrace_proxy::proxy::RuntimeOverlayStatus::Disabled,
+        Some(path) => match probe_runtime_overlay_writable(path) {
             Ok(()) => {
                 info!(
                     runtime_overlay = %path.display(),
                     "Runtime feature-flag overlay path is writable"
                 );
+                llmtrace_proxy::proxy::RuntimeOverlayStatus::Writable
             }
             Err(reason) => {
                 tracing::warn!(
@@ -515,12 +519,15 @@ async fn build_app_state(
                     "Runtime feature-flag overlay path is not writable. \
                      Admin PUTs to /api/v1/config/features will still apply \
                      in memory but the sidecar will NOT persist across \
-                     restarts. Mount an emptyDir or writable volume at the \
-                     runtime overlay parent directory to enable persistence."
+                     restarts. See docs/runbooks/feature-flags.md for the \
+                     'runtime overlay didn't persist' entry. Mount an \
+                     emptyDir or writable volume at the runtime overlay \
+                     parent directory to enable persistence."
                 );
+                llmtrace_proxy::proxy::RuntimeOverlayStatus::NotWritable { reason }
             }
-        }
-    }
+        },
+    };
 
     let state = Arc::new(AppState {
         config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(
@@ -543,6 +550,7 @@ async fn build_app_state(
         report_store,
         rate_limiter,
         ml_status,
+        runtime_overlay_status,
         shutdown,
         metrics,
         ready,
