@@ -346,6 +346,13 @@ fn update_state_metrics(state: &AppState, prev: &FeatureFlags, next: &FeatureFla
 
 /// Initial snapshot of the state metrics, called from `build_app_state`
 /// so dashboards show the correct values from process start.
+///
+/// Also pre-initialises the `audit_event_dropped_total` and
+/// `config_persist_errors_total` counters to zero so they appear in
+/// `/metrics` scrapes even when no failures have occurred yet —
+/// Prometheus counters are lazy-initialised and would otherwise be
+/// absent until the first `.inc()`, which breaks "rate() > 0" alert
+/// rules that assume the series exists.
 pub fn init_state_metrics(state: &AppState, flags: &FeatureFlags) {
     for id in FeatureId::ALL {
         let val = id.read(flags);
@@ -369,6 +376,15 @@ pub fn init_state_metrics(state: &AppState, flags: &FeatureFlags) {
             }
         }
     }
+    // Pre-initialise zero-valued counters so /metrics always exposes
+    // them and Prometheus alert rules can reference the series.
+    state
+        .metrics
+        .audit_event_dropped_total
+        .with_label_values(&["feature_flag_changed"])
+        .reset();
+    // config_persist_errors_total is a plain IntCounter (not Vec) and
+    // is always present after registration, so no explicit init needed.
 }
 
 /// Return `true` when enough time has elapsed since the last audit log
