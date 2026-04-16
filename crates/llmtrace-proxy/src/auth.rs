@@ -92,9 +92,11 @@ pub async fn auth_middleware(
         return next.run(req).await;
     }
 
+    let cfg = state.config_handle.snapshot();
+
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
-    if !state.config.auth.enabled {
+    if !cfg.auth.enabled {
         let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
         let ctx = AuthContext {
             tenant_id,
@@ -150,7 +152,7 @@ pub async fn auth_middleware(
 
     if let Some(token) = token {
         // Check bootstrap admin key first
-        if let Some(ref admin_key) = state.config.auth.admin_key {
+        if let Some(ref admin_key) = cfg.auth.admin_key {
             if token == admin_key.as_str() {
                 // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
                 let tenant_id = resolve_tenant_from_header(headers).unwrap_or_default();
@@ -697,17 +699,23 @@ mod tests {
         ));
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -715,8 +723,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

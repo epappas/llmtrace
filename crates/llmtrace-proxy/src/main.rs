@@ -6,7 +6,7 @@
 //! capture, async security analysis, and circuit-breaker degradation.
 
 use axum::middleware;
-use axum::routing::{any, delete, get, post};
+use axum::routing::{any, delete, get, post, put};
 use axum::Router;
 use clap::{Parser, Subcommand};
 use llmtrace_core::{ProxyConfig, SecurityAnalyzer};
@@ -39,6 +39,16 @@ struct Cli {
     #[arg(short, long, global = true, env = "LLMTRACE_CONFIG")]
     config: Option<PathBuf>,
 
+    /// Path to the sidecar `config.runtime.yaml` overlay written by the
+    /// feature-flag admin API (issue #42).
+    ///
+    /// Takes precedence over the `LLMTRACE_RUNTIME_CONFIG` env var and
+    /// the auto-derived `config.runtime.yaml` next to `--config`. If
+    /// none of the three resolve, runtime persistence is disabled and
+    /// PUTs to `/api/v1/config/features` apply in memory only.
+    #[arg(long, global = true, env = "LLMTRACE_RUNTIME_CONFIG")]
+    runtime_config: Option<PathBuf>,
+
     /// Override log level (trace, debug, info, warn, error).
     #[arg(long, global = true, env = "LLMTRACE_LOG_LEVEL")]
     log_level: Option<String>,
@@ -50,6 +60,19 @@ struct Cli {
     /// Subcommand to run. If omitted, starts the proxy server.
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+/// Resolve the sidecar runtime-overlay path with the documented
+/// precedence: explicit CLI / env flag wins, otherwise derive from the
+/// base `--config` parent directory, otherwise `None` (persistence
+/// disabled).
+fn resolve_runtime_overlay_path(cli: &Cli) -> Option<PathBuf> {
+    if let Some(path) = &cli.runtime_config {
+        return Some(path.clone());
+    }
+    cli.config
+        .as_ref()
+        .and_then(|p| p.parent().map(|dir| dir.join("config.runtime.yaml")))
 }
 
 /// CLI subcommands.
@@ -71,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Load, merge, and validate configuration
     let config = load_and_merge_config(&cli)?;
+    let runtime_overlay_path = resolve_runtime_overlay_path(&cli);
 
     match cli.command {
         Some(Commands::Validate) => run_validate(&config),
@@ -81,7 +105,7 @@ async fn main() -> anyhow::Result<()> {
         None => {
             init_logging(&config)?;
             config::validate_config(&config)?;
-            run_proxy(config).await
+            run_proxy(config, runtime_overlay_path).await
         }
     }
 }
@@ -90,13 +114,16 @@ async fn main() -> anyhow::Result<()> {
 // Configuration loading
 // ---------------------------------------------------------------------------
 
-/// Load configuration from file/defaults, then apply env var and CLI overrides.
+/// Load configuration from file/defaults, then apply the runtime
+/// sidecar overlay, then env var overrides, then CLI flag overrides.
 ///
 /// Precedence (highest wins):
 /// 1. CLI flags (`--log-level`, `--log-format`)
 /// 2. Environment variables (`LLMTRACE_LISTEN_ADDR`, etc.)
-/// 3. Config file values
-/// 4. Built-in defaults
+/// 3. Sidecar runtime overlay (`config.runtime.yaml` written by the
+///    `/api/v1/config/features` admin API — issue #42)
+/// 4. Config file values (`--config`)
+/// 5. Built-in defaults
 fn load_and_merge_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
     let mut config = match &cli.config {
         Some(path) => {
@@ -109,6 +136,33 @@ fn load_and_merge_config(cli: &Cli) -> anyhow::Result<ProxyConfig> {
             ProxyConfig::default()
         }
     };
+
+    // Apply the sidecar feature-flag overlay, if present. This sits
+    // between the base config file and env/CLI overrides so operator
+    // environment still wins over any runtime toggles.
+    if let Some(overlay_path) = resolve_runtime_overlay_path(cli) {
+        match llmtrace_proxy::feature_flags::load_runtime_overlay(&overlay_path) {
+            Ok(Some(flags)) => {
+                eprintln!(
+                    "Applying runtime feature-flag overlay from {}",
+                    overlay_path.display()
+                );
+                if let Err(e) = flags.apply_to_config(&mut config) {
+                    eprintln!(
+                        "Runtime overlay {} contains an invalid flag combination ({e}); ignoring",
+                        overlay_path.display()
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "Failed to load runtime overlay {}: {e}; continuing with base config",
+                    overlay_path.display()
+                );
+            }
+        }
+    }
 
     // Apply environment variable overrides
     config::apply_env_overrides(&mut config);
@@ -182,25 +236,29 @@ async fn run_migrate(config: &ProxyConfig) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Start the proxy server.
-async fn run_proxy(config: ProxyConfig) -> anyhow::Result<()> {
+async fn run_proxy(
+    config: ProxyConfig,
+    runtime_overlay_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
     info!(
         listen_addr = %config.listen_addr,
         upstream_url = %config.upstream_url,
         storage_profile = %config.storage.profile,
         shutdown_timeout_seconds = config.shutdown.timeout_seconds,
+        runtime_overlay_path = ?runtime_overlay_path,
         "Starting LLMTrace proxy server"
     );
 
     let listen_addr = config.listen_addr.clone();
 
     // Build shared application state (includes the ShutdownCoordinator)
-    let state = build_app_state(config).await?;
+    let state = build_app_state(config, runtime_overlay_path).await?;
     let coordinator = state.shutdown.clone();
 
     // Optionally start the gRPC ingestion gateway in a background task.
     // The gRPC server shares the same cancellation token so it drains
     // gracefully when a shutdown signal arrives.
-    if state.config.grpc.enabled {
+    if state.config_handle.load().grpc.enabled {
         let grpc_state = Arc::clone(&state);
         tokio::spawn(async move {
             if let Err(e) = llmtrace_proxy::run_grpc_server(grpc_state).await {
@@ -280,7 +338,89 @@ fn init_logging(config: &ProxyConfig) -> anyhow::Result<()> {
 ///
 /// Includes a [`ShutdownCoordinator`] initialised from the config's
 /// `shutdown.timeout_seconds`.
-async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
+///
+/// Also probes the runtime feature-flag overlay path for writability
+/// and logs a loud WARN if persistence will silently fail (common
+/// under read-only Kubernetes ConfigMap mounts). The probe uses
+/// `tempfile::NamedTempFile` for a symlink-resistant test (the crate
+/// opens with `O_EXCL | O_CREAT` and randomizes the suffix), writes
+/// a small non-empty payload so per-file-quota / fs-full surfaces
+/// immediately, and automatically cleans up via the tempfile `Drop`
+/// impl.
+///
+/// On failure the tuple `(ReasonCode, String)` is returned — the code
+/// is stored on `AppState` and surfaced on `/health`, the string goes
+/// straight into the startup WARN log so operators still get the raw
+/// diagnostic server-side.
+fn probe_runtime_overlay_writable(
+    path: &std::path::Path,
+) -> Result<(), (llmtrace_proxy::proxy::RuntimeOverlayReasonCode, String)> {
+    use llmtrace_proxy::proxy::RuntimeOverlayReasonCode;
+    use std::io::Write;
+
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    };
+    if !parent.exists() {
+        if let Err(e) = std::fs::create_dir_all(&parent) {
+            let code = RuntimeOverlayReasonCode::from_io_error(&e);
+            return Err((
+                code,
+                format!(
+                    "runtime overlay parent {} is not creatable: {e}",
+                    parent.display()
+                ),
+            ));
+        }
+    }
+
+    // Create a randomised tempfile in the target parent, write a
+    // small payload, flush, and let the `NamedTempFile` destructor
+    // remove it. Symlinks planted at a deterministic path cannot
+    // redirect this write.
+    let mut tmp = match tempfile::NamedTempFile::new_in(&parent) {
+        Ok(t) => t,
+        Err(e) => {
+            let code = RuntimeOverlayReasonCode::from_io_error(&e);
+            return Err((
+                code,
+                format!(
+                    "runtime overlay parent {} is not writable: {e}",
+                    parent.display()
+                ),
+            ));
+        }
+    };
+    if let Err(e) = tmp.write_all(b"llmtrace_probe\n") {
+        let code = RuntimeOverlayReasonCode::from_io_error(&e);
+        return Err((
+            code,
+            format!(
+                "runtime overlay parent {} failed probe write: {e}",
+                parent.display()
+            ),
+        ));
+    }
+    if let Err(e) = tmp.as_file().sync_all() {
+        let code = RuntimeOverlayReasonCode::from_io_error(&e);
+        return Err((
+            code,
+            format!(
+                "runtime overlay parent {} failed probe fsync: {e}",
+                parent.display()
+            ),
+        ));
+    }
+    // Tempfile is closed and removed when `tmp` drops at end of scope.
+    drop(tmp);
+    Ok(())
+}
+
+async fn build_app_state(
+    config: ProxyConfig,
+    runtime_overlay_path: Option<PathBuf>,
+) -> anyhow::Result<Arc<AppState>> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(
             config.connection_timeout_ms,
@@ -327,18 +467,25 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     // Build the security analyzer — attempt ML warm-up if enabled and compiled
-    let (security, ml_status) = build_security_analyzer(&config).await?;
+    let (security, ml_status, ensemble_runtime) = build_security_analyzer(&config).await?;
 
-    // Regex-only analyzer for fast-path enforcement (near-zero latency)
+    // Regex-only analyzer for fast-path enforcement (near-zero latency).
+    // Shares the jailbreak toggle with the ensemble's inner regex analyzer
+    // via the runtime handle so runtime flag flips affect both (#42).
     let fast_analyzer: Arc<dyn llmtrace_core::SecurityAnalyzer> = Arc::new(
-        llmtrace_security::RegexSecurityAnalyzer::new()
-            .map_err(|e| anyhow::anyhow!("Failed to build fast analyzer: {e}"))?,
+        llmtrace_security::RegexSecurityAnalyzer::new_with_jailbreak_flag(
+            ensemble_runtime.jailbreak_flag(),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to build fast analyzer: {e}"))?,
     );
 
     let storage_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
     let cost_estimator = CostEstimator::new(&config.cost_estimation);
     let alert_engine = AlertEngine::from_config(&config.alerts, client.clone());
+    // Always construct the cost tracker so the runtime feature-flag API
+    // can toggle cost caps on and off without restart (#42). Hot-path
+    // call sites gate usage on the live `cfg.cost_caps.enabled`.
     let cost_tracker = CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
     let anomaly_detector = llmtrace_proxy::anomaly::AnomalyDetector::new(
         &config.anomaly_detection,
@@ -357,7 +504,7 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
             engine.channel_count(),
         );
     }
-    if cost_tracker.is_some() {
+    if cost_tracker.is_enabled() {
         info!("Cost cap enforcement enabled");
     }
     if anomaly_detector.is_some() {
@@ -383,27 +530,70 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         }
     }
 
-    // Per-tenant rate limiter
-    let rate_limiter = if config.rate_limiting.enabled {
+    // Always construct the per-tenant rate limiter so the runtime
+    // feature-flag API can toggle rate limiting on and off without
+    // restart (#42). Hot-path call sites gate usage on the live
+    // `cfg.rate_limiting.enabled`.
+    if config.rate_limiting.enabled {
         info!(
             rps = config.rate_limiting.requests_per_second,
             burst = config.rate_limiting.burst_size,
             overrides = config.rate_limiting.tenant_overrides.len(),
             "Per-tenant rate limiting enabled"
         );
-        Some(llmtrace_proxy::RateLimiter::new(
-            &config.rate_limiting,
-            Arc::clone(&storage.cache),
-        ))
-    } else {
-        None
+    }
+    let rate_limiter =
+        llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
+    // Warn loudly if the runtime overlay path is configured but the
+    // filesystem refuses writes. Operators running under a read-only
+    // ConfigMap mount will otherwise see silent failures at the first
+    // admin PUT. The probe result is also cached on AppState and
+    // surfaced via /health so Kubernetes readiness probes can fail
+    // fast on the silent-revert trap (see docs/runbooks/feature-flags.md).
+    let runtime_overlay_status = match runtime_overlay_path.as_ref() {
+        None => llmtrace_proxy::proxy::RuntimeOverlayStatus::Disabled,
+        Some(path) => match probe_runtime_overlay_writable(path) {
+            Ok(()) => {
+                info!(
+                    runtime_overlay = %path.display(),
+                    "Runtime feature-flag overlay path is writable"
+                );
+                llmtrace_proxy::proxy::RuntimeOverlayStatus::Writable
+            }
+            Err((reason_code, reason_log)) => {
+                // The raw `reason_log` (with path + errno) is logged
+                // server-side only. /health exposes only the stable
+                // `reason_code.as_str()` to avoid leaking the
+                // filesystem layout to unauthenticated callers
+                // (issue #42 C1).
+                tracing::warn!(
+                    runtime_overlay = %path.display(),
+                    reason_code = %reason_code.as_str(),
+                    reason = %reason_log,
+                    "Runtime feature-flag overlay path is not writable. \
+                     Admin PUTs to /api/v1/config/features will still apply \
+                     in memory but the sidecar will NOT persist across \
+                     restarts. See docs/runbooks/feature-flags.md for the \
+                     'runtime overlay didn't persist' entry. Mount an \
+                     emptyDir or writable volume at the runtime overlay \
+                     parent directory to enable persistence."
+                );
+                llmtrace_proxy::proxy::RuntimeOverlayStatus::NotWritable { reason_code }
+            }
+        },
     };
 
-    Ok(Arc::new(AppState {
-        config,
+    let state = Arc::new(AppState {
+        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(
+            config,
+            None,
+            runtime_overlay_path,
+        ),
         client,
         storage,
         security,
+        ensemble_runtime,
         fast_analyzer,
         storage_breaker,
         security_breaker,
@@ -415,10 +605,21 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
         report_store,
         rate_limiter,
         ml_status,
+        runtime_overlay_status,
         shutdown,
         metrics,
         ready,
-    }))
+    });
+
+    // Seed the per-flag state metric so dashboards reflect the
+    // startup configuration immediately, without waiting for the first
+    // admin PUT.
+    llmtrace_proxy::feature_flags_api::init_state_metrics(
+        &state,
+        &llmtrace_proxy::feature_flags::FeatureFlags::from_config(&state.config_handle.snapshot()),
+    );
+
+    Ok(state)
 }
 
 /// Build the security analyzer, pre-loading ML models at startup by default.
@@ -430,7 +631,11 @@ async fn build_app_state(config: ProxyConfig) -> anyhow::Result<Arc<AppState>> {
 /// On failure, it falls back to the regex-only analyzer and logs a warning.
 async fn build_security_analyzer(
     config: &ProxyConfig,
-) -> anyhow::Result<(Arc<dyn SecurityAnalyzer>, MlModelStatus)> {
+) -> anyhow::Result<(
+    Arc<dyn SecurityAnalyzer>,
+    MlModelStatus,
+    Arc<llmtrace_security::EnsembleRuntimeHandle>,
+)> {
     // Optional runtime overrides (useful for local stacks and CI).
     // These do not modify the loaded config; they only affect analyzer wiring.
     let mut ml_enabled = config.security_analysis.ml_enabled;
@@ -553,7 +758,18 @@ async fn build_security_analyzer(
                     let ensemble = ensemble
                         .with_operating_point(op)
                         .with_over_defence(config.security_analysis.over_defence);
-                    Ok((Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>, status))
+                    // Initialise the runtime handle from config so the
+                    // starting state matches what the operator asked for.
+                    let handle = ensemble.runtime_handle();
+                    handle.set_ml(config.security_analysis.ml_enabled);
+                    handle.set_injecguard(config.security_analysis.injecguard_enabled);
+                    handle.set_piguard(config.security_analysis.piguard_enabled);
+                    handle.set_jailbreak(config.security_analysis.jailbreak_enabled);
+                    Ok((
+                        Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>,
+                        status,
+                        Arc::new(handle),
+                    ))
                 }
                 Ok(Err(e)) => {
                     let err_msg = format!("{e}");
@@ -567,6 +783,7 @@ async fn build_security_analyzer(
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                         MlModelStatus::Failed { error: err_msg },
+                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
                 }
                 Err(_) => {
@@ -584,6 +801,7 @@ async fn build_security_analyzer(
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                         MlModelStatus::Failed { error: err_msg },
+                        Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
                 }
             }
@@ -595,6 +813,7 @@ async fn build_security_analyzer(
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                 MlModelStatus::Disabled,
+                Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
         } else {
             let regex = RegexSecurityAnalyzer::new()
@@ -602,6 +821,7 @@ async fn build_security_analyzer(
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
                 MlModelStatus::Disabled,
+                Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
         }
     }
@@ -614,6 +834,7 @@ async fn build_security_analyzer(
         Ok((
             Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
             MlModelStatus::Disabled,
+            Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
         ))
     }
 }
@@ -644,6 +865,16 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/config/live",
             get(llmtrace_proxy::api::get_live_config),
+        )
+        // Runtime feature flag admin API (issue #42)
+        .route(
+            "/api/v1/config/features",
+            get(llmtrace_proxy::feature_flags_api::get_features)
+                .put(llmtrace_proxy::feature_flags_api::bulk_update_features),
+        )
+        .route(
+            "/api/v1/config/features/:feature",
+            put(llmtrace_proxy::feature_flags_api::update_feature),
         )
         .route("/api/v1/traces", get(llmtrace_proxy::api::list_traces))
         .route(
@@ -752,7 +983,7 @@ mod tests {
 
     /// Build a test router with default config (in-memory storage).
     async fn test_app() -> Router {
-        let state = build_app_state(memory_config()).await.unwrap();
+        let state = build_app_state(memory_config(), None).await.unwrap();
         build_router(state)
     }
 
@@ -790,7 +1021,7 @@ mod tests {
             },
             ..ProxyConfig::default()
         };
-        let state = build_app_state(config).await.unwrap();
+        let state = build_app_state(config, None).await.unwrap();
         let app = build_router(state);
 
         let body = serde_json::json!({
@@ -812,13 +1043,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_app_state_succeeds() {
-        let state = build_app_state(memory_config()).await;
+        let state = build_app_state(memory_config(), None).await;
         assert!(state.is_ok());
     }
 
     #[test]
     fn test_load_and_merge_config_defaults() {
         let cli = Cli {
+            runtime_config: None,
             config: None,
             log_level: None,
             log_format: None,
@@ -833,6 +1065,7 @@ mod tests {
     #[test]
     fn test_load_and_merge_config_cli_overrides() {
         let cli = Cli {
+            runtime_config: None,
             config: None,
             log_level: Some("debug".to_string()),
             log_format: Some("json".to_string()),
@@ -925,6 +1158,7 @@ logging:
         f.write_all(yaml.as_bytes()).unwrap();
 
         let cli = Cli {
+            runtime_config: None,
             config: Some(f.path().to_path_buf()),
             log_level: None,
             log_format: None,

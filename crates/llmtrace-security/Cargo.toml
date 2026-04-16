@@ -32,6 +32,7 @@ regex = "1.10"
 base64 = "0.22"
 unicode-normalization = "0.1"
 serde_json = "1.0"
+arc-swap = "1.9"
 
 # ML dependencies (opt-in via `ml` feature)
 candle-core = { version = "0.9", optional = true }

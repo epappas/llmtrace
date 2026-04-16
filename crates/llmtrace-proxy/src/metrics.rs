@@ -11,8 +11,8 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Response, StatusCode};
 use prometheus::{
-    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts,
-    Registry, TextEncoder,
+    Encoder, GaugeVec, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge,
+    IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use std::sync::Arc;
 
@@ -106,6 +106,41 @@ pub struct Metrics {
     pub ip_blocks_active: IntGauge,
     /// Total action-rule matches by finding type and action type.
     pub action_rule_matches_total: IntCounterVec,
+
+    /// Feature flag updates by feature name (issue #42).
+    ///
+    /// Incremented once per changed field in a PUT request to
+    /// `/api/v1/config/features`. Bulk updates increment once per
+    /// differing field, not once per request, so dashboards can
+    /// distinguish which flags are getting toggled hot.
+    pub feature_flag_updates_total: IntCounterVec,
+
+    /// Current runtime value of every bool-typed feature flag (0 or 1).
+    ///
+    /// Dashboards query this gauge to display the live state of
+    /// `analyzer_*_enabled`, `boundary_defense_*`, `rate_limiting_enabled`,
+    /// `cost_caps_enabled`, `over_defence`, and `llm_judge_enabled` without
+    /// hitting `/api/v1/config/features`.
+    pub feature_flag_bool_state: IntGaugeVec,
+
+    /// Current runtime value of every string-typed feature flag as an
+    /// info metric. One (feature, value) combination per flag is set to
+    /// 1 at a time; on change the old combination is zeroed so stale
+    /// label pairs do not accumulate.
+    pub feature_flag_string_state: IntGaugeVec,
+
+    /// Failed writes of the sidecar `config.runtime.yaml` overlay.
+    ///
+    /// A non-zero value means the in-memory change took effect but the
+    /// next proxy restart will revert it.
+    pub config_persist_errors_total: IntCounter,
+
+    /// Forensic audit events that could not be persisted to the
+    /// metadata store, labelled by event type. A non-zero value on
+    /// `{event_type="feature_flag_changed"}` means a feature flag
+    /// mutation was applied to live traffic without a durable audit
+    /// record — alert on this in production dashboards. Issue #42 C2.
+    pub audit_event_dropped_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -403,6 +438,63 @@ impl Metrics {
             .register(Box::new(action_rule_matches_total.clone()))
             .expect("register action_rule_matches_total");
 
+        let feature_flag_updates_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_updates_total",
+                "Total runtime feature-flag updates, labelled by feature name",
+            ),
+            &["feature"],
+        )
+        .expect("metric: feature_flag_updates_total");
+        registry
+            .register(Box::new(feature_flag_updates_total.clone()))
+            .expect("register feature_flag_updates_total");
+
+        let feature_flag_bool_state = IntGaugeVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_bool_state",
+                "Current runtime value of each bool-typed feature flag (0 or 1)",
+            ),
+            &["feature"],
+        )
+        .expect("metric: feature_flag_bool_state");
+        registry
+            .register(Box::new(feature_flag_bool_state.clone()))
+            .expect("register feature_flag_bool_state");
+
+        let feature_flag_string_state = IntGaugeVec::new(
+            Opts::new(
+                "llmtrace_feature_flag_string_state",
+                "Info metric for string-typed feature flags; the active (feature,value) pair is 1",
+            ),
+            &["feature", "value"],
+        )
+        .expect("metric: feature_flag_string_state");
+        registry
+            .register(Box::new(feature_flag_string_state.clone()))
+            .expect("register feature_flag_string_state");
+
+        let config_persist_errors_total = IntCounter::new(
+            "llmtrace_config_persist_errors_total",
+            "Total failures writing the runtime feature-flag sidecar overlay",
+        )
+        .expect("metric: config_persist_errors_total");
+        registry
+            .register(Box::new(config_persist_errors_total.clone()))
+            .expect("register config_persist_errors_total");
+
+        let audit_event_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_audit_event_dropped_total",
+                "Total forensic AuditEvent writes that failed to persist, by event type",
+            ),
+            &["event_type"],
+        )
+        .expect("metric: audit_event_dropped_total");
+        registry
+            .register(Box::new(audit_event_dropped_total.clone()))
+            .expect("register audit_event_dropped_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -440,6 +532,11 @@ impl Metrics {
             action_latency_seconds,
             ip_blocks_active,
             action_rule_matches_total,
+            feature_flag_updates_total,
+            feature_flag_bool_state,
+            feature_flag_string_state,
+            config_persist_errors_total,
+            audit_event_dropped_total,
         }
     }
 

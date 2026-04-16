@@ -96,15 +96,25 @@ pub struct CostTracker {
 impl CostTracker {
     /// Create a new cost tracker.
     ///
-    /// Returns `None` if cost caps are disabled.
-    pub fn new(config: &CostCapConfig, cache: Arc<dyn CacheLayer>) -> Option<Self> {
-        if !config.enabled {
-            return None;
-        }
-        Some(Self {
+    /// Always returns a tracker. Callers must gate enforcement on
+    /// `cfg.cost_caps.enabled` at the request hot path so the runtime
+    /// feature-flag API can toggle cost caps on and off without
+    /// reconstructing the tracker (issue #42).
+    pub fn new(config: &CostCapConfig, cache: Arc<dyn CacheLayer>) -> Self {
+        Self {
             config: config.clone(),
             cache,
-        })
+        }
+    }
+
+    /// Returns `true` if cost caps are enabled in the tracker's snapshot
+    /// of the config. Callers on the proxy hot path should prefer the
+    /// live `cfg.cost_caps.enabled` read via `ConfigHandle` — this
+    /// helper only reflects the config at the time the tracker was
+    /// constructed.
+    #[must_use]
+    pub fn is_enabled(&self) -> bool {
+        self.config.enabled
     }
 
     /// Enforce token caps on a request **before** it is forwarded upstream.
@@ -419,15 +429,17 @@ mod tests {
     // -- constructor -------------------------------------------------------
 
     #[test]
-    fn test_disabled_config_returns_none() {
+    fn test_disabled_config_tracker_reports_disabled() {
         let cache = make_cache();
-        assert!(CostTracker::new(&CostCapConfig::default(), cache).is_none());
+        let tracker = CostTracker::new(&CostCapConfig::default(), cache);
+        assert!(!tracker.is_enabled());
     }
 
     #[test]
-    fn test_enabled_config_returns_tracker() {
+    fn test_enabled_config_tracker_reports_enabled() {
         let cache = make_cache();
-        assert!(CostTracker::new(&enabled_config(), cache).is_some());
+        let tracker = CostTracker::new(&enabled_config(), cache);
+        assert!(tracker.is_enabled());
     }
 
     // -- period key --------------------------------------------------------
@@ -458,14 +470,14 @@ mod tests {
 
     #[test]
     fn test_token_cap_allowed_when_within_limits() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(None, Some(1000), Some(500), Some(1500));
         assert!(matches!(result, CapCheckResult::Allowed));
     }
 
     #[test]
     fn test_token_cap_prompt_exceeded() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(None, Some(5000), None, None);
         assert!(matches!(result, CapCheckResult::TokenCapExceeded { .. }));
         if let CapCheckResult::TokenCapExceeded { reason } = result {
@@ -476,21 +488,21 @@ mod tests {
 
     #[test]
     fn test_token_cap_completion_exceeded() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(None, None, Some(5000), None);
         assert!(matches!(result, CapCheckResult::TokenCapExceeded { .. }));
     }
 
     #[test]
     fn test_token_cap_total_exceeded() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(None, None, None, Some(9000));
         assert!(matches!(result, CapCheckResult::TokenCapExceeded { .. }));
     }
 
     #[test]
     fn test_token_cap_none_tokens_always_allowed() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(None, None, None, None);
         assert!(matches!(result, CapCheckResult::Allowed));
     }
@@ -502,14 +514,14 @@ mod tests {
             default_token_cap: None,
             ..CostCapConfig::default()
         };
-        let tracker = CostTracker::new(&config, make_cache()).unwrap();
+        let tracker = CostTracker::new(&config, make_cache());
         let result = tracker.check_token_caps(None, Some(999999), Some(999999), Some(999999));
         assert!(matches!(result, CapCheckResult::Allowed));
     }
 
     #[test]
     fn test_token_cap_agent_override() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         // Premium agent has max_prompt=16384, no completion or total cap
         let result =
             tracker.check_token_caps(Some("premium-agent"), Some(10000), Some(999999), None);
@@ -518,14 +530,14 @@ mod tests {
 
     #[test]
     fn test_token_cap_agent_prompt_exceeded() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let result = tracker.check_token_caps(Some("premium-agent"), Some(20000), None, None);
         assert!(matches!(result, CapCheckResult::TokenCapExceeded { .. }));
     }
 
     #[test]
     fn test_token_cap_unknown_agent_uses_defaults() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         // Unknown agent should use default caps (4096 prompt)
         let result = tracker.check_token_caps(Some("unknown-agent"), Some(5000), None, None);
         assert!(matches!(result, CapCheckResult::TokenCapExceeded { .. }));
@@ -535,7 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_budget_allowed_when_no_spend() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let tid = TenantId::new();
         let result = tracker.check_budget_caps(tid, None).await;
         assert!(matches!(result, CapCheckResult::Allowed));
@@ -544,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_budget_rejected_on_hard_cap() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         // Seed spend above the hourly hard cap ($10)
@@ -569,7 +581,7 @@ mod tests {
     #[tokio::test]
     async fn test_budget_soft_cap_warning() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         // Spend $8.5 — above soft cap ($8) but below hard cap ($10)
@@ -601,7 +613,7 @@ mod tests {
             default_token_cap: None,
             agents: Vec::new(),
         };
-        let tracker = CostTracker::new(&config, Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&config, Arc::clone(&cache));
         let tid = TenantId::new();
 
         // Spend $8.5 — above 80% ($8) but below hard cap ($10)
@@ -617,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn test_budget_agent_override_caps() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         // Premium agent has daily cap $500. Spend $200 — should be fine.
@@ -632,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn test_budget_agent_hard_cap_rejected() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         // Premium agent daily hard cap = $500
@@ -649,7 +661,7 @@ mod tests {
     #[tokio::test]
     async fn test_record_spend_accumulates() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         tracker.record_spend(tid, None, 1.0).await;
@@ -668,7 +680,7 @@ mod tests {
     #[tokio::test]
     async fn test_record_spend_zero_ignored() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         tracker.record_spend(tid, None, 0.0).await;
@@ -687,7 +699,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_spend_empty() {
-        let tracker = CostTracker::new(&enabled_config(), make_cache()).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), make_cache());
         let tid = TenantId::new();
         let snapshot = tracker.current_spend(tid, None).await;
 
@@ -703,7 +715,7 @@ mod tests {
     #[tokio::test]
     async fn test_current_spend_with_data() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         tracker.record_spend(tid, None, 5.0).await;
@@ -722,7 +734,7 @@ mod tests {
     #[tokio::test]
     async fn test_current_spend_agent() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         tracker
@@ -740,7 +752,7 @@ mod tests {
     #[tokio::test]
     async fn test_spend_isolated_between_tenants() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid1 = TenantId::new();
         let tid2 = TenantId::new();
 
@@ -766,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn test_spend_isolated_between_agents() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache)).unwrap();
+        let tracker = CostTracker::new(&enabled_config(), Arc::clone(&cache));
         let tid = TenantId::new();
 
         tracker.record_spend(tid, Some("agent-a"), 5.0).await;
@@ -800,7 +812,7 @@ mod tests {
             default_token_cap: None,
             agents: Vec::new(),
         };
-        let tracker = CostTracker::new(&config, make_cache()).unwrap();
+        let tracker = CostTracker::new(&config, make_cache());
         let tid = TenantId::new();
         let result = tracker.check_budget_caps(tid, None).await;
         assert!(matches!(result, CapCheckResult::Allowed));

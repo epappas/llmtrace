@@ -600,7 +600,7 @@ fn proto_to_json_request(
 
 /// Run security analysis on a single span's prompt and response content.
 async fn analyze_span(state: &Arc<AppState>, span: &TraceSpan) -> Vec<SecurityFinding> {
-    if !state.config.enable_security_analysis {
+    if !state.config_handle.load().enable_security_analysis {
         return Vec::new();
     }
     if !state.security_breaker.allow().await {
@@ -652,8 +652,9 @@ pub async fn ingest_traces(
     headers: HeaderMap,
     body: Body,
 ) -> Response {
+    let cfg = state.config_handle.snapshot();
     // Check feature gate
-    if !state.config.otel_ingest.enabled {
+    if !cfg.otel_ingest.enabled {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "OTEL ingestion is not enabled"})),
@@ -662,18 +663,17 @@ pub async fn ingest_traces(
     }
 
     // Read body bytes
-    let body_bytes =
-        match axum::body::to_bytes(body, state.config.max_request_size_bytes as usize).await {
-            Ok(b) => b,
-            Err(e) => {
-                warn!("OTEL ingest: failed to read body: {e}");
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({"error": "Failed to read request body"})),
-                )
-                    .into_response();
-            }
-        };
+    let body_bytes = match axum::body::to_bytes(body, cfg.max_request_size_bytes as usize).await {
+        Ok(b) => b,
+        Err(e) => {
+            warn!("OTEL ingest: failed to read body: {e}");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Failed to read request body"})),
+            )
+                .into_response();
+        }
+    };
 
     // Determine content type
     let content_type = headers
@@ -863,17 +863,23 @@ mod tests {
         ));
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -881,8 +887,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -911,17 +918,23 @@ mod tests {
         ));
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -929,8 +942,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

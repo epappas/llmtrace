@@ -6,6 +6,7 @@
 
 use crate::action_router::ActionRouter;
 use crate::circuit_breaker::CircuitBreaker;
+use crate::config_handle::ConfigHandle;
 use crate::cost::CostEstimator;
 use crate::provider::{self, ParsedResponse};
 use crate::streaming::{StreamingAccumulator, StreamingOutputMonitor, StreamingSecurityMonitor};
@@ -29,6 +30,84 @@ use uuid::Uuid;
 // ---------------------------------------------------------------------------
 // Shared application state
 // ---------------------------------------------------------------------------
+
+/// Stable, operator-facing reason code for a non-writable runtime
+/// overlay path. The raw `std::io::Error` message is intentionally NOT
+/// exposed to unauthenticated `/health` callers (would leak the
+/// filesystem layout); it is only logged server-side at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeOverlayReasonCode {
+    /// Filesystem reports read-only (mount option or ConfigMap mount).
+    ReadOnlyFilesystem,
+    /// Filesystem accepts writes but the proxy process lacks permission.
+    PermissionDenied,
+    /// The resolved parent directory does not exist and cannot be
+    /// created (for example, points at a non-existent path under a
+    /// read-only parent).
+    ParentMissing,
+    /// Any other I/O error — intentionally coarse so the wire shape
+    /// does not leak kernel-specific strings to unauthenticated
+    /// callers.
+    Unknown,
+}
+
+impl RuntimeOverlayReasonCode {
+    /// Wire representation used in the `/health` JSON body.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadOnlyFilesystem => "read_only_filesystem",
+            Self::PermissionDenied => "permission_denied",
+            Self::ParentMissing => "parent_missing",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Infer the stable reason code from a raw `std::io::Error`.
+    /// Returns `Unknown` when the OS-level classification is not
+    /// actionable. `EROFS` (errno 30 on Linux / 30 on macOS) is
+    /// detected via `raw_os_error()` so we do not need an explicit
+    /// libc dependency; this keeps the check portable and coarse on
+    /// non-POSIX targets (which will just report `Unknown`).
+    pub fn from_io_error(err: &std::io::Error) -> Self {
+        const EROFS: i32 = 30;
+        match err.kind() {
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::NotFound => Self::ParentMissing,
+            _ if err.raw_os_error() == Some(EROFS) => Self::ReadOnlyFilesystem,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// Writability state of the sidecar runtime overlay path at startup.
+///
+/// Computed by `main::probe_runtime_overlay_writable` and surfaced on
+/// the `/health` endpoint so Kubernetes readiness probes and
+/// operators can detect the silent-revert trap where the base
+/// `--config` lives in a read-only ConfigMap mount and the derived
+/// `config.runtime.yaml` inherits the mount (issue #42 B2).
+#[derive(Debug, Clone)]
+pub enum RuntimeOverlayStatus {
+    /// No runtime overlay path was resolved — the proxy was started
+    /// without `--config` / `--runtime-config` and persistence is
+    /// intentionally disabled.
+    Disabled,
+    /// The runtime overlay path resolved and the filesystem accepts
+    /// writes. Admin PUTs to `/api/v1/config/features` will persist
+    /// across restarts.
+    Writable,
+    /// The runtime overlay path resolved but the filesystem rejected
+    /// the startup probe. Admin PUTs will apply in memory but will
+    /// NOT persist — pod restart silently reverts. Only the stable
+    /// reason code is exposed via `/health`; the raw filesystem
+    /// error is logged server-side.
+    NotWritable {
+        /// Stable operator-facing reason code, safe to expose on the
+        /// unauthenticated `/health` endpoint.
+        reason_code: RuntimeOverlayReasonCode,
+    },
+}
 
 /// Status of ML model loading at startup.
 #[derive(Debug, Clone)]
@@ -57,14 +136,24 @@ pub enum MlModelStatus {
 
 /// Shared state threaded through axum handlers via [`State`].
 pub struct AppState {
-    /// Proxy configuration.
-    pub config: ProxyConfig,
+    /// Runtime-mutable proxy configuration.
+    ///
+    /// Reads are lock-free via [`arc_swap::ArcSwap`]. Callers that need
+    /// the config across an `.await` must use `config_handle.snapshot()`
+    /// (an `Arc<ProxyConfig>`) instead of `load()` because the `Guard`
+    /// returned by `load()` is `!Send`.
+    pub config_handle: ConfigHandle,
     /// HTTP client for forwarding requests upstream.
     pub client: Client,
     /// Composite storage (traces, metadata, cache).
     pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
+    /// Runtime handle for toggling ensemble feature flags from the admin
+    /// API (issue #42). When the ensemble is not constructed (regex-only
+    /// fallback path), this is an inert handle whose writes round-trip
+    /// but are not observed.
+    pub ensemble_runtime: Arc<llmtrace_security::EnsembleRuntimeHandle>,
     /// Regex-only security analyzer for fast-path enforcement.
     pub fast_analyzer: Arc<dyn SecurityAnalyzer>,
     /// Circuit breaker for the storage subsystem.
@@ -75,8 +164,12 @@ pub struct AppState {
     pub cost_estimator: CostEstimator,
     /// Alert engine for webhook notifications (`None` if alerts are disabled).
     pub alert_engine: Option<crate::alerts::AlertEngine>,
-    /// Cost cap tracker (`None` if cost caps are disabled).
-    pub cost_tracker: Option<crate::cost_caps::CostTracker>,
+    /// Cost cap tracker.
+    ///
+    /// Always constructed so that toggling `cost_caps_enabled` at runtime
+    /// via the feature-flag admin API takes effect without restart (#42).
+    /// Hot-path call sites gate usage on `cfg.cost_caps.enabled`.
+    pub cost_tracker: crate::cost_caps::CostTracker,
     /// Anomaly detector (`None` if anomaly detection is disabled).
     pub anomaly_detector: Option<crate::anomaly::AnomalyDetector>,
     /// Action orchestrator for routing enforcement actions.
@@ -84,10 +177,23 @@ pub struct AppState {
     /// In-memory store for compliance reports (legacy — reports are now also
     /// persisted to MetadataRepository).
     pub report_store: crate::compliance::ReportStore,
-    /// Per-tenant rate limiter (`None` if rate limiting is disabled).
-    pub rate_limiter: Option<crate::rate_limit::RateLimiter>,
+    /// Per-tenant rate limiter.
+    ///
+    /// Always constructed so that toggling `rate_limiting_enabled` at
+    /// runtime via the feature-flag admin API takes effect without
+    /// restart (#42). Hot-path call sites gate usage on
+    /// `cfg.rate_limiting.enabled`.
+    pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
+    /// Writability of the sidecar runtime overlay path at startup.
+    ///
+    /// Computed once by `build_app_state` via a probe write; the
+    /// `/health` endpoint exposes the result so operators and
+    /// Kubernetes readiness probes can catch the silent-revert trap
+    /// where the base `--config` lives in a read-only ConfigMap mount
+    /// and the derived `config.runtime.yaml` inherits the mount.
+    pub runtime_overlay_status: RuntimeOverlayStatus,
     /// Shutdown coordinator for graceful shutdown and task tracking.
     pub shutdown: crate::shutdown::ShutdownCoordinator,
     /// Prometheus metrics collectors.
@@ -258,6 +364,9 @@ pub async fn proxy_handler(
     state.metrics.active_connections.inc();
     let start_time = Utc::now();
     let trace_id = Uuid::new_v4();
+    // Snapshot the live config for this request. `Arc<ProxyConfig>` is
+    // `Send + 'static`, so it can cross `await` points freely.
+    let cfg = state.config_handle.snapshot();
 
     let method = req.method().clone();
     let uri = req.uri().clone();
@@ -272,7 +381,7 @@ pub async fn proxy_handler(
     let tenant_id = match tenant_id_opt {
         Some(id) if !id.0.is_nil() => id,
         _ => {
-            if state.config.auth.enabled {
+            if cfg.auth.enabled {
                 // This shouldn't be reached if auth_middleware is working correctly
                 warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
                 return error_response(StatusCode::UNAUTHORIZED, "Authentication required");
@@ -284,7 +393,7 @@ pub async fn proxy_handler(
 
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);
-    let detected_provider = provider::detect_provider(&headers, &state.config.upstream_url, &path);
+    let detected_provider = provider::detect_provider(&headers, &cfg.upstream_url, &path);
 
     let source_ip = headers
         .get("x-forwarded-for")
@@ -313,7 +422,7 @@ pub async fn proxy_handler(
     // Auto-create tenant on first request (best-effort, non-blocking).
     // If auth is enabled, only create if we have an authenticated tenant.
     // If auth is disabled, we still auto-create the "Unknown" tenant.
-    if !state.config.auth.enabled || tenant_id_opt.is_some() {
+    if !cfg.auth.enabled || tenant_id_opt.is_some() {
         let state_ac = Arc::clone(&state);
         let name = if tenant_id_opt.is_some() {
             _api_key
@@ -343,8 +452,10 @@ pub async fn proxy_handler(
     }
 
     // --- Per-tenant rate limiting ---
-    if let Some(ref limiter) = state.rate_limiter {
-        match limiter.check(tenant_id).await {
+    // The limiter is always constructed; the runtime feature-flag API
+    // can toggle `rate_limiting.enabled` per-request via `ConfigHandle`.
+    if cfg.rate_limiting.enabled {
+        match state.rate_limiter.check(tenant_id).await {
             crate::rate_limit::RateLimitResult::Exceeded {
                 retry_after_secs,
                 limit,
@@ -374,18 +485,14 @@ pub async fn proxy_handler(
     );
 
     // Read the request body
-    let body_bytes = match axum::body::to_bytes(
-        req.into_body(),
-        state.config.max_request_size_bytes as usize,
-    )
-    .await
-    {
-        Ok(b) => b,
-        Err(e) => {
-            warn!(%trace_id, "Failed to read request body: {}", e);
-            return error_response(StatusCode::BAD_REQUEST, "Failed to read request body");
-        }
-    };
+    let body_bytes =
+        match axum::body::to_bytes(req.into_body(), cfg.max_request_size_bytes as usize).await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(%trace_id, "Failed to read request body: {}", e);
+                return error_response(StatusCode::BAD_REQUEST, "Failed to read request body");
+            }
+        };
 
     // Parse LLM metadata from the body (best-effort — don't fail if parse fails)
     let llm_body: Option<LLMRequestBody> = serde_json::from_slice(&body_bytes).ok();
@@ -415,7 +522,10 @@ pub async fn proxy_handler(
         .unwrap_or_default();
 
     // --- Pre-request cost cap enforcement ---
-    if let Some(ref tracker) = state.cost_tracker {
+    // The tracker is always constructed; the runtime feature-flag API
+    // can toggle `cost_caps.enabled` per-request via `ConfigHandle`.
+    if cfg.cost_caps.enabled {
+        let tracker = &state.cost_tracker;
         // Token cap (best-effort from request body — max_tokens field)
         let req_max_tokens: Option<u32> = llm_body
             .as_ref()
@@ -478,7 +588,7 @@ pub async fn proxy_handler(
 
     // --- Pre-request security enforcement ---
     let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
-    if state.config.enable_security_analysis {
+    if cfg.enable_security_analysis {
         let enf_context = AnalysisContext {
             tenant_id,
             trace_id,
@@ -490,7 +600,7 @@ pub async fn proxy_handler(
         let (mut decision, pre_findings) = crate::enforcement::run_enforcement(
             &analysis_text,
             &enf_context,
-            &state.config.enforcement,
+            &cfg.enforcement,
             &state.security,
             &state.fast_analyzer,
         )
@@ -530,15 +640,15 @@ pub async fn proxy_handler(
     // --- Boundary token injection defense ---
     let boundary_result = crate::boundary::apply_boundary_defense(
         &body_bytes,
-        &state.config.boundary_defense,
+        &cfg.boundary_defense,
         &detected_provider,
     );
-    let boundary_active = state.config.boundary_defense.enabled
-        && !state.config.boundary_defense.shadow_mode
+    let boundary_active = cfg.boundary_defense.enabled
+        && !cfg.boundary_defense.shadow_mode
         && boundary_result.messages_wrapped > 0;
 
     if boundary_result.messages_wrapped > 0 {
-        let mode = if state.config.boundary_defense.shadow_mode {
+        let mode = if cfg.boundary_defense.shadow_mode {
             "shadow"
         } else {
             "active"
@@ -558,12 +668,12 @@ pub async fn proxy_handler(
             boundary_result.messages_wrapped,
             boundary_result.reminder_injected,
             boundary_result.overhead_bytes,
-            state.config.boundary_defense.shadow_mode,
+            cfg.boundary_defense.shadow_mode,
         );
     }
 
     // Build the upstream request
-    let upstream_url = build_upstream_url(&state.config, &path, query.as_deref());
+    let upstream_url = build_upstream_url(&cfg, &path, query.as_deref());
 
     let mut upstream_req = state.client.request(
         reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::POST),
@@ -639,6 +749,11 @@ pub async fn proxy_handler(
     // Spawn a task that reads from the upstream stream and fans out to both
     // the client response and a background buffer for trace capture.
     let state_bg = Arc::clone(&state);
+    // Share the SAME config snapshot with the background task so the
+    // request path and its streaming tail observe a single, coherent
+    // version of the config. An admin PUT landing mid-request will be
+    // picked up on the next request, not in the middle of this one.
+    let cfg_bg = Arc::clone(&cfg);
     let prompt_text_bg = prompt_text.clone();
     let analysis_text_bg = analysis_text;
     let model_name_bg = model_name.clone();
@@ -654,7 +769,7 @@ pub async fn proxy_handler(
         let mut stream = response_stream;
         let mut sse_accumulator = if is_streaming {
             Some(StreamingAccumulator::with_max_content_bytes(
-                state_bg.config.max_response_size_bytes as usize,
+                cfg_bg.max_response_size_bytes as usize,
             ))
         } else {
             None
@@ -664,7 +779,7 @@ pub async fn proxy_handler(
         // Respect monitoring_scope: disable if OutputOnly.
         let mut streaming_monitor =
             if is_streaming && scope_bg != llmtrace_core::MonitoringScope::OutputOnly {
-                StreamingSecurityMonitor::new(&state_bg.config.streaming_analysis)
+                StreamingSecurityMonitor::new(&cfg_bg.streaming_analysis)
             } else {
                 None
             };
@@ -672,16 +787,13 @@ pub async fn proxy_handler(
         // Respect monitoring_scope: disable if InputOnly.
         let mut output_monitor =
             if is_streaming && scope_bg != llmtrace_core::MonitoringScope::InputOnly {
-                StreamingOutputMonitor::new(
-                    &state_bg.config.streaming_analysis,
-                    &state_bg.config.output_safety,
-                )
+                StreamingOutputMonitor::new(&cfg_bg.streaming_analysis, &cfg_bg.output_safety)
             } else {
                 None
             };
         let mut raw_collected = Vec::new();
         let mut response_truncated = false;
-        let max_response_bytes = state_bg.config.max_response_size_bytes as usize;
+        let max_response_bytes = cfg_bg.max_response_size_bytes as usize;
         let mut ttft_ms: Option<u64> = None;
 
         while let Some(chunk) = stream.next().await {
@@ -852,7 +964,7 @@ pub async fn proxy_handler(
         };
 
         // Truncate analysis text to configured limit before security analysis
-        let max_analysis = state_bg.config.security_analysis.max_analysis_text_bytes;
+        let max_analysis = cfg_bg.security_analysis.max_analysis_text_bytes;
         let analysis_text_final = if analysis_text_bg.len() > max_analysis {
             warn!(
                 original_len = analysis_text_bg.len(),
@@ -885,7 +997,7 @@ pub async fn proxy_handler(
         };
 
         // --- Async spend recording for cost caps ---
-        if let Some(ref tracker) = state_bg.cost_tracker {
+        if cfg_bg.cost_caps.enabled {
             let estimated = state_bg.cost_estimator.estimate_cost(
                 &captured.provider,
                 &captured.model_name,
@@ -893,7 +1005,8 @@ pub async fn proxy_handler(
                 captured.completion_tokens,
             );
             if let Some(cost) = estimated {
-                tracker
+                state_bg
+                    .cost_tracker
                     .record_spend(captured.tenant_id, agent_id_bg.as_deref(), cost)
                     .await;
             }
@@ -1094,7 +1207,8 @@ async fn run_security_analysis(
     state: &Arc<AppState>,
     captured: &CapturedInteraction,
 ) -> Vec<SecurityFinding> {
-    if !state.config.enable_security_analysis {
+    let cfg = state.config_handle.snapshot();
+    if !cfg.enable_security_analysis {
         return Vec::new();
     }
     if !state.security_breaker.allow().await {
@@ -1112,7 +1226,7 @@ async fn run_security_analysis(
         parameters: std::collections::HashMap::new(),
     };
 
-    let timeout = std::time::Duration::from_millis(state.config.security_analysis_timeout_ms);
+    let timeout = std::time::Duration::from_millis(cfg.security_analysis_timeout_ms);
 
     // Respect monitoring_scope: pass empty string for parts we shouldn't monitor
     let prompt = if captured.monitoring_scope == llmtrace_core::MonitoringScope::OutputOnly {
@@ -1169,7 +1283,7 @@ async fn run_security_analysis(
                 .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             warn!(
                 trace_id = %captured.trace_id,
-                timeout_ms = state.config.security_analysis_timeout_ms,
+                timeout_ms = cfg.security_analysis_timeout_ms,
                 "Security analysis timed out"
             );
             Vec::new()
@@ -1178,12 +1292,12 @@ async fn run_security_analysis(
 
     // --- Output safety analysis (R6) ---
     // Respect monitoring_scope: skip if InputOnly.
-    if state.config.output_safety.enabled
+    if cfg.output_safety.enabled
         && !captured.response_text.is_empty()
         && captured.monitoring_scope != llmtrace_core::MonitoringScope::InputOnly
     {
         let output_analyzer =
-            llmtrace_security::OutputAnalyzer::new_with_fallback(&state.config.output_safety);
+            llmtrace_security::OutputAnalyzer::new_with_fallback(&cfg.output_safety);
         let result = output_analyzer.analyze_output(&captured.response_text);
         if !result.findings.is_empty() {
             info!(
@@ -1208,7 +1322,7 @@ async fn run_trace_capture(
     captured: &CapturedInteraction,
     security_findings: &[SecurityFinding],
 ) {
-    if !state.config.enable_trace_storage {
+    if !state.config_handle.load().enable_trace_storage {
         return;
     }
     if !state.storage_breaker.allow().await {
@@ -1374,6 +1488,29 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
         ("degraded", StatusCode::OK)
     };
 
+    let runtime_overlay = match &state.runtime_overlay_status {
+        RuntimeOverlayStatus::Disabled => serde_json::json!({
+            "status": "disabled",
+            "persistence": false,
+            "writable": false,
+        }),
+        RuntimeOverlayStatus::Writable => serde_json::json!({
+            "status": "writable",
+            "persistence": true,
+            "writable": true,
+        }),
+        // Only expose the stable reason code; the raw filesystem
+        // error was logged server-side at startup. /health is on the
+        // unauthenticated skip-list so we must not leak paths or
+        // errno strings (issue #42 C1).
+        RuntimeOverlayStatus::NotWritable { reason_code } => serde_json::json!({
+            "status": "not_writable",
+            "persistence": false,
+            "writable": false,
+            "reason_code": reason_code.as_str(),
+        }),
+    };
+
     let body = serde_json::json!({
         "status": status_label,
         "starting": !is_ready,
@@ -1388,6 +1525,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             "circuit_breaker": format!("{:?}", security_circuit),
         },
         "ml": ml_status,
+        "runtime_overlay": runtime_overlay,
     });
 
     Response::builder()

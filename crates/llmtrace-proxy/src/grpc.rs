@@ -179,7 +179,7 @@ pub fn proto_to_trace_span(proto: &TraceSpanProto) -> Option<TraceSpan> {
 /// Same pattern as the OTEL ingestion endpoint — returns an empty vec when
 /// analysis is disabled or the circuit breaker is open.
 async fn analyze_span(state: &Arc<AppState>, span: &TraceSpan) -> Vec<SecurityFinding> {
-    if !state.config.enable_security_analysis {
+    if !state.config_handle.load().enable_security_analysis {
         return Vec::new();
     }
     if !state.security_breaker.allow().await {
@@ -390,7 +390,7 @@ pub fn build_grpc_server(
 ///
 /// Returns `Ok(())` when the server shuts down (e.g., via signal or error).
 pub async fn run_grpc_server(state: Arc<AppState>) -> anyhow::Result<()> {
-    let addr = state.config.grpc.listen_addr.parse()?;
+    let addr = state.config_handle.load().grpc.listen_addr.parse()?;
     let shutdown_token = state.shutdown.token();
     let service = build_grpc_server(state);
 
@@ -441,17 +441,23 @@ mod tests {
         let security_breaker = Arc::new(CircuitBreaker::from_config(&config.circuit_breaker));
         let cost_estimator = CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -459,8 +465,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),

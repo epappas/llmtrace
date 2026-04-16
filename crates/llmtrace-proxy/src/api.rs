@@ -571,12 +571,12 @@ pub async fn get_current_costs(
     }
     let tenant_id = auth.tenant_id;
 
-    let tracker = match &state.cost_tracker {
-        Some(t) => t,
-        None => return api_error(StatusCode::NOT_FOUND, "Cost caps are not enabled"),
-    };
+    if !state.config_handle.load().cost_caps.enabled {
+        return api_error(StatusCode::NOT_FOUND, "Cost caps are not enabled");
+    }
 
-    let snapshot = tracker
+    let snapshot = state
+        .cost_tracker
         .current_spend(tenant_id, params.agent_id.as_deref())
         .await;
 
@@ -940,8 +940,9 @@ pub async fn get_live_config(
     if let Some(err) = require_role_operator(&auth) {
         return err;
     }
+    let cfg = state.config_handle.snapshot();
     Json(LiveConfigResponse {
-        config: redacted_live_config(&state.config),
+        config: redacted_live_config(&cfg),
     })
     .into_response()
 }
@@ -987,17 +988,23 @@ mod tests {
 
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
 
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
             alert_engine: None,
-            cost_tracker: None,
+            cost_tracker,
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
@@ -1005,8 +1012,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1044,15 +1052,19 @@ mod tests {
             &config.circuit_breaker,
         ));
         let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
+
         let cost_tracker =
-            crate::cost_caps::CostTracker::new(&cost_cap_config, Arc::clone(&storage.cache));
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
 
         Arc::new(AppState {
-            config,
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
             client,
             storage,
             fast_analyzer: security.clone(),
             security,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,
             cost_estimator,
@@ -1065,8 +1077,9 @@ mod tests {
                 reqwest::Client::new(),
             ),
             report_store: crate::compliance::new_report_store(),
-            rate_limiter: None,
+            rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1902,9 +1915,7 @@ mod tests {
         let (tid, hdr) = tenant_header();
 
         // Record some spend
-        if let Some(ref tracker) = state.cost_tracker {
-            tracker.record_spend(tid, None, 25.0).await;
-        }
+        state.cost_tracker.record_spend(tid, None, 25.0).await;
 
         let app = api_router(state);
         let req = Request::get("/api/v1/costs/current")
