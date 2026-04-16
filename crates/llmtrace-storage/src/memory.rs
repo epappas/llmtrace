@@ -167,7 +167,7 @@ impl TraceRepository for InMemoryTraceRepository {
             }
         }
 
-        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        results.sort_by_key(|x| std::cmp::Reverse(x.created_at));
 
         if let Some(offset) = query.offset {
             let offset = offset as usize;
@@ -187,7 +187,7 @@ impl TraceRepository for InMemoryTraceRepository {
     async fn query_spans(&self, query: &TraceQuery) -> Result<Vec<TraceSpan>> {
         let mut all = self.all_spans_for_tenant(query.tenant_id).await;
         all.retain(|s| Self::span_matches(s, query));
-        all.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        all.sort_by_key(|x| std::cmp::Reverse(x.start_time));
 
         if let Some(offset) = query.offset {
             let offset = offset as usize;
@@ -430,7 +430,7 @@ impl MetadataRepository for InMemoryMetadataRepository {
             .cloned()
             .collect();
 
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by_key(|x| std::cmp::Reverse(x.timestamp));
 
         if let Some(offset) = query.offset {
             let offset = offset as usize;
@@ -512,7 +512,7 @@ impl MetadataRepository for InMemoryMetadataRepository {
             .cloned()
             .collect();
 
-        results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        results.sort_by_key(|x| std::cmp::Reverse(x.created_at));
 
         if let Some(offset) = query.offset {
             let offset = offset as usize;

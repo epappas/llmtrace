@@ -904,7 +904,7 @@ pub async fn actions_summary(
             count,
         })
         .collect();
-    top_actions.sort_by(|a, b| b.count.cmp(&a.count));
+    top_actions.sort_by_key(|x| std::cmp::Reverse(x.count));
     top_actions.truncate(20);
 
     Json(ActionsSummary {
