@@ -23,15 +23,21 @@ use async_trait::async_trait;
 use llmtrace_core::{JudgeMode, JudgeVerdict, SecurityFinding, TenantId};
 use uuid::Uuid;
 
+mod anthropic;
 mod finding;
+mod openai;
 mod parser;
 mod prompt;
+mod retry;
+mod truncate_helper;
 mod vllm;
 
-pub use finding::{severity_from_score, verdict_to_finding};
+pub use anthropic::{AnthropicJudgeBackend, AnthropicJudgeOptions, API_KEY_ENV as ANTHROPIC_API_KEY_ENV};
+pub use finding::{severity_from_score, verdict_to_finding, JUDGE_FINDING_TYPE};
+pub use openai::{OpenAIJudgeBackend, OpenAiJudgeOptions, API_KEY_ENV as OPENAI_API_KEY_ENV};
 pub use parser::{parse_verdict_json, RawVerdict};
 pub use prompt::{build_system_prompt, build_user_message_json, DEFAULT_SYSTEM_PROMPT};
-pub use vllm::VllmJudgeBackend;
+pub use vllm::{VllmJudgeBackend, VllmJudgeOptions};
 
 // ---------------------------------------------------------------------------
 // Error type

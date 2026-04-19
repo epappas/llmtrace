@@ -48,8 +48,15 @@ pub enum ConfigUpdateError<E: std::fmt::Debug + std::fmt::Display> {
 /// do not cross `.await` points. Hot-path callers that hold the config
 /// across an `await` must use [`ConfigHandle::snapshot`] instead, because
 /// the guard returned by `load()` is `!Send`.
+///
+/// `ConfigHandle` is `Clone`: each clone shares the same underlying
+/// `ArcSwap` and writer mutex, so a clone handed to a background
+/// worker observes admin-API writes immediately and cooperates with
+/// other writers. This is how the judge worker, enforcement actions,
+/// and HTTP handlers all read the same live config.
+#[derive(Clone)]
 pub struct ConfigHandle {
-    inner: ArcSwap<ProxyConfig>,
+    inner: Arc<ArcSwap<ProxyConfig>>,
     /// Path to the base `config.yaml` (never mutated by this handle — the
     /// file may be a read-only ConfigMap mount on Kubernetes).
     config_path: Option<PathBuf>,
@@ -57,8 +64,10 @@ pub struct ConfigHandle {
     /// are persisted (Phase 3). `None` disables persistence entirely.
     persist_path: Option<PathBuf>,
     /// Serializes concurrent writers so clone-validate-swap races cannot
-    /// lose updates even though reads remain lock-free.
-    write_lock: Mutex<()>,
+    /// lose updates even though reads remain lock-free. All clones share
+    /// the same mutex so two workers cannot each base on the same
+    /// snapshot and overwrite each other.
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl ConfigHandle {
@@ -68,10 +77,10 @@ impl ConfigHandle {
         persist_path: Option<PathBuf>,
     ) -> Self {
         Self {
-            inner: ArcSwap::from_pointee(config),
+            inner: Arc::new(ArcSwap::from_pointee(config)),
             config_path,
             persist_path,
-            write_lock: Mutex::new(()),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 

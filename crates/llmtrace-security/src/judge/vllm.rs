@@ -154,7 +154,7 @@ impl JudgeBackend for VllmJudgeBackend {
             let message = response.text().await.unwrap_or_default();
             return Err(JudgeError::BackendError {
                 status: status.as_u16(),
-                message: truncate_for_error(&message, 512),
+                message: super::truncate_helper::truncate_for_error(&message, 512),
             });
         }
 
@@ -222,17 +222,6 @@ impl JudgeBackend for VllmJudgeBackend {
             })
         }
     }
-}
-
-fn truncate_for_error(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}... [truncated]", &s[..end])
 }
 
 // ---------------------------------------------------------------------------

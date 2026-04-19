@@ -1,23 +1,37 @@
 use async_trait::async_trait;
 use futures_util::FutureExt;
-use llmtrace_core::{ActionRouterConfig, ActionRuleConfig, CacheLayer, SecurityFinding, TenantId};
+use llmtrace_core::{
+    ActionRouterConfig, ActionRuleConfig, CacheLayer, JudgeMode, JudgeVerdict, SecurityFinding,
+    SecuritySeverity, TenantId,
+};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::enforcement::EnforcementDecision;
 
-/// Context provided to all Actions
+/// Finding-type key emitted when a judge verdict is promoted into the
+/// ensemble. Kept in sync with `llmtrace_security::judge::JUDGE_FINDING_TYPE`
+/// so operators can write enforcement category overrides for one key.
+pub const JUDGE_FINDING_TYPE: &str = "llm_judge_verdict";
+
+/// Context provided to all Actions.
+///
+/// `analysis_text` is the candidate prompt the ensemble evaluated; it
+/// is passed into actions so components like the LLM Judge can re-use
+/// the same string the detectors analysed without re-parsing the
+/// request body.
 pub struct ActionContext<'a> {
     pub trace_id: Uuid,
     pub tenant_id: TenantId,
     pub findings: &'a [SecurityFinding],
+    pub analysis_text: &'a str,
     pub source_ip: Option<IpAddr>,
     pub model_name: String,
     pub provider: llmtrace_core::LLMProvider,
@@ -75,7 +89,9 @@ pub struct ActionRouter {
     rules: Vec<ActionRuleConfig>,
     default_actions: Vec<String>,
     cache: Option<Arc<dyn CacheLayer>>,
-    _judge_rx: Option<Arc<Mutex<mpsc::Receiver<JudgeRequest>>>>,
+    /// Judge receiver held only between construction and `take_judge_receiver`.
+    /// Consumed by [`JudgeWorker`](crate::judge::JudgeWorker) during proxy startup.
+    judge_rx: Option<mpsc::Receiver<JudgeRequest>>,
 }
 
 impl ActionRouter {
@@ -90,7 +106,7 @@ impl ActionRouter {
             rules: config.rules.clone(),
             default_actions: config.default_actions.clone(),
             cache,
-            _judge_rx: None,
+            judge_rx: None,
         };
 
         if !config.enabled {
@@ -114,32 +130,14 @@ impl ActionRouter {
         });
         router.register_action(webhook);
 
-        let (judge_tx, judge_rx) = mpsc::channel::<JudgeRequest>(100);
-        let judge_rx = Arc::new(Mutex::new(judge_rx));
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let judge_rx_task = Arc::clone(&judge_rx);
-            handle.spawn(async move {
-                loop {
-                    let req = {
-                        let mut receiver = judge_rx_task.lock().await;
-                        receiver.recv().await
-                    };
-                    let Some(req) = req else {
-                        break;
-                    };
-                    debug!(
-                        trace_id = %req.trace_id,
-                        tenant_id = %req.tenant_id,
-                        model_name = %req.model_name,
-                        "Received JudgeRouteAction request"
-                    );
-                    if let Some(response_tx) = req.response_tx {
-                        let _ = response_tx.send(JudgeResponse { accepted: true });
-                    }
-                }
-            });
-        }
-        router._judge_rx = Some(judge_rx);
+        // The judge channel is created here but the receiver is handed to
+        // `JudgeWorker` at startup via [`take_judge_receiver`]. If no worker
+        // claims the receiver the channel is still functional and
+        // `JudgeRouteAction::execute` will emit `Error` / `Skipped` outcomes
+        // once the channel fills or closes.
+        let (judge_tx, judge_rx) =
+            mpsc::channel::<JudgeRequest>(DEFAULT_JUDGE_CHANNEL_BUFFER);
+        router.judge_rx = Some(judge_rx);
         let judge_route = Arc::new(JudgeRouteAction {
             tx: judge_tx,
             inline_await: config.judge_route.inline_await,
@@ -148,6 +146,14 @@ impl ActionRouter {
         router.register_action(judge_route);
 
         router
+    }
+
+    /// Take ownership of the judge request receiver. Returns `None` if
+    /// the router is disabled or the receiver has already been claimed.
+    /// Called once during proxy startup to wire the channel into
+    /// [`JudgeWorker`](crate::judge::JudgeWorker).
+    pub fn take_judge_receiver(&mut self) -> Option<mpsc::Receiver<JudgeRequest>> {
+        self.judge_rx.take()
     }
 
     pub fn register_action(&mut self, action: Arc<dyn Action>) {
@@ -543,16 +549,136 @@ impl Action for LogAction {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct JudgeResponse {
-    pub accepted: bool,
+/// Default size of the bounded mpsc buffer connecting [`JudgeRouteAction`]
+/// to [`JudgeWorker`](crate::judge::JudgeWorker). Matches the design
+/// doc's `judge.worker.channel_buffer` default; when the channel is
+/// full, async enqueue drops the request and increments
+/// `llmtrace_judge_dropped_total{reason="channel_full"}` (fail-open).
+const DEFAULT_JUDGE_CHANNEL_BUFFER: usize = 1000;
+
+/// Map the judge's `security_score` onto a [`SecuritySeverity`] using the
+/// bands from `docs/architecture/LLM_JUDGE.md` section 6. Kept in sync
+/// with `llmtrace_security::judge::severity_from_score`; duplicated here
+/// so the promotion path stays feature-flag independent.
+fn severity_from_judge_score(score: u8) -> SecuritySeverity {
+    match score {
+        0..=29 => SecuritySeverity::Low,
+        30..=59 => SecuritySeverity::Medium,
+        60..=79 => SecuritySeverity::High,
+        _ => SecuritySeverity::Critical,
+    }
 }
 
+/// Convert a judge verdict into a `SecurityFinding` carrying the
+/// judge's voting metadata. Returns a finding stamped with
+/// `finding_type = "llm_judge_verdict"` so operators can hook it into
+/// enforcement category overrides identically to any other finding.
+fn judge_verdict_to_finding(verdict: &JudgeVerdict) -> SecurityFinding {
+    let severity = severity_from_judge_score(verdict.security_score);
+    let description = if verdict.reasoning.is_empty() {
+        format!("LLM Judge verdict: {}", verdict.category)
+    } else {
+        verdict.reasoning.clone()
+    };
+    SecurityFinding::new(
+        severity,
+        JUDGE_FINDING_TYPE.to_string(),
+        description,
+        verdict.confidence,
+    )
+    .with_metadata("voting_result".to_string(), "llm_judge".to_string())
+    .with_metadata("category".to_string(), verdict.category.clone())
+    .with_metadata("model_used".to_string(), verdict.model_used.clone())
+    .with_metadata(
+        "recommended_action".to_string(),
+        verdict.recommended_action.clone(),
+    )
+    .with_metadata("mode".to_string(), verdict.mode.as_str().to_string())
+    .with_metadata(
+        "security_score".to_string(),
+        verdict.security_score.to_string(),
+    )
+}
+
+/// Convert an inline judge verdict into an [`ActionOutcome`].
+///
+/// Promotion rules (design doc section 4.3):
+/// - Judge recommends "block" and `is_threat=true` -> [`ActionOutcome::BlockRequested`]
+///   with the prior findings augmented by the judge finding, so enforcement
+///   can cite both signals in the 403 body.
+/// - Otherwise -> [`ActionOutcome::Completed`], preserving the prior
+///   enforcement decision. The judge never *downgrades* an existing Block;
+///   the only influence it has on the current request is promotion when
+///   the verdict is unambiguous.
+fn verdict_to_outcome(prior_findings: &[SecurityFinding], verdict: &JudgeVerdict) -> ActionOutcome {
+    let judge_finding = judge_verdict_to_finding(verdict);
+    if verdict.is_threat && verdict.recommended_action == "block" {
+        let mut merged: Vec<SecurityFinding> = prior_findings.to_vec();
+        merged.push(judge_finding);
+        ActionOutcome::BlockRequested {
+            reason: format!(
+                "LLM Judge confirmed {} (score={}, conf={:.2})",
+                verdict.category, verdict.security_score, verdict.confidence,
+            ),
+            findings: merged,
+        }
+    } else {
+        ActionOutcome::Completed {
+            message: format!(
+                "Judge verdict: category={} action={} score={}",
+                verdict.category, verdict.recommended_action, verdict.security_score,
+            ),
+        }
+    }
+}
+
+/// Classify agreement between the judge verdict and prior ensemble findings
+/// for the `llmtrace_judge_verdict_agreement` metric.
+///
+/// - `confirm`: ensemble flagged at least one threat AND judge also says `is_threat`
+/// - `suppress`: ensemble flagged at least one threat AND judge says `is_threat=false`
+/// - `elevate`: ensemble was clean AND judge says `is_threat=true`
+/// - `clean`: ensemble was clean AND judge says `is_threat=false`
+fn agreement_label(prior_findings: &[SecurityFinding], verdict: &JudgeVerdict) -> &'static str {
+    let ensemble_hot = prior_findings.iter().any(|f| {
+        matches!(
+            f.severity,
+            SecuritySeverity::High | SecuritySeverity::Critical | SecuritySeverity::Medium
+        )
+    });
+    match (ensemble_hot, verdict.is_threat) {
+        (true, true) => "confirm",
+        (true, false) => "suppress",
+        (false, true) => "elevate",
+        (false, false) => "clean",
+    }
+}
+
+/// Outcome returned by [`JudgeWorker`](crate::judge::JudgeWorker) over
+/// the inline-path oneshot channel. The worker emits exactly one variant
+/// per request.
+#[derive(Debug)]
+pub enum JudgeResponse {
+    /// Judge produced a full verdict. Callers can convert it to a
+    /// [`SecurityFinding`] and re-run enforcement.
+    Verdict(JudgeVerdict),
+    /// Judge elected not to call the backend (disabled, below
+    /// `min_score_threshold`, etc.).
+    Skipped { reason: String },
+    /// Backend call failed in a fail-open way. No verdict is available
+    /// and enforcement must proceed with the prior decision.
+    Error { message: String },
+}
+
+/// Envelope placed on the action router -> judge-worker channel.
 #[derive(Debug)]
 pub struct JudgeRequest {
     pub trace_id: Uuid,
     pub tenant_id: TenantId,
     pub model_name: String,
+    pub analysis_text: String,
+    pub prior_findings: Vec<SecurityFinding>,
+    pub mode: JudgeMode,
     pub response_tx: Option<oneshot::Sender<JudgeResponse>>,
 }
 
@@ -562,6 +688,25 @@ pub struct JudgeRouteAction {
     pub inline_timeout_ms: u64,
 }
 
+impl JudgeRouteAction {
+    fn build_request(
+        &self,
+        ctx: &ActionContext<'_>,
+        mode: JudgeMode,
+        response_tx: Option<oneshot::Sender<JudgeResponse>>,
+    ) -> JudgeRequest {
+        JudgeRequest {
+            trace_id: ctx.trace_id,
+            tenant_id: ctx.tenant_id,
+            model_name: ctx.model_name.clone(),
+            analysis_text: ctx.analysis_text.to_string(),
+            prior_findings: ctx.findings.to_vec(),
+            mode,
+            response_tx,
+        }
+    }
+}
+
 #[async_trait]
 impl Action for JudgeRouteAction {
     fn action_type(&self) -> &str {
@@ -569,48 +714,61 @@ impl Action for JudgeRouteAction {
     }
 
     async fn execute(&self, ctx: &ActionContext<'_>) -> Result<ActionOutcome, ActionError> {
-        let should_await = self.inline_await && matches!(ctx.execution_mode, ExecutionMode::Inline);
+        let inline = matches!(ctx.execution_mode, ExecutionMode::Inline);
+        let should_await = self.inline_await && inline;
+        // Mode reflects whether the verdict influences the current
+        // request. `Inline` requires both the execution mode and the
+        // operator-enabled `inline_await` knob; otherwise we're
+        // fire-and-forget and the verdict only affects storage.
+        let mode = if should_await {
+            JudgeMode::Inline
+        } else {
+            JudgeMode::Async
+        };
 
         if should_await {
             let (response_tx, response_rx) = oneshot::channel();
-            let req = JudgeRequest {
-                trace_id: ctx.trace_id,
-                tenant_id: ctx.tenant_id,
-                model_name: ctx.model_name.clone(),
-                response_tx: Some(response_tx),
-            };
+            let req = self.build_request(ctx, mode, Some(response_tx));
             self.tx.send(req).await.map_err(|_| {
                 ActionError::Failed("Judge route channel closed before enqueue".to_string())
             })?;
 
-            let ack =
+            let response =
                 tokio::time::timeout(Duration::from_millis(self.inline_timeout_ms), response_rx)
                     .await
                     .map_err(|_| {
-                        ActionError::Failed("Timed out waiting for judge ack".to_string())
+                        ActionError::Failed("Timed out waiting for judge verdict".to_string())
                     })?
-                    .map_err(|_| ActionError::Failed("Judge ack channel closed".to_string()))?;
+                    .map_err(|_| {
+                        ActionError::Failed("Judge response channel closed".to_string())
+                    })?;
 
-            if !ack.accepted {
-                return Err(ActionError::Failed(
-                    "Judge route worker rejected the request".to_string(),
-                ));
+            match response {
+                JudgeResponse::Verdict(verdict) => {
+                    if let Some(metrics) = &ctx.metrics {
+                        metrics.record_judge_agreement(agreement_label(ctx.findings, &verdict));
+                    }
+                    Ok(verdict_to_outcome(ctx.findings, &verdict))
+                }
+                JudgeResponse::Skipped { reason } => Ok(ActionOutcome::Skipped { reason }),
+                JudgeResponse::Error { message } => Err(ActionError::Failed(message)),
             }
         } else {
-            let req = JudgeRequest {
-                trace_id: ctx.trace_id,
-                tenant_id: ctx.tenant_id,
-                model_name: ctx.model_name.clone(),
-                response_tx: None,
-            };
-            if self.tx.try_send(req).is_err() {
+            let req = self.build_request(ctx, mode, None);
+            if let Err(e) = self.tx.try_send(req) {
+                if let Some(metrics) = &ctx.metrics {
+                    let reason = match e {
+                        mpsc::error::TrySendError::Full(_) => "channel_full",
+                        mpsc::error::TrySendError::Closed(_) => "channel_closed",
+                    };
+                    metrics.record_judge_dropped(reason);
+                }
                 return Err(ActionError::Failed("Channel full or closed".to_string()));
             }
+            Ok(ActionOutcome::Enqueued {
+                queue_id: format!("judge_{}", ctx.trace_id),
+            })
         }
-
-        Ok(ActionOutcome::Enqueued {
-            queue_id: format!("judge_{}", ctx.trace_id),
-        })
     }
 
     fn supports_inline(&self) -> bool {
@@ -647,6 +805,7 @@ mod tests {
             trace_id: Uuid::new_v4(),
             tenant_id: TenantId(Uuid::new_v4()),
             findings,
+            analysis_text: "test prompt",
             source_ip: Some("127.0.0.1".parse().unwrap()),
             model_name: "gpt-4".to_string(),
             provider: llmtrace_core::LLMProvider::OpenAI,
@@ -992,6 +1151,226 @@ mod tests {
         assert_eq!(req.trace_id, ctx.trace_id);
         assert_eq!(req.tenant_id, ctx.tenant_id);
         assert_eq!(req.model_name, "gpt-4");
+        assert_eq!(req.analysis_text, "test prompt");
+        assert_eq!(req.prior_findings.len(), 1);
+        assert_eq!(req.prior_findings[0].finding_type, "prompt_injection");
+        // inline_await=false => mode should be Async regardless of execution_mode
+        assert_eq!(req.mode, JudgeMode::Async);
+        assert!(req.response_tx.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_inline_await_returns_verdict() {
+        use chrono::Utc;
+        let (tx, mut rx) = mpsc::channel(4);
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: true,
+            inline_timeout_ms: 500,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let ctx = test_ctx(&findings, None, None);
+        let trace_id = ctx.trace_id;
+        let tenant_id = ctx.tenant_id;
+
+        // Simulate a worker replying with a Verdict on the oneshot.
+        let worker = tokio::spawn(async move {
+            let req = rx.recv().await.expect("request should be queued");
+            assert_eq!(req.mode, JudgeMode::Inline);
+            assert!(req.response_tx.is_some());
+            let tx = req.response_tx.unwrap();
+            let verdict = JudgeVerdict {
+                id: Uuid::new_v4(),
+                trace_id,
+                tenant_id,
+                is_threat: true,
+                category: "prompt_injection".to_string(),
+                confidence: 0.9,
+                security_score: 85,
+                recommended_action: "block".to_string(),
+                reasoning: "test".to_string(),
+                mode: JudgeMode::Inline,
+                model_used: "security-judge-v1".to_string(),
+                latency_ms: 50,
+                prompt_tokens: None,
+                completion_tokens: None,
+                created_at: Utc::now(),
+            };
+            let _ = tx.send(JudgeResponse::Verdict(verdict));
+        });
+
+        let outcome = action.execute(&ctx).await.unwrap();
+        // Verdict has is_threat=true and recommended_action="block", so
+        // phase 5 promotion fires: the outcome must be BlockRequested
+        // with the judge finding appended to the prior ensemble findings.
+        match outcome {
+            ActionOutcome::BlockRequested { reason, findings } => {
+                assert!(reason.contains("prompt_injection"));
+                assert_eq!(findings.len(), 2); // prior + judge
+                let judge_finding = findings.last().unwrap();
+                assert_eq!(judge_finding.finding_type, JUDGE_FINDING_TYPE);
+                assert_eq!(
+                    judge_finding.metadata.get("voting_result").map(String::as_str),
+                    Some("llm_judge")
+                );
+            }
+            other => panic!("expected BlockRequested, got {other:?}"),
+        }
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_inline_verdict_allow_preserves_outcome() {
+        use chrono::Utc;
+        let (tx, mut rx) = mpsc::channel(4);
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: true,
+            inline_timeout_ms: 500,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let ctx = test_ctx(&findings, None, None);
+        let trace_id = ctx.trace_id;
+        let tenant_id = ctx.tenant_id;
+
+        // Worker replies with a benign verdict (judge disagrees with regex).
+        let worker = tokio::spawn(async move {
+            let req = rx.recv().await.unwrap();
+            let tx = req.response_tx.unwrap();
+            let verdict = JudgeVerdict {
+                id: Uuid::new_v4(),
+                trace_id,
+                tenant_id,
+                is_threat: false,
+                category: "benign".to_string(),
+                confidence: 0.95,
+                security_score: 10,
+                recommended_action: "allow".to_string(),
+                reasoning: "legitimate request".to_string(),
+                mode: JudgeMode::Inline,
+                model_used: "security-judge-v1".to_string(),
+                latency_ms: 50,
+                prompt_tokens: None,
+                completion_tokens: None,
+                created_at: Utc::now(),
+            };
+            let _ = tx.send(JudgeResponse::Verdict(verdict));
+        });
+
+        let outcome = action.execute(&ctx).await.unwrap();
+        // is_threat=false: no promotion, outcome is Completed and the
+        // caller keeps whatever decision the prior enforcement produced.
+        match outcome {
+            ActionOutcome::Completed { message } => assert!(message.contains("allow")),
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_records_agreement_metric() {
+        use chrono::Utc;
+        let (tx, mut rx) = mpsc::channel(4);
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: true,
+            inline_timeout_ms: 500,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let metrics = crate::metrics::Metrics::new();
+        let ctx = test_ctx(&findings, None, Some(metrics.clone()));
+        let trace_id = ctx.trace_id;
+        let tenant_id = ctx.tenant_id;
+
+        let worker = tokio::spawn(async move {
+            let req = rx.recv().await.unwrap();
+            let tx = req.response_tx.unwrap();
+            // Ensemble had a High finding; judge also says threat -> "confirm".
+            let verdict = JudgeVerdict {
+                id: Uuid::new_v4(),
+                trace_id,
+                tenant_id,
+                is_threat: true,
+                category: "prompt_injection".to_string(),
+                confidence: 0.9,
+                security_score: 85,
+                recommended_action: "block".to_string(),
+                reasoning: "test".to_string(),
+                mode: JudgeMode::Inline,
+                model_used: "security-judge-v1".to_string(),
+                latency_ms: 50,
+                prompt_tokens: None,
+                completion_tokens: None,
+                created_at: Utc::now(),
+            };
+            let _ = tx.send(JudgeResponse::Verdict(verdict));
+        });
+
+        action.execute(&ctx).await.unwrap();
+        worker.await.unwrap();
+
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("llmtrace_judge_verdict_agreement"));
+        assert!(text.contains("agreement=\"confirm\""));
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_inline_await_skipped_is_outcome_skipped() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: true,
+            inline_timeout_ms: 500,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let ctx = test_ctx(&findings, None, None);
+
+        let worker = tokio::spawn(async move {
+            let req = rx.recv().await.expect("request should be queued");
+            let tx = req.response_tx.unwrap();
+            let _ = tx.send(JudgeResponse::Skipped {
+                reason: "disabled".to_string(),
+            });
+        });
+
+        let outcome = action.execute(&ctx).await.unwrap();
+        match outcome {
+            ActionOutcome::Skipped { reason } => assert_eq!(reason, "disabled"),
+            other => panic!("expected Skipped, got {other:?}"),
+        }
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_channel_full_records_drop_metric() {
+        let (tx, _rx) = mpsc::channel::<JudgeRequest>(1);
+        // Fill the channel with a placeholder so try_send fails.
+        tx.try_send(JudgeRequest {
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId(Uuid::new_v4()),
+            model_name: "filler".to_string(),
+            analysis_text: String::new(),
+            prior_findings: vec![],
+            mode: JudgeMode::Async,
+            response_tx: None,
+        })
+        .unwrap();
+
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: false,
+            inline_timeout_ms: 100,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let metrics = crate::metrics::Metrics::new();
+        let mut ctx = test_ctx(&findings, None, Some(metrics.clone()));
+        ctx.execution_mode = ExecutionMode::Async;
+
+        let err = action.execute(&ctx).await.unwrap_err();
+        assert!(matches!(err, ActionError::Failed(_)));
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("llmtrace_judge_dropped_total"));
+        assert!(text.contains("reason=\"channel_full\""));
     }
 
     #[tokio::test]

@@ -218,9 +218,16 @@ fn feature_value_display(v: &FeatureValue) -> String {
 ///   `ml_active() || injecguard_active() || piguard_active()` is
 ///   false (issue #42 M4).
 /// - HOT flags are always effective.
-/// - `llm_judge_enabled` is always `false` — the store-only contract
-///   is explicit, not an operational surprise.
-fn feature_is_effective(ml_status: &MlModelStatus, live: &FeatureFlags, id: FeatureId) -> bool {
+/// - `llm_judge_enabled` is effective iff the judge worker was spawned
+///   at startup (#43). If the worker was not spawned (startup
+///   `judge.enabled=false` or backend construction failed), the flag
+///   is persisted but inert until the proxy restarts.
+fn feature_is_effective(
+    ml_status: &MlModelStatus,
+    judge_worker_spawned: bool,
+    live: &FeatureFlags,
+    id: FeatureId,
+) -> bool {
     use FeatureId::*;
     // True iff the corresponding ML sub-model was loaded at startup.
     let ml_loaded = matches!(
@@ -255,7 +262,7 @@ fn feature_is_effective(ml_status: &MlModelStatus, live: &FeatureFlags, id: Feat
         // ensemble short-circuits before reading the threshold or
         // over-defence atomic.
         OperatingPoint | OverDefence => any_ml_active,
-        LlmJudgeEnabled => false,
+        LlmJudgeEnabled => judge_worker_spawned,
         AnalyzerJailbreakEnabled
         | EnforcementMode
         | BoundaryDefenseEnabled
@@ -278,13 +285,17 @@ fn feature_overridden_by(_id: FeatureId) -> Option<String> {
 /// startup ML status. `feature_is_effective` cross-references the
 /// live `flags` for the ensemble tuning knobs so the projection
 /// reflects the current state, not just what was loaded at startup.
-fn build_view(flags: FeatureFlags, ml_status: &MlModelStatus) -> FeatureFlagsView {
+fn build_view(
+    flags: FeatureFlags,
+    ml_status: &MlModelStatus,
+    judge_worker_spawned: bool,
+) -> FeatureFlagsView {
     let mut effective = BTreeMap::new();
     let mut overridden_by = BTreeMap::new();
     for id in FeatureId::ALL {
         effective.insert(
             id.name().to_string(),
-            feature_is_effective(ml_status, &flags, *id),
+            feature_is_effective(ml_status, judge_worker_spawned, &flags, *id),
         );
         overridden_by.insert(id.name().to_string(), feature_overridden_by(*id));
     }
@@ -592,12 +603,11 @@ fn collect_warnings(
     view: &FeatureFlagsView,
 ) -> Vec<String> {
     let mut out = Vec::new();
-    if next.llm_judge_enabled && !prev.llm_judge_enabled {
-        out.push(
-            "llm_judge backend not implemented yet; flag stored but no analyzer reads it (see #43)"
-                .to_string(),
-        );
-    }
+    // llm_judge_enabled is no longer store-only (#43 Phase 4). The
+    // generic inert-warning branch below fires when the operator
+    // enables the flag but the worker was not spawned at startup
+    // (e.g. judge.enabled=false at boot, or backend construction
+    // failed because the API key env var was unset).
     for (id, _old, new_val) in diff_flags(prev, next) {
         let name = id.name();
         // Only warn about inert bool flags when the operator is
@@ -678,7 +688,7 @@ pub async fn get_features(
     }
     let cfg = state.config_handle.snapshot();
     let flags = FeatureFlags::from_config(&cfg);
-    let view = build_view(flags, &state.ml_status);
+    let view = build_view(flags, &state.ml_status, state.judge_worker_spawned);
     no_store_json_response(StatusCode::OK, Json(view))
 }
 
@@ -748,7 +758,7 @@ pub async fn update_feature(
     let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
-    let view = build_view(next_flags.clone(), &state.ml_status);
+    let view = build_view(next_flags.clone(), &state.ml_status, state.judge_worker_spawned);
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     warnings.append(&mut dropped_audit);
     // Short-circuit disk persistence on zero-diff — a no-op PUT
@@ -809,7 +819,7 @@ pub async fn bulk_update_features(
     let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
-    let view = build_view(next_flags.clone(), &state.ml_status);
+    let view = build_view(next_flags.clone(), &state.ml_status, state.judge_worker_spawned);
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     warnings.append(&mut dropped_audit);
     // Zero-diff bulk PUT is a no-op at the disk layer (issue #42 M2).
@@ -894,6 +904,7 @@ mod tests {
             report_store: crate::compliance::new_report_store(),
             rate_limiter,
             ml_status: crate::proxy::MlModelStatus::Disabled,
+            judge_worker_spawned: false,
             runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
@@ -967,7 +978,11 @@ mod tests {
         // effective + overridden_by maps exist for every flag
         let effective = body["effective"].as_object().unwrap();
         assert!(effective.contains_key("enforcement_mode"));
-        // llm_judge_enabled is always inert (store-only)
+        // llm_judge_enabled is inert because test_state() sets
+        // judge_worker_spawned=false. When the proxy starts with
+        // judge.enabled=true and backend construction succeeds this
+        // becomes true; see feature_is_effective_llm_judge_reflects_worker_status
+        // for the positive case.
         assert_eq!(effective["llm_judge_enabled"], false);
         // analyzer_ml_enabled is inert when ml_status is Disabled
         assert_eq!(effective["analyzer_ml_enabled"], false);
@@ -1675,11 +1690,13 @@ mod tests {
         flags.analyzer_piguard_enabled = true;
         assert!(feature_is_effective(
             &ml_all,
+            false,
             &flags,
             FeatureId::OperatingPoint
         ));
         assert!(feature_is_effective(
             &ml_all,
+            false,
             &flags,
             FeatureId::OverDefence
         ));
@@ -1690,13 +1707,34 @@ mod tests {
         flags.analyzer_piguard_enabled = false;
         assert!(!feature_is_effective(
             &ml_all,
+            false,
             &flags,
             FeatureId::OperatingPoint
         ));
         assert!(!feature_is_effective(
             &ml_all,
+            false,
             &flags,
             FeatureId::OverDefence
+        ));
+    }
+
+    #[test]
+    fn feature_is_effective_llm_judge_reflects_worker_status() {
+        let flags = FeatureFlags::from_config(&ProxyConfig::default());
+        // Worker not spawned at startup -> flag inert regardless of live value.
+        assert!(!feature_is_effective(
+            &MlModelStatus::Disabled,
+            false,
+            &flags,
+            FeatureId::LlmJudgeEnabled
+        ));
+        // Worker spawned -> flag effective.
+        assert!(feature_is_effective(
+            &MlModelStatus::Disabled,
+            true,
+            &flags,
+            FeatureId::LlmJudgeEnabled
         ));
     }
 

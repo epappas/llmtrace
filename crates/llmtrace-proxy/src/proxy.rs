@@ -186,6 +186,16 @@ pub struct AppState {
     pub rate_limiter: crate::rate_limit::RateLimiter,
     /// Status of ML model loading at startup.
     pub ml_status: MlModelStatus,
+    /// Whether the LLM-as-a-Judge worker was spawned at startup (#43).
+    ///
+    /// Computed once by `build_app_state`: `true` iff `judge.enabled`
+    /// was true at startup AND the configured backend was constructed
+    /// successfully (e.g., required API-key env vars present). When
+    /// `false`, flipping `llm_judge_enabled` via the admin API is
+    /// persisted but inert until the proxy restarts with a successful
+    /// backend construction. Surfaced via `/api/v1/config/features`
+    /// `effective["llm_judge_enabled"]`.
+    pub judge_worker_spawned: bool,
     /// Writability of the sidecar runtime overlay path at startup.
     ///
     /// Computed once by `build_app_state` via a probe write; the
@@ -610,6 +620,7 @@ pub async fn proxy_handler(
             trace_id,
             tenant_id,
             findings: &pre_findings,
+            analysis_text: &analysis_text,
             source_ip,
             model_name: model_name.clone(),
             provider: detected_provider.clone(),
@@ -1068,6 +1079,7 @@ pub async fn proxy_handler(
             trace_id: captured.trace_id,
             tenant_id: captured.tenant_id,
             findings: &security_findings,
+            analysis_text: &captured.analysis_text,
             source_ip,
             model_name: captured.model_name.clone(),
             provider: captured.provider.clone(),
