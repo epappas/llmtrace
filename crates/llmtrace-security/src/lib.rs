@@ -33,6 +33,8 @@ pub mod code_security;
 pub(crate) mod encoding;
 pub mod fpr_monitor;
 pub mod jailbreak_detector;
+#[cfg(feature = "judge")]
+pub mod judge;
 pub mod mcp_monitor;
 pub mod multi_agent;
 pub mod normalise;

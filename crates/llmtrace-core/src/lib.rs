@@ -292,6 +292,75 @@ impl SecurityFinding {
 }
 
 // ---------------------------------------------------------------------------
+// LLM-as-a-Judge verdict types (issue #43)
+// ---------------------------------------------------------------------------
+
+/// Execution mode for a judge invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeMode {
+    /// Called during pre-request enforcement; the verdict influences
+    /// the enforcement decision for the current request.
+    Inline,
+    /// Called in a background worker; the verdict is persisted and
+    /// appended to the trace but does not influence the current
+    /// request.
+    Async,
+}
+
+impl JudgeMode {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Async => "async",
+        }
+    }
+}
+
+/// Structured verdict returned by a [`JudgeBackend`]. Participates in
+/// ensemble voting (inline path) or is persisted for later consumption
+/// by the Pipeline Learning service (async path). See
+/// `docs/architecture/LLM_JUDGE.md` for the architecture specification.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct JudgeVerdict {
+    /// Unique verdict identifier.
+    #[schema(value_type = String, format = "uuid")]
+    pub id: Uuid,
+    /// Trace this verdict is bound to.
+    #[schema(value_type = String, format = "uuid")]
+    pub trace_id: Uuid,
+    /// Tenant that owns the trace.
+    pub tenant_id: TenantId,
+    /// Whether the judge classified the candidate as a threat.
+    pub is_threat: bool,
+    /// Free-form category string, e.g. "prompt_injection", "jailbreak".
+    pub category: String,
+    /// Model-reported confidence in the range 0.0..=1.0.
+    pub confidence: f64,
+    /// Normalized security score 0..=100. Used when converting the
+    /// verdict into a [`SecurityFinding`] severity.
+    pub security_score: u8,
+    /// Recommended action; one of "allow", "flag", "block".
+    pub recommended_action: String,
+    /// Free-form reasoning text emitted by the judge.
+    pub reasoning: String,
+    /// Whether the verdict was produced inline or asynchronously.
+    pub mode: JudgeMode,
+    /// Backend model identifier used to produce the verdict.
+    pub model_used: String,
+    /// End-to-end latency of the judge call in milliseconds.
+    pub latency_ms: u64,
+    /// Prompt tokens reported by the backend, if available.
+    pub prompt_tokens: Option<u32>,
+    /// Completion tokens reported by the backend, if available.
+    pub completion_tokens: Option<u32>,
+    /// Wall-clock timestamp when the verdict was produced.
+    #[schema(value_type = String, format = "date-time")]
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // LLM provider types
 // ---------------------------------------------------------------------------
 
@@ -1086,14 +1155,14 @@ pub struct ProxyConfig {
     /// Action router / orchestrator configuration.
     #[serde(default)]
     pub action_router: ActionRouterConfig,
-    /// Runtime-toggleable flag for the LLM Judge analysis tier (#43).
+    /// LLM-as-a-Judge analysis tier (issue #43).
     ///
-    /// Store-only placeholder: the backend does not yet exist, so this
-    /// flag round-trips through the runtime config and the feature-flags
-    /// API but does not gate any behavior. Issue #43 will wire it to the
-    /// real judge pipeline.
+    /// Runtime-toggleable via `judge.enabled`. The wire field
+    /// `llm_judge_enabled` on the feature-flags admin API continues to
+    /// mirror `judge.enabled` for backwards compatibility with external
+    /// clients.
     #[serde(default)]
-    pub llm_judge_enabled: bool,
+    pub judge: JudgeConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1134,7 +1203,7 @@ impl Default for ProxyConfig {
             shutdown: ShutdownConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
             action_router: ActionRouterConfig::default(),
-            llm_judge_enabled: false,
+            judge: JudgeConfig::default(),
         }
     }
 }
@@ -1230,6 +1299,174 @@ impl Default for JudgeRouteActionConfig {
         Self {
             inline_await: false,
             inline_timeout_ms: 10000,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LLM-as-a-Judge configuration (issue #43)
+// ---------------------------------------------------------------------------
+
+/// Backend selection for the LLM Judge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeBackendKind {
+    #[default]
+    Vllm,
+    Openai,
+    Anthropic,
+}
+
+/// vLLM (or any OpenAI-compatible) self-hosted judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VllmBackendConfig {
+    pub base_url: String,
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+impl Default for VllmBackendConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "http://localhost:8000".to_string(),
+            model: "security-judge-v1".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+        }
+    }
+}
+
+/// OpenAI API judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiBackendConfig {
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+impl Default for OpenAiBackendConfig {
+    fn default() -> Self {
+        Self {
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+        }
+    }
+}
+
+/// Anthropic API judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicBackendConfig {
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+impl Default for AnthropicBackendConfig {
+    fn default() -> Self {
+        Self {
+            model: "claude-3-5-haiku-20241022".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+        }
+    }
+}
+
+/// Worker-loop tuning for async judge dispatch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeWorkerConfig {
+    pub channel_buffer: usize,
+    pub max_concurrency: usize,
+    pub timeout_ms: u64,
+}
+
+impl Default for JudgeWorkerConfig {
+    fn default() -> Self {
+        Self {
+            channel_buffer: 1000,
+            max_concurrency: 4,
+            timeout_ms: 30_000,
+        }
+    }
+}
+
+/// Retry policy for transient backend failures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeRetryConfig {
+    pub max_retries: u32,
+    pub backoff_base_ms: u64,
+}
+
+impl Default for JudgeRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 2,
+            backoff_base_ms: 1000,
+        }
+    }
+}
+
+/// Top-level LLM-as-a-Judge configuration. Nested in [`ProxyConfig`] and
+/// read via `ConfigHandle::load().judge` on the hot path.
+///
+/// The `enabled` field replaces the previous store-only
+/// `ProxyConfig.llm_judge_enabled` flag. The wire name
+/// `llm_judge_enabled` on the feature-flags admin API continues to
+/// mirror this field so external clients see no breaking change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub backend: JudgeBackendKind,
+    #[serde(default)]
+    pub vllm: VllmBackendConfig,
+    #[serde(default)]
+    pub openai: OpenAiBackendConfig,
+    #[serde(default)]
+    pub anthropic: AnthropicBackendConfig,
+    #[serde(default)]
+    pub worker: JudgeWorkerConfig,
+    #[serde(default)]
+    pub retry: JudgeRetryConfig,
+    /// Operator-supplied system prompt. Empty string or `None` selects
+    /// the built-in hardened default.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// Only judge candidates whose prior security score meets or exceeds
+    /// this threshold. Default 30 keeps cost bounded by skipping clean
+    /// traffic.
+    #[serde(default = "default_judge_min_score_threshold")]
+    pub min_score_threshold: u8,
+    /// Whether verdicts are written to the `judge_verdicts` table.
+    /// Disable to run the judge in shadow mode for ensemble voting
+    /// without persistence.
+    #[serde(default = "default_judge_persist_verdicts")]
+    pub persist_verdicts: bool,
+}
+
+fn default_judge_min_score_threshold() -> u8 {
+    30
+}
+
+fn default_judge_persist_verdicts() -> bool {
+    true
+}
+
+impl Default for JudgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: JudgeBackendKind::default(),
+            vllm: VllmBackendConfig::default(),
+            openai: OpenAiBackendConfig::default(),
+            anthropic: AnthropicBackendConfig::default(),
+            worker: JudgeWorkerConfig::default(),
+            retry: JudgeRetryConfig::default(),
+            system_prompt: None,
+            min_score_threshold: default_judge_min_score_threshold(),
+            persist_verdicts: default_judge_persist_verdicts(),
         }
     }
 }
@@ -2657,6 +2894,42 @@ pub trait CacheLayer: Send + Sync {
     async fn health_check(&self) -> Result<()>;
 }
 
+/// Filter parameters for querying [`JudgeVerdict`] records.
+#[derive(Debug, Clone, Default)]
+pub struct JudgeVerdictQuery {
+    /// Restrict to verdicts for this tenant.
+    pub tenant_id: Option<TenantId>,
+    /// Restrict to verdicts for this trace.
+    pub trace_id: Option<Uuid>,
+    /// Only verdicts with `created_at >= since`.
+    pub since: Option<DateTime<Utc>>,
+    /// Only verdicts with `created_at <= until`.
+    pub until: Option<DateTime<Utc>>,
+    /// Cap the result set.
+    pub limit: Option<u64>,
+}
+
+/// Persistence interface for [`JudgeVerdict`] records produced by the
+/// LLM-as-a-Judge worker (issue #43).
+///
+/// Verdicts are written asynchronously and read by the Pipeline
+/// Learning service (issue #44) as supervised training labels.
+/// Backends are expected to be write-heavy append-only; the query
+/// surface is intentionally narrow and optimised for time-range +
+/// tenant scans.
+#[async_trait::async_trait]
+pub trait JudgeVerdictStore: Send + Sync {
+    /// Persist a single verdict. Idempotency on `verdict.id` is not
+    /// required; callers guarantee unique ids via [`Uuid::new_v4`].
+    async fn insert_verdict(&self, verdict: &JudgeVerdict) -> Result<()>;
+
+    /// Query verdicts matching `query`.
+    async fn query_verdicts(&self, query: &JudgeVerdictQuery) -> Result<Vec<JudgeVerdict>>;
+
+    /// Lightweight reachability probe.
+    async fn health_check(&self) -> Result<()>;
+}
+
 // ---------------------------------------------------------------------------
 // Composite Storage struct
 // ---------------------------------------------------------------------------
@@ -2672,6 +2945,8 @@ pub struct Storage {
     pub metadata: Arc<dyn MetadataRepository>,
     /// Cache layer (hot queries, sessions).
     pub cache: Arc<dyn CacheLayer>,
+    /// LLM-as-a-Judge verdict store (issue #43).
+    pub judge_verdicts: Arc<dyn JudgeVerdictStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -3200,7 +3475,7 @@ mod tests {
             enforcement: EnforcementConfig::default(),
             action_router: ActionRouterConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
-            llm_judge_enabled: false,
+            judge: JudgeConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

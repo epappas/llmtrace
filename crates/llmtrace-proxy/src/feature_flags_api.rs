@@ -1826,6 +1826,7 @@ mod tests {
                 traces: real.storage.traces,
                 metadata: failing,
                 cache: real.storage.cache,
+                judge_verdicts: real.storage.judge_verdicts,
             },
             ..real
         });

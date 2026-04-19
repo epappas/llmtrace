@@ -1,0 +1,126 @@
+//! LLM-as-a-Judge analysis tier (issue #43).
+//!
+//! This module provides a pluggable backend for invoking a dedicated
+//! language model as a third security detector alongside the regex
+//! and DeBERTa ensembles. See `docs/architecture/LLM_JUDGE.md` for the
+//! full specification.
+//!
+//! # Crate boundary
+//!
+//! This module is scoped to **pure LLM IO and classification**:
+//!
+//! - The [`JudgeBackend`] trait, request/response types, and
+//!   backend implementations (vLLM now; OpenAI and Anthropic in
+//!   follow-up phases).
+//! - The hardened system prompt and JSON-schema parser.
+//! - Verdict-to-[`SecurityFinding`] conversion for ensemble
+//!   integration.
+//!
+//! Worker lifecycle, channel plumbing, storage persistence, and
+//! metrics live in the `llmtrace-proxy` crate.
+
+use async_trait::async_trait;
+use llmtrace_core::{JudgeMode, JudgeVerdict, SecurityFinding, TenantId};
+use uuid::Uuid;
+
+mod finding;
+mod parser;
+mod prompt;
+mod vllm;
+
+pub use finding::{severity_from_score, verdict_to_finding};
+pub use parser::{parse_verdict_json, RawVerdict};
+pub use prompt::{build_system_prompt, build_user_message_json, DEFAULT_SYSTEM_PROMPT};
+pub use vllm::VllmJudgeBackend;
+
+// ---------------------------------------------------------------------------
+// Error type
+// ---------------------------------------------------------------------------
+
+/// Errors emitted by [`JudgeBackend`] implementations. The judge worker
+/// translates these into fail-open metric increments -- a judge failure
+/// never changes the outcome of a request versus the no-judge baseline.
+#[derive(Debug, thiserror::Error)]
+pub enum JudgeError {
+    #[error("backend HTTP timeout after {elapsed_ms}ms")]
+    Timeout { elapsed_ms: u64 },
+
+    #[error("backend returned HTTP {status}: {message}")]
+    BackendError { status: u16, message: String },
+
+    #[error("failed to parse verdict: {0}")]
+    ParseError(String),
+
+    #[error("backend disabled or misconfigured: {0}")]
+    Misconfigured(String),
+
+    #[error("transport error: {0}")]
+    Transport(String),
+}
+
+// ---------------------------------------------------------------------------
+// Request / response shapes for the backend call (no channels here -- the
+// action-router oneshot wrapper lives in llmtrace-proxy).
+// ---------------------------------------------------------------------------
+
+/// A single candidate for judge analysis.
+///
+/// Carries only data the backend needs to classify the text plus
+/// enough trace/tenant context to stamp the returned verdict. The
+/// action-router [`JudgeRequest`](https://docs.rs/llmtrace_proxy) wraps
+/// this structure with the oneshot response channel for the inline
+/// path.
+#[derive(Debug, Clone)]
+pub struct JudgeCandidate {
+    pub trace_id: Uuid,
+    pub tenant_id: TenantId,
+    pub model_name: String,
+    pub analysis_text: String,
+    pub prior_findings: Vec<SecurityFinding>,
+    pub mode: JudgeMode,
+}
+
+impl JudgeCandidate {
+    /// Compute the highest prior `security_score`-equivalent from the
+    /// prior findings vector so the worker can apply the
+    /// `min_score_threshold` gate without reaching into internal
+    /// finding fields.
+    #[must_use]
+    pub fn peak_prior_severity_score(&self) -> u8 {
+        self.prior_findings
+            .iter()
+            .map(|f| match f.severity {
+                llmtrace_core::SecuritySeverity::Critical => 90u8,
+                llmtrace_core::SecuritySeverity::High => 70u8,
+                llmtrace_core::SecuritySeverity::Medium => 50u8,
+                llmtrace_core::SecuritySeverity::Low => 30u8,
+                llmtrace_core::SecuritySeverity::Info => 10u8,
+            })
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Backend trait
+// ---------------------------------------------------------------------------
+
+/// Abstraction over a judge backend. Implementations are responsible
+/// for HTTP transport, prompt formatting, response parsing, and
+/// returning a fully-populated [`JudgeVerdict`].
+#[async_trait]
+pub trait JudgeBackend: Send + Sync {
+    /// Produce a verdict for `candidate`. Implementations must set
+    /// `verdict.mode` to `candidate.mode` and `verdict.trace_id /
+    /// tenant_id` to mirror the candidate.
+    async fn judge(&self, candidate: &JudgeCandidate) -> Result<JudgeVerdict, JudgeError>;
+
+    /// Human-readable backend identifier used as a metric label.
+    fn name(&self) -> &'static str;
+
+    /// Lightweight health probe the worker can issue on startup or
+    /// after repeated failures. Implementations should issue a
+    /// minimal request (e.g. a GET against a `/v1/models` endpoint)
+    /// and return `Ok(())` when the backend is reachable.
+    async fn health_check(&self) -> Result<(), JudgeError>;
+}

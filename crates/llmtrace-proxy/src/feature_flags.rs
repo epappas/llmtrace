@@ -17,9 +17,9 @@
 //! Each field on [`FeatureFlags`] either reads its target on the
 //! request hot path (HOT) or has a runtime gate plumbed via
 //! [`llmtrace_security::EnsembleRuntimeHandle`] in the proxy infrastructure
-//! (PLUMB-CHEAP). The store-only `llm_judge_enabled` flag round-trips
-//! through the config but no subsystem consumes it; issue #43 will wire
-//! it through.
+//! (PLUMB-CHEAP). The `llm_judge_enabled` wire field mirrors
+//! `config.judge.enabled` (issue #43); the judge worker reads the
+//! nested config on the hot path.
 
 use std::path::Path;
 
@@ -58,9 +58,11 @@ pub struct FeatureFlags {
     /// Whether over-defence suppression is applied to ML-only single-
     /// detector injection findings.
     pub over_defence: bool,
-    /// Store-only placeholder for the future LLM Judge analysis tier
-    /// (issue #43). PUTs to this flag round-trip through the runtime
-    /// config but no subsystem consumes the value yet.
+    /// Runtime gate for the LLM-as-a-Judge analysis tier (issue #43).
+    /// Mirrors `config.judge.enabled` on the wire for backwards
+    /// compatibility with external admin-API clients; the nested
+    /// `JudgeConfig` struct carries backend selection and tuning
+    /// knobs.
     pub llm_judge_enabled: bool,
 }
 
@@ -322,7 +324,7 @@ impl FeatureFlags {
             operating_point: operating_point_to_str(&config.security_analysis.operating_point)
                 .to_string(),
             over_defence: config.security_analysis.over_defence,
-            llm_judge_enabled: config.llm_judge_enabled,
+            llm_judge_enabled: config.judge.enabled,
         }
     }
 
@@ -346,7 +348,7 @@ impl FeatureFlags {
         config.cost_caps.enabled = self.cost_caps_enabled;
         config.security_analysis.operating_point = point;
         config.security_analysis.over_defence = self.over_defence;
-        config.llm_judge_enabled = self.llm_judge_enabled;
+        config.judge.enabled = self.llm_judge_enabled;
         Ok(())
     }
 }
@@ -418,7 +420,7 @@ fn apply_feature_id(
             config.security_analysis.over_defence = require_bool(name, &value)?;
         }
         FeatureId::LlmJudgeEnabled => {
-            config.llm_judge_enabled = require_bool(name, &value)?;
+            config.judge.enabled = require_bool(name, &value)?;
         }
     }
     Ok(())
@@ -563,7 +565,7 @@ mod tests {
         original.security_analysis.operating_point = OperatingPoint::HighPrecision;
         original.cost_caps.enabled = true;
         original.rate_limiting.enabled = true;
-        original.llm_judge_enabled = true;
+        original.judge.enabled = true;
 
         let flags = FeatureFlags::from_config(&original);
 
@@ -585,7 +587,7 @@ mod tests {
         apply_single(&mut cfg, "over_defence", FeatureValue::Bool(true)).unwrap();
         assert!(cfg.security_analysis.over_defence);
         apply_single(&mut cfg, "llm_judge_enabled", FeatureValue::Bool(true)).unwrap();
-        assert!(cfg.llm_judge_enabled);
+        assert!(cfg.judge.enabled);
     }
 
     #[test]

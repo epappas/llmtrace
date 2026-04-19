@@ -7,6 +7,7 @@
 //! configuration profile.
 
 mod cache;
+mod judge_verdict;
 mod memory;
 pub mod migration;
 mod sqlite;
@@ -21,14 +22,19 @@ mod postgres;
 mod redis_cache;
 
 pub use cache::InMemoryCacheLayer;
+pub use judge_verdict::InMemoryJudgeVerdictStore;
 pub use memory::{InMemoryMetadataRepository, InMemoryTraceRepository};
 pub use sqlite::{SqliteMetadataRepository, SqliteTraceRepository};
 
 #[cfg(feature = "clickhouse")]
 pub use self::clickhouse::ClickHouseTraceRepository;
+#[cfg(feature = "clickhouse")]
+pub use judge_verdict::ClickHouseJudgeVerdictStore;
 
 #[cfg(feature = "postgres")]
 pub use self::postgres::PostgresMetadataRepository;
+#[cfg(feature = "postgres")]
+pub use judge_verdict::PostgresJudgeVerdictStore;
 
 #[cfg(feature = "redis_backend")]
 pub use self::redis_cache::RedisCacheLayer;
@@ -77,16 +83,22 @@ impl StorageProfile {
                 let traces = Arc::new(SqliteTraceRepository::from_pool(pool.clone()).await?);
                 let metadata = Arc::new(SqliteMetadataRepository::from_pool(pool).await?);
                 let cache = Arc::new(InMemoryCacheLayer::new());
+                // Lite profile keeps judge verdicts in memory: SQLite is
+                // the trace/metadata store and a dedicated judge table
+                // is not yet wired for SQLite (out of scope for Phase 3).
+                let judge_verdicts = Arc::new(InMemoryJudgeVerdictStore::new());
                 Ok(Storage {
                     traces,
                     metadata,
                     cache,
+                    judge_verdicts,
                 })
             }
             StorageProfile::Memory => Ok(Storage {
                 traces: Arc::new(InMemoryTraceRepository::new()),
                 metadata: Arc::new(InMemoryMetadataRepository::new()),
                 cache: Arc::new(InMemoryCacheLayer::new()),
+                judge_verdicts: Arc::new(InMemoryJudgeVerdictStore::new()),
             }),
             #[cfg(all(
                 feature = "clickhouse",
@@ -104,10 +116,15 @@ impl StorageProfile {
                 );
                 let metadata = Arc::new(PostgresMetadataRepository::new(&postgres_url).await?);
                 let cache = Arc::new(RedisCacheLayer::new(&redis_url).await?);
+                let judge_verdicts = Arc::new(
+                    ClickHouseJudgeVerdictStore::new(&clickhouse_url, &clickhouse_database)
+                        .await?,
+                );
                 Ok(Storage {
                     traces,
                     metadata,
                     cache,
+                    judge_verdicts,
                 })
             }
         }
