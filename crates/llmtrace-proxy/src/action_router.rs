@@ -135,8 +135,7 @@ impl ActionRouter {
         // claims the receiver the channel is still functional and
         // `JudgeRouteAction::execute` will emit `Error` / `Skipped` outcomes
         // once the channel fills or closes.
-        let (judge_tx, judge_rx) =
-            mpsc::channel::<JudgeRequest>(DEFAULT_JUDGE_CHANNEL_BUFFER);
+        let (judge_tx, judge_rx) = mpsc::channel::<JudgeRequest>(DEFAULT_JUDGE_CHANNEL_BUFFER);
         router.judge_rx = Some(judge_rx);
         let judge_route = Arc::new(JudgeRouteAction {
             tx: judge_tx,
@@ -1210,7 +1209,10 @@ mod tests {
                 let judge_finding = findings.last().unwrap();
                 assert_eq!(judge_finding.finding_type, JUDGE_FINDING_TYPE);
                 assert_eq!(
-                    judge_finding.metadata.get("voting_result").map(String::as_str),
+                    judge_finding
+                        .metadata
+                        .get("voting_result")
+                        .map(String::as_str),
                     Some("llm_judge")
                 );
             }

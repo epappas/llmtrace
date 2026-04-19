@@ -758,7 +758,11 @@ pub async fn update_feature(
     let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
-    let view = build_view(next_flags.clone(), &state.ml_status, state.judge_worker_spawned);
+    let view = build_view(
+        next_flags.clone(),
+        &state.ml_status,
+        state.judge_worker_spawned,
+    );
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     warnings.append(&mut dropped_audit);
     // Short-circuit disk persistence on zero-diff — a no-op PUT
@@ -819,7 +823,11 @@ pub async fn bulk_update_features(
     let has_diff = diff_flags(&prev_flags, &next_flags).next().is_some();
     apply_runtime_effects(&state, &prev_flags, &next_flags);
     let mut dropped_audit = record_audit_and_metrics(&state, &auth, &prev_flags, &next_flags).await;
-    let view = build_view(next_flags.clone(), &state.ml_status, state.judge_worker_spawned);
+    let view = build_view(
+        next_flags.clone(),
+        &state.ml_status,
+        state.judge_worker_spawned,
+    );
     let mut warnings = collect_warnings(&prev_flags, &next_flags, &view);
     warnings.append(&mut dropped_audit);
     // Zero-diff bulk PUT is a no-op at the disk layer (issue #42 M2).

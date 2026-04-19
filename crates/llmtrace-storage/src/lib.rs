@@ -117,8 +117,7 @@ impl StorageProfile {
                 let metadata = Arc::new(PostgresMetadataRepository::new(&postgres_url).await?);
                 let cache = Arc::new(RedisCacheLayer::new(&redis_url).await?);
                 let judge_verdicts = Arc::new(
-                    ClickHouseJudgeVerdictStore::new(&clickhouse_url, &clickhouse_database)
-                        .await?,
+                    ClickHouseJudgeVerdictStore::new(&clickhouse_url, &clickhouse_database).await?,
                 );
                 Ok(Storage {
                     traces,

@@ -202,10 +202,7 @@ impl JudgeBackend for VllmJudgeBackend {
     }
 
     async fn health_check(&self) -> Result<(), JudgeError> {
-        let url = format!(
-            "{}/v1/models",
-            self.options.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}/v1/models", self.options.base_url.trim_end_matches('/'));
         let response = tokio::time::timeout(self.options.timeout, self.client.get(&url).send())
             .await
             .map_err(|_| JudgeError::Timeout {

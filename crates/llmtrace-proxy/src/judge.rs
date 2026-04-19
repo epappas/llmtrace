@@ -175,7 +175,11 @@ async fn run_one(
         Ok(verdict) => {
             metrics.record_judge_request(backend_name, mode_label, "success");
             metrics.record_judge_latency(backend_name, mode_label, elapsed);
-            metrics.record_judge_tokens(backend_name, verdict.prompt_tokens, verdict.completion_tokens);
+            metrics.record_judge_tokens(
+                backend_name,
+                verdict.prompt_tokens,
+                verdict.completion_tokens,
+            );
             metrics.record_judge_verdict(&verdict);
             if persist {
                 if let Err(e) = store.insert_verdict(&verdict).await {
@@ -231,9 +235,12 @@ pub fn build_judge_backend(
     }
     let timeout = Duration::from_millis(config.worker.timeout_ms);
     let backend: Arc<dyn JudgeBackend> = match config.backend {
-        JudgeBackendKind::Vllm => {
-            Arc::new(build_vllm(&config.vllm, timeout, http_client, &config.system_prompt))
-        }
+        JudgeBackendKind::Vllm => Arc::new(build_vllm(
+            &config.vllm,
+            timeout,
+            http_client,
+            &config.system_prompt,
+        )),
         JudgeBackendKind::Openai => Arc::new(build_openai(
             &config.openai,
             &config.retry,
@@ -279,9 +286,7 @@ fn build_openai(
     system_prompt: &Option<String>,
 ) -> anyhow::Result<OpenAIJudgeBackend> {
     let api_key = std::env::var(OPENAI_API_KEY_ENV).map_err(|_| {
-        anyhow::anyhow!(
-            "judge backend=openai requires env var {OPENAI_API_KEY_ENV} to be set"
-        )
+        anyhow::anyhow!("judge backend=openai requires env var {OPENAI_API_KEY_ENV} to be set")
     })?;
     Ok(OpenAIJudgeBackend::new(
         http_client,
@@ -334,9 +339,9 @@ fn build_anthropic(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arc_swap::ArcSwap;
     use async_trait::async_trait;
     use chrono::Utc;
-    use arc_swap::ArcSwap;
     use llmtrace_core::{JudgeMode, JudgeVerdict, SecurityFinding, SecuritySeverity, TenantId};
     use llmtrace_storage::InMemoryJudgeVerdictStore;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -412,7 +417,11 @@ mod tests {
         }
     }
 
-    fn judge_request(mode: JudgeMode, tx: Option<oneshot::Sender<JudgeResponse>>, high_prior: bool) -> JudgeRequest {
+    fn judge_request(
+        mode: JudgeMode,
+        tx: Option<oneshot::Sender<JudgeResponse>>,
+        high_prior: bool,
+    ) -> JudgeRequest {
         let findings = if high_prior {
             vec![SecurityFinding::new(
                 SecuritySeverity::High,
@@ -438,11 +447,7 @@ mod tests {
         cfg: ProxyConfig,
         backend: Arc<dyn JudgeBackend>,
         store: Arc<dyn JudgeVerdictStore>,
-    ) -> (
-        mpsc::Sender<JudgeRequest>,
-        JudgeWorker,
-        Metrics,
-    ) {
+    ) -> (mpsc::Sender<JudgeRequest>, JudgeWorker, Metrics) {
         let (tx, rx) = mpsc::channel::<JudgeRequest>(4);
         let metrics = Metrics::new();
         let config: Arc<dyn ConfigSnapshotSource> = Arc::new(SwapConfigSource::new(cfg));

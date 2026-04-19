@@ -49,7 +49,10 @@ impl AnthropicJudgeBackend {
     }
 
     fn messages_url(&self) -> String {
-        format!("{}/v1/messages", self.options.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/messages",
+            self.options.base_url.trim_end_matches('/')
+        )
     }
 }
 

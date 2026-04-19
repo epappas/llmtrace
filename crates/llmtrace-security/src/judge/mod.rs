@@ -32,7 +32,9 @@ mod retry;
 mod truncate_helper;
 mod vllm;
 
-pub use anthropic::{AnthropicJudgeBackend, AnthropicJudgeOptions, API_KEY_ENV as ANTHROPIC_API_KEY_ENV};
+pub use anthropic::{
+    AnthropicJudgeBackend, AnthropicJudgeOptions, API_KEY_ENV as ANTHROPIC_API_KEY_ENV,
+};
 pub use finding::{severity_from_score, verdict_to_finding, JUDGE_FINDING_TYPE};
 pub use openai::{OpenAIJudgeBackend, OpenAiJudgeOptions, API_KEY_ENV as OPENAI_API_KEY_ENV};
 pub use parser::{parse_verdict_json, RawVerdict};

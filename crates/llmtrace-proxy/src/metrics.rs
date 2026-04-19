@@ -529,9 +529,7 @@ impl Metrics {
                 "llmtrace_judge_latency_seconds",
                 "Judge call latency in seconds",
             )
-            .buckets(vec![
-                0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0,
-            ]),
+            .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0]),
             &["backend", "mode"],
         )
         .expect("metric: judge_latency_seconds");
@@ -865,9 +863,7 @@ impl Metrics {
 
     /// Increment the drop counter with one of a fixed set of reasons.
     pub fn record_judge_dropped(&self, reason: &str) {
-        self.judge_dropped_total
-            .with_label_values(&[reason])
-            .inc();
+        self.judge_dropped_total.with_label_values(&[reason]).inc();
     }
 
     /// Record an agreement/disagreement between judge and ensemble.

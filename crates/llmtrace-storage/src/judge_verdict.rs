@@ -110,9 +110,7 @@ mod clickhouse_impl {
         /// Construct the store and run DDL migrations (idempotent
         /// `CREATE TABLE IF NOT EXISTS`).
         pub async fn new(url: &str, database: &str) -> Result<Self> {
-            let client = Client::default()
-                .with_url(url)
-                .with_database(database);
+            let client = Client::default().with_url(url).with_database(database);
             let store = Self {
                 client,
                 database: database.to_string(),
@@ -425,7 +423,8 @@ mod postgres_impl {
                 sql.push_str(&format!(" AND created_at >= ${n}"));
             }
             if query.until.is_some() {
-                let n = 1 + query.tenant_id.is_some() as i32
+                let n = 1
+                    + query.tenant_id.is_some() as i32
                     + query.trace_id.is_some() as i32
                     + query.since.is_some() as i32;
                 sql.push_str(&format!(" AND created_at <= ${n}"));
@@ -477,33 +476,34 @@ mod postgres_impl {
                         id: row
                             .try_get("id")
                             .map_err(|e| LLMTraceError::Storage(format!("id col: {e}")))?,
-                        trace_id: row.try_get("trace_id").map_err(|e| {
-                            LLMTraceError::Storage(format!("trace_id col: {e}"))
-                        })?,
-                        tenant_id: TenantId(row.try_get("tenant_id").map_err(|e| {
-                            LLMTraceError::Storage(format!("tenant_id col: {e}"))
-                        })?),
-                        is_threat: row.try_get("is_threat").map_err(|e| {
-                            LLMTraceError::Storage(format!("is_threat col: {e}"))
-                        })?,
-                        category: row.try_get("category").map_err(|e| {
-                            LLMTraceError::Storage(format!("category col: {e}"))
-                        })?,
-                        confidence: row.try_get("confidence").map_err(|e| {
-                            LLMTraceError::Storage(format!("confidence col: {e}"))
-                        })?,
-                        security_score: u8::try_from(security_score_i32.clamp(0, 255))
-                            .unwrap_or(0),
-                        recommended_action: row.try_get("recommended_action").map_err(|e| {
-                            LLMTraceError::Storage(format!("ra col: {e}"))
-                        })?,
-                        reasoning: row.try_get("reasoning").map_err(|e| {
-                            LLMTraceError::Storage(format!("reasoning col: {e}"))
-                        })?,
+                        trace_id: row
+                            .try_get("trace_id")
+                            .map_err(|e| LLMTraceError::Storage(format!("trace_id col: {e}")))?,
+                        tenant_id: TenantId(
+                            row.try_get("tenant_id").map_err(|e| {
+                                LLMTraceError::Storage(format!("tenant_id col: {e}"))
+                            })?,
+                        ),
+                        is_threat: row
+                            .try_get("is_threat")
+                            .map_err(|e| LLMTraceError::Storage(format!("is_threat col: {e}")))?,
+                        category: row
+                            .try_get("category")
+                            .map_err(|e| LLMTraceError::Storage(format!("category col: {e}")))?,
+                        confidence: row
+                            .try_get("confidence")
+                            .map_err(|e| LLMTraceError::Storage(format!("confidence col: {e}")))?,
+                        security_score: u8::try_from(security_score_i32.clamp(0, 255)).unwrap_or(0),
+                        recommended_action: row
+                            .try_get("recommended_action")
+                            .map_err(|e| LLMTraceError::Storage(format!("ra col: {e}")))?,
+                        reasoning: row
+                            .try_get("reasoning")
+                            .map_err(|e| LLMTraceError::Storage(format!("reasoning col: {e}")))?,
                         mode,
-                        model_used: row.try_get("model_used").map_err(|e| {
-                            LLMTraceError::Storage(format!("model_used col: {e}"))
-                        })?,
+                        model_used: row
+                            .try_get("model_used")
+                            .map_err(|e| LLMTraceError::Storage(format!("model_used col: {e}")))?,
                         latency_ms: u64::try_from(latency_ms_i64.max(0)).unwrap_or(0),
                         prompt_tokens: prompt_tokens_i32.map(|v| v.max(0) as u32),
                         completion_tokens: completion_tokens_i32.map(|v| v.max(0) as u32),

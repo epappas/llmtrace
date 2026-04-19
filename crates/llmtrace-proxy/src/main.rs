@@ -592,11 +592,8 @@ async fn build_app_state(
         },
     };
 
-    let config_handle = llmtrace_proxy::config_handle::ConfigHandle::new(
-        config,
-        None,
-        runtime_overlay_path,
-    );
+    let config_handle =
+        llmtrace_proxy::config_handle::ConfigHandle::new(config, None, runtime_overlay_path);
 
     // Spawn the LLM-as-a-Judge worker before AppState is finalized so
     // any subsequent request handlers can dispatch `JudgeRouteAction`
