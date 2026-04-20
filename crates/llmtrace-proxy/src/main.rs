@@ -494,6 +494,7 @@ async fn build_app_state(
     #[cfg_attr(not(feature = "judge"), allow(unused_mut))]
     let mut action_router = llmtrace_proxy::action_router::ActionRouter::new(
         &config.action_router,
+        config.judge.promotion.clone(),
         Some(Arc::clone(&storage.cache)),
         client.clone(),
     );
@@ -615,6 +616,7 @@ async fn build_app_state(
                         cfg_source,
                         metrics.clone(),
                         judge_cfg.worker.max_concurrency,
+                        shutdown.clone(),
                     );
                     info!(
                         backend = ?judge_cfg.backend,

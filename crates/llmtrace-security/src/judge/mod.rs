@@ -26,6 +26,7 @@ use uuid::Uuid;
 mod anthropic;
 mod finding;
 mod openai;
+mod openai_compat;
 mod parser;
 mod prompt;
 mod retry;

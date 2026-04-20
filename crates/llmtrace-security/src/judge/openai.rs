@@ -8,12 +8,13 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use llmtrace_core::JudgeVerdict;
+use llmtrace_core::{JudgeRetryConfig, JudgeVerdict};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use super::openai_compat::{call_chat_completions, ChatMessage, ChatRequest, ResponseFormat};
 use super::{
     build_system_prompt, build_user_message_json, parse_verdict_json, JudgeBackend, JudgeCandidate,
     JudgeError,
@@ -24,7 +25,11 @@ use super::{
 pub const API_KEY_ENV: &str = "LLMTRACE_JUDGE_OPENAI_API_KEY";
 
 /// Construction-time options for the OpenAI judge backend.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented manually to redact `api_key`. Do not add a
+/// `derive(Debug)` here: any future `tracing::debug!(?options, ...)`
+/// or panic message that formats this struct would leak the key.
+#[derive(Clone)]
 pub struct OpenAiJudgeOptions {
     pub base_url: String,
     pub model: String,
@@ -35,6 +40,25 @@ pub struct OpenAiJudgeOptions {
     pub backoff_base_ms: u64,
     pub system_prompt_override: Option<String>,
     pub api_key: String,
+}
+
+impl fmt::Debug for OpenAiJudgeOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OpenAiJudgeOptions")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .field("temperature", &self.temperature)
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("backoff_base_ms", &self.backoff_base_ms)
+            .field(
+                "system_prompt_override",
+                &self.system_prompt_override.as_ref().map(|_| "<set>"),
+            )
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
 }
 
 pub struct OpenAIJudgeBackend {
@@ -54,53 +78,6 @@ impl OpenAIJudgeBackend {
             self.options.base_url.trim_end_matches('/')
         )
     }
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    max_tokens: u32,
-    temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-}
-
-#[derive(Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: String,
-}
-
-#[derive(Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    kind: &'static str,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<ChatUsage>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatResponseMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatResponseMessage {
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatUsage {
-    #[serde(default)]
-    prompt_tokens: Option<u32>,
-    #[serde(default)]
-    completion_tokens: Option<u32>,
 }
 
 #[async_trait]
@@ -130,60 +107,24 @@ impl JudgeBackend for OpenAIJudgeBackend {
 
         let url = self.chat_completions_url();
         let started = Instant::now();
-        // Retry wraps the full HTTP round-trip + status check so 5xx
-        // responses trigger a retry via `is_retriable`. 4xx responses
-        // return a permanent BackendError and short-circuit.
-        let body_bytes = super::retry::with_retry(
-            self.options.max_retries,
-            self.options.backoff_base_ms,
-            || async {
-                let response = tokio::time::timeout(
-                    self.options.timeout,
-                    self.client
-                        .post(&url)
-                        .bearer_auth(&self.options.api_key)
-                        .json(&body)
-                        .send(),
-                )
-                .await
-                .map_err(|_| JudgeError::Timeout {
-                    elapsed_ms: self.options.timeout.as_millis() as u64,
-                })?
-                .map_err(|e| JudgeError::Transport(e.to_string()))?;
-
-                let status = response.status();
-                let bytes = response.bytes().await.unwrap_or_default();
-                if !status.is_success() {
-                    return Err(JudgeError::BackendError {
-                        status: status.as_u16(),
-                        message: super::truncate_helper::truncate_for_error(
-                            &String::from_utf8_lossy(&bytes),
-                            512,
-                        ),
-                    });
-                }
-                Ok(bytes)
-            },
+        let retry = JudgeRetryConfig {
+            max_retries: self.options.max_retries,
+            backoff_base_ms: self.options.backoff_base_ms,
+        };
+        let parsed = call_chat_completions(
+            &self.client,
+            &url,
+            &|rb| rb.bearer_auth(&self.options.api_key),
+            &body,
+            self.options.timeout,
+            &retry,
         )
         .await?;
 
-        let parsed: ChatResponse = serde_json::from_slice(&body_bytes)
-            .map_err(|e| JudgeError::ParseError(format!("chat response decode: {e}")))?;
-
-        let content = parsed
-            .choices
-            .first()
-            .ok_or_else(|| JudgeError::ParseError("chat response has no choices".to_string()))?
-            .message
-            .content
-            .clone();
-
+        let content = parsed.first_content()?.to_string();
         let raw = parse_verdict_json(&content)?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let (prompt_tokens, completion_tokens) = parsed
-            .usage
-            .map(|u| (u.prompt_tokens, u.completion_tokens))
-            .unwrap_or((None, None));
+        let (prompt_tokens, completion_tokens) = parsed.tokens();
 
         Ok(JudgeVerdict {
             id: Uuid::new_v4(),
@@ -245,6 +186,30 @@ mod tests {
     use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn debug_impl_redacts_api_key() {
+        const SECRET: &str = "sk-super-secret-openai-key-1234567890";
+        let opts = OpenAiJudgeOptions {
+            base_url: "https://api.openai.com".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 256,
+            temperature: 0.1,
+            timeout: Duration::from_millis(500),
+            max_retries: 0,
+            backoff_base_ms: 10,
+            system_prompt_override: None,
+            api_key: SECRET.to_string(),
+        };
+        let rendered = format!("{opts:?}");
+        assert!(
+            !rendered.contains(SECRET),
+            "api_key leaked in Debug output: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+        assert!(rendered.contains("base_url"));
+        assert!(rendered.contains("gpt-4o-mini"));
+    }
 
     #[derive(Clone)]
     struct MockState {

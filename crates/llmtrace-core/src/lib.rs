@@ -1430,6 +1430,10 @@ pub struct JudgeConfig {
     pub worker: JudgeWorkerConfig,
     #[serde(default)]
     pub retry: JudgeRetryConfig,
+    /// Promotion policy: when (if ever) an inline judge verdict is
+    /// allowed to override the prior enforcement decision.
+    #[serde(default)]
+    pub promotion: JudgePromotionConfig,
     /// Operator-supplied system prompt. Empty string or `None` selects
     /// the built-in hardened default.
     #[serde(default)]
@@ -1464,9 +1468,60 @@ impl Default for JudgeConfig {
             anthropic: AnthropicBackendConfig::default(),
             worker: JudgeWorkerConfig::default(),
             retry: JudgeRetryConfig::default(),
+            promotion: JudgePromotionConfig::default(),
             system_prompt: None,
             min_score_threshold: default_judge_min_score_threshold(),
             persist_verdicts: default_judge_persist_verdicts(),
+        }
+    }
+}
+
+/// Inline-path promotion policy for judge verdicts (issue #70).
+///
+/// Gates whether a judge verdict is allowed to override the prior
+/// enforcement decision and promote it to `Block`. An uncalibrated,
+/// compromised, or drifted judge can emit `{"is_threat": true,
+/// "recommended_action": "block"}` with very low confidence; without
+/// these gates such a verdict would DoS legitimate traffic. Defaults
+/// are conservative: require high confidence, a meaningful security
+/// score, and at least one supporting prior ensemble finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgePromotionConfig {
+    /// Minimum self-reported `confidence` required to promote a verdict
+    /// to `BlockRequested`. Verdicts below this threshold are logged
+    /// and emit the agreement metric but do not override the prior
+    /// enforcement decision.
+    #[serde(default = "default_judge_promotion_min_confidence")]
+    pub min_confidence: f64,
+    /// Minimum `security_score` required to promote a verdict.
+    #[serde(default = "default_judge_promotion_min_security_score")]
+    pub min_security_score: u8,
+    /// When true, require at least one prior ensemble finding of
+    /// severity `Medium` or higher before a pure-judge Block promotion
+    /// can fire. Prevents "elevate" cases (clean ensemble, judge says
+    /// Block) from single-handedly blocking traffic.
+    #[serde(default = "default_judge_promotion_require_ensemble_support")]
+    pub require_ensemble_support: bool,
+}
+
+fn default_judge_promotion_min_confidence() -> f64 {
+    0.7
+}
+
+fn default_judge_promotion_min_security_score() -> u8 {
+    60
+}
+
+fn default_judge_promotion_require_ensemble_support() -> bool {
+    true
+}
+
+impl Default for JudgePromotionConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence: default_judge_promotion_min_confidence(),
+            min_security_score: default_judge_promotion_min_security_score(),
+            require_ensemble_support: default_judge_promotion_require_ensemble_support(),
         }
     }
 }

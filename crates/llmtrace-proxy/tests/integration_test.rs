@@ -66,6 +66,7 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
     let cost_estimator = llmtrace_proxy::cost::CostEstimator::new(&config.cost_estimation);
     let action_router = llmtrace_proxy::action_router::ActionRouter::new(
         &config.action_router,
+        config.judge.promotion.clone(),
         Some(Arc::clone(&storage.cache)),
         reqwest::Client::new(),
     );

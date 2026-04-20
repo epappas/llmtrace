@@ -27,10 +27,12 @@ use reqwest::Client;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Semaphore};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::action_router::{JudgeRequest, JudgeResponse};
 use crate::metrics::Metrics;
+use crate::shutdown::ShutdownCoordinator;
 
 /// Snapshot provider for the worker. Decouples the worker from the
 /// full `AppState` so unit tests can drive it with a stand-alone
@@ -53,6 +55,11 @@ pub struct JudgeWorker {
     config: Arc<dyn ConfigSnapshotSource>,
     metrics: Metrics,
     concurrency: Arc<Semaphore>,
+    /// Shared shutdown coordinator. The outer `run()` loop exits when
+    /// the token fires; each per-request backend task registers a
+    /// `TaskGuard` with the coordinator so `wait_for_tasks()` actually
+    /// waits for them to drain on SIGTERM. See issue #68.
+    shutdown: ShutdownCoordinator,
 }
 
 impl JudgeWorker {
@@ -66,6 +73,7 @@ impl JudgeWorker {
         config: Arc<dyn ConfigSnapshotSource>,
         metrics: Metrics,
         max_concurrency: usize,
+        shutdown: ShutdownCoordinator,
     ) -> Self {
         Self {
             rx,
@@ -74,15 +82,39 @@ impl JudgeWorker {
             config,
             metrics,
             concurrency: Arc::new(Semaphore::new(max_concurrency.max(1))),
+            shutdown,
         }
     }
 
-    /// Run the worker until the channel is closed.
+    /// Run the worker until the channel closes or shutdown is signaled.
+    ///
+    /// On shutdown the loop exits promptly; in-flight per-request
+    /// tasks are tracked via `ShutdownCoordinator::track_task` so
+    /// `wait_for_tasks()` blocks until they drain (or the grace window
+    /// expires).
     pub async fn run(mut self) {
-        while let Some(req) = self.rx.recv().await {
-            self.handle(req).await;
+        let token = self.shutdown.token();
+        loop {
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => {
+                    debug!("JudgeWorker shutdown signaled; draining");
+                    break;
+                }
+                req = self.rx.recv() => {
+                    match req {
+                        Some(r) => self.handle(r).await,
+                        None => {
+                            debug!("JudgeWorker channel closed; loop exiting");
+                            break;
+                        }
+                    }
+                }
+            }
         }
-        debug!("JudgeWorker channel closed; loop exiting");
+        // Reset the queue-depth gauge so dashboards do not show stale
+        // depth after the process drains.
+        self.metrics.judge_queue_depth.set(0);
     }
 
     async fn handle(&self, req: JudgeRequest) {
@@ -120,10 +152,13 @@ impl JudgeWorker {
         let store = Arc::clone(&self.store);
         let metrics = self.metrics.clone();
         let persist = judge_cfg.persist_verdicts;
+        let task_guard = self.shutdown.track_task();
+        let cancel = self.shutdown.token();
 
         tokio::spawn(async move {
-            let _permit = permit; // release when task finishes
-            run_one(&backend, &store, persist, &metrics, req, candidate).await;
+            let _permit = permit; // release semaphore slot on task completion
+            let _task_guard = task_guard; // decrements in_flight count on drop
+            run_one(&backend, &store, persist, &metrics, req, candidate, cancel).await;
         });
     }
 }
@@ -162,13 +197,31 @@ async fn run_one(
     metrics: &Metrics,
     req: JudgeRequest,
     candidate: JudgeCandidate,
+    cancel: CancellationToken,
 ) {
     let backend_name = backend.name();
     let mode_label = candidate.mode.as_str();
     let response_tx = req.response_tx;
     let started = Instant::now();
 
-    let result = backend.judge(&candidate).await;
+    // Race the backend call against shutdown; if the token fires first
+    // the request is abandoned cleanly and surfaces as a `shutdown`
+    // drop metric. The caller on the inline path receives an Error so
+    // it can fail open.
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => {
+            metrics.record_judge_request(backend_name, mode_label, "shutdown");
+            metrics.record_judge_dropped("shutdown");
+            if let Some(tx) = response_tx {
+                let _ = tx.send(JudgeResponse::Error {
+                    message: "judge worker shutting down".to_string(),
+                });
+            }
+            return;
+        }
+        r = backend.judge(&candidate) => r,
+    };
     let elapsed = started.elapsed();
 
     match result {
@@ -237,6 +290,7 @@ pub fn build_judge_backend(
     let backend: Arc<dyn JudgeBackend> = match config.backend {
         JudgeBackendKind::Vllm => Arc::new(build_vllm(
             &config.vllm,
+            &config.retry,
             timeout,
             http_client,
             &config.system_prompt,
@@ -261,6 +315,7 @@ pub fn build_judge_backend(
 
 fn build_vllm(
     cfg: &VllmBackendConfig,
+    retry: &llmtrace_core::JudgeRetryConfig,
     timeout: Duration,
     http_client: Client,
     system_prompt: &Option<String>,
@@ -273,6 +328,7 @@ fn build_vllm(
             max_tokens: cfg.max_tokens,
             temperature: cfg.temperature,
             timeout,
+            retry: retry.clone(),
             system_prompt_override: system_prompt.clone(),
         },
     )
@@ -448,11 +504,34 @@ mod tests {
         backend: Arc<dyn JudgeBackend>,
         store: Arc<dyn JudgeVerdictStore>,
     ) -> (mpsc::Sender<JudgeRequest>, JudgeWorker, Metrics) {
+        let (tx, worker, metrics, _shutdown) = setup_with_shutdown(cfg, backend, store);
+        (tx, worker, metrics)
+    }
+
+    fn setup_with_shutdown(
+        cfg: ProxyConfig,
+        backend: Arc<dyn JudgeBackend>,
+        store: Arc<dyn JudgeVerdictStore>,
+    ) -> (
+        mpsc::Sender<JudgeRequest>,
+        JudgeWorker,
+        Metrics,
+        ShutdownCoordinator,
+    ) {
         let (tx, rx) = mpsc::channel::<JudgeRequest>(4);
         let metrics = Metrics::new();
         let config: Arc<dyn ConfigSnapshotSource> = Arc::new(SwapConfigSource::new(cfg));
-        let worker = JudgeWorker::new(rx, backend, store, config, metrics.clone(), 2);
-        (tx, worker, metrics)
+        let shutdown = ShutdownCoordinator::new(30);
+        let worker = JudgeWorker::new(
+            rx,
+            backend,
+            store,
+            config,
+            metrics.clone(),
+            2,
+            shutdown.clone(),
+        );
+        (tx, worker, metrics, shutdown)
     }
 
     #[tokio::test]
@@ -613,5 +692,66 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         panic!("verdict was never persisted");
+    }
+
+    /// Issue #68: an in-flight backend call must be cancelled cleanly
+    /// when the coordinator fires; the inline caller must receive an
+    /// Error response rather than block past the grace window.
+    #[tokio::test]
+    async fn worker_cancels_in_flight_backend_on_shutdown() {
+        // A stub backend that sleeps 30s — long enough that the test
+        // will hang if shutdown isn't honored.
+        struct SleepyBackend;
+        #[async_trait]
+        impl JudgeBackend for SleepyBackend {
+            async fn judge(
+                &self,
+                _c: &JudgeCandidate,
+            ) -> Result<JudgeVerdict, llmtrace_security::judge::JudgeError> {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                unreachable!("shutdown should cancel this long before 30s")
+            }
+            fn name(&self) -> &'static str {
+                "sleepy"
+            }
+            async fn health_check(&self) -> Result<(), llmtrace_security::judge::JudgeError> {
+                Ok(())
+            }
+        }
+
+        let backend: Arc<dyn JudgeBackend> = Arc::new(SleepyBackend);
+        let store = Arc::new(InMemoryJudgeVerdictStore::new()) as Arc<dyn JudgeVerdictStore>;
+        let (tx, worker, metrics, shutdown) =
+            setup_with_shutdown(judge_config_enabled(30), backend, store);
+
+        let (resp_tx, resp_rx) = oneshot::channel();
+        let req = judge_request(JudgeMode::Inline, Some(resp_tx), true);
+        let worker_handle = tokio::spawn(worker.run());
+        tx.send(req).await.unwrap();
+        // Let the worker dispatch the request before triggering shutdown.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown.trigger();
+
+        // Caller must receive the Error response within a short budget
+        // (the cancel branch responds immediately; no wait for the 30s backend).
+        let start = Instant::now();
+        let resp = tokio::time::timeout(Duration::from_secs(2), resp_rx)
+            .await
+            .expect("worker must respond within 2s on shutdown")
+            .expect("oneshot channel must not be dropped");
+        assert!(start.elapsed() < Duration::from_secs(2));
+        match resp {
+            JudgeResponse::Error { message } => assert!(message.contains("shutting down")),
+            other => panic!("expected Error(shutdown), got {other:?}"),
+        }
+
+        // wait_for_tasks must return true within the configured window
+        // because the per-request task's TaskGuard has dropped.
+        assert!(shutdown.wait_for_tasks().await);
+        drop(tx);
+        worker_handle.await.unwrap();
+
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("reason=\"shutdown\""));
     }
 }

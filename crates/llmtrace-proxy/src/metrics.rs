@@ -157,6 +157,11 @@ pub struct Metrics {
     pub judge_verdict_agreement: IntCounterVec,
     /// Judge requests dropped without issuing a backend call.
     pub judge_dropped_total: IntCounterVec,
+    /// Judge verdicts that failed the inline promotion gate (#70), by
+    /// reason. Distinguishes from `judge_dropped_total`, which is
+    /// pre-backend: a rejected promotion DID produce a verdict, the
+    /// verdict just wasn't allowed to flip the decision to Block.
+    pub judge_promotion_rejected_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -602,9 +607,36 @@ impl Metrics {
             "disabled",
             "below_threshold",
             "channel_full",
+            "channel_closed",
             "persist_failure",
+            "semaphore_closed",
+            "shutdown",
         ] {
             judge_dropped_total.with_label_values(&[reason]).inc_by(0);
+        }
+
+        let judge_promotion_rejected_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_promotion_rejected_total",
+                "Judge verdicts that did not pass the inline promotion gate, by reason",
+            ),
+            &["reason"],
+        )
+        .expect("metric: judge_promotion_rejected_total");
+        registry
+            .register(Box::new(judge_promotion_rejected_total.clone()))
+            .expect("register judge_promotion_rejected_total");
+
+        // Pre-initialise reason labels — same rationale as above.
+        for reason in &[
+            "not_threat_or_block",
+            "below_confidence",
+            "below_score",
+            "no_ensemble_support",
+        ] {
+            judge_promotion_rejected_total
+                .with_label_values(&[reason])
+                .inc_by(0);
         }
 
         // Initialise circuit breaker gauges to their startup state (closed).
@@ -656,6 +688,7 @@ impl Metrics {
             judge_queue_depth,
             judge_verdict_agreement,
             judge_dropped_total,
+            judge_promotion_rejected_total,
         }
     }
 
@@ -870,6 +903,13 @@ impl Metrics {
     pub fn record_judge_agreement(&self, agreement: &str) {
         self.judge_verdict_agreement
             .with_label_values(&[agreement])
+            .inc();
+    }
+
+    /// Record a verdict that failed the inline promotion gate.
+    pub fn record_judge_promotion_rejected(&self, reason: &str) {
+        self.judge_promotion_rejected_total
+            .with_label_values(&[reason])
             .inc();
     }
 }

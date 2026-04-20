@@ -10,12 +10,12 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use llmtrace_core::JudgeVerdict;
+use llmtrace_core::{JudgeRetryConfig, JudgeVerdict};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use super::openai_compat::{call_chat_completions, ChatMessage, ChatRequest, ResponseFormat};
 use super::{
     build_system_prompt, build_user_message_json, parse_verdict_json, JudgeBackend, JudgeCandidate,
     JudgeError,
@@ -23,7 +23,8 @@ use super::{
 
 /// vLLM judge backend configuration used at construction time.
 /// Mirrors [`llmtrace_core::VllmBackendConfig`] plus the judge-level
-/// fields the backend needs (system-prompt override, per-call timeout).
+/// fields the backend needs (system-prompt override, per-call timeout,
+/// retry policy).
 #[derive(Debug, Clone)]
 pub struct VllmJudgeOptions {
     pub base_url: String,
@@ -31,6 +32,7 @@ pub struct VllmJudgeOptions {
     pub max_tokens: u32,
     pub temperature: f32,
     pub timeout: Duration,
+    pub retry: JudgeRetryConfig,
     pub system_prompt_override: Option<String>,
 }
 
@@ -55,57 +57,6 @@ impl VllmJudgeBackend {
             self.options.base_url.trim_end_matches('/')
         )
     }
-}
-
-// ---------------------------------------------------------------------------
-// OpenAI-compatible wire types
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<ChatMessage<'a>>,
-    max_tokens: u32,
-    temperature: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-}
-
-#[derive(Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: String,
-}
-
-#[derive(Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    kind: &'static str,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-    #[serde(default)]
-    usage: Option<ChatUsage>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatResponseMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatResponseMessage {
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatUsage {
-    #[serde(default)]
-    prompt_tokens: Option<u32>,
-    #[serde(default)]
-    completion_tokens: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -139,44 +90,25 @@ impl JudgeBackend for VllmJudgeBackend {
 
         let url = self.chat_completions_url();
         let started = Instant::now();
-        let response = tokio::time::timeout(
+
+        // vLLM is self-hosted and does not expect an auth header; the
+        // identity auth_fn is the contract difference versus OpenAI.
+        // Issue #67: previously this call bypassed the retry wrapper,
+        // leaving the default backend with the weakest resilience.
+        let parsed = call_chat_completions(
+            &self.client,
+            &url,
+            &|rb| rb,
+            &body,
             self.options.timeout,
-            self.client.post(&url).json(&body).send(),
+            &self.options.retry,
         )
-        .await
-        .map_err(|_| JudgeError::Timeout {
-            elapsed_ms: self.options.timeout.as_millis() as u64,
-        })?
-        .map_err(|e| JudgeError::Transport(e.to_string()))?;
+        .await?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let message = response.text().await.unwrap_or_default();
-            return Err(JudgeError::BackendError {
-                status: status.as_u16(),
-                message: super::truncate_helper::truncate_for_error(&message, 512),
-            });
-        }
-
-        let parsed: ChatResponse = response
-            .json()
-            .await
-            .map_err(|e| JudgeError::ParseError(format!("chat response decode: {e}")))?;
-
-        let content = parsed
-            .choices
-            .first()
-            .ok_or_else(|| JudgeError::ParseError("chat response has no choices".to_string()))?
-            .message
-            .content
-            .clone();
-
+        let content = parsed.first_content()?.to_string();
         let raw = parse_verdict_json(&content)?;
         let elapsed_ms = started.elapsed().as_millis() as u64;
-        let (prompt_tokens, completion_tokens) = parsed
-            .usage
-            .map(|u| (u.prompt_tokens, u.completion_tokens))
-            .unwrap_or((None, None));
+        let (prompt_tokens, completion_tokens) = parsed.tokens();
 
         Ok(JudgeVerdict {
             id: Uuid::new_v4(),
@@ -301,6 +233,10 @@ mod tests {
             max_tokens: 256,
             temperature: 0.1,
             timeout: Duration::from_millis(500),
+            retry: JudgeRetryConfig {
+                max_retries: 0,
+                backoff_base_ms: 10,
+            },
             system_prompt_override: None,
         }
     }
@@ -408,5 +344,54 @@ mod tests {
         let base_url = spawn_mock(state).await;
         let backend = VllmJudgeBackend::new(Client::new(), default_options(base_url));
         backend.health_check().await.unwrap();
+    }
+
+    /// Issue #67: vLLM must honor the shared retry wrapper just like
+    /// OpenAI and Anthropic. A 503 followed by a 200 should produce a
+    /// verdict after exactly one retry.
+    #[tokio::test]
+    async fn judge_retries_on_5xx_then_succeeds() {
+        use std::sync::atomic::AtomicI32;
+        // Status sequence: call 0 -> 503, call 1+ -> 200.
+        let counter = Arc::new(AtomicI32::new(0));
+        let state = MockState::new(successful_chat_response(
+            r#"{"is_threat":true,"category":"prompt_injection","confidence":0.9,"security_score":80,"recommended_action":"block","reasoning":"ok"}"#,
+        ));
+        let state_in_handler = state.clone();
+        let counter_in_handler = Arc::clone(&counter);
+
+        // Rebuild a router locally so we can inject status-sequence
+        // behaviour without breaking MockState's shape for other tests.
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |axum::Json(_body): axum::Json<serde_json::Value>| {
+                let state = state_in_handler.clone();
+                let counter = Arc::clone(&counter_in_handler);
+                async move {
+                    let n = counter.fetch_add(1, Ordering::SeqCst);
+                    let code = if n == 0 {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        StatusCode::OK
+                    };
+                    let body = state.response_body.lock().await.clone();
+                    (code, axum::Json(body))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let base_url = format!("http://{addr}");
+
+        let mut opts = default_options(base_url);
+        opts.retry.max_retries = 1;
+        let backend = VllmJudgeBackend::new(Client::new(), opts);
+
+        let verdict = backend.judge(&candidate()).await.unwrap();
+        assert!(verdict.is_threat);
+        assert_eq!(verdict.security_score, 80);
+        // Exactly two calls: the 503 and the retry.
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 }

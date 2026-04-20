@@ -1008,6 +1008,7 @@ mod tests {
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
+                llmtrace_core::JudgePromotionConfig::default(),
                 None,
                 reqwest::Client::new(),
             ),
@@ -1074,6 +1075,7 @@ mod tests {
             anomaly_detector: None,
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
+                llmtrace_core::JudgePromotionConfig::default(),
                 None,
                 reqwest::Client::new(),
             ),

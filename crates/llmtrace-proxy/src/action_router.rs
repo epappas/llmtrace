@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use llmtrace_core::{
-    ActionRouterConfig, ActionRuleConfig, CacheLayer, JudgeMode, JudgeVerdict, SecurityFinding,
-    SecuritySeverity, TenantId,
+    ActionRouterConfig, ActionRuleConfig, CacheLayer, JudgeMode, JudgePromotionConfig,
+    JudgeVerdict, SecurityFinding, SecuritySeverity, TenantId,
 };
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
@@ -97,6 +97,7 @@ pub struct ActionRouter {
 impl ActionRouter {
     pub fn new(
         config: &ActionRouterConfig,
+        judge_promotion: JudgePromotionConfig,
         cache: Option<Arc<dyn CacheLayer>>,
         http_client: Client,
     ) -> Self {
@@ -141,6 +142,7 @@ impl ActionRouter {
             tx: judge_tx,
             inline_await: config.judge_route.inline_await,
             inline_timeout_ms: config.judge_route.inline_timeout_ms,
+            promotion: judge_promotion,
         });
         router.register_action(judge_route);
 
@@ -609,26 +611,78 @@ fn judge_verdict_to_finding(verdict: &JudgeVerdict) -> SecurityFinding {
 ///   enforcement decision. The judge never *downgrades* an existing Block;
 ///   the only influence it has on the current request is promotion when
 ///   the verdict is unambiguous.
-fn verdict_to_outcome(prior_findings: &[SecurityFinding], verdict: &JudgeVerdict) -> ActionOutcome {
-    let judge_finding = judge_verdict_to_finding(verdict);
-    if verdict.is_threat && verdict.recommended_action == "block" {
-        let mut merged: Vec<SecurityFinding> = prior_findings.to_vec();
-        merged.push(judge_finding);
-        ActionOutcome::BlockRequested {
-            reason: format!(
-                "LLM Judge confirmed {} (score={}, conf={:.2})",
-                verdict.category, verdict.security_score, verdict.confidence,
-            ),
-            findings: merged,
+///
+/// Issue #70: the promotion is additionally gated by
+/// [`JudgePromotionConfig`]. A verdict that fails any gate increments
+/// `llmtrace_judge_promotion_rejected_total{reason}` and falls through
+/// to `ActionOutcome::Completed`, preserving the prior enforcement
+/// decision. This protects against compromised, drifted, or
+/// uncalibrated judges.
+fn verdict_to_outcome(
+    prior_findings: &[SecurityFinding],
+    verdict: &JudgeVerdict,
+    promotion: &JudgePromotionConfig,
+    metrics: Option<&crate::metrics::Metrics>,
+) -> ActionOutcome {
+    if let Some(rejection) = promotion_rejection(prior_findings, verdict, promotion) {
+        if let Some(m) = metrics {
+            m.record_judge_promotion_rejected(rejection);
         }
-    } else {
-        ActionOutcome::Completed {
+        return ActionOutcome::Completed {
             message: format!(
-                "Judge verdict: category={} action={} score={}",
-                verdict.category, verdict.recommended_action, verdict.security_score,
+                "Judge verdict not promoted ({}): category={} action={} score={} conf={:.2}",
+                rejection,
+                verdict.category,
+                verdict.recommended_action,
+                verdict.security_score,
+                verdict.confidence,
             ),
-        }
+        };
     }
+
+    let judge_finding = judge_verdict_to_finding(verdict);
+    let mut merged: Vec<SecurityFinding> = prior_findings.to_vec();
+    merged.push(judge_finding);
+    ActionOutcome::BlockRequested {
+        reason: format!(
+            "LLM Judge confirmed {} (score={}, conf={:.2})",
+            verdict.category, verdict.security_score, verdict.confidence,
+        ),
+        findings: merged,
+    }
+}
+
+/// Return `Some(reason)` when the verdict fails the promotion gate;
+/// `None` when all gates pass. Rejection reasons are stable wire
+/// strings used as metric labels — do not rename without updating the
+/// pre-initialised labels in `Metrics::new`.
+fn promotion_rejection(
+    prior_findings: &[SecurityFinding],
+    verdict: &JudgeVerdict,
+    promotion: &JudgePromotionConfig,
+) -> Option<&'static str> {
+    if !verdict.is_threat || verdict.recommended_action != "block" {
+        return Some("not_threat_or_block");
+    }
+    if verdict.confidence < promotion.min_confidence {
+        return Some("below_confidence");
+    }
+    if verdict.security_score < promotion.min_security_score {
+        return Some("below_score");
+    }
+    if promotion.require_ensemble_support && !has_medium_or_higher(prior_findings) {
+        return Some("no_ensemble_support");
+    }
+    None
+}
+
+fn has_medium_or_higher(findings: &[SecurityFinding]) -> bool {
+    findings.iter().any(|f| {
+        matches!(
+            f.severity,
+            SecuritySeverity::Medium | SecuritySeverity::High | SecuritySeverity::Critical
+        )
+    })
 }
 
 /// Classify agreement between the judge verdict and prior ensemble findings
@@ -685,6 +739,11 @@ pub struct JudgeRouteAction {
     pub tx: mpsc::Sender<JudgeRequest>,
     pub inline_await: bool,
     pub inline_timeout_ms: u64,
+    /// Inline-path Block-promotion policy. Captured at construction so
+    /// verdicts are evaluated against a stable policy for the lifetime
+    /// of the process; runtime tuning requires restart (hot-flip is
+    /// tracked separately in #46).
+    pub promotion: JudgePromotionConfig,
 }
 
 impl JudgeRouteAction {
@@ -728,9 +787,24 @@ impl Action for JudgeRouteAction {
         if should_await {
             let (response_tx, response_rx) = oneshot::channel();
             let req = self.build_request(ctx, mode, Some(response_tx));
-            self.tx.send(req).await.map_err(|_| {
-                ActionError::Failed("Judge route channel closed before enqueue".to_string())
-            })?;
+            // Non-blocking enqueue on the inline path. If the channel is
+            // full we fail open immediately rather than stalling the
+            // request thread — see issue #69: `send().await` can block
+            // inline callers past their `inline_timeout_ms` budget when
+            // the judge worker is slow or saturated, degrading hot-path
+            // latency for legitimate traffic.
+            if let Err(e) = self.tx.try_send(req) {
+                if let Some(metrics) = &ctx.metrics {
+                    let reason = match e {
+                        mpsc::error::TrySendError::Full(_) => "channel_full",
+                        mpsc::error::TrySendError::Closed(_) => "channel_closed",
+                    };
+                    metrics.record_judge_dropped(reason);
+                }
+                return Err(ActionError::Failed(
+                    "Judge route channel full or closed on inline path".to_string(),
+                ));
+            }
 
             let response =
                 tokio::time::timeout(Duration::from_millis(self.inline_timeout_ms), response_rx)
@@ -747,7 +821,12 @@ impl Action for JudgeRouteAction {
                     if let Some(metrics) = &ctx.metrics {
                         metrics.record_judge_agreement(agreement_label(ctx.findings, &verdict));
                     }
-                    Ok(verdict_to_outcome(ctx.findings, &verdict))
+                    Ok(verdict_to_outcome(
+                        ctx.findings,
+                        &verdict,
+                        &self.promotion,
+                        ctx.metrics.as_ref(),
+                    ))
                 }
                 JudgeResponse::Skipped { reason } => Ok(ActionOutcome::Skipped { reason }),
                 JudgeResponse::Error { message } => Err(ActionError::Failed(message)),
@@ -903,7 +982,12 @@ mod tests {
         };
 
         let client = reqwest::Client::new();
-        let router = ActionRouter::new(&config, None, client);
+        let router = ActionRouter::new(
+            &config,
+            llmtrace_core::JudgePromotionConfig::default(),
+            None,
+            client,
+        );
 
         let findings = [finding("inj", SecuritySeverity::High, 0.9)];
         let acts = router.resolve_actions(&findings);
@@ -932,6 +1016,7 @@ mod tests {
                 default_actions: vec!["one".into(), "two".into(), "three".into()],
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             None,
             Client::new(),
         );
@@ -980,6 +1065,7 @@ mod tests {
                 default_actions: vec!["inline_only".into(), "async_ok".into()],
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             None,
             Client::new(),
         );
@@ -1017,6 +1103,7 @@ mod tests {
                 default_actions: vec!["custom".into()],
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             None,
             Client::new(),
         );
@@ -1045,6 +1132,7 @@ mod tests {
                 default_actions: vec!["panic_action".into(), "after".into()],
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             None,
             Client::new(),
         );
@@ -1088,6 +1176,7 @@ mod tests {
                 },
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             Some(Arc::clone(&cache)),
             Client::new(),
         );
@@ -1139,6 +1228,7 @@ mod tests {
             tx,
             inline_await: false,
             inline_timeout_ms: 100,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1166,6 +1256,7 @@ mod tests {
             tx,
             inline_await: true,
             inline_timeout_ms: 500,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1229,6 +1320,7 @@ mod tests {
             tx,
             inline_await: true,
             inline_timeout_ms: 500,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1277,6 +1369,7 @@ mod tests {
             tx,
             inline_await: true,
             inline_timeout_ms: 500,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let metrics = crate::metrics::Metrics::new();
@@ -1316,6 +1409,126 @@ mod tests {
         assert!(text.contains("agreement=\"confirm\""));
     }
 
+    // Issue #70: tests for the promotion gate. Uses the synchronous
+    // verdict_to_outcome path directly to pin the logic independently
+    // of the action router.
+
+    fn sample_verdict(is_threat: bool, action: &str, confidence: f64, score: u8) -> JudgeVerdict {
+        use chrono::Utc;
+        JudgeVerdict {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId(Uuid::new_v4()),
+            is_threat,
+            category: "prompt_injection".to_string(),
+            confidence,
+            security_score: score,
+            recommended_action: action.to_string(),
+            reasoning: "test".to_string(),
+            mode: JudgeMode::Inline,
+            model_used: "security-judge-v1".to_string(),
+            latency_ms: 10,
+            prompt_tokens: None,
+            completion_tokens: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn promotion_rejects_when_not_threat_or_block() {
+        let v = sample_verdict(false, "allow", 0.95, 80);
+        assert_eq!(
+            promotion_rejection(&[], &v, &JudgePromotionConfig::default()),
+            Some("not_threat_or_block"),
+        );
+
+        let v = sample_verdict(true, "flag", 0.95, 80);
+        assert_eq!(
+            promotion_rejection(&[], &v, &JudgePromotionConfig::default()),
+            Some("not_threat_or_block"),
+        );
+    }
+
+    #[test]
+    fn promotion_rejects_when_below_confidence() {
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let v = sample_verdict(true, "block", 0.5, 80);
+        assert_eq!(
+            promotion_rejection(&prior, &v, &JudgePromotionConfig::default()),
+            Some("below_confidence"),
+        );
+    }
+
+    #[test]
+    fn promotion_rejects_when_below_score() {
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let v = sample_verdict(true, "block", 0.9, 30);
+        assert_eq!(
+            promotion_rejection(&prior, &v, &JudgePromotionConfig::default()),
+            Some("below_score"),
+        );
+    }
+
+    #[test]
+    fn promotion_rejects_when_no_ensemble_support() {
+        // require_ensemble_support=true (default), but prior findings are
+        // empty -> gate rejects even though the verdict is strong.
+        let v = sample_verdict(true, "block", 0.95, 85);
+        assert_eq!(
+            promotion_rejection(&[], &v, &JudgePromotionConfig::default()),
+            Some("no_ensemble_support"),
+        );
+    }
+
+    #[test]
+    fn promotion_passes_when_all_gates_satisfied() {
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let v = sample_verdict(true, "block", 0.95, 85);
+        assert_eq!(
+            promotion_rejection(&prior, &v, &JudgePromotionConfig::default()),
+            None,
+        );
+    }
+
+    #[test]
+    fn promotion_ensemble_support_opt_out_allows_pure_judge_block() {
+        // When require_ensemble_support=false, a strong judge verdict
+        // can Block even without supporting ensemble findings.
+        let mut promotion = JudgePromotionConfig::default();
+        promotion.require_ensemble_support = false;
+        let v = sample_verdict(true, "block", 0.95, 85);
+        assert_eq!(promotion_rejection(&[], &v, &promotion), None);
+    }
+
+    #[test]
+    fn verdict_to_outcome_records_rejection_metric_and_returns_completed() {
+        let metrics = crate::metrics::Metrics::new();
+        let v = sample_verdict(true, "block", 0.3, 85); // below default min_confidence 0.7
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let outcome =
+            verdict_to_outcome(&prior, &v, &JudgePromotionConfig::default(), Some(&metrics));
+        assert!(matches!(outcome, ActionOutcome::Completed { .. }));
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("llmtrace_judge_promotion_rejected_total"));
+        assert!(text.contains("reason=\"below_confidence\""));
+    }
+
+    #[test]
+    fn verdict_to_outcome_promotes_when_all_gates_pass() {
+        let metrics = crate::metrics::Metrics::new();
+        let v = sample_verdict(true, "block", 0.95, 85);
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let outcome =
+            verdict_to_outcome(&prior, &v, &JudgePromotionConfig::default(), Some(&metrics));
+        match outcome {
+            ActionOutcome::BlockRequested { reason, findings } => {
+                assert!(reason.contains("prompt_injection"));
+                assert_eq!(findings.len(), 2); // prior + judge
+            }
+            other => panic!("expected BlockRequested, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn test_judge_route_inline_await_skipped_is_outcome_skipped() {
         let (tx, mut rx) = mpsc::channel(4);
@@ -1323,6 +1536,7 @@ mod tests {
             tx,
             inline_await: true,
             inline_timeout_ms: 500,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1362,6 +1576,7 @@ mod tests {
             tx,
             inline_await: false,
             inline_timeout_ms: 100,
+            promotion: JudgePromotionConfig::default(),
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let metrics = crate::metrics::Metrics::new();
@@ -1372,6 +1587,52 @@ mod tests {
         assert!(matches!(err, ActionError::Failed(_)));
         let text = metrics.gather_text().unwrap();
         assert!(text.contains("llmtrace_judge_dropped_total"));
+        assert!(text.contains("reason=\"channel_full\""));
+    }
+
+    #[tokio::test]
+    async fn test_judge_route_inline_channel_full_fails_fast_not_on_timeout() {
+        // Issue #69: inline path must fail open immediately when the
+        // channel is full instead of stalling until `inline_timeout_ms`
+        // on `send().await`.
+        let (tx, _rx) = mpsc::channel::<JudgeRequest>(1);
+        // Pre-fill so try_send returns Full.
+        tx.try_send(JudgeRequest {
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId(Uuid::new_v4()),
+            model_name: "filler".to_string(),
+            analysis_text: String::new(),
+            prior_findings: vec![],
+            mode: JudgeMode::Inline,
+            response_tx: None,
+        })
+        .unwrap();
+
+        // Large inline_timeout_ms: the fix must return fast despite the
+        // generous budget; if the implementation ever regresses to
+        // `send().await`, the channel has no receiver so the send would
+        // block indefinitely and the test would time out rather than
+        // returning within 50ms.
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: true,
+            inline_timeout_ms: 30_000,
+            promotion: JudgePromotionConfig::default(),
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let metrics = crate::metrics::Metrics::new();
+        let ctx = test_ctx(&findings, None, Some(metrics.clone()));
+
+        let started = std::time::Instant::now();
+        let err = action.execute(&ctx).await.unwrap_err();
+        let elapsed = started.elapsed();
+
+        assert!(matches!(err, ActionError::Failed(_)));
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "inline path took {elapsed:?} — expected <50ms fail-fast"
+        );
+        let text = metrics.gather_text().unwrap();
         assert!(text.contains("reason=\"channel_full\""));
     }
 
@@ -1395,6 +1656,7 @@ mod tests {
                 },
                 ..ActionRouterConfig::default()
             },
+            llmtrace_core::JudgePromotionConfig::default(),
             None,
             Client::new(),
         );

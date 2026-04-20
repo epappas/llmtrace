@@ -10,6 +10,7 @@ use chrono::Utc;
 use llmtrace_core::JudgeVerdict;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -24,7 +25,12 @@ pub const API_KEY_ENV: &str = "LLMTRACE_JUDGE_ANTHROPIC_API_KEY";
 /// Anthropic Messages API version header value.
 const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
-#[derive(Debug, Clone)]
+/// Construction-time options for the Anthropic judge backend.
+///
+/// `Debug` is implemented manually to redact `api_key`. Do not add a
+/// `derive(Debug)` here: any future `tracing::debug!(?options, ...)`
+/// or panic message that formats this struct would leak the key.
+#[derive(Clone)]
 pub struct AnthropicJudgeOptions {
     pub base_url: String,
     pub model: String,
@@ -35,6 +41,25 @@ pub struct AnthropicJudgeOptions {
     pub backoff_base_ms: u64,
     pub system_prompt_override: Option<String>,
     pub api_key: String,
+}
+
+impl fmt::Debug for AnthropicJudgeOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AnthropicJudgeOptions")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .field("temperature", &self.temperature)
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("backoff_base_ms", &self.backoff_base_ms)
+            .field(
+                "system_prompt_override",
+                &self.system_prompt_override.as_ref().map(|_| "<set>"),
+            )
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
 }
 
 pub struct AnthropicJudgeBackend {
@@ -242,6 +267,29 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    #[test]
+    fn debug_impl_redacts_api_key() {
+        const SECRET: &str = "ak-super-secret-anthropic-key-9876543210";
+        let opts = AnthropicJudgeOptions {
+            base_url: "https://api.anthropic.com".to_string(),
+            model: "claude-3-5-haiku-20241022".to_string(),
+            max_tokens: 256,
+            temperature: 0.1,
+            timeout: Duration::from_millis(500),
+            max_retries: 0,
+            backoff_base_ms: 10,
+            system_prompt_override: None,
+            api_key: SECRET.to_string(),
+        };
+        let rendered = format!("{opts:?}");
+        assert!(
+            !rendered.contains(SECRET),
+            "api_key leaked in Debug output: {rendered}"
+        );
+        assert!(rendered.contains("<redacted>"));
+        assert!(rendered.contains("claude-3-5-haiku-20241022"));
+    }
 
     #[derive(Clone)]
     struct MockState {
