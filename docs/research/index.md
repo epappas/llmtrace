@@ -45,8 +45,12 @@ This is the living research corpus behind LLMTrace — the academic papers, benc
 - [Self-distillation continual learning](self-distillation-continual-learning.md)
 - [LLM-judge reliability patterns](llm-judge-reliability-patterns.md)
 
+## Evaluations & results
+
+- [Judge evaluation — `gpt-4o-mini` on 27 corpora (2026-04-20)](results/judge_evaluation_gpt4o_mini_2026-04-20.md) — baseline run of the LLM-as-a-Judge against 23 external academic corpora plus 4 local curated sets (1,274 samples, F1 = 0.856).
+- [Regex FPR calibration](results/fpr_calibration_regex.md)
+
 ## Primary sources
 
 - [Papers](papers.md) — archived PDFs of the cited papers.
-- [Results: regex FPR calibration](results/fpr_calibration_regex.md)
 - Diagrams (Mermaid source): `research/diagrams/` in the repository.

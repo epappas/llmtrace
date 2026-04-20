@@ -1,20 +1,17 @@
 //! Live performance + accuracy benchmark for the OpenAI-compatible judge.
 //!
-//! Loads the labeled datasets under `benchmarks/datasets/` and scores
-//! the judge against them, reporting a confusion matrix (precision,
-//! recall, F1, FPR) alongside the end-to-end latency distribution and
-//! token / cost accounting.
+//! Loads every labeled dataset in the configured directory, scores
+//! each sample against the judge, and reports a confusion matrix
+//! (precision, recall, F1, FPR) plus latency distribution, token
+//! consumption, and estimated cost. Per-sample ground truth is the
+//! `label` field on each record (`malicious` / `benign`).
 //!
-//! Datasets used (all labels come from the files themselves):
-//!   - `injection_samples.json`   (malicious, prompt_injection / jailbreak / role_injection)
-//!   - `benign_samples.json`      (benign, ordinary user prompts)
-//!   - `notinject_samples.json`   (benign, prompts that *look* injection-y
-//!     but aren't -- the false-positive pressure test)
-//!   - `encoding_evasion.json`    (malicious, encoded / obfuscated)
-//!
-//! Ground truth is the `label` field on each record. `is_threat` is
-//! considered correct when `malicious` matches `true` and `benign`
-//! matches `false`. Category match is reported separately.
+//! Datasets are discovered automatically: all `*.json` files in
+//! `BENCH_DATASET_DIR` (built-in sets) and, if set, every `*.json` in
+//! `BENCH_EXTERNAL_DIR` are loaded. This lets the same harness evaluate
+//! the judge on both local curated sets and external academic corpora
+//! (AdvBench, DeepSet, CyberSecEval2, HarmBench, InjecAgent,
+//! JailbreakBench, XSTest, TensorTrust, ...) with no code changes.
 //!
 //! Required env var:
 //!   LLMTRACE_JUDGE_OPENAI_API_KEY
@@ -24,8 +21,9 @@
 //!   JUDGE_MODEL       (openai/gpt-4o-mini)
 //!   JUDGE_TIMEOUT_MS  (30000)
 //!   BENCH_DATASET_DIR (benchmarks/datasets)
+//!   BENCH_EXTERNAL_DIR (unset; e.g. benchmarks/datasets/external)
 //!   BENCH_MAX_PER_SET (100)    -- downsample per file; 0 = use all
-//!   BENCH_CONCURRENCY (4)      -- in-flight requests
+//!   BENCH_CONCURRENCY (4)
 //!   BENCH_SEED        (42)     -- reproducible subsampling
 //!
 //! Run:
@@ -67,37 +65,15 @@ struct Sample {
     source: String,
 }
 
-struct Dataset {
-    name: &'static str,
-    file: &'static str,
+struct LoadedSample {
+    dataset: String,
+    text: String,
     expected_threat: bool,
+    source: String,
 }
 
-const DATASETS: &[Dataset] = &[
-    Dataset {
-        name: "injection",
-        file: "injection_samples.json",
-        expected_threat: true,
-    },
-    Dataset {
-        name: "encoding_evasion",
-        file: "encoding_evasion.json",
-        expected_threat: true,
-    },
-    Dataset {
-        name: "benign",
-        file: "benign_samples.json",
-        expected_threat: false,
-    },
-    Dataset {
-        name: "notinject",
-        file: "notinject_samples.json",
-        expected_threat: false,
-    },
-];
-
 struct Scored {
-    dataset: &'static str,
+    dataset: String,
     expected_threat: bool,
     verdict: JudgeVerdict,
     latency_ms: u64,
@@ -135,6 +111,14 @@ impl Confusion {
 
     fn total(&self) -> u64 {
         self.tp + self.fp + self.tn + self.fn_
+    }
+
+    fn positives(&self) -> u64 {
+        self.tp + self.fn_
+    }
+
+    fn negatives(&self) -> u64 {
+        self.fp + self.tn
     }
 
     fn precision(&self) -> Option<f64> {
@@ -213,23 +197,46 @@ fn make_candidate(text: &str) -> JudgeCandidate {
     }
 }
 
-fn load_dataset(dir: &Path, d: &Dataset, max_per_set: usize, rng: &mut StdRng) -> Vec<Sample> {
-    let path = dir.join(d.file);
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let mut samples: Vec<Sample> =
-        serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
-    // Sanity: labels must match the expected column for this dataset.
-    let wanted = if d.expected_threat {
-        "malicious"
-    } else {
-        "benign"
+fn list_json_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return out;
     };
-    samples.retain(|s| s.label == wanted);
-    if max_per_set > 0 && samples.len() > max_per_set {
-        samples.shuffle(rng);
-        samples.truncate(max_per_set);
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|e| e.to_str()) == Some("json") {
+            out.push(p);
+        }
     }
-    samples
+    out.sort();
+    out
+}
+
+fn load_samples(path: &Path, max_per_set: usize, rng: &mut StdRng) -> Vec<LoadedSample> {
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let bytes =
+        std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let mut parsed: Vec<Sample> = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+    // Drop anything without a usable label.
+    parsed.retain(|s| s.label == "malicious" || s.label == "benign");
+    if max_per_set > 0 && parsed.len() > max_per_set {
+        parsed.shuffle(rng);
+        parsed.truncate(max_per_set);
+    }
+    parsed
+        .into_iter()
+        .map(|s| LoadedSample {
+            dataset: name.clone(),
+            text: s.text,
+            expected_threat: s.label == "malicious",
+            source: s.source,
+        })
+        .collect()
 }
 
 #[tokio::main]
@@ -242,9 +249,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(30_000);
-    let dataset_dir = PathBuf::from(
+    let local_dir = PathBuf::from(
         std::env::var("BENCH_DATASET_DIR").unwrap_or_else(|_| DEFAULT_DATASET_DIR.to_string()),
     );
+    let external_dir = std::env::var("BENCH_EXTERNAL_DIR").ok().map(PathBuf::from);
     let max_per_set: usize = std::env::var("BENCH_MAX_PER_SET")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -275,38 +283,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut all: Vec<(&'static Dataset, Sample)> = Vec::new();
-    println!("=== LLMTrace judge live benchmark (labeled corpus) ===");
-    println!("backend:     {}", backend.name());
-    println!("model:       {}", backend.model());
-    println!("base_url:    {base_url}");
-    println!("dataset_dir: {}", dataset_dir.display());
-    println!("max_per_set: {max_per_set}  (0 = all)");
-    println!("concurrency: {concurrency}");
-    println!("seed:        {seed}");
+    println!("=== LLMTrace judge live benchmark ===");
+    println!("backend:          {}", backend.name());
+    println!("model:            {}", backend.model());
+    println!("base_url:         {base_url}");
+    println!("local_dir:        {}", local_dir.display());
+    if let Some(ext) = &external_dir {
+        println!("external_dir:     {}", ext.display());
+    }
+    println!("max_per_set:      {max_per_set}  (0 = all)");
+    println!("concurrency:      {concurrency}");
+    println!("seed:             {seed}");
     println!();
-    for d in DATASETS {
-        let loaded = load_dataset(&dataset_dir, d, max_per_set, &mut rng);
+
+    let mut all: Vec<LoadedSample> = Vec::new();
+    for path in list_json_files(&local_dir) {
+        let loaded = load_samples(&path, max_per_set, &mut rng);
+        let pos = loaded.iter().filter(|s| s.expected_threat).count();
+        let neg = loaded.len() - pos;
         println!(
-            "  loaded {:5} from {:<28} (expected_threat={})",
-            loaded.len(),
-            d.file,
-            d.expected_threat
+            "  {:<32} n={:<5} (malicious={pos}, benign={neg})",
+            path.file_name().unwrap().to_string_lossy(),
+            loaded.len()
         );
-        for s in loaded {
-            all.push((d, s));
+        all.extend(loaded);
+    }
+    if let Some(ext) = &external_dir {
+        println!();
+        println!("  -- external datasets --");
+        for path in list_json_files(ext) {
+            let loaded = load_samples(&path, max_per_set, &mut rng);
+            let pos = loaded.iter().filter(|s| s.expected_threat).count();
+            let neg = loaded.len() - pos;
+            println!(
+                "  {:<32} n={:<5} (malicious={pos}, benign={neg})",
+                path.file_name().unwrap().to_string_lossy(),
+                loaded.len()
+            );
+            all.extend(loaded);
         }
     }
+
     let total_calls = all.len();
+    let pos_total = all.iter().filter(|s| s.expected_threat).count();
+    let neg_total = total_calls - pos_total;
     println!();
-    println!("judging {total_calls} samples at {concurrency}-wide concurrency...");
+    println!("TOTAL: {total_calls} samples ({pos_total} malicious, {neg_total} benign)");
+    println!("judging at {concurrency}-wide concurrency...");
     println!();
 
     let sem = Arc::new(Semaphore::new(concurrency));
     let wall_started = Instant::now();
 
     let mut handles = Vec::with_capacity(total_calls);
-    for (d, s) in all {
+    for s in all {
         let backend = Arc::clone(&backend);
         let sem = Arc::clone(&sem);
         handles.push(tokio::spawn(async move {
@@ -314,7 +344,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let t0 = Instant::now();
             let res = backend.judge(&make_candidate(&s.text)).await;
             let latency_ms = t0.elapsed().as_millis() as u64;
-            (d, s, latency_ms, res)
+            (s, latency_ms, res)
         }));
     }
 
@@ -323,18 +353,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut completed = 0usize;
     for h in handles {
         match h.await {
-            Ok((d, sample, latency_ms, Ok(verdict))) => {
+            Ok((s, latency_ms, Ok(verdict))) => {
                 scored.push(Scored {
-                    dataset: d.name,
-                    expected_threat: d.expected_threat,
+                    dataset: s.dataset,
+                    expected_threat: s.expected_threat,
                     verdict,
                     latency_ms,
-                    source: sample.source,
+                    source: s.source,
                 });
             }
-            Ok((_, sample, _, Err(e))) => {
+            Ok((s, _, Err(e))) => {
                 failures += 1;
-                eprintln!("  fail on id={} source={}: {e}", sample.id, sample.source);
+                eprintln!("  fail on dataset={} source={}: {e}", s.dataset, s.source);
             }
             Err(e) => {
                 failures += 1;
@@ -342,22 +372,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         completed += 1;
-        if completed.is_multiple_of(25) {
+        if completed.is_multiple_of(50) {
             eprintln!("  progress: {completed}/{total_calls}");
         }
     }
     let wall = wall_started.elapsed();
 
-    // Aggregate overall + per-dataset confusion.
+    // Aggregate: overall + per-dataset + per-source.
     let mut overall = Confusion {
         failures,
         ..Confusion::default()
     };
-    let mut per_dataset: BTreeMap<&'static str, Confusion> = BTreeMap::new();
+    let mut per_dataset: BTreeMap<String, Confusion> = BTreeMap::new();
     let mut per_source: BTreeMap<String, Confusion> = BTreeMap::new();
     for s in &scored {
         overall.record(s);
-        per_dataset.entry(s.dataset).or_default().record(s);
+        per_dataset
+            .entry(s.dataset.clone())
+            .or_default()
+            .record(s);
         if !s.source.is_empty() {
             per_source.entry(s.source.clone()).or_default().record(s);
         }
@@ -366,14 +399,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_overall(&overall, wall, concurrency);
     println!();
     println!("=== per-dataset breakdown ===");
+    println!(
+        "  {:<32}  {:<5} {:<5} {:<5} {:<5} {:<5}  {:<6}  {:<6}  {:<6}  {:<6}",
+        "dataset", "n", "pos", "TP", "FP", "FN", "acc", "P", "R", "FPR"
+    );
     for (name, c) in &per_dataset {
         print_confusion(name, c);
     }
     if !per_source.is_empty() {
         println!();
-        println!("=== per-source breakdown ===");
-        // Only show sources with >= 5 samples to keep noise down.
-        let mut sources: Vec<_> = per_source.iter().filter(|(_, c)| c.total() >= 5).collect();
+        println!("=== per-source breakdown (n>=10) ===");
+        println!(
+            "  {:<32}  {:<5} {:<5} {:<5} {:<5} {:<5}  {:<6}  {:<6}  {:<6}  {:<6}",
+            "source", "n", "pos", "TP", "FP", "FN", "acc", "P", "R", "FPR"
+        );
+        let mut sources: Vec<_> = per_source.iter().filter(|(_, c)| c.total() >= 10).collect();
         sources.sort_by_key(|(_, c)| std::cmp::Reverse(c.total()));
         for (name, c) in sources {
             print_confusion(name, c);
@@ -389,6 +429,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn print_overall(c: &Confusion, wall: Duration, concurrency: usize) {
     println!("=== overall ===");
     println!("  samples judged:     {}", c.total());
+    println!("  positives/negatives:{}/{}", c.positives(), c.negatives());
     println!("  failures:           {}", c.failures);
     if c.total() == 0 {
         return;
@@ -444,7 +485,7 @@ fn print_overall(c: &Confusion, wall: Duration, concurrency: usize) {
 }
 
 fn print_confusion(name: &str, c: &Confusion) {
-    let acc = c.accuracy();
+    let acc = format!("{:.3}", c.accuracy());
     let prec = c
         .precision()
         .map(|v| format!("{v:.3}"))
@@ -458,12 +499,16 @@ fn print_confusion(name: &str, c: &Confusion) {
         .map(|v| format!("{v:.3}"))
         .unwrap_or_else(|| "n/a".into());
     println!(
-        "  {name:<32}  n={:<4} TP={:<3} FP={:<3} TN={:<3} FN={:<3}  acc={:.3}  P={prec}  R={rec}  FPR={fpr}",
+        "  {:<32}  {:<5} {:<5} {:<5} {:<5} {:<5}  {:<6}  {:<6}  {:<6}  {:<6}",
+        name,
         c.total(),
+        c.positives(),
         c.tp,
         c.fp,
-        c.tn,
         c.fn_,
-        acc
+        acc,
+        prec,
+        rec,
+        fpr
     );
 }
