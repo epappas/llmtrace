@@ -62,3 +62,7 @@ uuid = { version = "1.0", features = ["v4"] }
 base64 = "0.22"
 axum = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[[example]]
+name = "judge_smoke"
+required-features = ["judge"]

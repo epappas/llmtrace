@@ -1424,14 +1424,26 @@ impl Default for VllmBackendConfig {
 /// OpenAI API judge backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiBackendConfig {
+    /// Base URL for the OpenAI-compatible chat-completions endpoint.
+    /// Defaults to `https://api.openai.com`. Can be pointed at any
+    /// OpenAI-compatible gateway (OpenRouter, Azure OpenAI deployment,
+    /// self-hosted LiteLLM, etc.) without introducing a new backend
+    /// kind — the wire protocol is identical.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
 }
 
+fn default_openai_base_url() -> String {
+    "https://api.openai.com".to_string()
+}
+
 impl Default for OpenAiBackendConfig {
     fn default() -> Self {
         Self {
+            base_url: default_openai_base_url(),
             model: "gpt-4o-mini".to_string(),
             max_tokens: 512,
             temperature: 0.1,
@@ -3247,6 +3259,24 @@ mod tests {
         assert_eq!(severity_to_score(&SecuritySeverity::Medium), 30);
         assert_eq!(severity_to_score(&SecuritySeverity::High), 60);
         assert_eq!(severity_to_score(&SecuritySeverity::Critical), 80);
+    }
+
+    #[test]
+    fn openai_backend_config_base_url_defaults_and_overrides() {
+        // Omitted field -> default.
+        let cfg: OpenAiBackendConfig =
+            serde_json::from_str(r#"{"model":"gpt-4o-mini","max_tokens":256,"temperature":0.1}"#)
+                .expect("deserialize without base_url");
+        assert_eq!(cfg.base_url, "https://api.openai.com");
+
+        // Explicit override for OpenAI-compatible gateways (OpenRouter,
+        // Azure OpenAI, LiteLLM, etc.).
+        let cfg: OpenAiBackendConfig = serde_json::from_str(
+            r#"{"base_url":"https://openrouter.ai/api/v1","model":"openai/gpt-4o-mini","max_tokens":256,"temperature":0.1}"#,
+        )
+        .expect("deserialize with override");
+        assert_eq!(cfg.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(cfg.model, "openai/gpt-4o-mini");
     }
 
     #[test]

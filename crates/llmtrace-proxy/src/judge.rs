@@ -453,7 +453,7 @@ fn build_openai(
     Ok(OpenAIJudgeBackend::new(
         http_client,
         OpenAiJudgeOptions {
-            base_url: "https://api.openai.com".to_string(),
+            base_url: cfg.base_url.clone(),
             model: cfg.model.clone(),
             max_tokens: cfg.max_tokens,
             temperature: cfg.temperature,
