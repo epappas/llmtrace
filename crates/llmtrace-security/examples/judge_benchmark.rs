@@ -218,10 +218,9 @@ fn load_samples(path: &Path, max_per_set: usize, rng: &mut StdRng) -> Vec<Loaded
         .and_then(|s| s.to_str())
         .unwrap_or("unknown")
         .to_string();
-    let bytes =
-        std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let mut parsed: Vec<Sample> = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+    let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let mut parsed: Vec<Sample> =
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
     // Drop anything without a usable label.
     parsed.retain(|s| s.label == "malicious" || s.label == "benign");
     if max_per_set > 0 && parsed.len() > max_per_set {
@@ -387,10 +386,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut per_source: BTreeMap<String, Confusion> = BTreeMap::new();
     for s in &scored {
         overall.record(s);
-        per_dataset
-            .entry(s.dataset.clone())
-            .or_default()
-            .record(s);
+        per_dataset.entry(s.dataset.clone()).or_default().record(s);
         if !s.source.is_empty() {
             per_source.entry(s.source.clone()).or_default().record(s);
         }
