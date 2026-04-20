@@ -48,11 +48,13 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
 
-      - name: Install docs dependencies
-        run: uv pip install --system -r requirements-docs.txt
+      - name: Create venv and install docs dependencies
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install -r requirements-docs.txt
 
       - name: Build site
-        run: mkdocs build
+        run: uv run mkdocs build
 
       - name: Configure Pages
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
