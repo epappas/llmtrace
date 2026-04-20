@@ -265,7 +265,7 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
-        let mut seq = state.status_seq.lock().await;
+        let seq = state.status_seq.lock().await;
         let code = if seq.is_empty() {
             200
         } else {
