@@ -88,8 +88,29 @@ struct MessagesRequest<'a> {
     model: &'a str,
     max_tokens: u32,
     temperature: f32,
-    system: &'a str,
+    /// Sent as the structured-blocks form (not a bare string) so each
+    /// block can carry its own `cache_control` marker. Issue #82: the
+    /// hardened system prompt is identical across calls within a judge
+    /// deployment, so flagging it `ephemeral` lets the provider serve
+    /// the prompt tokens from its cache and cut both cost and latency
+    /// significantly on repeat traffic.
+    system: Vec<SystemBlock<'a>>,
     messages: Vec<UserMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct SystemBlock<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<CacheControl>,
+}
+
+#[derive(Serialize)]
+struct CacheControl {
+    #[serde(rename = "type")]
+    kind: &'static str,
 }
 
 #[derive(Serialize)]
@@ -131,7 +152,11 @@ impl JudgeBackend for AnthropicJudgeBackend {
             model: &self.options.model,
             max_tokens: self.options.max_tokens,
             temperature: self.options.temperature,
-            system,
+            system: vec![SystemBlock {
+                kind: "text",
+                text: system,
+                cache_control: Some(CacheControl { kind: "ephemeral" }),
+            }],
             messages: vec![UserMessage {
                 role: "user",
                 content: user,
@@ -224,6 +249,10 @@ impl JudgeBackend for AnthropicJudgeBackend {
         "anthropic"
     }
 
+    fn model(&self) -> &str {
+        &self.options.model
+    }
+
     async fn health_check(&self) -> Result<(), JudgeError> {
         // Anthropic does not publish a cheap /v1/models equivalent.
         // A ping-style request with minimal max_tokens is the
@@ -302,6 +331,7 @@ mod tests {
     struct MockState {
         received_api_key: Arc<Mutex<Option<String>>>,
         received_version: Arc<Mutex<Option<String>>>,
+        received_body: Arc<Mutex<Option<serde_json::Value>>>,
         response_body: Arc<Mutex<serde_json::Value>>,
         status_seq: Arc<Mutex<Vec<u16>>>,
         call_count: Arc<AtomicU32>,
@@ -310,7 +340,7 @@ mod tests {
     async fn mock_handler(
         State(state): State<MockState>,
         headers: HeaderMap,
-        Json(_body): Json<serde_json::Value>,
+        Json(body): Json<serde_json::Value>,
     ) -> (StatusCode, Json<serde_json::Value>) {
         let n = state.call_count.fetch_add(1, Ordering::SeqCst);
         *state.received_api_key.lock().await = headers
@@ -321,6 +351,7 @@ mod tests {
             .get("anthropic-version")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+        *state.received_body.lock().await = Some(body);
 
         let seq = state.status_seq.lock().await;
         let code = if seq.is_empty() {
@@ -330,8 +361,8 @@ mod tests {
         };
         drop(seq);
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::OK);
-        let body = state.response_body.lock().await.clone();
-        (status, Json(body))
+        let response = state.response_body.lock().await.clone();
+        (status, Json(response))
     }
 
     async fn spawn_mock(state: MockState) -> String {
@@ -384,6 +415,7 @@ mod tests {
         let state = MockState {
             received_api_key: Arc::new(Mutex::new(None)),
             received_version: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(mock_messages_body(
                 r#"{"is_threat":false,"category":"benign","confidence":0.1,"security_score":5,"recommended_action":"allow","reasoning":"ok"}"#,
             ))),
@@ -407,10 +439,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn anthropic_sends_system_as_cache_controlled_block() {
+        let state = MockState {
+            received_api_key: Arc::new(Mutex::new(None)),
+            received_version: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
+            response_body: Arc::new(Mutex::new(mock_messages_body(
+                r#"{"is_threat":false,"category":"benign","confidence":0.1,"security_score":5,"recommended_action":"allow","reasoning":"ok"}"#,
+            ))),
+            status_seq: Arc::new(Mutex::new(vec![])),
+            call_count: Arc::new(AtomicU32::new(0)),
+        };
+        let base_url = spawn_mock(state.clone()).await;
+        let backend = AnthropicJudgeBackend::new(Client::new(), options(base_url, "ak-cache"));
+        backend.judge(&candidate()).await.unwrap();
+
+        let body = state
+            .received_body
+            .lock()
+            .await
+            .clone()
+            .expect("mock must have captured a request body");
+        let system = body
+            .get("system")
+            .and_then(|v| v.as_array())
+            .expect("system must be sent as an array of blocks, not a bare string");
+        assert_eq!(
+            system.len(),
+            1,
+            "expected a single system block, got {}",
+            system.len()
+        );
+        let block = &system[0];
+        assert_eq!(block.get("type").and_then(|v| v.as_str()), Some("text"));
+        let cache_control = block
+            .get("cache_control")
+            .expect("cache_control must be present for prompt caching");
+        assert_eq!(
+            cache_control.get("type").and_then(|v| v.as_str()),
+            Some("ephemeral"),
+            "cache_control.type must be 'ephemeral' to activate prompt caching"
+        );
+        let text = block
+            .get("text")
+            .and_then(|v| v.as_str())
+            .expect("system block must contain prompt text");
+        assert!(
+            text.contains("security classifier"),
+            "system block must carry the hardened judge prompt"
+        );
+    }
+
+    #[tokio::test]
     async fn anthropic_retries_on_5xx_then_succeeds() {
         let state = MockState {
             received_api_key: Arc::new(Mutex::new(None)),
             received_version: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(mock_messages_body(
                 r#"{"is_threat":true,"category":"jailbreak","confidence":0.88,"security_score":75,"recommended_action":"block","reasoning":"ok"}"#,
             ))),
@@ -432,6 +517,7 @@ mod tests {
         let state = MockState {
             received_api_key: Arc::new(Mutex::new(None)),
             received_version: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(serde_json::json!({"error":"bad key"}))),
             status_seq: Arc::new(Mutex::new(vec![401, 401, 401])),
             call_count: Arc::new(AtomicU32::new(0)),
@@ -454,6 +540,7 @@ mod tests {
         let state = MockState {
             received_api_key: Arc::new(Mutex::new(None)),
             received_version: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(serde_json::json!({
                 "content": [{"type": "image", "source": "..."}]
             }))),

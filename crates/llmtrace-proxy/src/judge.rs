@@ -200,6 +200,7 @@ async fn run_one(
     cancel: CancellationToken,
 ) {
     let backend_name = backend.name();
+    let model_label = backend.model();
     let mode_label = candidate.mode.as_str();
     let response_tx = req.response_tx;
     let started = Instant::now();
@@ -211,7 +212,7 @@ async fn run_one(
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => {
-            metrics.record_judge_request(backend_name, mode_label, "shutdown");
+            metrics.record_judge_request(backend_name, model_label, mode_label, "shutdown");
             metrics.record_judge_dropped("shutdown");
             if let Some(tx) = response_tx {
                 let _ = tx.send(JudgeResponse::Error {
@@ -226,10 +227,11 @@ async fn run_one(
 
     match result {
         Ok(verdict) => {
-            metrics.record_judge_request(backend_name, mode_label, "success");
-            metrics.record_judge_latency(backend_name, mode_label, elapsed);
+            metrics.record_judge_request(backend_name, model_label, mode_label, "success");
+            metrics.record_judge_latency(backend_name, model_label, mode_label, elapsed);
             metrics.record_judge_tokens(
                 backend_name,
+                model_label,
                 verdict.prompt_tokens,
                 verdict.completion_tokens,
             );
@@ -246,8 +248,8 @@ async fn run_one(
         }
         Err(e) => {
             let status = judge_error_status(&e);
-            metrics.record_judge_request(backend_name, mode_label, status);
-            warn!(error = %e, backend = backend_name, mode = mode_label, "Judge backend failure (fail-open)");
+            metrics.record_judge_request(backend_name, model_label, mode_label, status);
+            warn!(error = %e, backend = backend_name, model = model_label, mode = mode_label, "Judge backend failure (fail-open)");
             if let Some(tx) = response_tx {
                 let _ = tx.send(JudgeResponse::Error {
                     message: e.to_string(),
@@ -637,6 +639,10 @@ mod tests {
             "stub"
         }
 
+        fn model(&self) -> &str {
+            "stub-model"
+        }
+
         async fn health_check(&self) -> Result<(), JudgeError> {
             Ok(())
         }
@@ -910,6 +916,9 @@ mod tests {
             }
             fn name(&self) -> &'static str {
                 "sleepy"
+            }
+            fn model(&self) -> &str {
+                "sleepy-model"
             }
             async fn health_check(&self) -> Result<(), llmtrace_security::judge::JudgeError> {
                 Ok(())

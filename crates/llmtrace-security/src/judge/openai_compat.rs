@@ -78,6 +78,21 @@ pub(crate) struct ChatMessage<'a> {
 pub(crate) struct ResponseFormat {
     #[serde(rename = "type")]
     pub kind: &'static str,
+    /// Present only when `kind == "json_schema"` (issue #81). Carries
+    /// the strict schema contract the provider is required to match.
+    /// vLLM continues to use `json_object` mode and leaves this None.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<JsonSchemaSpec>,
+}
+
+/// OpenAI `response_format.json_schema` spec. `strict: true` makes the
+/// provider refuse the completion when the generated object fails the
+/// schema, which removes the malformed-JSON failure mode entirely.
+#[derive(Serialize)]
+pub(crate) struct JsonSchemaSpec {
+    pub name: &'static str,
+    pub strict: bool,
+    pub schema: serde_json::Value,
 }
 
 #[derive(Deserialize)]

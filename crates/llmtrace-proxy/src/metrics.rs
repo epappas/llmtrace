@@ -162,6 +162,11 @@ pub struct Metrics {
     /// pre-backend: a rejected promotion DID produce a verdict, the
     /// verdict just wasn't allowed to flip the decision to Block.
     pub judge_promotion_rejected_total: IntCounterVec,
+    /// Judge verdicts that would have been promoted to Block but the
+    /// promotion config had `shadow=true` (#84). Lets operators measure
+    /// the enforcement rate in shadow mode before flipping enforcement
+    /// on.
+    pub judge_shadow_would_block_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -520,9 +525,9 @@ impl Metrics {
         let judge_requests_total = IntCounterVec::new(
             Opts::new(
                 "llmtrace_judge_requests_total",
-                "Total judge invocations by backend, mode, and status",
+                "Total judge invocations by backend, model, mode, and status",
             ),
-            &["backend", "mode", "status"],
+            &["backend", "model", "mode", "status"],
         )
         .expect("metric: judge_requests_total");
         registry
@@ -535,7 +540,7 @@ impl Metrics {
                 "Judge call latency in seconds",
             )
             .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0]),
-            &["backend", "mode"],
+            &["backend", "model", "mode"],
         )
         .expect("metric: judge_latency_seconds");
         registry
@@ -545,9 +550,9 @@ impl Metrics {
         let judge_tokens_total = IntCounterVec::new(
             Opts::new(
                 "llmtrace_judge_tokens_total",
-                "Judge token consumption by direction and backend",
+                "Judge token consumption by direction, backend, and model",
             ),
-            &["direction", "backend"],
+            &["direction", "backend", "model"],
         )
         .expect("metric: judge_tokens_total");
         registry
@@ -557,9 +562,9 @@ impl Metrics {
         let judge_verdicts_total = IntCounterVec::new(
             Opts::new(
                 "llmtrace_judge_verdicts_total",
-                "Verdicts emitted by the judge by category, recommended action, and threat flag",
+                "Verdicts emitted by the judge by category, recommended action, threat flag, and model",
             ),
-            &["category", "recommended_action", "is_threat"],
+            &["category", "recommended_action", "is_threat", "model"],
         )
         .expect("metric: judge_verdicts_total");
         registry
@@ -640,6 +645,18 @@ impl Metrics {
                 .inc_by(0);
         }
 
+        let judge_shadow_would_block_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_shadow_would_block_total",
+                "Judge verdicts suppressed by shadow mode that would otherwise have been promoted to Block",
+            ),
+            &["category", "recommended_action"],
+        )
+        .expect("metric: judge_shadow_would_block_total");
+        registry
+            .register(Box::new(judge_shadow_would_block_total.clone()))
+            .expect("register judge_shadow_would_block_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -690,6 +707,7 @@ impl Metrics {
             judge_verdict_agreement,
             judge_dropped_total,
             judge_promotion_rejected_total,
+            judge_shadow_would_block_total,
         }
     }
 
@@ -851,16 +869,22 @@ impl Metrics {
     // -- Judge metrics (issue #43) -----------------------------------------
 
     /// Record a judge invocation outcome.
-    pub fn record_judge_request(&self, backend: &str, mode: &str, status: &str) {
+    pub fn record_judge_request(&self, backend: &str, model: &str, mode: &str, status: &str) {
         self.judge_requests_total
-            .with_label_values(&[backend, mode, status])
+            .with_label_values(&[backend, model, mode, status])
             .inc();
     }
 
     /// Record judge call latency.
-    pub fn record_judge_latency(&self, backend: &str, mode: &str, duration: std::time::Duration) {
+    pub fn record_judge_latency(
+        &self,
+        backend: &str,
+        model: &str,
+        mode: &str,
+        duration: std::time::Duration,
+    ) {
         self.judge_latency_seconds
-            .with_label_values(&[backend, mode])
+            .with_label_values(&[backend, model, mode])
             .observe(duration.as_secs_f64());
     }
 
@@ -868,17 +892,18 @@ impl Metrics {
     pub fn record_judge_tokens(
         &self,
         backend: &str,
+        model: &str,
         prompt_tokens: Option<u32>,
         completion_tokens: Option<u32>,
     ) {
         if let Some(n) = prompt_tokens {
             self.judge_tokens_total
-                .with_label_values(&["prompt", backend])
+                .with_label_values(&["prompt", backend, model])
                 .inc_by(u64::from(n));
         }
         if let Some(n) = completion_tokens {
             self.judge_tokens_total
-                .with_label_values(&["completion", backend])
+                .with_label_values(&["completion", backend, model])
                 .inc_by(u64::from(n));
         }
     }
@@ -891,6 +916,7 @@ impl Metrics {
                 verdict.category.as_str(),
                 verdict.recommended_action.as_str(),
                 is_threat,
+                verdict.model_used.as_str(),
             ])
             .inc();
     }
@@ -911,6 +937,13 @@ impl Metrics {
     pub fn record_judge_promotion_rejected(&self, reason: &str) {
         self.judge_promotion_rejected_total
             .with_label_values(&[reason])
+            .inc();
+    }
+
+    /// Record a verdict that was suppressed by shadow mode (#84).
+    pub fn record_judge_shadow_would_block(&self, category: &str, recommended_action: &str) {
+        self.judge_shadow_would_block_total
+            .with_label_values(&[category, recommended_action])
             .inc();
     }
 }

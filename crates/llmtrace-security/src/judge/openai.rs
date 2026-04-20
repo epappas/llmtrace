@@ -14,11 +14,59 @@ use std::fmt;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-use super::openai_compat::{call_chat_completions, ChatMessage, ChatRequest, ResponseFormat};
+use super::openai_compat::{
+    call_chat_completions, ChatMessage, ChatRequest, JsonSchemaSpec, ResponseFormat,
+};
 use super::{
     build_system_prompt, build_user_message_json, parse_verdict_json, JudgeBackend, JudgeCandidate,
     JudgeError,
 };
+
+/// Strict JSON schema that mirrors the prompt contract in
+/// [`super::prompt::DEFAULT_SYSTEM_PROMPT`]. Sent with
+/// `response_format: { type: "json_schema", strict: true }` so the
+/// OpenAI backend either returns an object that matches or refuses the
+/// completion — the malformed-JSON parse-error class disappears (issue
+/// #81).
+///
+/// `additionalProperties: false` + the full `required` list are both
+/// mandatory for `strict: true` to activate; omitting either causes
+/// OpenAI to reject the request at validation time.
+fn verdict_response_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+            "is_threat",
+            "category",
+            "confidence",
+            "security_score",
+            "recommended_action",
+            "reasoning"
+        ],
+        "properties": {
+            "is_threat": { "type": "boolean" },
+            "category": {
+                "type": "string",
+                "enum": [
+                    "prompt_injection",
+                    "jailbreak",
+                    "data_exfiltration",
+                    "policy_violation",
+                    "benign",
+                    "other"
+                ]
+            },
+            "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+            "security_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "recommended_action": {
+                "type": "string",
+                "enum": ["allow", "flag", "block"]
+            },
+            "reasoning": { "type": "string", "maxLength": 400 }
+        }
+    })
+}
 
 /// Environment variable holding the OpenAI API key. Must be set when
 /// the judge backend is `openai`; absence is a startup misconfiguration.
@@ -103,7 +151,12 @@ impl JudgeBackend for OpenAIJudgeBackend {
             max_tokens: self.options.max_tokens,
             temperature: self.options.temperature,
             response_format: Some(ResponseFormat {
-                kind: "json_object",
+                kind: "json_schema",
+                json_schema: Some(JsonSchemaSpec {
+                    name: "llmtrace_judge_verdict",
+                    strict: true,
+                    schema: verdict_response_schema(),
+                }),
             }),
         };
 
@@ -150,6 +203,10 @@ impl JudgeBackend for OpenAIJudgeBackend {
 
     fn name(&self) -> &'static str {
         "openai"
+    }
+
+    fn model(&self) -> &str {
+        &self.options.model
     }
 
     async fn health_check(&self) -> Result<(), JudgeError> {
@@ -219,6 +276,7 @@ mod tests {
     #[derive(Clone)]
     struct MockState {
         received_auth: Arc<Mutex<Option<String>>>,
+        received_body: Arc<Mutex<Option<serde_json::Value>>>,
         response_body: Arc<Mutex<serde_json::Value>>,
         status_seq: Arc<Mutex<Vec<u16>>>,
         call_count: Arc<AtomicU32>,
@@ -227,13 +285,14 @@ mod tests {
     async fn mock_handler(
         State(state): State<MockState>,
         headers: HeaderMap,
-        Json(_body): Json<serde_json::Value>,
+        Json(body): Json<serde_json::Value>,
     ) -> (StatusCode, Json<serde_json::Value>) {
         let count = state.call_count.fetch_add(1, Ordering::SeqCst);
         *state.received_auth.lock().await = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
+        *state.received_body.lock().await = Some(body);
 
         let seq = state.status_seq.lock().await;
         let code = if seq.is_empty() {
@@ -246,8 +305,8 @@ mod tests {
         };
         drop(seq);
         let status = StatusCode::from_u16(code).unwrap_or(StatusCode::OK);
-        let body = state.response_body.lock().await.clone();
-        (status, Json(body))
+        let response = state.response_body.lock().await.clone();
+        (status, Json(response))
     }
 
     async fn spawn_mock(state: MockState) -> String {
@@ -299,6 +358,7 @@ mod tests {
     async fn openai_happy_path_includes_bearer_auth_and_returns_verdict() {
         let state = MockState {
             received_auth: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(mock_verdict_body(
                 r#"{"is_threat":false,"category":"benign","confidence":0.1,"security_score":5,"recommended_action":"allow","reasoning":"ok"}"#,
             ))),
@@ -316,9 +376,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_sends_strict_json_schema_response_format() {
+        let state = MockState {
+            received_auth: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
+            response_body: Arc::new(Mutex::new(mock_verdict_body(
+                r#"{"is_threat":false,"category":"benign","confidence":0.1,"security_score":5,"recommended_action":"allow","reasoning":"ok"}"#,
+            ))),
+            status_seq: Arc::new(Mutex::new(vec![])),
+            call_count: Arc::new(AtomicU32::new(0)),
+        };
+        let base_url = spawn_mock(state.clone()).await;
+        let backend = OpenAIJudgeBackend::new(Client::new(), options(base_url, "sk-schema"));
+        backend.judge(&candidate()).await.unwrap();
+
+        let body = state
+            .received_body
+            .lock()
+            .await
+            .clone()
+            .expect("mock must have captured a request body");
+        let rf = body
+            .get("response_format")
+            .expect("response_format must be present");
+        assert_eq!(rf.get("type").and_then(|v| v.as_str()), Some("json_schema"));
+        let js = rf
+            .get("json_schema")
+            .expect("json_schema must be present in strict mode");
+        assert_eq!(
+            js.get("strict").and_then(|v| v.as_bool()),
+            Some(true),
+            "strict=true is required for schema enforcement"
+        );
+        assert_eq!(
+            js.get("name").and_then(|v| v.as_str()),
+            Some("llmtrace_judge_verdict")
+        );
+        let schema = js.get("schema").expect("schema must be present");
+        assert_eq!(
+            schema.get("additionalProperties").and_then(|v| v.as_bool()),
+            Some(false),
+            "additionalProperties=false is mandatory for strict=true"
+        );
+        let required = schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required must be an array");
+        for key in [
+            "is_threat",
+            "category",
+            "confidence",
+            "security_score",
+            "recommended_action",
+            "reasoning",
+        ] {
+            assert!(
+                required.iter().any(|v| v.as_str() == Some(key)),
+                "required must contain {key}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn openai_retries_on_5xx_then_succeeds() {
         let state = MockState {
             received_auth: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(mock_verdict_body(
                 r#"{"is_threat":true,"category":"prompt_injection","confidence":0.9,"security_score":80,"recommended_action":"block","reasoning":"ok"}"#,
             ))),
@@ -339,6 +462,7 @@ mod tests {
     async fn openai_retries_exhausted_returns_backend_error() {
         let state = MockState {
             received_auth: Arc::new(Mutex::new(None)),
+            received_body: Arc::new(Mutex::new(None)),
             response_body: Arc::new(Mutex::new(serde_json::json!({"error":"nope"}))),
             status_seq: Arc::new(Mutex::new(vec![500, 500, 500])),
             call_count: Arc::new(AtomicU32::new(0)),

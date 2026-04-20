@@ -1606,6 +1606,20 @@ pub struct JudgePromotionConfig {
     /// to `BlockRequested`. Verdicts below this threshold are logged
     /// and emit the agreement metric but do not override the prior
     /// enforcement decision.
+    ///
+    /// # Calibration status
+    ///
+    /// The default of `0.7` is a **pre-calibration placeholder**, not
+    /// an empirically-derived probability threshold. LLM self-reported
+    /// confidence is not a calibrated probability until it is mapped
+    /// through Platt scaling or isotonic regression against a
+    /// golden-set reliability diagram. Raising this value reduces
+    /// false-positive blocks at the cost of missed threats; lowering
+    /// it inverts the tradeoff. Recalibrate whenever the judge model,
+    /// provider family, or system prompt changes (cross-family drift).
+    /// See `docs/architecture/LLM_JUDGE.md#calibration-status` and
+    /// issue #66 (golden-set reliability patterns) before picking a
+    /// production value.
     #[serde(default = "default_judge_promotion_min_confidence")]
     pub min_confidence: f64,
     /// Minimum `security_score` required to promote a verdict.
@@ -1617,6 +1631,18 @@ pub struct JudgePromotionConfig {
     /// Block) from single-handedly blocking traffic.
     #[serde(default = "default_judge_promotion_require_ensemble_support")]
     pub require_ensemble_support: bool,
+    /// Shadow mode: when true, the judge runs end-to-end (persists
+    /// verdicts, emits metrics, records agreement) but `verdict_to_outcome`
+    /// never promotes a verdict to `BlockRequested`, regardless of
+    /// confidence, severity, or ensemble support. Every would-be
+    /// promotion increments
+    /// `llmtrace_judge_shadow_would_block_total{category,recommended_action}`
+    /// so operators can measure the enforcement rate **before** flipping
+    /// enforcement on. Recommended during initial rollout and after any
+    /// judge-model, provider, or prompt change; see
+    /// `docs/architecture/LLM_JUDGE.md#49-calibration-status`.
+    #[serde(default = "default_judge_promotion_shadow")]
+    pub shadow: bool,
 }
 
 fn default_judge_promotion_min_confidence() -> f64 {
@@ -1631,12 +1657,17 @@ fn default_judge_promotion_require_ensemble_support() -> bool {
     true
 }
 
+fn default_judge_promotion_shadow() -> bool {
+    false
+}
+
 impl Default for JudgePromotionConfig {
     fn default() -> Self {
         Self {
             min_confidence: default_judge_promotion_min_confidence(),
             min_security_score: default_judge_promotion_min_security_score(),
             require_ensemble_support: default_judge_promotion_require_ensemble_support(),
+            shadow: default_judge_promotion_shadow(),
         }
     }
 }

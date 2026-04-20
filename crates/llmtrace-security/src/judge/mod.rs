@@ -148,6 +148,17 @@ pub trait JudgeBackend: Send + Sync {
     /// Human-readable backend identifier used as a metric label.
     fn name(&self) -> &'static str;
 
+    /// Configured model identifier (e.g. `"gpt-4o-mini"`,
+    /// `"claude-3-5-sonnet-20241022"`, `"meta-llama/Meta-Llama-3-8B-Instruct"`).
+    ///
+    /// Exposed as the `model` Prometheus label on judge metrics so
+    /// operators can distinguish cost/latency/agreement profiles across
+    /// models from the same backend family and catch silent drift when
+    /// a model is upgraded (issue #83). Returned as `&str` because the
+    /// metric recorder only needs a borrow — backends store the model
+    /// name in their options and return a view into it.
+    fn model(&self) -> &str;
+
     /// Lightweight health probe the worker can issue on startup or
     /// after repeated failures. Implementations should issue a
     /// minimal request (e.g. a GET against a `/v1/models` endpoint)

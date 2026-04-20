@@ -193,6 +193,46 @@ The judge is itself attackable. Mitigations:
 - **Bounded generation.** `max_tokens: 512`, `temperature: 0.1` to reduce
   creative deviation.
 
+### 4.9 Calibration status
+
+The promotion gate (`JudgePromotionConfig`) ships with **uncalibrated default
+thresholds**:
+
+| Field                     | Default | Status                                        |
+|---------------------------|---------|-----------------------------------------------|
+| `min_confidence`          | `0.7`   | Placeholder -- not derived from a reliability diagram |
+| `min_security_score`      | `60`    | Aligned with the `High` severity band, not calibrated against FP rate |
+| `require_ensemble_support`| `true`  | Always-on safety rail independent of calibration |
+| `shadow`                  | `false` | Off by default; see the rollout sequence below |
+
+LLM self-reported confidence is **not a calibrated probability** without
+post-hoc calibration (Platt scaling or isotonic regression) against a
+golden-set reliability diagram. Cross-family drift (OpenAI GPT-4o vs
+Anthropic Claude Opus vs a local vLLM model) can shift the operating point by
+10 points or more even when the prompt is unchanged, so the thresholds picked
+for one backend do not transfer to another without re-measurement.
+
+**Recommended pre-production rollout:**
+
+1. Enable the judge with `promotion.shadow = true` (issue #84). The worker
+   persists verdicts and emits metrics, but `verdict_to_outcome` never
+   promotes Block. Operators watch `llmtrace_judge_shadow_would_block_total`
+   to measure the *would-block* rate under current thresholds.
+2. Collect >=1,000 verdicts across the traffic profile you intend to protect.
+3. Run the golden-set reliability workflow in issue #66: group verdicts by
+   self-reported confidence, plot observed precision vs. reported confidence,
+   fit a calibrator.
+4. Pick `min_confidence` at the target false-positive rate (typical starting
+   point: FP <= 1% of legitimate traffic). Re-pick `min_security_score` from
+   the same reliability diagram if the score distribution is bimodal.
+5. Flip `shadow = false`. Keep the `model` label on the judge metrics (issue
+   #83) so future model upgrades trigger a visible drift signal instead of a
+   silent regression.
+
+Re-run steps 2-5 whenever the judge model, provider, or system prompt
+changes. Issue #83 (per-model metrics) and issue #66 (golden-set patterns)
+are prerequisites for doing this rigorously.
+
 ---
 
 ## 5. Component Design

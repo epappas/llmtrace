@@ -88,6 +88,7 @@ impl JudgeBackend for VllmJudgeBackend {
             temperature: self.options.temperature,
             response_format: Some(ResponseFormat {
                 kind: "json_object",
+                json_schema: None,
             }),
         };
 
@@ -135,6 +136,10 @@ impl JudgeBackend for VllmJudgeBackend {
 
     fn name(&self) -> &'static str {
         "vllm"
+    }
+
+    fn model(&self) -> &str {
+        &self.options.model
     }
 
     async fn health_check(&self) -> Result<(), JudgeError> {

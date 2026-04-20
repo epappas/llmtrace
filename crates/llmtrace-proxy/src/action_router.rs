@@ -598,6 +598,21 @@ fn verdict_to_outcome(
         };
     }
 
+    if promotion.shadow {
+        if let Some(m) = metrics {
+            m.record_judge_shadow_would_block(&verdict.category, &verdict.recommended_action);
+        }
+        return ActionOutcome::Completed {
+            message: format!(
+                "Judge verdict would block (shadow mode): category={} action={} score={} conf={:.2}",
+                verdict.category,
+                verdict.recommended_action,
+                verdict.security_score,
+                verdict.confidence,
+            ),
+        };
+    }
+
     let judge_finding = llmtrace_core::verdict_to_finding(verdict);
     let mut merged: Vec<SecurityFinding> = prior_findings.to_vec();
     merged.push(judge_finding);
@@ -1568,6 +1583,58 @@ mod tests {
             }
             other => panic!("expected BlockRequested, got {other:?}"),
         }
+        // Sanity: the same scenario must not bump the shadow counter when
+        // shadow mode is off. An IntCounterVec without any recorded
+        // sample does not appear in the text exposition, so we only
+        // assert the negative (no incremented shadow sample).
+        let text = metrics.gather_text().unwrap();
+        assert!(!text.contains(
+            "llmtrace_judge_shadow_would_block_total{category=\"prompt_injection\",recommended_action=\"block\"} 1"
+        ));
+    }
+
+    #[test]
+    fn verdict_to_outcome_shadow_suppresses_promotion_and_records_counter() {
+        let metrics = crate::metrics::Metrics::new();
+        let v = sample_verdict(true, "block", 0.95, 85);
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let promotion = JudgePromotionConfig {
+            shadow: true,
+            ..JudgePromotionConfig::default()
+        };
+        let outcome = verdict_to_outcome(&prior, &v, &promotion, Some(&metrics));
+        match outcome {
+            ActionOutcome::Completed { message } => {
+                assert!(
+                    message.contains("shadow mode"),
+                    "message should explain shadow: {message}"
+                );
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains(
+            "llmtrace_judge_shadow_would_block_total{category=\"prompt_injection\",recommended_action=\"block\"} 1"
+        ));
+    }
+
+    #[test]
+    fn verdict_to_outcome_shadow_does_not_bypass_rejection_gate() {
+        let metrics = crate::metrics::Metrics::new();
+        // Below min_confidence -> must still be rejected before shadow branch runs.
+        let v = sample_verdict(true, "block", 0.3, 85);
+        let prior = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let promotion = JudgePromotionConfig {
+            shadow: true,
+            ..JudgePromotionConfig::default()
+        };
+        let outcome = verdict_to_outcome(&prior, &v, &promotion, Some(&metrics));
+        assert!(matches!(outcome, ActionOutcome::Completed { .. }));
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("reason=\"below_confidence\""));
+        assert!(!text.contains(
+            "llmtrace_judge_shadow_would_block_total{category=\"prompt_injection\",recommended_action=\"block\"} 1"
+        ));
     }
 
     #[tokio::test]
