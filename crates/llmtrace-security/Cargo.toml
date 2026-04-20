@@ -66,3 +66,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [[example]]
 name = "judge_smoke"
 required-features = ["judge"]
+
+[[example]]
+name = "judge_benchmark"
+required-features = ["judge"]
