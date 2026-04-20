@@ -1436,6 +1436,16 @@ async fn run_trace_capture(
 /// least once) the response includes `"starting": true` and returns HTTP 503.
 /// Kubernetes `startupProbe` will keep retrying until the endpoint returns 200,
 /// at which point the liveness and readiness probes take over.
+/// Issue #79: a judge subsystem is considered healthy when either the
+/// operator opted out at startup (`enabled=false`) OR the worker did
+/// spawn successfully. The degraded case — `enabled=true` at startup
+/// but `worker_spawned=false` — is terminal for this process; only a
+/// restart can re-spawn the worker.
+#[must_use]
+pub fn judge_is_healthy(enabled_at_startup: bool, worker_spawned: bool) -> bool {
+    !enabled_at_startup || worker_spawned
+}
+
 pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body> {
     let traces_ok = state.storage.traces.health_check().await.is_ok();
     let metadata_ok = state.storage.metadata.health_check().await.is_ok();
@@ -1481,7 +1491,14 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
         }),
     };
 
-    let all_healthy = traces_ok && metadata_ok && cache_ok && security_ok;
+    // Issue #79: surface judge worker status on /health so Kubernetes
+    // readiness probes can detect the silent-degradation case where
+    // `judge.enabled=true` but the worker failed to start (e.g., missing
+    // API key, unreachable vLLM).
+    let judge_enabled_at_startup = state.config_handle.snapshot().judge.enabled;
+    let judge_healthy = judge_is_healthy(judge_enabled_at_startup, state.judge_worker_spawned);
+
+    let all_healthy = traces_ok && metadata_ok && cache_ok && security_ok && judge_healthy;
 
     // Once every backend is healthy for the first time, mark the proxy as
     // ready. This is a one-way latch: once set it stays set so transient
@@ -1492,13 +1509,28 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
     }
     let is_ready = was_ready || all_healthy;
 
+    // A judge-driven degradation is terminal for this process (only a
+    // restart can re-spawn the worker), so flip readiness to 503 rather
+    // than the usual 200-with-degraded. Non-judge degradations keep the
+    // prior behaviour — transient storage/security blips should not pull
+    // the pod out of service.
+    let judge_degraded = is_ready && !judge_healthy;
+
     let (status_label, http_status) = if !is_ready {
         ("starting", StatusCode::SERVICE_UNAVAILABLE)
+    } else if judge_degraded {
+        ("degraded", StatusCode::SERVICE_UNAVAILABLE)
     } else if all_healthy {
         ("healthy", StatusCode::OK)
     } else {
         ("degraded", StatusCode::OK)
     };
+
+    let judge_status = serde_json::json!({
+        "enabled_at_startup": judge_enabled_at_startup,
+        "worker_spawned": state.judge_worker_spawned,
+        "healthy": judge_healthy,
+    });
 
     let runtime_overlay = match &state.runtime_overlay_status {
         RuntimeOverlayStatus::Disabled => serde_json::json!({
@@ -1537,6 +1569,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
             "circuit_breaker": format!("{:?}", security_circuit),
         },
         "ml": ml_status,
+        "judge": judge_status,
         "runtime_overlay": runtime_overlay,
     });
 
@@ -1621,6 +1654,26 @@ fn error_response(status: StatusCode, message: &str) -> Response<Body> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #79: judge health predicate.
+
+    #[test]
+    fn judge_health_opt_out_is_healthy() {
+        // enabled=false means operator opted out — always healthy
+        assert!(judge_is_healthy(false, false));
+        assert!(judge_is_healthy(false, true));
+    }
+
+    #[test]
+    fn judge_health_enabled_and_spawned_is_healthy() {
+        assert!(judge_is_healthy(true, true));
+    }
+
+    #[test]
+    fn judge_health_enabled_but_not_spawned_is_degraded() {
+        // Silent-degradation case: operator wants judge, startup failed
+        assert!(!judge_is_healthy(true, false));
+    }
 
     #[test]
     fn test_extract_api_key_bearer() {

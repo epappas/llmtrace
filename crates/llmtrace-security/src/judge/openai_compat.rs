@@ -13,12 +13,46 @@
 //! 2. ~180 lines of wire-type duplication between `vllm.rs` and
 //!    `openai.rs` collapse to one source of truth.
 
+use chrono::{DateTime, Utc};
 use llmtrace_core::JudgeRetryConfig;
+use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use super::{retry, truncate_helper, JudgeError};
+
+/// Parse the HTTP `Retry-After` header (RFC 7231 §7.1.3) into
+/// milliseconds. Supports both delta-seconds (`"120"`) and HTTP-date
+/// forms. Returns `None` when the header is absent, malformed, or
+/// points to a past date.
+///
+/// Referenced from `openai_compat::call_chat_completions` and
+/// `anthropic::judge` so `JudgeError::BackendError` can carry a hint
+/// that `retry::with_retry` uses to override the computed backoff
+/// (issue #75).
+#[must_use]
+pub(crate) fn parse_retry_after(headers: &HeaderMap) -> Option<u64> {
+    let value = headers.get(reqwest::header::RETRY_AFTER)?;
+    let text = value.to_str().ok()?;
+    // Delta-seconds form: non-negative integer.
+    if let Ok(secs) = text.trim().parse::<u64>() {
+        return Some(secs.saturating_mul(1000));
+    }
+    // HTTP-date form: RFC 7231 allows IMF-fixdate / obs-date. Chrono
+    // parses RFC 2822 which covers IMF-fixdate.
+    if let Ok(when) = DateTime::parse_from_rfc2822(text.trim()) {
+        let when = when.with_timezone(&Utc);
+        let now = Utc::now();
+        if when > now {
+            let delta = (when - now).num_milliseconds();
+            if delta > 0 {
+                return Some(delta as u64);
+            }
+        }
+    }
+    None
+}
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -116,12 +150,16 @@ pub(crate) async fn call_chat_completions<F>(
     body: &ChatRequest<'_>,
     timeout: Duration,
     retry_cfg: &JudgeRetryConfig,
+    total_deadline: Option<Duration>,
 ) -> Result<ChatResponse, JudgeError>
 where
     F: Fn(RequestBuilder) -> RequestBuilder,
 {
-    let body_bytes =
-        retry::with_retry(retry_cfg.max_retries, retry_cfg.backoff_base_ms, || async {
+    let body_bytes = retry::with_retry(
+        retry_cfg.max_retries,
+        retry_cfg.backoff_base_ms,
+        total_deadline,
+        || async {
             let req = client.post(url).json(body);
             let req = auth_fn(req);
             let response = tokio::time::timeout(timeout, req.send())
@@ -132,6 +170,7 @@ where
                 .map_err(|e| JudgeError::Transport(e.to_string()))?;
 
             let status = response.status();
+            let retry_after_ms = parse_retry_after(response.headers());
             let bytes = response.bytes().await.unwrap_or_default();
             if !status.is_success() {
                 return Err(JudgeError::BackendError {
@@ -140,12 +179,81 @@ where
                         &String::from_utf8_lossy(&bytes),
                         512,
                     ),
+                    retry_after_ms,
                 });
             }
             Ok(bytes)
-        })
-        .await?;
+        },
+    )
+    .await?;
 
     serde_json::from_slice::<ChatResponse>(&body_bytes)
         .map_err(|e| JudgeError::ParseError(format!("chat response decode: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+    #[test]
+    fn parse_retry_after_missing_header_is_none() {
+        let headers = HeaderMap::new();
+        assert_eq!(parse_retry_after(&headers), None);
+    }
+
+    #[test]
+    fn parse_retry_after_delta_seconds() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("5"));
+        assert_eq!(parse_retry_after(&headers), Some(5000));
+
+        headers.clear();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("120"));
+        assert_eq!(parse_retry_after(&headers), Some(120_000));
+
+        headers.clear();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0"));
+        assert_eq!(parse_retry_after(&headers), Some(0));
+    }
+
+    #[test]
+    fn parse_retry_after_malformed_returns_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("not-a-number"));
+        assert_eq!(parse_retry_after(&headers), None);
+
+        headers.clear();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static(""));
+        assert_eq!(parse_retry_after(&headers), None);
+    }
+
+    #[test]
+    fn parse_retry_after_http_date_future() {
+        // A date 60 seconds in the future (formatted per RFC 2822 which
+        // matches RFC 7231 IMF-fixdate).
+        let future = Utc::now() + chrono::Duration::seconds(60);
+        let date_str = future.to_rfc2822();
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&date_str).unwrap());
+        let parsed = parse_retry_after(&headers).expect("future date should parse");
+        // Allow a few hundred ms of jitter from test execution time.
+        assert!(parsed >= 55_000 && parsed <= 65_000, "got {parsed}ms");
+    }
+
+    #[test]
+    fn parse_retry_after_past_http_date_is_none() {
+        let past = Utc::now() - chrono::Duration::seconds(60);
+        let date_str = past.to_rfc2822();
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&date_str).unwrap());
+        assert_eq!(parse_retry_after(&headers), None);
+    }
+
+    #[test]
+    fn parse_retry_after_handles_whitespace() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("  30  "));
+        assert_eq!(parse_retry_after(&headers), Some(30_000));
+    }
 }

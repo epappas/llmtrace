@@ -495,6 +495,7 @@ async fn build_app_state(
     let mut action_router = llmtrace_proxy::action_router::ActionRouter::new(
         &config.action_router,
         config.judge.promotion.clone(),
+        config.judge.worker.max_analysis_text_bytes,
         Some(Arc::clone(&storage.cache)),
         client.clone(),
     );

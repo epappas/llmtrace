@@ -611,6 +611,7 @@ impl Metrics {
             "persist_failure",
             "semaphore_closed",
             "shutdown",
+            "analysis_text_truncated",
         ] {
             judge_dropped_total.with_label_values(&[reason]).inc_by(0);
         }

@@ -16,10 +16,10 @@ use uuid::Uuid;
 
 use crate::enforcement::EnforcementDecision;
 
-/// Finding-type key emitted when a judge verdict is promoted into the
-/// ensemble. Kept in sync with `llmtrace_security::judge::JUDGE_FINDING_TYPE`
-/// so operators can write enforcement category overrides for one key.
-pub const JUDGE_FINDING_TYPE: &str = "llm_judge_verdict";
+/// Re-export of the canonical finding-type constant from `llmtrace-core`
+/// so existing callers of `llmtrace_proxy::action_router::JUDGE_FINDING_TYPE`
+/// keep working after the deduplication in issue #76.
+pub use llmtrace_core::JUDGE_FINDING_TYPE;
 
 /// Context provided to all Actions.
 ///
@@ -98,6 +98,7 @@ impl ActionRouter {
     pub fn new(
         config: &ActionRouterConfig,
         judge_promotion: JudgePromotionConfig,
+        judge_max_analysis_text_bytes: u32,
         cache: Option<Arc<dyn CacheLayer>>,
         http_client: Client,
     ) -> Self {
@@ -143,6 +144,7 @@ impl ActionRouter {
             inline_await: config.judge_route.inline_await,
             inline_timeout_ms: config.judge_route.inline_timeout_ms,
             promotion: judge_promotion,
+            max_analysis_text_bytes: judge_max_analysis_text_bytes as usize,
         });
         router.register_action(judge_route);
 
@@ -557,50 +559,6 @@ impl Action for LogAction {
 /// `llmtrace_judge_dropped_total{reason="channel_full"}` (fail-open).
 const DEFAULT_JUDGE_CHANNEL_BUFFER: usize = 1000;
 
-/// Map the judge's `security_score` onto a [`SecuritySeverity`] using the
-/// bands from `docs/architecture/LLM_JUDGE.md` section 6. Kept in sync
-/// with `llmtrace_security::judge::severity_from_score`; duplicated here
-/// so the promotion path stays feature-flag independent.
-fn severity_from_judge_score(score: u8) -> SecuritySeverity {
-    match score {
-        0..=29 => SecuritySeverity::Low,
-        30..=59 => SecuritySeverity::Medium,
-        60..=79 => SecuritySeverity::High,
-        _ => SecuritySeverity::Critical,
-    }
-}
-
-/// Convert a judge verdict into a `SecurityFinding` carrying the
-/// judge's voting metadata. Returns a finding stamped with
-/// `finding_type = "llm_judge_verdict"` so operators can hook it into
-/// enforcement category overrides identically to any other finding.
-fn judge_verdict_to_finding(verdict: &JudgeVerdict) -> SecurityFinding {
-    let severity = severity_from_judge_score(verdict.security_score);
-    let description = if verdict.reasoning.is_empty() {
-        format!("LLM Judge verdict: {}", verdict.category)
-    } else {
-        verdict.reasoning.clone()
-    };
-    SecurityFinding::new(
-        severity,
-        JUDGE_FINDING_TYPE.to_string(),
-        description,
-        verdict.confidence,
-    )
-    .with_metadata("voting_result".to_string(), "llm_judge".to_string())
-    .with_metadata("category".to_string(), verdict.category.clone())
-    .with_metadata("model_used".to_string(), verdict.model_used.clone())
-    .with_metadata(
-        "recommended_action".to_string(),
-        verdict.recommended_action.clone(),
-    )
-    .with_metadata("mode".to_string(), verdict.mode.as_str().to_string())
-    .with_metadata(
-        "security_score".to_string(),
-        verdict.security_score.to_string(),
-    )
-}
-
 /// Convert an inline judge verdict into an [`ActionOutcome`].
 ///
 /// Promotion rules (design doc section 4.3):
@@ -640,7 +598,7 @@ fn verdict_to_outcome(
         };
     }
 
-    let judge_finding = judge_verdict_to_finding(verdict);
+    let judge_finding = llmtrace_core::verdict_to_finding(verdict);
     let mut merged: Vec<SecurityFinding> = prior_findings.to_vec();
     merged.push(judge_finding);
     ActionOutcome::BlockRequested {
@@ -744,6 +702,12 @@ pub struct JudgeRouteAction {
     /// of the process; runtime tuning requires restart (hot-flip is
     /// tracked separately in #46).
     pub promotion: JudgePromotionConfig,
+    /// Issue #78: upper bound on `analysis_text` bytes copied into the
+    /// envelope. Caps worst-case memory when the channel saturates.
+    /// Truncation is byte-bounded but UTF-8-safe (splits at char
+    /// boundaries), and increments the `analysis_text_truncated`
+    /// drop-reason counter.
+    pub max_analysis_text_bytes: usize,
 }
 
 impl JudgeRouteAction {
@@ -753,16 +717,37 @@ impl JudgeRouteAction {
         mode: JudgeMode,
         response_tx: Option<oneshot::Sender<JudgeResponse>>,
     ) -> JudgeRequest {
+        let analysis_text = truncate_analysis_text(ctx.analysis_text, self.max_analysis_text_bytes);
+        if analysis_text.len() < ctx.analysis_text.len() {
+            if let Some(metrics) = &ctx.metrics {
+                metrics.record_judge_dropped("analysis_text_truncated");
+            }
+        }
         JudgeRequest {
             trace_id: ctx.trace_id,
             tenant_id: ctx.tenant_id,
             model_name: ctx.model_name.clone(),
-            analysis_text: ctx.analysis_text.to_string(),
+            analysis_text,
             prior_findings: ctx.findings.to_vec(),
             mode,
             response_tx,
         }
     }
+}
+
+/// Truncate an analysis text to at most `max_bytes` bytes at a UTF-8
+/// char boundary. If `text.len() <= max_bytes` the input is returned
+/// unchanged; otherwise the returned string is byte-bounded and
+/// ends at a valid char boundary (never mid-codepoint).
+fn truncate_analysis_text(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
 }
 
 #[async_trait]
@@ -985,6 +970,7 @@ mod tests {
         let router = ActionRouter::new(
             &config,
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             client,
         );
@@ -1017,6 +1003,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             Client::new(),
         );
@@ -1066,6 +1053,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             Client::new(),
         );
@@ -1104,6 +1092,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             Client::new(),
         );
@@ -1133,6 +1122,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             Client::new(),
         );
@@ -1177,6 +1167,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             Some(Arc::clone(&cache)),
             Client::new(),
         );
@@ -1229,6 +1220,7 @@ mod tests {
             inline_await: false,
             inline_timeout_ms: 100,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1257,6 +1249,7 @@ mod tests {
             inline_await: true,
             inline_timeout_ms: 500,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1321,6 +1314,7 @@ mod tests {
             inline_await: true,
             inline_timeout_ms: 500,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1370,6 +1364,7 @@ mod tests {
             inline_await: true,
             inline_timeout_ms: 500,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let metrics = crate::metrics::Metrics::new();
@@ -1432,6 +1427,52 @@ mod tests {
             completion_tokens: None,
             created_at: Utc::now(),
         }
+    }
+
+    // Issue #78: analysis_text envelope cap.
+
+    #[test]
+    fn truncate_analysis_text_leaves_short_strings_untouched() {
+        assert_eq!(truncate_analysis_text("hello", 64), "hello");
+        assert_eq!(truncate_analysis_text("", 64), "");
+    }
+
+    #[test]
+    fn truncate_analysis_text_caps_long_strings_at_byte_limit() {
+        let s = "a".repeat(200);
+        let out = truncate_analysis_text(&s, 64);
+        assert_eq!(out.len(), 64);
+    }
+
+    #[test]
+    fn truncate_analysis_text_respects_utf8_boundaries() {
+        let s = "a\u{1F600}b\u{1F600}c"; // 1 + 4 + 1 + 4 + 1 = 11 bytes
+        let out = truncate_analysis_text(s, 5);
+        assert_eq!(out, "a\u{1F600}");
+        assert_eq!(out.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn judge_route_build_request_truncates_and_records_metric() {
+        let (tx, _rx) = mpsc::channel::<JudgeRequest>(4);
+        let action = JudgeRouteAction {
+            tx,
+            inline_await: false,
+            inline_timeout_ms: 100,
+            promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 16,
+        };
+        let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
+        let metrics = crate::metrics::Metrics::new();
+        let mut ctx = test_ctx(&findings, None, Some(metrics.clone()));
+        let long: &str = "this text is definitely longer than sixteen bytes, trust me";
+        ctx.analysis_text = long;
+        let req = action.build_request(&ctx, JudgeMode::Async, None);
+        assert_eq!(req.analysis_text.len(), 16);
+        assert!(long.starts_with(req.analysis_text.as_str()));
+
+        let text = metrics.gather_text().unwrap();
+        assert!(text.contains("reason=\"analysis_text_truncated\""));
     }
 
     #[test]
@@ -1537,6 +1578,7 @@ mod tests {
             inline_await: true,
             inline_timeout_ms: 500,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let ctx = test_ctx(&findings, None, None);
@@ -1577,6 +1619,7 @@ mod tests {
             inline_await: false,
             inline_timeout_ms: 100,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let metrics = crate::metrics::Metrics::new();
@@ -1618,6 +1661,7 @@ mod tests {
             inline_await: true,
             inline_timeout_ms: 30_000,
             promotion: JudgePromotionConfig::default(),
+            max_analysis_text_bytes: 64 * 1024,
         };
         let findings = [finding("prompt_injection", SecuritySeverity::High, 0.9)];
         let metrics = crate::metrics::Metrics::new();
@@ -1657,6 +1701,7 @@ mod tests {
                 ..ActionRouterConfig::default()
             },
             llmtrace_core::JudgePromotionConfig::default(),
+            64 * 1024,
             None,
             Client::new(),
         );

@@ -39,6 +39,8 @@ pub struct AnthropicJudgeOptions {
     pub timeout: Duration,
     pub max_retries: u32,
     pub backoff_base_ms: u64,
+    /// Issue #73: total end-to-end deadline covering all retries + backoff.
+    pub total_deadline: Option<Duration>,
     pub system_prompt_override: Option<String>,
     pub api_key: String,
 }
@@ -141,6 +143,7 @@ impl JudgeBackend for AnthropicJudgeBackend {
         let body_bytes = super::retry::with_retry(
             self.options.max_retries,
             self.options.backoff_base_ms,
+            self.options.total_deadline,
             || async {
                 let response = tokio::time::timeout(
                     self.options.timeout,
@@ -158,6 +161,7 @@ impl JudgeBackend for AnthropicJudgeBackend {
                 .map_err(|e| JudgeError::Transport(e.to_string()))?;
 
                 let status = response.status();
+                let retry_after_ms = super::openai_compat::parse_retry_after(response.headers());
                 let bytes = response.bytes().await.unwrap_or_default();
                 if !status.is_success() {
                     return Err(JudgeError::BackendError {
@@ -166,6 +170,7 @@ impl JudgeBackend for AnthropicJudgeBackend {
                             &String::from_utf8_lossy(&bytes),
                             512,
                         ),
+                        retry_after_ms,
                     });
                 }
                 Ok(bytes)
@@ -251,6 +256,7 @@ impl JudgeBackend for AnthropicJudgeBackend {
             Err(JudgeError::BackendError {
                 status: response.status().as_u16(),
                 message: "health check non-2xx".to_string(),
+                retry_after_ms: None,
             })
         }
     }
@@ -279,6 +285,7 @@ mod tests {
             timeout: Duration::from_millis(500),
             max_retries: 0,
             backoff_base_ms: 10,
+            total_deadline: None,
             system_prompt_override: None,
             api_key: SECRET.to_string(),
         };
@@ -366,6 +373,7 @@ mod tests {
             timeout: Duration::from_millis(500),
             max_retries: 0,
             backoff_base_ms: 10,
+            total_deadline: None,
             system_prompt_override: None,
             api_key: api_key.to_string(),
         }

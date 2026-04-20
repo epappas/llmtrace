@@ -361,6 +361,82 @@ pub struct JudgeVerdict {
 }
 
 // ---------------------------------------------------------------------------
+// Judge <-> SecurityFinding conversion (canonical; issue #76)
+// ---------------------------------------------------------------------------
+
+/// Stable finding type emitted by the LLM Judge so operators can hook
+/// it into enforcement category overrides the same way they do for
+/// regex/ML findings.
+pub const JUDGE_FINDING_TYPE: &str = "llm_judge_verdict";
+
+/// Canonical 0..=100 security-score bands for [`SecuritySeverity`].
+/// Documented in `docs/architecture/LLM_JUDGE.md` section 6.
+///
+/// Scores above 100 are out of spec but may appear if a backend
+/// disregards the schema; we clamp to Critical so a loud signal is
+/// never silently downgraded.
+#[must_use]
+pub fn severity_from_score(score: u8) -> SecuritySeverity {
+    match score {
+        0..=29 => SecuritySeverity::Low,
+        30..=59 => SecuritySeverity::Medium,
+        60..=79 => SecuritySeverity::High,
+        _ => SecuritySeverity::Critical,
+    }
+}
+
+/// Inverse of [`severity_from_score`]: picks a representative score
+/// for a severity. Used by `min_score_threshold` gating where the
+/// filter compares a judge score to the highest prior-finding severity
+/// score. Returning the *low end* of each band keeps the gate
+/// conservative — the judge fires at the earliest score that would
+/// map to the severity band.
+///
+/// Takes `&SecuritySeverity` so callers do not need to clone; the
+/// enum is cheap to match-by-reference.
+#[must_use]
+pub fn severity_to_score(severity: &SecuritySeverity) -> u8 {
+    match severity {
+        SecuritySeverity::Info | SecuritySeverity::Low => 0,
+        SecuritySeverity::Medium => 30,
+        SecuritySeverity::High => 60,
+        SecuritySeverity::Critical => 80,
+    }
+}
+
+/// Convert a [`JudgeVerdict`] to a [`SecurityFinding`] so the verdict
+/// participates in the existing ensemble voting pipeline.
+/// `finding_type` is stamped with [`JUDGE_FINDING_TYPE`]; metadata
+/// carries the per-verdict fields operators can branch on.
+#[must_use]
+pub fn verdict_to_finding(verdict: &JudgeVerdict) -> SecurityFinding {
+    let severity = severity_from_score(verdict.security_score);
+    let description = if verdict.reasoning.is_empty() {
+        format!("LLM Judge verdict: {}", verdict.category)
+    } else {
+        verdict.reasoning.clone()
+    };
+    SecurityFinding::new(
+        severity,
+        JUDGE_FINDING_TYPE.to_string(),
+        description,
+        verdict.confidence,
+    )
+    .with_metadata("voting_result".to_string(), "llm_judge".to_string())
+    .with_metadata("category".to_string(), verdict.category.clone())
+    .with_metadata("model_used".to_string(), verdict.model_used.clone())
+    .with_metadata(
+        "recommended_action".to_string(),
+        verdict.recommended_action.clone(),
+    )
+    .with_metadata("mode".to_string(), verdict.mode.as_str().to_string())
+    .with_metadata(
+        "security_score".to_string(),
+        verdict.security_score.to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // LLM provider types
 // ---------------------------------------------------------------------------
 
@@ -1324,6 +1400,13 @@ pub struct VllmBackendConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Issue #77: opt-in to sending judge traffic over plaintext HTTP
+    /// to a non-loopback host. Default `false` rejects
+    /// `http://non-loopback` URLs at startup with a clear error.
+    /// Loopback URLs (`127.0.0.1`, `::1`, `localhost`) are always
+    /// allowed because they cannot leave the host.
+    #[serde(default)]
+    pub allow_plaintext: bool,
 }
 
 impl Default for VllmBackendConfig {
@@ -1333,6 +1416,7 @@ impl Default for VllmBackendConfig {
             model: "security-judge-v1".to_string(),
             max_tokens: 512,
             temperature: 0.1,
+            allow_plaintext: false,
         }
     }
 }
@@ -1379,6 +1463,35 @@ pub struct JudgeWorkerConfig {
     pub channel_buffer: usize,
     pub max_concurrency: usize,
     pub timeout_ms: u64,
+    /// Issue #78: maximum bytes of `analysis_text` carried on a
+    /// [`JudgeRequest`] envelope. Bounds the worst-case memory held
+    /// by the bounded judge channel: `channel_buffer * this` is the
+    /// upper-bound heap footprint when the channel saturates.
+    /// Default 64 KiB keeps 1000 × 64 KiB ≈ 64 MiB in-flight memory,
+    /// well under the 512 MiB default Helm limit at
+    /// `deployments/helm/llmtrace/values.yaml`. Analysis-text beyond
+    /// this length is truncated at envelope construction;
+    /// `llmtrace_judge_dropped_total{reason="analysis_text_truncated"}`
+    /// tracks occurrences.
+    #[serde(default = "default_judge_worker_max_analysis_text_bytes")]
+    pub max_analysis_text_bytes: u32,
+    /// Issue #73: hard ceiling on worst-case end-to-end latency of one
+    /// `judge()` call, including all retries and backoff. Default
+    /// 45 000 ms ≈ one `timeout_ms` + one retry + backoff slack.
+    /// Without this cap, the product of `timeout_ms × (max_retries+1)`
+    /// plus backoff could reach 90+ seconds under the default
+    /// config, saturating worker concurrency for that long. `0`
+    /// disables the ceiling.
+    #[serde(default = "default_judge_worker_total_deadline_ms")]
+    pub total_deadline_ms: u64,
+}
+
+fn default_judge_worker_max_analysis_text_bytes() -> u32 {
+    64 * 1024
+}
+
+fn default_judge_worker_total_deadline_ms() -> u64 {
+    45_000
 }
 
 impl Default for JudgeWorkerConfig {
@@ -1387,6 +1500,8 @@ impl Default for JudgeWorkerConfig {
             channel_buffer: 1000,
             max_concurrency: 4,
             timeout_ms: 30_000,
+            max_analysis_text_bytes: default_judge_worker_max_analysis_text_bytes(),
+            total_deadline_ms: default_judge_worker_total_deadline_ms(),
         }
     }
 }
@@ -3075,6 +3190,115 @@ pub trait SecurityAnalyzer: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #76: canonical judge -> finding conversion.
+
+    #[test]
+    fn severity_from_score_bands_match_design_doc() {
+        assert_eq!(severity_from_score(0), SecuritySeverity::Low);
+        assert_eq!(severity_from_score(29), SecuritySeverity::Low);
+        assert_eq!(severity_from_score(30), SecuritySeverity::Medium);
+        assert_eq!(severity_from_score(59), SecuritySeverity::Medium);
+        assert_eq!(severity_from_score(60), SecuritySeverity::High);
+        assert_eq!(severity_from_score(79), SecuritySeverity::High);
+        assert_eq!(severity_from_score(80), SecuritySeverity::Critical);
+        assert_eq!(severity_from_score(100), SecuritySeverity::Critical);
+        // Clamped: out-of-spec values map to Critical, never silently dropped.
+        assert_eq!(severity_from_score(200), SecuritySeverity::Critical);
+    }
+
+    #[test]
+    fn severity_to_score_is_consistent_with_bands() {
+        // severity_to_score returns the LOW end of each band so gating
+        // fires at the earliest score that would promote the severity.
+        assert_eq!(severity_to_score(&SecuritySeverity::Info), 0);
+        assert_eq!(severity_to_score(&SecuritySeverity::Low), 0);
+        assert_eq!(severity_to_score(&SecuritySeverity::Medium), 30);
+        assert_eq!(severity_to_score(&SecuritySeverity::High), 60);
+        assert_eq!(severity_to_score(&SecuritySeverity::Critical), 80);
+    }
+
+    #[test]
+    fn severity_roundtrip_through_score_preserves_band() {
+        for sev in [
+            SecuritySeverity::Low,
+            SecuritySeverity::Medium,
+            SecuritySeverity::High,
+            SecuritySeverity::Critical,
+        ] {
+            let score = severity_to_score(&sev);
+            assert_eq!(severity_from_score(score), sev);
+        }
+    }
+
+    #[test]
+    fn verdict_to_finding_stamps_canonical_metadata() {
+        let verdict = JudgeVerdict {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            is_threat: true,
+            category: "prompt_injection".to_string(),
+            confidence: 0.9,
+            security_score: 85,
+            recommended_action: "block".to_string(),
+            reasoning: "override attempt".to_string(),
+            mode: JudgeMode::Inline,
+            model_used: "security-judge-v1".to_string(),
+            latency_ms: 123,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            created_at: chrono::Utc::now(),
+        };
+        let finding = verdict_to_finding(&verdict);
+
+        assert_eq!(finding.finding_type, JUDGE_FINDING_TYPE);
+        assert_eq!(finding.severity, SecuritySeverity::Critical);
+        assert!((finding.confidence_score - 0.9).abs() < f64::EPSILON);
+        assert_eq!(finding.description, "override attempt");
+        assert_eq!(
+            finding.metadata.get("voting_result").map(String::as_str),
+            Some("llm_judge")
+        );
+        assert_eq!(
+            finding.metadata.get("category").map(String::as_str),
+            Some("prompt_injection")
+        );
+        assert_eq!(
+            finding
+                .metadata
+                .get("recommended_action")
+                .map(String::as_str),
+            Some("block")
+        );
+        assert_eq!(
+            finding.metadata.get("security_score").map(String::as_str),
+            Some("85")
+        );
+    }
+
+    #[test]
+    fn verdict_to_finding_uses_category_when_reasoning_empty() {
+        let verdict = JudgeVerdict {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            is_threat: false,
+            category: "benign".to_string(),
+            confidence: 0.1,
+            security_score: 10,
+            recommended_action: "allow".to_string(),
+            reasoning: String::new(),
+            mode: JudgeMode::Async,
+            model_used: "m".to_string(),
+            latency_ms: 1,
+            prompt_tokens: None,
+            completion_tokens: None,
+            created_at: chrono::Utc::now(),
+        };
+        let finding = verdict_to_finding(&verdict);
+        assert_eq!(finding.description, "LLM Judge verdict: benign");
+    }
 
     #[test]
     fn test_tenant_id_creation() {

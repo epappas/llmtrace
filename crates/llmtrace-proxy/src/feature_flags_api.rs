@@ -907,6 +907,7 @@ mod tests {
             action_router: crate::action_router::ActionRouter::new(
                 &llmtrace_core::ActionRouterConfig::default(),
                 llmtrace_core::JudgePromotionConfig::default(),
+                llmtrace_core::JudgeWorkerConfig::default().max_analysis_text_bytes,
                 None,
                 reqwest::Client::new(),
             ),

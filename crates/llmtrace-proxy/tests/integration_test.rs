@@ -67,6 +67,7 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
     let action_router = llmtrace_proxy::action_router::ActionRouter::new(
         &config.action_router,
         config.judge.promotion.clone(),
+        config.judge.worker.max_analysis_text_bytes,
         Some(Arc::clone(&storage.cache)),
         reqwest::Client::new(),
     );
@@ -230,6 +231,10 @@ async fn test_health_endpoint() {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["status"], "healthy");
+    // Issue #79: judge sub-object always present; healthy when off.
+    assert_eq!(json["judge"]["enabled_at_startup"], false);
+    assert_eq!(json["judge"]["worker_spawned"], false);
+    assert_eq!(json["judge"]["healthy"], true);
 }
 
 #[tokio::test]

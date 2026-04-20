@@ -55,7 +55,16 @@ pub enum JudgeError {
     Timeout { elapsed_ms: u64 },
 
     #[error("backend returned HTTP {status}: {message}")]
-    BackendError { status: u16, message: String },
+    BackendError {
+        status: u16,
+        message: String,
+        /// Issue #75: parsed `Retry-After` hint in milliseconds, when
+        /// the backend returned one (e.g., a 429 with
+        /// `Retry-After: 3`). The retry wrapper uses this to override
+        /// the computed exponential backoff, capped at the remaining
+        /// total deadline.
+        retry_after_ms: Option<u64>,
+    },
 
     #[error("failed to parse verdict: {0}")]
     ParseError(String),
@@ -65,6 +74,20 @@ pub enum JudgeError {
 
     #[error("transport error: {0}")]
     Transport(String),
+}
+
+impl JudgeError {
+    /// When this error carries a server-supplied `Retry-After` hint
+    /// (currently only `BackendError`), return it in milliseconds.
+    /// Used by [`retry::with_retry`](super::retry::with_retry) to
+    /// honor provider guidance instead of the computed backoff.
+    #[must_use]
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            JudgeError::BackendError { retry_after_ms, .. } => *retry_after_ms,
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -94,17 +117,15 @@ impl JudgeCandidate {
     /// prior findings vector so the worker can apply the
     /// `min_score_threshold` gate without reaching into internal
     /// finding fields.
+    ///
+    /// Uses the canonical `severity_to_score` mapping from
+    /// `llmtrace-core` so the min-score-threshold semantics match the
+    /// judge's own severity bands (issue #76).
     #[must_use]
     pub fn peak_prior_severity_score(&self) -> u8 {
         self.prior_findings
             .iter()
-            .map(|f| match f.severity {
-                llmtrace_core::SecuritySeverity::Critical => 90u8,
-                llmtrace_core::SecuritySeverity::High => 70u8,
-                llmtrace_core::SecuritySeverity::Medium => 50u8,
-                llmtrace_core::SecuritySeverity::Low => 30u8,
-                llmtrace_core::SecuritySeverity::Info => 10u8,
-            })
+            .map(|f| llmtrace_core::severity_to_score(&f.severity))
             .max()
             .unwrap_or(0)
     }

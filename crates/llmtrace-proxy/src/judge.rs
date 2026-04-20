@@ -268,6 +268,94 @@ fn judge_error_status(err: &JudgeError) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
+// Plaintext vLLM guardrail (issue #77)
+// ---------------------------------------------------------------------------
+
+/// Classification of a judge `base_url` for the plaintext guardrail.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransportSafety {
+    /// TLS or loopback — no data exposure concern.
+    Safe,
+    /// `http://` to a non-loopback host — requires opt-in.
+    PlaintextNonLoopback,
+}
+
+/// Classify a judge `base_url` for transport-security purposes.
+///
+/// Returns `PlaintextNonLoopback` iff the scheme is `http://` AND the
+/// host is not a loopback literal. Loopback hosts (`127.0.0.1`, `::1`,
+/// `localhost`) are always `Safe` because the data cannot leave the
+/// host. TLS URLs are `Safe` regardless of host.
+///
+/// Intentionally uses string inspection rather than a URL-parser
+/// dependency; the check only distinguishes three cases and does not
+/// need RFC-3986-complete URL handling.
+#[must_use]
+pub fn classify_base_url(base_url: &str) -> TransportSafety {
+    let lower = base_url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return TransportSafety::Safe;
+    }
+    if !lower.starts_with("http://") {
+        // Unrecognised scheme; treat as non-plaintext-relevant — the
+        // reqwest client will reject it at send time with a clearer
+        // error than we could produce here.
+        return TransportSafety::Safe;
+    }
+    // Extract the host token between "http://" and the port/path.
+    // IPv6 literals are bracketed: `[addr]:port`. Parse brackets first
+    // so the port colon after `]` does not get mistaken for an IPv6
+    // segment separator.
+    let after_scheme = &lower["http://".len()..];
+    let host = if let Some(rest) = after_scheme.strip_prefix('[') {
+        match rest.find(']') {
+            Some(end) => &rest[..end],
+            None => rest, // malformed; fall through to loopback check
+        }
+    } else {
+        let host_end = after_scheme.find([':', '/']).unwrap_or(after_scheme.len());
+        &after_scheme[..host_end]
+    };
+
+    let is_loopback =
+        host == "localhost" || host == "127.0.0.1" || host == "::1" || host.starts_with("127.");
+
+    if is_loopback {
+        TransportSafety::Safe
+    } else {
+        TransportSafety::PlaintextNonLoopback
+    }
+}
+
+/// Validate the vLLM backend's plaintext posture before constructing the
+/// backend. Fails startup when the base URL is plaintext on a
+/// non-loopback host and the operator has not explicitly opted in via
+/// `judge.vllm.allow_plaintext=true`. Emits a `warn!` log on opt-in to
+/// keep the risk visible in operational logs.
+fn validate_vllm_transport(cfg: &VllmBackendConfig) -> anyhow::Result<()> {
+    match classify_base_url(&cfg.base_url) {
+        TransportSafety::Safe => Ok(()),
+        TransportSafety::PlaintextNonLoopback if cfg.allow_plaintext => {
+            tracing::warn!(
+                base_url = %cfg.base_url,
+                reason_code = "vllm_plaintext_non_loopback",
+                "vLLM judge backend configured with plaintext http:// on a non-loopback host. \
+                 Candidate prompts and prior findings will traverse the network unencrypted. \
+                 Operator opted in via judge.vllm.allow_plaintext=true."
+            );
+            Ok(())
+        }
+        TransportSafety::PlaintextNonLoopback => Err(anyhow::anyhow!(
+            "vLLM judge base_url is plaintext HTTP on a non-loopback host \
+             ({url}). Candidate prompts and prior findings would traverse the \
+             network unencrypted. Either switch to https://, point at a \
+             loopback address, or opt in via judge.vllm.allow_plaintext=true.",
+            url = cfg.base_url
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Backend factory
 // ---------------------------------------------------------------------------
 
@@ -287,18 +375,30 @@ pub fn build_judge_backend(
         return Ok(None);
     }
     let timeout = Duration::from_millis(config.worker.timeout_ms);
+    // `total_deadline_ms == 0` disables the ceiling; translate to None
+    // so `retry::with_retry` skips the deadline check entirely.
+    let total_deadline = if config.worker.total_deadline_ms == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(config.worker.total_deadline_ms))
+    };
     let backend: Arc<dyn JudgeBackend> = match config.backend {
-        JudgeBackendKind::Vllm => Arc::new(build_vllm(
-            &config.vllm,
-            &config.retry,
-            timeout,
-            http_client,
-            &config.system_prompt,
-        )),
+        JudgeBackendKind::Vllm => {
+            validate_vllm_transport(&config.vllm)?;
+            Arc::new(build_vllm(
+                &config.vllm,
+                &config.retry,
+                timeout,
+                total_deadline,
+                http_client,
+                &config.system_prompt,
+            ))
+        }
         JudgeBackendKind::Openai => Arc::new(build_openai(
             &config.openai,
             &config.retry,
             timeout,
+            total_deadline,
             http_client,
             &config.system_prompt,
         )?),
@@ -306,6 +406,7 @@ pub fn build_judge_backend(
             &config.anthropic,
             &config.retry,
             timeout,
+            total_deadline,
             http_client,
             &config.system_prompt,
         )?),
@@ -317,6 +418,7 @@ fn build_vllm(
     cfg: &VllmBackendConfig,
     retry: &llmtrace_core::JudgeRetryConfig,
     timeout: Duration,
+    total_deadline: Option<Duration>,
     http_client: Client,
     system_prompt: &Option<String>,
 ) -> VllmJudgeBackend {
@@ -329,6 +431,7 @@ fn build_vllm(
             temperature: cfg.temperature,
             timeout,
             retry: retry.clone(),
+            total_deadline,
             system_prompt_override: system_prompt.clone(),
         },
     )
@@ -338,6 +441,7 @@ fn build_openai(
     cfg: &OpenAiBackendConfig,
     retry: &llmtrace_core::JudgeRetryConfig,
     timeout: Duration,
+    total_deadline: Option<Duration>,
     http_client: Client,
     system_prompt: &Option<String>,
 ) -> anyhow::Result<OpenAIJudgeBackend> {
@@ -354,6 +458,7 @@ fn build_openai(
             timeout,
             max_retries: retry.max_retries,
             backoff_base_ms: retry.backoff_base_ms,
+            total_deadline,
             system_prompt_override: system_prompt.clone(),
             api_key,
         },
@@ -364,6 +469,7 @@ fn build_anthropic(
     cfg: &AnthropicBackendConfig,
     retry: &llmtrace_core::JudgeRetryConfig,
     timeout: Duration,
+    total_deadline: Option<Duration>,
     http_client: Client,
     system_prompt: &Option<String>,
 ) -> anyhow::Result<AnthropicJudgeBackend> {
@@ -382,6 +488,7 @@ fn build_anthropic(
             timeout,
             max_retries: retry.max_retries,
             backoff_base_ms: retry.backoff_base_ms,
+            total_deadline,
             system_prompt_override: system_prompt.clone(),
             api_key,
         },
@@ -403,6 +510,96 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::oneshot;
     use uuid::Uuid;
+
+    // Issue #77: plaintext vLLM guardrail.
+
+    #[test]
+    fn classify_loopback_urls_as_safe() {
+        assert_eq!(
+            classify_base_url("http://localhost:8000"),
+            TransportSafety::Safe
+        );
+        assert_eq!(
+            classify_base_url("http://127.0.0.1:8000"),
+            TransportSafety::Safe
+        );
+        assert_eq!(
+            classify_base_url("http://[::1]:8000"),
+            TransportSafety::Safe
+        );
+        assert_eq!(classify_base_url("http://127.0.0.1"), TransportSafety::Safe);
+    }
+
+    #[test]
+    fn classify_non_loopback_http_as_plaintext() {
+        assert_eq!(
+            classify_base_url("http://vllm.internal:8000"),
+            TransportSafety::PlaintextNonLoopback
+        );
+        assert_eq!(
+            classify_base_url("http://10.0.0.5:8000"),
+            TransportSafety::PlaintextNonLoopback
+        );
+        assert_eq!(
+            classify_base_url("HTTP://Vllm.Internal"),
+            TransportSafety::PlaintextNonLoopback
+        );
+    }
+
+    #[test]
+    fn classify_https_as_safe() {
+        assert_eq!(
+            classify_base_url("https://vllm.internal:8443"),
+            TransportSafety::Safe
+        );
+        assert_eq!(
+            classify_base_url("HTTPS://api.openai.com"),
+            TransportSafety::Safe
+        );
+    }
+
+    #[test]
+    fn validate_vllm_transport_allows_loopback_http() {
+        let cfg = VllmBackendConfig {
+            base_url: "http://localhost:8000".to_string(),
+            ..VllmBackendConfig::default()
+        };
+        validate_vllm_transport(&cfg).unwrap();
+    }
+
+    #[test]
+    fn validate_vllm_transport_rejects_non_loopback_plaintext_without_opt_in() {
+        let cfg = VllmBackendConfig {
+            base_url: "http://vllm.internal:8000".to_string(),
+            allow_plaintext: false,
+            ..VllmBackendConfig::default()
+        };
+        let err = validate_vllm_transport(&cfg).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("allow_plaintext"));
+        assert!(msg.contains("vllm.internal"));
+    }
+
+    #[test]
+    fn validate_vllm_transport_allows_non_loopback_plaintext_with_opt_in() {
+        let cfg = VllmBackendConfig {
+            base_url: "http://vllm.internal:8000".to_string(),
+            allow_plaintext: true,
+            ..VllmBackendConfig::default()
+        };
+        // Should succeed (warning emitted server-side; not asserted here).
+        validate_vllm_transport(&cfg).unwrap();
+    }
+
+    #[test]
+    fn validate_vllm_transport_allows_https_always() {
+        let cfg = VllmBackendConfig {
+            base_url: "https://vllm.internal:8443".to_string(),
+            allow_plaintext: false,
+            ..VllmBackendConfig::default()
+        };
+        validate_vllm_transport(&cfg).unwrap();
+    }
 
     /// Minimal snapshot source backed by an ArcSwap so tests can drive
     /// the worker without constructing a full `ConfigHandle`.

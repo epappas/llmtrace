@@ -38,6 +38,8 @@ pub struct OpenAiJudgeOptions {
     pub timeout: Duration,
     pub max_retries: u32,
     pub backoff_base_ms: u64,
+    /// Issue #73: total end-to-end deadline covering all retries + backoff.
+    pub total_deadline: Option<Duration>,
     pub system_prompt_override: Option<String>,
     pub api_key: String,
 }
@@ -118,6 +120,7 @@ impl JudgeBackend for OpenAIJudgeBackend {
             &body,
             self.options.timeout,
             &retry,
+            self.options.total_deadline,
         )
         .await?;
 
@@ -170,6 +173,7 @@ impl JudgeBackend for OpenAIJudgeBackend {
             Err(JudgeError::BackendError {
                 status: response.status().as_u16(),
                 message: "health check non-2xx".to_string(),
+                retry_after_ms: None,
             })
         }
     }
@@ -198,6 +202,7 @@ mod tests {
             timeout: Duration::from_millis(500),
             max_retries: 0,
             backoff_base_ms: 10,
+            total_deadline: None,
             system_prompt_override: None,
             api_key: SECRET.to_string(),
         };
@@ -284,6 +289,7 @@ mod tests {
             timeout: Duration::from_millis(500),
             max_retries: 0,
             backoff_base_ms: 10,
+            total_deadline: None,
             system_prompt_override: None,
             api_key: api_key.to_string(),
         }

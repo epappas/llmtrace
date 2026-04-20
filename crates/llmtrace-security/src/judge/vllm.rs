@@ -33,6 +33,9 @@ pub struct VllmJudgeOptions {
     pub temperature: f32,
     pub timeout: Duration,
     pub retry: JudgeRetryConfig,
+    /// Issue #73: total end-to-end deadline covering all retries + backoff.
+    /// `None` disables the cap.
+    pub total_deadline: Option<Duration>,
     pub system_prompt_override: Option<String>,
 }
 
@@ -102,6 +105,7 @@ impl JudgeBackend for VllmJudgeBackend {
             &body,
             self.options.timeout,
             &self.options.retry,
+            self.options.total_deadline,
         )
         .await?;
 
@@ -148,6 +152,7 @@ impl JudgeBackend for VllmJudgeBackend {
             Err(JudgeError::BackendError {
                 status: response.status().as_u16(),
                 message: "health check non-2xx".to_string(),
+                retry_after_ms: None,
             })
         }
     }
@@ -237,6 +242,7 @@ mod tests {
                 max_retries: 0,
                 backoff_base_ms: 10,
             },
+            total_deadline: None,
             system_prompt_override: None,
         }
     }
