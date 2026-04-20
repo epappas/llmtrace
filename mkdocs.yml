@@ -1,0 +1,204 @@
+site_name: LLMTrace
+site_url: https://docs.llmtrace.io
+site_description: Zero-code LLM observability and security for production. Transparent proxy that captures, analyzes, and secures LLM interactions in real-time.
+site_author: LLMTrace contributors
+repo_url: https://github.com/epappas/llmtrace
+repo_name: epappas/llmtrace
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; LLMTrace contributors. Licensed under MIT.
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.instant
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.action.view
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/epappas/llmtrace
+    - icon: fontawesome/brands/rust
+      link: https://crates.io/crates/llmtrace
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/llmtracing/
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - docs
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.details
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.keys
+  - pymdownx.smartsymbols
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+exclude_docs: |
+  README.md
+  prompts/
+  TODO.md
+
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: info
+  anchors: info
+  nav:
+    omitted_files: info
+    not_found: warn
+  links:
+    not_found: warn
+    absolute_links: info
+    anchors: info
+    unrecognized_links: info
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Configuration: getting-started/configuration.md
+  - Guides:
+      - OpenAI SDK: guides/integration-openai.md
+      - LangChain: guides/integration-langchain.md
+      - curl / HTTP: guides/integration-curl.md
+      - Custom Policies: guides/custom-policies.md
+      - Pre-Request Enforcement: guides/enforcement.md
+      - Auth & Multi-Tenancy: guides/auth-tenancy.md
+      - Dashboard: guides/dashboard.md
+      - Monitoring: guides/monitoring.md
+      - Troubleshooting: guides/troubleshooting.md
+      - Integration Tests: guides/integration-tests.md
+      - Releasing: guides/releasing.md
+      - REST API: guides/API.md
+  - Security & ML:
+      - Ensemble Detection: ml/ensemble.md
+      - Model Reference: ml/models.md
+      - Threshold Tuning: ml/tuning.md
+      - Benchmark Methodology: ml/benchmarks.md
+      - OWASP LLM Top 10: security/OWASP_LLM_TOP10.md
+      - OWASP GenAI Architecture: security/OWASP_GENAI_TOP10_2025_ARCHITECTURE.md
+      - Analyzers Breakdown: security/ANALYZERS_TECHNICAL_BREAKDOWN.md
+  - Deployment:
+      - Docker Compose: deployment/docker-compose.md
+      - Kubernetes: deployment/kubernetes.md
+      - Secrets Management: deployment/secrets-management.md
+  - Operations:
+      - Feature Flags: runbooks/feature-flags.md
+      - Dashboard Features: dashboard-features.md
+  - Architecture:
+      - System Architecture: architecture/SYSTEM_ARCHITECTURE.md
+      - Transparent Proxy: architecture/TRANSPARENT_PROXY.md
+      - LLM Judge: architecture/LLM_JUDGE.md
+      - Boundary Token Defense: architecture/BOUNDARY_TOKEN_DEFENSE.md
+      - ML Long-Input Defense: architecture/ML_LONG_INPUT_DEFENSE.md
+      - DMPI Average Pooling: architecture/DMPI_001_AVERAGE_POOLING.md
+      - DMPI Two FC Layers: architecture/DMPI_002_TWO_FC_LAYERS.md
+      - DMPI Ten Binary Features: architecture/DMPI_003_TEN_BINARY_FEATURES.md
+  - Research:
+      - Overview: research/index.md
+      - Landscape & OWASP:
+          - Landscape: research/landscape.md
+          - State of the Art 2026: research/security-state-of-art-2026.md
+          - Benchmarks & Tools Landscape: research/benchmarks-and-tools-landscape.md
+          - OWASP GenAI Top 10 2025 References: research/owasp-genai-top10-2025-references.md
+          - LLMTrace OWASP GenAI Architecture Report: research/llmtrace-owasp-genai-architecture-report.md
+          - LLMTrace Defense Pipeline Design: research/llmtrace-defense-pipeline-design.md
+      - Attacks & Benchmarks:
+          - BIPIA Indirect Prompt Injection: research/bipia-indirect-prompt-injection-benchmark.md
+          - CyberSecEval2: research/cyberseceval2-llm-security-benchmark.md
+          - WASP Web-Agent Security: research/wasp-web-agent-security-benchmark.md
+          - Prompt Injections → Protocol Exploits: research/prompt-injections-to-protocol-exploits.md
+          - Bypassing LLM Guardrails (Evasion): research/bypassing-llm-guardrails-evasion.md
+          - Agent-as-a-Proxy Attacks: research/agent-as-a-proxy-attacks.md
+          - LLM Jailbreaks Prompt Collection: research/llm-jailbreaks-prompt-collection.md
+      - Defense Techniques:
+          - Spotlighting Indirect Injection: research/spotlighting-indirect-injection-defense.md
+          - Instruction Hierarchy: research/instruction-hierarchy-defense.md
+          - Task Shield Alignment: research/task-shield-alignment-defense.md
+          - Tool Result Parsing: research/defense-tool-result-parsing.md
+          - Indirect Injection Firewalls: research/indirect-injection-firewalls.md
+          - Multi-Agent Defense Pipeline: research/multi-agent-defense-pipeline.md
+          - InjecGuard Over-Defense Mitigation: research/injecguard-over-defense-mitigation.md
+          - Design Patterns for Securing Agents: research/design-patterns-securing-agents.md
+      - Detection Methods:
+          - DMPI + PMHFE Detection: research/dmpi-pmhfe-prompt-injection-detection.md
+          - Perplexity-Based Attack Detection: research/perplexity-based-attack-detection.md
+          - Token-Level Perplexity Detection: research/token-level-perplexity-detection.md
+          - Self-Distillation Continual Learning: research/self-distillation-continual-learning.md
+          - LLM-Judge Reliability Patterns: research/llm-judge-reliability-patterns.md
+      - Papers: research/papers.md
+      - Results:
+          - Regex FPR Calibration: research/results/fpr_calibration_regex.md
+  - Reference:
+      - Feature Roadmap: FEATURE_ROADMAP.md
+      - Changelog: changelog.md
+  - Community:
+      - Contributing: contributing.md
+      - Code of Conduct: code-of-conduct.md
+      - Security Policy: security-policy.md
+      - Agents Guide: agents.md
