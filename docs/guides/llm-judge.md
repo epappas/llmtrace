@@ -15,6 +15,30 @@ For real performance numbers against published corpora, see the
 
 ---
 
+## The three-tier cascade (what this looks like in production)
+
+The judge is not a single remote call. It's a cascade:
+
+```
+elevated candidate
+  → Tier 2: fast-judge (DeBERTa local, 20–50 ms)
+    → high or low confidence → final
+    → ambiguous band         → Tier 3: slow-judge (local Qwen / remote LLM)
+```
+
+Operators pick one of three shipping patterns depending on what
+they have available:
+
+| Pattern | `backend` | `cascade.slow_backend` | When |
+|---|---|---|---|
+| Fast-only (ships today) | `cascade` | `null` | You have DeBERTa but no fine-tuned local LLM judge yet |
+| Fast + remote reasoned | `cascade` | `openai` or `anthropic` | Cheap fast path, expensive reasoning only on ambiguous cases |
+| Fast + local reasoned | `cascade` | `vllm` pointing at a local Qwen LoRA | Zero-cost steady state, no egress, issue #90 |
+| Single backend | `openai` / `anthropic` / `vllm` / `deberta` | — | No cascade, just pick one |
+
+The rationale and per-tier responsibilities are documented in
+[`architecture/JUDGE_CASCADE.md`](../architecture/JUDGE_CASCADE.md).
+
 ## Before you enable it
 
 The judge is fail-open, runtime-toggleable, and shadow-capable. That
@@ -109,6 +133,81 @@ export LLMTRACE_JUDGE_ANTHROPIC_API_KEY='...'
 The Anthropic backend enables prompt caching automatically (issue
 #82, the hardened system prompt is flagged `cache_control:
 ephemeral`), which materially reduces cost on repeat traffic.
+
+### Cascade (DeBERTa fast-judge → optional LLM slow-judge)
+
+The production-recommended default. Set `backend: cascade` and pick
+which inner backends fill the two tiers. The slow tier is `null` on
+day one (fast-only); you flip it on later without any code change.
+
+```yaml
+judge:
+  enabled: true
+  backend: cascade
+  cascade:
+    fast_backend: deberta
+    # slow_backend: null            # today: fast-only, no reasoned second opinion
+    # slow_backend: openai          # tomorrow: use OpenAI for ambiguous cases
+    # slow_backend: vllm            # once Qwen judge (#90) is deployed locally
+    ambiguous_low: 0.3
+    ambiguous_high: 0.7
+
+  deberta:
+    model_id: "protectai/deberta-v3-base-prompt-injection-v2"
+    threshold: 0.5
+    # cache_dir: "~/.cache/llmtrace/models"
+
+  # Configure whichever slow backend you pick above; unused
+  # backend blocks are ignored.
+  openai:
+    base_url: "https://api.openai.com"
+    model: "gpt-4o-mini"
+  vllm:
+    base_url: "http://vllm.internal:8000"
+    model: "llmtrace-qwen-judge-v1"
+
+  promotion:
+    shadow: true   # shadow-first, always
+```
+
+Tuning notes:
+
+- **Ambiguous band defaults to `[0.3, 0.7]`.** Tighten it (e.g.
+  `[0.4, 0.6]`) if you want the slow tier to fire less often; widen
+  it if you're seeing too many unreviewed fast-tier blocks in
+  production. The calibration workflow in
+  [§ Shadow-mode rollout](#shadow-mode-rollout-recommended) produces
+  the curve you need to pick good bounds.
+- **On fast-tier errors** the cascade automatically tries the slow
+  tier as a resilience fallback, if one is configured. On slow-tier
+  errors mid-escalation it keeps the fast verdict. Either way the
+  judge never *fails* — it just degrades.
+- **DeBERTa as the fast-judge is a classifier.** It cannot produce
+  `category` or `reasoning`; the cascade synthesises those from a
+  fixed template. See
+  [`architecture/JUDGE_CASCADE.md §3.5`](../architecture/JUDGE_CASCADE.md).
+  If you need an LLM-style verdict with natural-language reasoning,
+  the slow tier is where it belongs.
+
+### DeBERTa fast-judge (classifier-only, standalone)
+
+Useful for local-only or air-gapped deployments that want the
+judge's governance (shadow mode, promotion gate, verdict
+persistence) without any LLM involvement.
+
+```yaml
+judge:
+  enabled: true
+  backend: deberta
+  deberta:
+    model_id: "protectai/deberta-v3-base-prompt-injection-v2"
+    threshold: 0.5
+  promotion:
+    shadow: true
+```
+
+Requires the proxy to be built with both the `judge` and `ml`
+features (the default release profile already has both).
 
 ### vLLM (self-hosted)
 

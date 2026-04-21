@@ -24,6 +24,7 @@ use llmtrace_core::{JudgeMode, JudgeVerdict, SecurityFinding, TenantId};
 use uuid::Uuid;
 
 mod anthropic;
+mod cascade;
 mod finding;
 mod openai;
 mod openai_compat;
@@ -33,14 +34,21 @@ mod retry;
 mod truncate_helper;
 mod vllm;
 
+#[cfg(feature = "ml")]
+mod deberta;
+
 pub use anthropic::{
     AnthropicJudgeBackend, AnthropicJudgeOptions, API_KEY_ENV as ANTHROPIC_API_KEY_ENV,
 };
+pub use cascade::CascadeJudgeBackend;
 pub use finding::{severity_from_score, verdict_to_finding, JUDGE_FINDING_TYPE};
 pub use openai::{OpenAIJudgeBackend, OpenAiJudgeOptions, API_KEY_ENV as OPENAI_API_KEY_ENV};
 pub use parser::{parse_verdict_json, RawVerdict};
 pub use prompt::{build_system_prompt, build_user_message_json, DEFAULT_SYSTEM_PROMPT};
 pub use vllm::{VllmJudgeBackend, VllmJudgeOptions};
+
+#[cfg(feature = "ml")]
+pub use deberta::{DebertaJudgeBackend, DebertaJudgeOptions};
 
 // ---------------------------------------------------------------------------
 // Error type

@@ -15,14 +15,16 @@
 //! see the drop rate without digging through logs.
 
 use llmtrace_core::{
-    AnthropicBackendConfig, JudgeBackendKind, JudgeConfig, JudgeVerdictStore, OpenAiBackendConfig,
-    ProxyConfig, VllmBackendConfig,
+    AnthropicBackendConfig, DebertaBackendConfig, JudgeBackendKind, JudgeCascadeConfig,
+    JudgeConfig, JudgeVerdictStore, OpenAiBackendConfig, ProxyConfig, VllmBackendConfig,
 };
 use llmtrace_security::judge::{
-    AnthropicJudgeBackend, AnthropicJudgeOptions, JudgeBackend, JudgeCandidate, JudgeError,
-    OpenAIJudgeBackend, OpenAiJudgeOptions, VllmJudgeBackend, ANTHROPIC_API_KEY_ENV,
-    OPENAI_API_KEY_ENV,
+    AnthropicJudgeBackend, AnthropicJudgeOptions, CascadeJudgeBackend, JudgeBackend,
+    JudgeCandidate, JudgeError, OpenAIJudgeBackend, OpenAiJudgeOptions, VllmJudgeBackend,
+    ANTHROPIC_API_KEY_ENV, OPENAI_API_KEY_ENV,
 };
+#[cfg(feature = "ml")]
+use llmtrace_security::judge::{DebertaJudgeBackend, DebertaJudgeOptions};
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -369,13 +371,26 @@ fn validate_vllm_transport(cfg: &VllmBackendConfig) -> anyhow::Result<()> {
 /// entirely when the judge is off; runtime-enabling later via the
 /// admin API would require a proxy restart. Hot-flip support is a
 /// follow-up phase.
-pub fn build_judge_backend(
+pub async fn build_judge_backend(
     config: &JudgeConfig,
     http_client: Client,
 ) -> anyhow::Result<Option<Arc<dyn JudgeBackend>>> {
     if !config.enabled {
         return Ok(None);
     }
+    let backend = build_backend_kind(config, config.backend, http_client).await?;
+    Ok(Some(backend))
+}
+
+/// Recursively build an `Arc<dyn JudgeBackend>` for a given
+/// [`JudgeBackendKind`]. Separated from [`build_judge_backend`] so
+/// cascade composition can call back into the same factory for its
+/// inner fast/slow tiers without duplicating the switch.
+async fn build_backend_kind(
+    config: &JudgeConfig,
+    kind: JudgeBackendKind,
+    http_client: Client,
+) -> anyhow::Result<Arc<dyn JudgeBackend>> {
     let timeout = Duration::from_millis(config.worker.timeout_ms);
     // `total_deadline_ms == 0` disables the ceiling; translate to None
     // so `retry::with_retry` skips the deadline check entirely.
@@ -384,7 +399,7 @@ pub fn build_judge_backend(
     } else {
         Some(Duration::from_millis(config.worker.total_deadline_ms))
     };
-    let backend: Arc<dyn JudgeBackend> = match config.backend {
+    let backend: Arc<dyn JudgeBackend> = match kind {
         JudgeBackendKind::Vllm => {
             validate_vllm_transport(&config.vllm)?;
             Arc::new(build_vllm(
@@ -412,8 +427,75 @@ pub fn build_judge_backend(
             http_client,
             &config.system_prompt,
         )?),
+        JudgeBackendKind::Deberta => build_deberta(&config.deberta, timeout).await?,
+        JudgeBackendKind::Cascade => build_cascade(config, http_client).await?,
     };
-    Ok(Some(backend))
+    Ok(backend)
+}
+
+#[cfg(feature = "ml")]
+async fn build_deberta(
+    cfg: &DebertaBackendConfig,
+    timeout: Duration,
+) -> anyhow::Result<Arc<dyn JudgeBackend>> {
+    let options = DebertaJudgeOptions {
+        model_id: cfg.model_id.clone(),
+        threshold: cfg.threshold,
+        cache_dir: cfg.cache_dir.clone(),
+        timeout,
+    };
+    let backend = DebertaJudgeBackend::new(options)
+        .await
+        .map_err(|e| anyhow::anyhow!("judge backend=deberta init failed: {e}"))?;
+    Ok(Arc::new(backend) as Arc<dyn JudgeBackend>)
+}
+
+#[cfg(not(feature = "ml"))]
+async fn build_deberta(
+    _cfg: &DebertaBackendConfig,
+    _timeout: Duration,
+) -> anyhow::Result<Arc<dyn JudgeBackend>> {
+    Err(anyhow::anyhow!(
+        "judge backend=deberta requires the `ml` feature; rebuild with --features ml,judge"
+    ))
+}
+
+async fn build_cascade(
+    config: &JudgeConfig,
+    http_client: Client,
+) -> anyhow::Result<Arc<dyn JudgeBackend>> {
+    let cascade_cfg: &JudgeCascadeConfig = &config.cascade;
+    if cascade_cfg.fast_backend == JudgeBackendKind::Cascade {
+        anyhow::bail!("cascade.fast_backend cannot be `cascade` (would recurse indefinitely)");
+    }
+    if matches!(cascade_cfg.slow_backend, Some(JudgeBackendKind::Cascade)) {
+        anyhow::bail!("cascade.slow_backend cannot be `cascade` (would recurse indefinitely)");
+    }
+    if cascade_cfg.ambiguous_low > cascade_cfg.ambiguous_high {
+        anyhow::bail!(
+            "cascade.ambiguous_low ({}) must be <= cascade.ambiguous_high ({})",
+            cascade_cfg.ambiguous_low,
+            cascade_cfg.ambiguous_high
+        );
+    }
+    let fast = Box::pin(build_backend_kind(
+        config,
+        cascade_cfg.fast_backend,
+        http_client.clone(),
+    ))
+    .await?;
+    let slow = if let Some(slow_kind) = cascade_cfg.slow_backend {
+        Some(Box::pin(build_backend_kind(config, slow_kind, http_client)).await?)
+    } else {
+        None
+    };
+    let cascade = CascadeJudgeBackend::new(
+        fast,
+        slow,
+        cascade_cfg.ambiguous_low,
+        cascade_cfg.ambiguous_high,
+    );
+    Ok(Arc::new(cascade) as Arc<dyn JudgeBackend>)
 }
 
 fn build_vllm(

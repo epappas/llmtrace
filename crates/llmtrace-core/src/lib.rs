@@ -1384,6 +1384,11 @@ impl Default for JudgeRouteActionConfig {
 // ---------------------------------------------------------------------------
 
 /// Backend selection for the LLM Judge.
+///
+/// `Deberta` and `Cascade` were added for the three-tier rollout (issue
+/// #86): `Deberta` is a local classifier-based fast-judge (#87);
+/// `Cascade` composes a fast backend with an optional slow backend
+/// (#88). `Vllm`, `Openai`, `Anthropic` are unchanged LLM generators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeBackendKind {
@@ -1391,6 +1396,8 @@ pub enum JudgeBackendKind {
     Vllm,
     Openai,
     Anthropic,
+    Deberta,
+    Cascade,
 }
 
 /// vLLM (or any OpenAI-compatible) self-hosted judge backend.
@@ -1465,6 +1472,96 @@ impl Default for AnthropicBackendConfig {
             model: "claude-3-5-haiku-20241022".to_string(),
             max_tokens: 512,
             temperature: 0.1,
+        }
+    }
+}
+
+/// DeBERTa classifier judge backend (issue #87).
+///
+/// Runs a local HuggingFace text-classification model through the
+/// existing candle-based ML machinery. Emits a synthesised 6-field
+/// `JudgeVerdict` (see `docs/architecture/JUDGE_CASCADE.md` §3.5 for
+/// the reasoning/category synthesis rules).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebertaBackendConfig {
+    /// HuggingFace Hub model id or local path.
+    #[serde(default = "default_deberta_model_id")]
+    pub model_id: String,
+    /// Probability threshold for the `is_threat` boundary. Default
+    /// `0.5`. Separate from the cascade's ambiguous band.
+    #[serde(default = "default_deberta_threshold")]
+    pub threshold: f64,
+    /// Optional cache directory for downloaded weights. `None` uses
+    /// the HuggingFace default (`~/.cache/huggingface/hub`).
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+}
+
+fn default_deberta_model_id() -> String {
+    "protectai/deberta-v3-base-prompt-injection-v2".to_string()
+}
+
+fn default_deberta_threshold() -> f64 {
+    0.5
+}
+
+impl Default for DebertaBackendConfig {
+    fn default() -> Self {
+        Self {
+            model_id: default_deberta_model_id(),
+            threshold: default_deberta_threshold(),
+            cache_dir: None,
+        }
+    }
+}
+
+/// Cascade configuration (issue #88).
+///
+/// A cascade composes a fast `JudgeBackend` with an optional slow
+/// one. On every call the fast backend runs first; if its
+/// `confidence` falls inside the ambiguous band and a slow backend
+/// is configured, the slow backend is invoked and its verdict wins.
+/// Otherwise the fast verdict is final.
+///
+/// Setting `slow_backend: null` ships the fast tier alone — useful
+/// before a local slow-judge model (issue #90) is available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeCascadeConfig {
+    /// Which inner backend is the fast tier. Defaults to `Deberta`.
+    #[serde(default = "default_cascade_fast_backend")]
+    pub fast_backend: JudgeBackendKind,
+    /// Which inner backend is the slow tier. `None` = fast-only.
+    #[serde(default)]
+    pub slow_backend: Option<JudgeBackendKind>,
+    /// Lower bound of the ambiguous band. Fast verdicts with
+    /// `confidence <= ambiguous_low` are treated as final.
+    #[serde(default = "default_cascade_ambiguous_low")]
+    pub ambiguous_low: f64,
+    /// Upper bound of the ambiguous band. Fast verdicts with
+    /// `confidence >= ambiguous_high` are treated as final.
+    #[serde(default = "default_cascade_ambiguous_high")]
+    pub ambiguous_high: f64,
+}
+
+fn default_cascade_fast_backend() -> JudgeBackendKind {
+    JudgeBackendKind::Deberta
+}
+
+fn default_cascade_ambiguous_low() -> f64 {
+    0.3
+}
+
+fn default_cascade_ambiguous_high() -> f64 {
+    0.7
+}
+
+impl Default for JudgeCascadeConfig {
+    fn default() -> Self {
+        Self {
+            fast_backend: default_cascade_fast_backend(),
+            slow_backend: None,
+            ambiguous_low: default_cascade_ambiguous_low(),
+            ambiguous_high: default_cascade_ambiguous_high(),
         }
     }
 }
@@ -1553,6 +1650,14 @@ pub struct JudgeConfig {
     pub openai: OpenAiBackendConfig,
     #[serde(default)]
     pub anthropic: AnthropicBackendConfig,
+    /// DeBERTa fast-judge backend (issue #87). Used when
+    /// `backend == deberta` or as the default fast tier of a
+    /// `cascade`.
+    #[serde(default)]
+    pub deberta: DebertaBackendConfig,
+    /// Cascade composition (issue #88). Used when `backend == cascade`.
+    #[serde(default)]
+    pub cascade: JudgeCascadeConfig,
     #[serde(default)]
     pub worker: JudgeWorkerConfig,
     #[serde(default)]
@@ -1593,6 +1698,8 @@ impl Default for JudgeConfig {
             vllm: VllmBackendConfig::default(),
             openai: OpenAiBackendConfig::default(),
             anthropic: AnthropicBackendConfig::default(),
+            deberta: DebertaBackendConfig::default(),
+            cascade: JudgeCascadeConfig::default(),
             worker: JudgeWorkerConfig::default(),
             retry: JudgeRetryConfig::default(),
             promotion: JudgePromotionConfig::default(),
@@ -3259,6 +3366,56 @@ mod tests {
         assert_eq!(severity_to_score(&SecuritySeverity::Medium), 30);
         assert_eq!(severity_to_score(&SecuritySeverity::High), 60);
         assert_eq!(severity_to_score(&SecuritySeverity::Critical), 80);
+    }
+
+    #[test]
+    fn deberta_backend_config_defaults_and_overrides() {
+        // All fields optional -> defaults.
+        let cfg: DebertaBackendConfig =
+            serde_json::from_str("{}").expect("deserialize empty DebertaBackendConfig");
+        assert_eq!(
+            cfg.model_id,
+            "protectai/deberta-v3-base-prompt-injection-v2"
+        );
+        assert!((cfg.threshold - 0.5).abs() < f64::EPSILON);
+        assert!(cfg.cache_dir.is_none());
+
+        // Overrides.
+        let cfg: DebertaBackendConfig = serde_json::from_str(
+            r#"{"model_id":"epappas/llmtrace-deberta-v1","threshold":0.6,"cache_dir":"/opt/cache"}"#,
+        )
+        .expect("deserialize DebertaBackendConfig overrides");
+        assert_eq!(cfg.model_id, "epappas/llmtrace-deberta-v1");
+        assert!((cfg.threshold - 0.6).abs() < f64::EPSILON);
+        assert_eq!(cfg.cache_dir.as_deref(), Some("/opt/cache"));
+    }
+
+    #[test]
+    fn judge_cascade_config_defaults_and_overrides() {
+        // Empty object -> fast=deberta, slow=none, band=[0.3, 0.7].
+        let cfg: JudgeCascadeConfig =
+            serde_json::from_str("{}").expect("deserialize empty JudgeCascadeConfig");
+        assert_eq!(cfg.fast_backend, JudgeBackendKind::Deberta);
+        assert!(cfg.slow_backend.is_none());
+        assert!((cfg.ambiguous_low - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.ambiguous_high - 0.7).abs() < f64::EPSILON);
+
+        // Fully specified (today's operator config with Qwen not yet
+        // trained ships slow_backend: null).
+        let cfg: JudgeCascadeConfig = serde_json::from_str(
+            r#"{"fast_backend":"deberta","slow_backend":null,"ambiguous_low":0.2,"ambiguous_high":0.8}"#,
+        )
+        .expect("deserialize JudgeCascadeConfig with null slow");
+        assert_eq!(cfg.fast_backend, JudgeBackendKind::Deberta);
+        assert!(cfg.slow_backend.is_none());
+        assert!((cfg.ambiguous_low - 0.2).abs() < f64::EPSILON);
+
+        // Slow tier configured (post-Qwen rollout).
+        let cfg: JudgeCascadeConfig = serde_json::from_str(
+            r#"{"fast_backend":"deberta","slow_backend":"vllm","ambiguous_low":0.25,"ambiguous_high":0.75}"#,
+        )
+        .expect("deserialize JudgeCascadeConfig with vllm slow");
+        assert_eq!(cfg.slow_backend, Some(JudgeBackendKind::Vllm));
     }
 
     #[test]

@@ -131,7 +131,21 @@ troubleshooting): see [LLM Judge Setup Guide](../guides/llm-judge.md).
 ```yaml
 judge:
   enabled: false
-  backend: openai                 # "openai" | "anthropic" | "vllm"
+  backend: cascade                # "cascade" | "deberta" | "openai" | "anthropic" | "vllm"
+
+  # Cascade composes a fast tier (DeBERTa) with an optional slow tier
+  # (any LLM-based backend). Set slow_backend: null to ship the fast
+  # tier alone today; flip it on when you have a reasoned slow-judge.
+  cascade:
+    fast_backend: deberta
+    slow_backend: null            # or "vllm" | "openai" | "anthropic"
+    ambiguous_low: 0.3
+    ambiguous_high: 0.7
+
+  deberta:
+    model_id: "protectai/deberta-v3-base-prompt-injection-v2"
+    threshold: 0.5
+    # cache_dir: "~/.cache/llmtrace/models"
 
   openai:
     base_url: "https://api.openai.com"  # any OpenAI-compatible gateway

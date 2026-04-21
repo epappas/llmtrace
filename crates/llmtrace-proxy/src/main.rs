@@ -605,7 +605,7 @@ async fn build_app_state(
     let judge_worker_spawned: bool = {
         if let Some(rx) = judge_rx {
             let judge_cfg = config_handle.snapshot().judge.clone();
-            match llmtrace_proxy::judge::build_judge_backend(&judge_cfg, client.clone()) {
+            match llmtrace_proxy::judge::build_judge_backend(&judge_cfg, client.clone()).await {
                 Ok(Some(backend)) => {
                     let store = Arc::clone(&storage.judge_verdicts);
                     let cfg_source: Arc<dyn llmtrace_proxy::judge::ConfigSnapshotSource> =

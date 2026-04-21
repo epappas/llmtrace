@@ -155,6 +155,7 @@ nav:
       - System Architecture: architecture/SYSTEM_ARCHITECTURE.md
       - Transparent Proxy: architecture/TRANSPARENT_PROXY.md
       - LLM Judge: architecture/LLM_JUDGE.md
+      - Judge Cascade (ADR): architecture/JUDGE_CASCADE.md
       - Boundary Token Defense: architecture/BOUNDARY_TOKEN_DEFENSE.md
       - ML Long-Input Defense: architecture/ML_LONG_INPUT_DEFENSE.md
       - DMPI Average Pooling: architecture/DMPI_001_AVERAGE_POOLING.md
