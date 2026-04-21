@@ -197,6 +197,8 @@ nav:
       - Results:
           - Judge Evaluation — gpt-4o-mini (2026-04-20): research/results/judge_evaluation_gpt4o_mini_2026-04-20.md
           - Regex FPR Calibration: research/results/fpr_calibration_regex.md
+      - Roadmap:
+          - autoresearch-rl Judge Fine-Tuning Plan: research/autoresearch-rl-judge-training-plan.md
   - Reference:
       - Feature Roadmap: FEATURE_ROADMAP.md
       - Changelog: changelog.md
