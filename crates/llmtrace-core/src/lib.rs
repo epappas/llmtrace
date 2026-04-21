@@ -292,6 +292,151 @@ impl SecurityFinding {
 }
 
 // ---------------------------------------------------------------------------
+// LLM-as-a-Judge verdict types (issue #43)
+// ---------------------------------------------------------------------------
+
+/// Execution mode for a judge invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeMode {
+    /// Called during pre-request enforcement; the verdict influences
+    /// the enforcement decision for the current request.
+    Inline,
+    /// Called in a background worker; the verdict is persisted and
+    /// appended to the trace but does not influence the current
+    /// request.
+    Async,
+}
+
+impl JudgeMode {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::Async => "async",
+        }
+    }
+}
+
+/// Structured verdict returned by a [`JudgeBackend`]. Participates in
+/// ensemble voting (inline path) or is persisted for later consumption
+/// by the Pipeline Learning service (async path). See
+/// `docs/architecture/LLM_JUDGE.md` for the architecture specification.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct JudgeVerdict {
+    /// Unique verdict identifier.
+    #[schema(value_type = String, format = "uuid")]
+    pub id: Uuid,
+    /// Trace this verdict is bound to.
+    #[schema(value_type = String, format = "uuid")]
+    pub trace_id: Uuid,
+    /// Tenant that owns the trace.
+    pub tenant_id: TenantId,
+    /// Whether the judge classified the candidate as a threat.
+    pub is_threat: bool,
+    /// Free-form category string, e.g. "prompt_injection", "jailbreak".
+    pub category: String,
+    /// Model-reported confidence in the range 0.0..=1.0.
+    pub confidence: f64,
+    /// Normalized security score 0..=100. Used when converting the
+    /// verdict into a [`SecurityFinding`] severity.
+    pub security_score: u8,
+    /// Recommended action; one of "allow", "flag", "block".
+    pub recommended_action: String,
+    /// Free-form reasoning text emitted by the judge.
+    pub reasoning: String,
+    /// Whether the verdict was produced inline or asynchronously.
+    pub mode: JudgeMode,
+    /// Backend model identifier used to produce the verdict.
+    pub model_used: String,
+    /// End-to-end latency of the judge call in milliseconds.
+    pub latency_ms: u64,
+    /// Prompt tokens reported by the backend, if available.
+    pub prompt_tokens: Option<u32>,
+    /// Completion tokens reported by the backend, if available.
+    pub completion_tokens: Option<u32>,
+    /// Wall-clock timestamp when the verdict was produced.
+    #[schema(value_type = String, format = "date-time")]
+    pub created_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Judge <-> SecurityFinding conversion (canonical; issue #76)
+// ---------------------------------------------------------------------------
+
+/// Stable finding type emitted by the LLM Judge so operators can hook
+/// it into enforcement category overrides the same way they do for
+/// regex/ML findings.
+pub const JUDGE_FINDING_TYPE: &str = "llm_judge_verdict";
+
+/// Canonical 0..=100 security-score bands for [`SecuritySeverity`].
+/// Documented in `docs/architecture/LLM_JUDGE.md` section 6.
+///
+/// Scores above 100 are out of spec but may appear if a backend
+/// disregards the schema; we clamp to Critical so a loud signal is
+/// never silently downgraded.
+#[must_use]
+pub fn severity_from_score(score: u8) -> SecuritySeverity {
+    match score {
+        0..=29 => SecuritySeverity::Low,
+        30..=59 => SecuritySeverity::Medium,
+        60..=79 => SecuritySeverity::High,
+        _ => SecuritySeverity::Critical,
+    }
+}
+
+/// Inverse of [`severity_from_score`]: picks a representative score
+/// for a severity. Used by `min_score_threshold` gating where the
+/// filter compares a judge score to the highest prior-finding severity
+/// score. Returning the *low end* of each band keeps the gate
+/// conservative — the judge fires at the earliest score that would
+/// map to the severity band.
+///
+/// Takes `&SecuritySeverity` so callers do not need to clone; the
+/// enum is cheap to match-by-reference.
+#[must_use]
+pub fn severity_to_score(severity: &SecuritySeverity) -> u8 {
+    match severity {
+        SecuritySeverity::Info | SecuritySeverity::Low => 0,
+        SecuritySeverity::Medium => 30,
+        SecuritySeverity::High => 60,
+        SecuritySeverity::Critical => 80,
+    }
+}
+
+/// Convert a [`JudgeVerdict`] to a [`SecurityFinding`] so the verdict
+/// participates in the existing ensemble voting pipeline.
+/// `finding_type` is stamped with [`JUDGE_FINDING_TYPE`]; metadata
+/// carries the per-verdict fields operators can branch on.
+#[must_use]
+pub fn verdict_to_finding(verdict: &JudgeVerdict) -> SecurityFinding {
+    let severity = severity_from_score(verdict.security_score);
+    let description = if verdict.reasoning.is_empty() {
+        format!("LLM Judge verdict: {}", verdict.category)
+    } else {
+        verdict.reasoning.clone()
+    };
+    SecurityFinding::new(
+        severity,
+        JUDGE_FINDING_TYPE.to_string(),
+        description,
+        verdict.confidence,
+    )
+    .with_metadata("voting_result".to_string(), "llm_judge".to_string())
+    .with_metadata("category".to_string(), verdict.category.clone())
+    .with_metadata("model_used".to_string(), verdict.model_used.clone())
+    .with_metadata(
+        "recommended_action".to_string(),
+        verdict.recommended_action.clone(),
+    )
+    .with_metadata("mode".to_string(), verdict.mode.as_str().to_string())
+    .with_metadata(
+        "security_score".to_string(),
+        verdict.security_score.to_string(),
+    )
+}
+
+// ---------------------------------------------------------------------------
 // LLM provider types
 // ---------------------------------------------------------------------------
 
@@ -1086,14 +1231,14 @@ pub struct ProxyConfig {
     /// Action router / orchestrator configuration.
     #[serde(default)]
     pub action_router: ActionRouterConfig,
-    /// Runtime-toggleable flag for the LLM Judge analysis tier (#43).
+    /// LLM-as-a-Judge analysis tier (issue #43).
     ///
-    /// Store-only placeholder: the backend does not yet exist, so this
-    /// flag round-trips through the runtime config and the feature-flags
-    /// API but does not gate any behavior. Issue #43 will wire it to the
-    /// real judge pipeline.
+    /// Runtime-toggleable via `judge.enabled`. The wire field
+    /// `llm_judge_enabled` on the feature-flags admin API continues to
+    /// mirror `judge.enabled` for backwards compatibility with external
+    /// clients.
     #[serde(default)]
-    pub llm_judge_enabled: bool,
+    pub judge: JudgeConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1134,7 +1279,7 @@ impl Default for ProxyConfig {
             shutdown: ShutdownConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
             action_router: ActionRouterConfig::default(),
-            llm_judge_enabled: false,
+            judge: JudgeConfig::default(),
         }
     }
 }
@@ -1230,6 +1375,418 @@ impl Default for JudgeRouteActionConfig {
         Self {
             inline_await: false,
             inline_timeout_ms: 10000,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LLM-as-a-Judge configuration (issue #43)
+// ---------------------------------------------------------------------------
+
+/// Backend selection for the LLM Judge.
+///
+/// `Deberta` and `Cascade` were added for the three-tier rollout (issue
+/// #86): `Deberta` is a local classifier-based fast-judge (#87);
+/// `Cascade` composes a fast backend with an optional slow backend
+/// (#88). `Vllm`, `Openai`, `Anthropic` are unchanged LLM generators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JudgeBackendKind {
+    #[default]
+    Vllm,
+    Openai,
+    Anthropic,
+    Deberta,
+    Cascade,
+}
+
+/// vLLM (or any OpenAI-compatible) self-hosted judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VllmBackendConfig {
+    pub base_url: String,
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+    /// Issue #77: opt-in to sending judge traffic over plaintext HTTP
+    /// to a non-loopback host. Default `false` rejects
+    /// `http://non-loopback` URLs at startup with a clear error.
+    /// Loopback URLs (`127.0.0.1`, `::1`, `localhost`) are always
+    /// allowed because they cannot leave the host.
+    #[serde(default)]
+    pub allow_plaintext: bool,
+}
+
+impl Default for VllmBackendConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "http://localhost:8000".to_string(),
+            model: "security-judge-v1".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+            allow_plaintext: false,
+        }
+    }
+}
+
+/// OpenAI API judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiBackendConfig {
+    /// Base URL for the OpenAI-compatible chat-completions endpoint.
+    /// Defaults to `https://api.openai.com`. Can be pointed at any
+    /// OpenAI-compatible gateway (OpenRouter, Azure OpenAI deployment,
+    /// self-hosted LiteLLM, etc.) without introducing a new backend
+    /// kind — the wire protocol is identical.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com".to_string()
+}
+
+impl Default for OpenAiBackendConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_openai_base_url(),
+            model: "gpt-4o-mini".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+        }
+    }
+}
+
+/// Anthropic API judge backend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicBackendConfig {
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+}
+
+impl Default for AnthropicBackendConfig {
+    fn default() -> Self {
+        Self {
+            model: "claude-3-5-haiku-20241022".to_string(),
+            max_tokens: 512,
+            temperature: 0.1,
+        }
+    }
+}
+
+/// DeBERTa classifier judge backend (issue #87).
+///
+/// Runs a local HuggingFace text-classification model through the
+/// existing candle-based ML machinery. Emits a synthesised 6-field
+/// `JudgeVerdict` (see `docs/architecture/JUDGE_CASCADE.md` §3.5 for
+/// the reasoning/category synthesis rules).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebertaBackendConfig {
+    /// HuggingFace Hub model id or local path.
+    #[serde(default = "default_deberta_model_id")]
+    pub model_id: String,
+    /// Probability threshold for the `is_threat` boundary. Default
+    /// `0.5`. Separate from the cascade's ambiguous band.
+    #[serde(default = "default_deberta_threshold")]
+    pub threshold: f64,
+    /// Optional cache directory for downloaded weights. `None` uses
+    /// the HuggingFace default (`~/.cache/huggingface/hub`).
+    #[serde(default)]
+    pub cache_dir: Option<String>,
+}
+
+fn default_deberta_model_id() -> String {
+    "protectai/deberta-v3-base-prompt-injection-v2".to_string()
+}
+
+fn default_deberta_threshold() -> f64 {
+    0.5
+}
+
+impl Default for DebertaBackendConfig {
+    fn default() -> Self {
+        Self {
+            model_id: default_deberta_model_id(),
+            threshold: default_deberta_threshold(),
+            cache_dir: None,
+        }
+    }
+}
+
+/// Cascade configuration (issue #88).
+///
+/// A cascade composes a fast `JudgeBackend` with an optional slow
+/// one. On every call the fast backend runs first; if its
+/// `confidence` falls inside the ambiguous band and a slow backend
+/// is configured, the slow backend is invoked and its verdict wins.
+/// Otherwise the fast verdict is final.
+///
+/// Setting `slow_backend: null` ships the fast tier alone — useful
+/// before a local slow-judge model (issue #90) is available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeCascadeConfig {
+    /// Which inner backend is the fast tier. Defaults to `Deberta`.
+    #[serde(default = "default_cascade_fast_backend")]
+    pub fast_backend: JudgeBackendKind,
+    /// Which inner backend is the slow tier. `None` = fast-only.
+    #[serde(default)]
+    pub slow_backend: Option<JudgeBackendKind>,
+    /// Lower bound of the ambiguous band. Fast verdicts with
+    /// `confidence <= ambiguous_low` are treated as final.
+    #[serde(default = "default_cascade_ambiguous_low")]
+    pub ambiguous_low: f64,
+    /// Upper bound of the ambiguous band. Fast verdicts with
+    /// `confidence >= ambiguous_high` are treated as final.
+    #[serde(default = "default_cascade_ambiguous_high")]
+    pub ambiguous_high: f64,
+}
+
+fn default_cascade_fast_backend() -> JudgeBackendKind {
+    JudgeBackendKind::Deberta
+}
+
+fn default_cascade_ambiguous_low() -> f64 {
+    0.3
+}
+
+fn default_cascade_ambiguous_high() -> f64 {
+    0.7
+}
+
+impl Default for JudgeCascadeConfig {
+    fn default() -> Self {
+        Self {
+            fast_backend: default_cascade_fast_backend(),
+            slow_backend: None,
+            ambiguous_low: default_cascade_ambiguous_low(),
+            ambiguous_high: default_cascade_ambiguous_high(),
+        }
+    }
+}
+
+/// Worker-loop tuning for async judge dispatch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeWorkerConfig {
+    pub channel_buffer: usize,
+    pub max_concurrency: usize,
+    pub timeout_ms: u64,
+    /// Issue #78: maximum bytes of `analysis_text` carried on a
+    /// [`JudgeRequest`] envelope. Bounds the worst-case memory held
+    /// by the bounded judge channel: `channel_buffer * this` is the
+    /// upper-bound heap footprint when the channel saturates.
+    /// Default 64 KiB keeps 1000 × 64 KiB ≈ 64 MiB in-flight memory,
+    /// well under the 512 MiB default Helm limit at
+    /// `deployments/helm/llmtrace/values.yaml`. Analysis-text beyond
+    /// this length is truncated at envelope construction;
+    /// `llmtrace_judge_dropped_total{reason="analysis_text_truncated"}`
+    /// tracks occurrences.
+    #[serde(default = "default_judge_worker_max_analysis_text_bytes")]
+    pub max_analysis_text_bytes: u32,
+    /// Issue #73: hard ceiling on worst-case end-to-end latency of one
+    /// `judge()` call, including all retries and backoff. Default
+    /// 45 000 ms ≈ one `timeout_ms` + one retry + backoff slack.
+    /// Without this cap, the product of `timeout_ms × (max_retries+1)`
+    /// plus backoff could reach 90+ seconds under the default
+    /// config, saturating worker concurrency for that long. `0`
+    /// disables the ceiling.
+    #[serde(default = "default_judge_worker_total_deadline_ms")]
+    pub total_deadline_ms: u64,
+}
+
+fn default_judge_worker_max_analysis_text_bytes() -> u32 {
+    64 * 1024
+}
+
+fn default_judge_worker_total_deadline_ms() -> u64 {
+    45_000
+}
+
+impl Default for JudgeWorkerConfig {
+    fn default() -> Self {
+        Self {
+            channel_buffer: 1000,
+            max_concurrency: 4,
+            timeout_ms: 30_000,
+            max_analysis_text_bytes: default_judge_worker_max_analysis_text_bytes(),
+            total_deadline_ms: default_judge_worker_total_deadline_ms(),
+        }
+    }
+}
+
+/// Retry policy for transient backend failures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeRetryConfig {
+    pub max_retries: u32,
+    pub backoff_base_ms: u64,
+}
+
+impl Default for JudgeRetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 2,
+            backoff_base_ms: 1000,
+        }
+    }
+}
+
+/// Top-level LLM-as-a-Judge configuration. Nested in [`ProxyConfig`] and
+/// read via `ConfigHandle::load().judge` on the hot path.
+///
+/// The `enabled` field replaces the previous store-only
+/// `ProxyConfig.llm_judge_enabled` flag. The wire name
+/// `llm_judge_enabled` on the feature-flags admin API continues to
+/// mirror this field so external clients see no breaking change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub backend: JudgeBackendKind,
+    #[serde(default)]
+    pub vllm: VllmBackendConfig,
+    #[serde(default)]
+    pub openai: OpenAiBackendConfig,
+    #[serde(default)]
+    pub anthropic: AnthropicBackendConfig,
+    /// DeBERTa fast-judge backend (issue #87). Used when
+    /// `backend == deberta` or as the default fast tier of a
+    /// `cascade`.
+    #[serde(default)]
+    pub deberta: DebertaBackendConfig,
+    /// Cascade composition (issue #88). Used when `backend == cascade`.
+    #[serde(default)]
+    pub cascade: JudgeCascadeConfig,
+    #[serde(default)]
+    pub worker: JudgeWorkerConfig,
+    #[serde(default)]
+    pub retry: JudgeRetryConfig,
+    /// Promotion policy: when (if ever) an inline judge verdict is
+    /// allowed to override the prior enforcement decision.
+    #[serde(default)]
+    pub promotion: JudgePromotionConfig,
+    /// Operator-supplied system prompt. Empty string or `None` selects
+    /// the built-in hardened default.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// Only judge candidates whose prior security score meets or exceeds
+    /// this threshold. Default 30 keeps cost bounded by skipping clean
+    /// traffic.
+    #[serde(default = "default_judge_min_score_threshold")]
+    pub min_score_threshold: u8,
+    /// Whether verdicts are written to the `judge_verdicts` table.
+    /// Disable to run the judge in shadow mode for ensemble voting
+    /// without persistence.
+    #[serde(default = "default_judge_persist_verdicts")]
+    pub persist_verdicts: bool,
+}
+
+fn default_judge_min_score_threshold() -> u8 {
+    30
+}
+
+fn default_judge_persist_verdicts() -> bool {
+    true
+}
+
+impl Default for JudgeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: JudgeBackendKind::default(),
+            vllm: VllmBackendConfig::default(),
+            openai: OpenAiBackendConfig::default(),
+            anthropic: AnthropicBackendConfig::default(),
+            deberta: DebertaBackendConfig::default(),
+            cascade: JudgeCascadeConfig::default(),
+            worker: JudgeWorkerConfig::default(),
+            retry: JudgeRetryConfig::default(),
+            promotion: JudgePromotionConfig::default(),
+            system_prompt: None,
+            min_score_threshold: default_judge_min_score_threshold(),
+            persist_verdicts: default_judge_persist_verdicts(),
+        }
+    }
+}
+
+/// Inline-path promotion policy for judge verdicts (issue #70).
+///
+/// Gates whether a judge verdict is allowed to override the prior
+/// enforcement decision and promote it to `Block`. An uncalibrated,
+/// compromised, or drifted judge can emit `{"is_threat": true,
+/// "recommended_action": "block"}` with very low confidence; without
+/// these gates such a verdict would DoS legitimate traffic. Defaults
+/// are conservative: require high confidence, a meaningful security
+/// score, and at least one supporting prior ensemble finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JudgePromotionConfig {
+    /// Minimum self-reported `confidence` required to promote a verdict
+    /// to `BlockRequested`. Verdicts below this threshold are logged
+    /// and emit the agreement metric but do not override the prior
+    /// enforcement decision.
+    ///
+    /// # Calibration status
+    ///
+    /// The default of `0.7` is a **pre-calibration placeholder**, not
+    /// an empirically-derived probability threshold. LLM self-reported
+    /// confidence is not a calibrated probability until it is mapped
+    /// through Platt scaling or isotonic regression against a
+    /// golden-set reliability diagram. Raising this value reduces
+    /// false-positive blocks at the cost of missed threats; lowering
+    /// it inverts the tradeoff. Recalibrate whenever the judge model,
+    /// provider family, or system prompt changes (cross-family drift).
+    /// See `docs/architecture/LLM_JUDGE.md#calibration-status` and
+    /// issue #66 (golden-set reliability patterns) before picking a
+    /// production value.
+    #[serde(default = "default_judge_promotion_min_confidence")]
+    pub min_confidence: f64,
+    /// Minimum `security_score` required to promote a verdict.
+    #[serde(default = "default_judge_promotion_min_security_score")]
+    pub min_security_score: u8,
+    /// When true, require at least one prior ensemble finding of
+    /// severity `Medium` or higher before a pure-judge Block promotion
+    /// can fire. Prevents "elevate" cases (clean ensemble, judge says
+    /// Block) from single-handedly blocking traffic.
+    #[serde(default = "default_judge_promotion_require_ensemble_support")]
+    pub require_ensemble_support: bool,
+    /// Shadow mode: when true, the judge runs end-to-end (persists
+    /// verdicts, emits metrics, records agreement) but `verdict_to_outcome`
+    /// never promotes a verdict to `BlockRequested`, regardless of
+    /// confidence, severity, or ensemble support. Every would-be
+    /// promotion increments
+    /// `llmtrace_judge_shadow_would_block_total{category,recommended_action}`
+    /// so operators can measure the enforcement rate **before** flipping
+    /// enforcement on. Recommended during initial rollout and after any
+    /// judge-model, provider, or prompt change; see
+    /// `docs/architecture/LLM_JUDGE.md#49-calibration-status`.
+    #[serde(default = "default_judge_promotion_shadow")]
+    pub shadow: bool,
+}
+
+fn default_judge_promotion_min_confidence() -> f64 {
+    0.7
+}
+
+fn default_judge_promotion_min_security_score() -> u8 {
+    60
+}
+
+fn default_judge_promotion_require_ensemble_support() -> bool {
+    true
+}
+
+fn default_judge_promotion_shadow() -> bool {
+    false
+}
+
+impl Default for JudgePromotionConfig {
+    fn default() -> Self {
+        Self {
+            min_confidence: default_judge_promotion_min_confidence(),
+            min_security_score: default_judge_promotion_min_security_score(),
+            require_ensemble_support: default_judge_promotion_require_ensemble_support(),
+            shadow: default_judge_promotion_shadow(),
         }
     }
 }
@@ -2657,6 +3214,42 @@ pub trait CacheLayer: Send + Sync {
     async fn health_check(&self) -> Result<()>;
 }
 
+/// Filter parameters for querying [`JudgeVerdict`] records.
+#[derive(Debug, Clone, Default)]
+pub struct JudgeVerdictQuery {
+    /// Restrict to verdicts for this tenant.
+    pub tenant_id: Option<TenantId>,
+    /// Restrict to verdicts for this trace.
+    pub trace_id: Option<Uuid>,
+    /// Only verdicts with `created_at >= since`.
+    pub since: Option<DateTime<Utc>>,
+    /// Only verdicts with `created_at <= until`.
+    pub until: Option<DateTime<Utc>>,
+    /// Cap the result set.
+    pub limit: Option<u64>,
+}
+
+/// Persistence interface for [`JudgeVerdict`] records produced by the
+/// LLM-as-a-Judge worker (issue #43).
+///
+/// Verdicts are written asynchronously and read by the Pipeline
+/// Learning service (issue #44) as supervised training labels.
+/// Backends are expected to be write-heavy append-only; the query
+/// surface is intentionally narrow and optimised for time-range +
+/// tenant scans.
+#[async_trait::async_trait]
+pub trait JudgeVerdictStore: Send + Sync {
+    /// Persist a single verdict. Idempotency on `verdict.id` is not
+    /// required; callers guarantee unique ids via [`Uuid::new_v4`].
+    async fn insert_verdict(&self, verdict: &JudgeVerdict) -> Result<()>;
+
+    /// Query verdicts matching `query`.
+    async fn query_verdicts(&self, query: &JudgeVerdictQuery) -> Result<Vec<JudgeVerdict>>;
+
+    /// Lightweight reachability probe.
+    async fn health_check(&self) -> Result<()>;
+}
+
 // ---------------------------------------------------------------------------
 // Composite Storage struct
 // ---------------------------------------------------------------------------
@@ -2672,6 +3265,8 @@ pub struct Storage {
     pub metadata: Arc<dyn MetadataRepository>,
     /// Cache layer (hot queries, sessions).
     pub cache: Arc<dyn CacheLayer>,
+    /// LLM-as-a-Judge verdict store (issue #43).
+    pub judge_verdicts: Arc<dyn JudgeVerdictStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2745,6 +3340,183 @@ pub trait SecurityAnalyzer: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Issue #76: canonical judge -> finding conversion.
+
+    #[test]
+    fn severity_from_score_bands_match_design_doc() {
+        assert_eq!(severity_from_score(0), SecuritySeverity::Low);
+        assert_eq!(severity_from_score(29), SecuritySeverity::Low);
+        assert_eq!(severity_from_score(30), SecuritySeverity::Medium);
+        assert_eq!(severity_from_score(59), SecuritySeverity::Medium);
+        assert_eq!(severity_from_score(60), SecuritySeverity::High);
+        assert_eq!(severity_from_score(79), SecuritySeverity::High);
+        assert_eq!(severity_from_score(80), SecuritySeverity::Critical);
+        assert_eq!(severity_from_score(100), SecuritySeverity::Critical);
+        // Clamped: out-of-spec values map to Critical, never silently dropped.
+        assert_eq!(severity_from_score(200), SecuritySeverity::Critical);
+    }
+
+    #[test]
+    fn severity_to_score_is_consistent_with_bands() {
+        // severity_to_score returns the LOW end of each band so gating
+        // fires at the earliest score that would promote the severity.
+        assert_eq!(severity_to_score(&SecuritySeverity::Info), 0);
+        assert_eq!(severity_to_score(&SecuritySeverity::Low), 0);
+        assert_eq!(severity_to_score(&SecuritySeverity::Medium), 30);
+        assert_eq!(severity_to_score(&SecuritySeverity::High), 60);
+        assert_eq!(severity_to_score(&SecuritySeverity::Critical), 80);
+    }
+
+    #[test]
+    fn deberta_backend_config_defaults_and_overrides() {
+        // All fields optional -> defaults.
+        let cfg: DebertaBackendConfig =
+            serde_json::from_str("{}").expect("deserialize empty DebertaBackendConfig");
+        assert_eq!(
+            cfg.model_id,
+            "protectai/deberta-v3-base-prompt-injection-v2"
+        );
+        assert!((cfg.threshold - 0.5).abs() < f64::EPSILON);
+        assert!(cfg.cache_dir.is_none());
+
+        // Overrides.
+        let cfg: DebertaBackendConfig = serde_json::from_str(
+            r#"{"model_id":"epappas/llmtrace-deberta-v1","threshold":0.6,"cache_dir":"/opt/cache"}"#,
+        )
+        .expect("deserialize DebertaBackendConfig overrides");
+        assert_eq!(cfg.model_id, "epappas/llmtrace-deberta-v1");
+        assert!((cfg.threshold - 0.6).abs() < f64::EPSILON);
+        assert_eq!(cfg.cache_dir.as_deref(), Some("/opt/cache"));
+    }
+
+    #[test]
+    fn judge_cascade_config_defaults_and_overrides() {
+        // Empty object -> fast=deberta, slow=none, band=[0.3, 0.7].
+        let cfg: JudgeCascadeConfig =
+            serde_json::from_str("{}").expect("deserialize empty JudgeCascadeConfig");
+        assert_eq!(cfg.fast_backend, JudgeBackendKind::Deberta);
+        assert!(cfg.slow_backend.is_none());
+        assert!((cfg.ambiguous_low - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.ambiguous_high - 0.7).abs() < f64::EPSILON);
+
+        // Fully specified (today's operator config with Qwen not yet
+        // trained ships slow_backend: null).
+        let cfg: JudgeCascadeConfig = serde_json::from_str(
+            r#"{"fast_backend":"deberta","slow_backend":null,"ambiguous_low":0.2,"ambiguous_high":0.8}"#,
+        )
+        .expect("deserialize JudgeCascadeConfig with null slow");
+        assert_eq!(cfg.fast_backend, JudgeBackendKind::Deberta);
+        assert!(cfg.slow_backend.is_none());
+        assert!((cfg.ambiguous_low - 0.2).abs() < f64::EPSILON);
+
+        // Slow tier configured (post-Qwen rollout).
+        let cfg: JudgeCascadeConfig = serde_json::from_str(
+            r#"{"fast_backend":"deberta","slow_backend":"vllm","ambiguous_low":0.25,"ambiguous_high":0.75}"#,
+        )
+        .expect("deserialize JudgeCascadeConfig with vllm slow");
+        assert_eq!(cfg.slow_backend, Some(JudgeBackendKind::Vllm));
+    }
+
+    #[test]
+    fn openai_backend_config_base_url_defaults_and_overrides() {
+        // Omitted field -> default.
+        let cfg: OpenAiBackendConfig =
+            serde_json::from_str(r#"{"model":"gpt-4o-mini","max_tokens":256,"temperature":0.1}"#)
+                .expect("deserialize without base_url");
+        assert_eq!(cfg.base_url, "https://api.openai.com");
+
+        // Explicit override for OpenAI-compatible gateways (OpenRouter,
+        // Azure OpenAI, LiteLLM, etc.).
+        let cfg: OpenAiBackendConfig = serde_json::from_str(
+            r#"{"base_url":"https://openrouter.ai/api/v1","model":"openai/gpt-4o-mini","max_tokens":256,"temperature":0.1}"#,
+        )
+        .expect("deserialize with override");
+        assert_eq!(cfg.base_url, "https://openrouter.ai/api/v1");
+        assert_eq!(cfg.model, "openai/gpt-4o-mini");
+    }
+
+    #[test]
+    fn severity_roundtrip_through_score_preserves_band() {
+        for sev in [
+            SecuritySeverity::Low,
+            SecuritySeverity::Medium,
+            SecuritySeverity::High,
+            SecuritySeverity::Critical,
+        ] {
+            let score = severity_to_score(&sev);
+            assert_eq!(severity_from_score(score), sev);
+        }
+    }
+
+    #[test]
+    fn verdict_to_finding_stamps_canonical_metadata() {
+        let verdict = JudgeVerdict {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            is_threat: true,
+            category: "prompt_injection".to_string(),
+            confidence: 0.9,
+            security_score: 85,
+            recommended_action: "block".to_string(),
+            reasoning: "override attempt".to_string(),
+            mode: JudgeMode::Inline,
+            model_used: "security-judge-v1".to_string(),
+            latency_ms: 123,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            created_at: chrono::Utc::now(),
+        };
+        let finding = verdict_to_finding(&verdict);
+
+        assert_eq!(finding.finding_type, JUDGE_FINDING_TYPE);
+        assert_eq!(finding.severity, SecuritySeverity::Critical);
+        assert!((finding.confidence_score - 0.9).abs() < f64::EPSILON);
+        assert_eq!(finding.description, "override attempt");
+        assert_eq!(
+            finding.metadata.get("voting_result").map(String::as_str),
+            Some("llm_judge")
+        );
+        assert_eq!(
+            finding.metadata.get("category").map(String::as_str),
+            Some("prompt_injection")
+        );
+        assert_eq!(
+            finding
+                .metadata
+                .get("recommended_action")
+                .map(String::as_str),
+            Some("block")
+        );
+        assert_eq!(
+            finding.metadata.get("security_score").map(String::as_str),
+            Some("85")
+        );
+    }
+
+    #[test]
+    fn verdict_to_finding_uses_category_when_reasoning_empty() {
+        let verdict = JudgeVerdict {
+            id: Uuid::new_v4(),
+            trace_id: Uuid::new_v4(),
+            tenant_id: TenantId::new(),
+            is_threat: false,
+            category: "benign".to_string(),
+            confidence: 0.1,
+            security_score: 10,
+            recommended_action: "allow".to_string(),
+            reasoning: String::new(),
+            mode: JudgeMode::Async,
+            model_used: "m".to_string(),
+            latency_ms: 1,
+            prompt_tokens: None,
+            completion_tokens: None,
+            created_at: chrono::Utc::now(),
+        };
+        let finding = verdict_to_finding(&verdict);
+        assert_eq!(finding.description, "LLM Judge verdict: benign");
+    }
 
     #[test]
     fn test_tenant_id_creation() {
@@ -3200,7 +3972,7 @@ mod tests {
             enforcement: EnforcementConfig::default(),
             action_router: ActionRouterConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
-            llm_judge_enabled: false,
+            judge: JudgeConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

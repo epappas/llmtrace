@@ -608,7 +608,6 @@ curl -k https://localhost:8443/health  # -k ignores cert errors
 
 - **[OpenAI SDK Integration](integration-openai.md)** — Use official SDKs instead of raw HTTP
 - **[LangChain Integration](integration-langchain.md)** — Framework integration
-- **[Python SDK](python-sdk.md)** — Native Python instrumentation
 - **[Dashboard Usage](dashboard.md)** — Visual monitoring
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [API documentation](API.md).

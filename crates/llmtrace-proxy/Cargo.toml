@@ -8,8 +8,9 @@ repository.workspace = true
 description = "Transparent proxy server for LLM API calls"
 
 [features]
-default = ["ml"]
+default = ["ml", "judge"]
 ml = ["llmtrace-security/ml"]
+judge = ["llmtrace-security/judge"]
 cuda = ["llmtrace-security/cuda"]
 metal = ["llmtrace-security/metal"]
 

@@ -2,8 +2,8 @@
 
 LLMTrace ships two distinct Compose setups:
 
-- The repo-root [`compose.yaml`](/Users/geo/Projects/llmtrace/compose.yaml) for local development and integration testing.
-- The production-oriented stack under [`deployments/docker-compose`](/Users/geo/Projects/llmtrace/deployments/docker-compose) for running the proxy, dashboard, TLS ingress, and optional monitoring.
+- The repo-root [`compose.yaml`](https://github.com/epappas/llmtrace/blob/main/compose.yaml) for local development and integration testing.
+- The production-oriented stack under [`deployments/docker-compose`](https://github.com/epappas/llmtrace/tree/main/deployments/docker-compose) for running the proxy, dashboard, TLS ingress, and optional monitoring.
 
 ## Files
 

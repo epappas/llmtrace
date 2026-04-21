@@ -808,4 +808,4 @@ def check_llmtrace_health():
 - **[API Guide](API.md)** — REST queries + proxy paths
 - **[Custom Policies](custom-policies.md)** — Configure security for your use cases
 
-**Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](../deployment/troubleshooting.md).
+**Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](troubleshooting.md).

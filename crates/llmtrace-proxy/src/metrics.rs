@@ -141,6 +141,32 @@ pub struct Metrics {
     /// mutation was applied to live traffic without a durable audit
     /// record — alert on this in production dashboards. Issue #42 C2.
     pub audit_event_dropped_total: IntCounterVec,
+
+    // ----------- LLM-as-a-Judge metrics (issue #43) -----------
+    /// Total judge invocations labelled by backend, mode, and status.
+    pub judge_requests_total: IntCounterVec,
+    /// Judge call latency in seconds, labelled by backend and mode.
+    pub judge_latency_seconds: HistogramVec,
+    /// Judge token consumption by direction (prompt|completion) and backend.
+    pub judge_tokens_total: IntCounterVec,
+    /// Verdict distribution by category, recommended action, and threat flag.
+    pub judge_verdicts_total: IntCounterVec,
+    /// Current judge worker queue depth.
+    pub judge_queue_depth: IntGauge,
+    /// Agreement between judge and prior ensemble outcome.
+    pub judge_verdict_agreement: IntCounterVec,
+    /// Judge requests dropped without issuing a backend call.
+    pub judge_dropped_total: IntCounterVec,
+    /// Judge verdicts that failed the inline promotion gate (#70), by
+    /// reason. Distinguishes from `judge_dropped_total`, which is
+    /// pre-backend: a rejected promotion DID produce a verdict, the
+    /// verdict just wasn't allowed to flip the decision to Block.
+    pub judge_promotion_rejected_total: IntCounterVec,
+    /// Judge verdicts that would have been promoted to Block but the
+    /// promotion config had `shadow=true` (#84). Lets operators measure
+    /// the enforcement rate in shadow mode before flipping enforcement
+    /// on.
+    pub judge_shadow_would_block_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -495,6 +521,142 @@ impl Metrics {
             .register(Box::new(audit_event_dropped_total.clone()))
             .expect("register audit_event_dropped_total");
 
+        // LLM-as-a-Judge metrics (issue #43)
+        let judge_requests_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_requests_total",
+                "Total judge invocations by backend, model, mode, and status",
+            ),
+            &["backend", "model", "mode", "status"],
+        )
+        .expect("metric: judge_requests_total");
+        registry
+            .register(Box::new(judge_requests_total.clone()))
+            .expect("register judge_requests_total");
+
+        let judge_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "llmtrace_judge_latency_seconds",
+                "Judge call latency in seconds",
+            )
+            .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 30.0, 60.0]),
+            &["backend", "model", "mode"],
+        )
+        .expect("metric: judge_latency_seconds");
+        registry
+            .register(Box::new(judge_latency_seconds.clone()))
+            .expect("register judge_latency_seconds");
+
+        let judge_tokens_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_tokens_total",
+                "Judge token consumption by direction, backend, and model",
+            ),
+            &["direction", "backend", "model"],
+        )
+        .expect("metric: judge_tokens_total");
+        registry
+            .register(Box::new(judge_tokens_total.clone()))
+            .expect("register judge_tokens_total");
+
+        let judge_verdicts_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_verdicts_total",
+                "Verdicts emitted by the judge by category, recommended action, threat flag, and model",
+            ),
+            &["category", "recommended_action", "is_threat", "model"],
+        )
+        .expect("metric: judge_verdicts_total");
+        registry
+            .register(Box::new(judge_verdicts_total.clone()))
+            .expect("register judge_verdicts_total");
+
+        let judge_queue_depth = IntGauge::new(
+            "llmtrace_judge_queue_depth",
+            "Current judge worker queue depth",
+        )
+        .expect("metric: judge_queue_depth");
+        registry
+            .register(Box::new(judge_queue_depth.clone()))
+            .expect("register judge_queue_depth");
+
+        let judge_verdict_agreement = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_verdict_agreement",
+                "Agreement between the judge verdict and the prior ensemble outcome",
+            ),
+            &["agreement"],
+        )
+        .expect("metric: judge_verdict_agreement");
+        registry
+            .register(Box::new(judge_verdict_agreement.clone()))
+            .expect("register judge_verdict_agreement");
+
+        let judge_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_dropped_total",
+                "Judge requests dropped without a backend call, by reason",
+            ),
+            &["reason"],
+        )
+        .expect("metric: judge_dropped_total");
+        registry
+            .register(Box::new(judge_dropped_total.clone()))
+            .expect("register judge_dropped_total");
+
+        // Pre-initialise zero samples for `judge_dropped_total` reason
+        // labels so dashboards do not stay blank until the first drop
+        // (matches the pattern established by audit_event_dropped_total
+        // in commit 6364faa).
+        for reason in &[
+            "disabled",
+            "below_threshold",
+            "channel_full",
+            "channel_closed",
+            "persist_failure",
+            "semaphore_closed",
+            "shutdown",
+            "analysis_text_truncated",
+        ] {
+            judge_dropped_total.with_label_values(&[reason]).inc_by(0);
+        }
+
+        let judge_promotion_rejected_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_promotion_rejected_total",
+                "Judge verdicts that did not pass the inline promotion gate, by reason",
+            ),
+            &["reason"],
+        )
+        .expect("metric: judge_promotion_rejected_total");
+        registry
+            .register(Box::new(judge_promotion_rejected_total.clone()))
+            .expect("register judge_promotion_rejected_total");
+
+        // Pre-initialise reason labels — same rationale as above.
+        for reason in &[
+            "not_threat_or_block",
+            "below_confidence",
+            "below_score",
+            "no_ensemble_support",
+        ] {
+            judge_promotion_rejected_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+
+        let judge_shadow_would_block_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_judge_shadow_would_block_total",
+                "Judge verdicts suppressed by shadow mode that would otherwise have been promoted to Block",
+            ),
+            &["category", "recommended_action"],
+        )
+        .expect("metric: judge_shadow_would_block_total");
+        registry
+            .register(Box::new(judge_shadow_would_block_total.clone()))
+            .expect("register judge_shadow_would_block_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -537,6 +699,15 @@ impl Metrics {
             feature_flag_string_state,
             config_persist_errors_total,
             audit_event_dropped_total,
+            judge_requests_total,
+            judge_latency_seconds,
+            judge_tokens_total,
+            judge_verdicts_total,
+            judge_queue_depth,
+            judge_verdict_agreement,
+            judge_dropped_total,
+            judge_promotion_rejected_total,
+            judge_shadow_would_block_total,
         }
     }
 
@@ -692,6 +863,87 @@ impl Metrics {
     pub fn record_action_rule_match(&self, finding_type: &str, action_type: &str) {
         self.action_rule_matches_total
             .with_label_values(&[finding_type, action_type])
+            .inc();
+    }
+
+    // -- Judge metrics (issue #43) -----------------------------------------
+
+    /// Record a judge invocation outcome.
+    pub fn record_judge_request(&self, backend: &str, model: &str, mode: &str, status: &str) {
+        self.judge_requests_total
+            .with_label_values(&[backend, model, mode, status])
+            .inc();
+    }
+
+    /// Record judge call latency.
+    pub fn record_judge_latency(
+        &self,
+        backend: &str,
+        model: &str,
+        mode: &str,
+        duration: std::time::Duration,
+    ) {
+        self.judge_latency_seconds
+            .with_label_values(&[backend, model, mode])
+            .observe(duration.as_secs_f64());
+    }
+
+    /// Record judge token consumption reported by the backend.
+    pub fn record_judge_tokens(
+        &self,
+        backend: &str,
+        model: &str,
+        prompt_tokens: Option<u32>,
+        completion_tokens: Option<u32>,
+    ) {
+        if let Some(n) = prompt_tokens {
+            self.judge_tokens_total
+                .with_label_values(&["prompt", backend, model])
+                .inc_by(u64::from(n));
+        }
+        if let Some(n) = completion_tokens {
+            self.judge_tokens_total
+                .with_label_values(&["completion", backend, model])
+                .inc_by(u64::from(n));
+        }
+    }
+
+    /// Record a persisted verdict for dashboard distribution tracking.
+    pub fn record_judge_verdict(&self, verdict: &llmtrace_core::JudgeVerdict) {
+        let is_threat = if verdict.is_threat { "true" } else { "false" };
+        self.judge_verdicts_total
+            .with_label_values(&[
+                verdict.category.as_str(),
+                verdict.recommended_action.as_str(),
+                is_threat,
+                verdict.model_used.as_str(),
+            ])
+            .inc();
+    }
+
+    /// Increment the drop counter with one of a fixed set of reasons.
+    pub fn record_judge_dropped(&self, reason: &str) {
+        self.judge_dropped_total.with_label_values(&[reason]).inc();
+    }
+
+    /// Record an agreement/disagreement between judge and ensemble.
+    pub fn record_judge_agreement(&self, agreement: &str) {
+        self.judge_verdict_agreement
+            .with_label_values(&[agreement])
+            .inc();
+    }
+
+    /// Record a verdict that failed the inline promotion gate.
+    pub fn record_judge_promotion_rejected(&self, reason: &str) {
+        self.judge_promotion_rejected_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    /// Record a verdict that was suppressed by shadow mode (#84).
+    pub fn record_judge_shadow_would_block(&self, category: &str, recommended_action: &str) {
+        self.judge_shadow_would_block_total
+            .with_label_values(&[category, recommended_action])
             .inc();
     }
 }

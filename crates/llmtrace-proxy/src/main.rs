@@ -491,11 +491,21 @@ async fn build_app_state(
         &config.anomaly_detection,
         Arc::clone(&storage.cache),
     );
-    let action_router = llmtrace_proxy::action_router::ActionRouter::new(
+    #[cfg_attr(not(feature = "judge"), allow(unused_mut))]
+    let mut action_router = llmtrace_proxy::action_router::ActionRouter::new(
         &config.action_router,
+        config.judge.promotion.clone(),
+        config.judge.worker.max_analysis_text_bytes,
         Some(Arc::clone(&storage.cache)),
         client.clone(),
     );
+
+    // Claim the judge channel receiver before the router is moved into
+    // AppState so the judge worker can consume it. Returns None when the
+    // action router is disabled (the JudgeRouteAction is not registered
+    // in that case and the channel is never used).
+    #[cfg(feature = "judge")]
+    let judge_rx = action_router.take_judge_receiver();
 
     if let Some(ref engine) = alert_engine {
         info!(
@@ -584,12 +594,66 @@ async fn build_app_state(
         },
     };
 
+    let config_handle =
+        llmtrace_proxy::config_handle::ConfigHandle::new(config, None, runtime_overlay_path);
+
+    // Spawn the LLM-as-a-Judge worker before AppState is finalized so
+    // any subsequent request handlers can dispatch `JudgeRouteAction`
+    // without racing the worker startup. `judge.enabled=false` at
+    // startup skips the spawn entirely -- see `build_judge_backend`.
+    #[cfg(feature = "judge")]
+    let judge_worker_spawned: bool = {
+        if let Some(rx) = judge_rx {
+            let judge_cfg = config_handle.snapshot().judge.clone();
+            match llmtrace_proxy::judge::build_judge_backend(&judge_cfg, client.clone()).await {
+                Ok(Some(backend)) => {
+                    let store = Arc::clone(&storage.judge_verdicts);
+                    let cfg_source: Arc<dyn llmtrace_proxy::judge::ConfigSnapshotSource> =
+                        Arc::new(config_handle.clone());
+                    let worker = llmtrace_proxy::judge::JudgeWorker::new(
+                        rx,
+                        backend,
+                        store,
+                        cfg_source,
+                        metrics.clone(),
+                        judge_cfg.worker.max_concurrency,
+                        shutdown.clone(),
+                    );
+                    info!(
+                        backend = ?judge_cfg.backend,
+                        max_concurrency = judge_cfg.worker.max_concurrency,
+                        min_score_threshold = judge_cfg.min_score_threshold,
+                        persist_verdicts = judge_cfg.persist_verdicts,
+                        "LLM-as-a-Judge worker started"
+                    );
+                    tokio::spawn(worker.run());
+                    true
+                }
+                Ok(None) => {
+                    info!(
+                        "LLM-as-a-Judge disabled at startup; worker not spawned. \
+                         Flip the llm_judge_enabled flag and restart to activate."
+                    );
+                    false
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "Failed to construct judge backend; worker not spawned. \
+                         Requests routed to JudgeRouteAction will fail-open."
+                    );
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    };
+    #[cfg(not(feature = "judge"))]
+    let judge_worker_spawned: bool = false;
+
     let state = Arc::new(AppState {
-        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(
-            config,
-            None,
-            runtime_overlay_path,
-        ),
+        config_handle,
         client,
         storage,
         security,
@@ -605,6 +669,7 @@ async fn build_app_state(
         report_store,
         rate_limiter,
         ml_status,
+        judge_worker_spawned,
         runtime_overlay_status,
         shutdown,
         metrics,

@@ -632,6 +632,32 @@ impl MLSecurityAnalyzer {
         self.model.is_some()
     }
 
+    /// Raw injection probability in `[0.0, 1.0]` for the given text, bypassing
+    /// the threshold / finding conversion. Issue #87: the
+    /// `DebertaJudgeBackend` needs this to synthesise the 6-field
+    /// `JudgeVerdict` on top of the classifier output.
+    ///
+    /// Returns `Ok(None)` when the model failed to load (fallback
+    /// mode); the caller should surface this as a judge error rather
+    /// than a silent zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if classification itself fails (tokenisation,
+    /// forward pass, etc.).
+    pub fn classify_probability(&self, text: &str) -> Result<Option<f64>> {
+        let Some(model) = &self.model else {
+            return Ok(None);
+        };
+        if text.is_empty() {
+            return Ok(Some(0.0));
+        }
+        let start = Instant::now();
+        let (score, _label, _token_count) = model.classify(text)?;
+        self.stats_tracker.record(start.elapsed());
+        Ok(Some(score))
+    }
+
     /// Returns the configured confidence threshold.
     #[must_use]
     pub fn threshold(&self) -> f64 {

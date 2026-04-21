@@ -93,6 +93,11 @@ pub fn postgres_migrations() -> Vec<Migration> {
             description: "compliance_reports".to_string(),
             sql: include_str!("../migrations/postgres/005_compliance_reports.sql"),
         },
+        Migration {
+            version: 6,
+            description: "judge_verdicts".to_string(),
+            sql: include_str!("../migrations/postgres/006_judge_verdicts.sql"),
+        },
     ]
 }
 

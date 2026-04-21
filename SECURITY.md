@@ -49,7 +49,7 @@ LLMTrace is designed with security as a core concern:
 - **RBAC** — Role-based access control for tenant management
 - **Secrets management** — No plaintext secrets in configuration; supports External Secrets Operator and Sealed Secrets
 
-See [docs/guides/custom-policies.md](docs/guides/custom-policies.md) for configuration details.
+See the [custom policies guide](https://docs.llmtrace.io/guides/custom-policies/) for configuration details.
 
 ## Dependencies
 

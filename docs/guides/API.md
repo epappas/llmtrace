@@ -245,6 +245,5 @@ Rate limiting and cost caps use specific `type` values:
 
 ## Next Steps
 
-- **[gRPC API Documentation](grpc-api.md)**
 - **[OpenAI SDK Integration](integration-openai.md)**
 - **[Custom Policies](custom-policies.md)**

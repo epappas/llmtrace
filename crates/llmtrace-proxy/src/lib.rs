@@ -19,6 +19,8 @@ pub mod enforcement;
 pub mod feature_flags;
 pub mod feature_flags_api;
 pub mod grpc;
+#[cfg(feature = "judge")]
+pub mod judge;
 pub mod metrics;
 pub mod openapi;
 pub mod otel;
