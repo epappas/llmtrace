@@ -128,6 +128,7 @@ nav:
       - curl / HTTP: guides/integration-curl.md
       - Custom Policies: guides/custom-policies.md
       - Pre-Request Enforcement: guides/enforcement.md
+      - LLM Judge Setup: guides/llm-judge.md
       - Auth & Multi-Tenancy: guides/auth-tenancy.md
       - Dashboard: guides/dashboard.md
       - Monitoring: guides/monitoring.md
@@ -193,6 +194,7 @@ nav:
           - LLM-Judge Reliability Patterns: research/llm-judge-reliability-patterns.md
       - Papers: research/papers.md
       - Results:
+          - Judge Evaluation — gpt-4o-mini (2026-04-20): research/results/judge_evaluation_gpt4o_mini_2026-04-20.md
           - Regex FPR Calibration: research/results/fpr_calibration_regex.md
   - Reference:
       - Feature Roadmap: FEATURE_ROADMAP.md

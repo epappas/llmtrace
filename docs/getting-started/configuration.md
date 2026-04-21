@@ -117,6 +117,65 @@ security_analysis:
   jailbreak_threshold: 0.7
 ```
 
+## LLM Judge (Optional)
+
+Adds an LLM-as-a-Judge detector alongside regex + DeBERTa. Requires
+the `judge` feature (enabled by default). Disabled out of the box;
+flip on at runtime via the admin feature-flag API
+(`llm_judge_enabled`). Fail-open: a misbehaving judge never changes
+request outcomes.
+
+Full walkthrough (minimal configs, shadow rollout, metrics,
+troubleshooting): see [LLM Judge Setup Guide](../guides/llm-judge.md).
+
+```yaml
+judge:
+  enabled: false
+  backend: openai                 # "openai" | "anthropic" | "vllm"
+
+  openai:
+    base_url: "https://api.openai.com"  # any OpenAI-compatible gateway
+    model: "gpt-4o-mini"
+    max_tokens: 512
+    temperature: 0.1
+  anthropic:
+    model: "claude-3-5-haiku-20241022"
+    max_tokens: 512
+    temperature: 0.1
+  vllm:
+    base_url: "http://localhost:8000"
+    model: "security-judge-v1"
+    max_tokens: 512
+    temperature: 0.1
+    allow_plaintext: false        # true only for loopback hosts
+
+  worker:
+    channel_buffer: 1000
+    max_concurrency: 4
+    timeout_ms: 30000
+    max_analysis_text_bytes: 65536
+    total_deadline_ms: 45000
+  retry:
+    max_retries: 2
+    backoff_base_ms: 1000
+  promotion:
+    min_confidence: 0.7           # pre-calibration placeholder
+    min_security_score: 60
+    require_ensemble_support: true
+    shadow: false                 # set true during initial rollout
+
+  system_prompt: ""               # "" uses built-in hardened default
+  min_score_threshold: 30         # only judge prompts with score >= 30
+  persist_verdicts: true
+```
+
+API keys are read from environment variables at startup, never from
+config files:
+
+- `LLMTRACE_JUDGE_OPENAI_API_KEY` for `backend: openai`
+- `LLMTRACE_JUDGE_ANTHROPIC_API_KEY` for `backend: anthropic`
+- vLLM does not require a key
+
 ## Alerts
 
 ```yaml

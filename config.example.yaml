@@ -413,3 +413,61 @@ health_check:
   interval_seconds: 10
   timeout_ms: 5000
   retries: 3
+
+# ---------------------------------------------------------------------------
+# LLM Judge — optional third detector (LLM-as-a-Judge)
+# ---------------------------------------------------------------------------
+#
+# Adds a dedicated language-model verdict alongside the regex and
+# DeBERTa detectors. Fail-open: misbehaviour never changes enforcement
+# versus the no-judge baseline. Disabled out of the box.
+#
+# Full setup guide with shadow-mode rollout + metrics:
+# https://docs.llmtrace.io/guides/llm-judge/
+#
+# Evaluation report (gpt-4o-mini on 27 labeled corpora):
+# https://docs.llmtrace.io/research/results/judge_evaluation_gpt4o_mini_2026-04-20/
+#
+# API keys are read from environment variables at startup:
+#   LLMTRACE_JUDGE_OPENAI_API_KEY        for backend: openai
+#   LLMTRACE_JUDGE_ANTHROPIC_API_KEY     for backend: anthropic
+#   (vLLM does not require a key)
+#
+# judge:
+#   enabled: false
+#   backend: openai                           # "openai" | "anthropic" | "vllm"
+#
+#   openai:
+#     base_url: "https://api.openai.com"      # OpenAI-compatible gateway (OpenRouter, Azure, LiteLLM)
+#     model: "gpt-4o-mini"
+#     max_tokens: 512
+#     temperature: 0.1
+#   anthropic:
+#     model: "claude-3-5-haiku-20241022"
+#     max_tokens: 512
+#     temperature: 0.1
+#   vllm:
+#     base_url: "http://localhost:8000"
+#     model: "security-judge-v1"
+#     max_tokens: 512
+#     temperature: 0.1
+#     allow_plaintext: false                  # true only for loopback hosts
+#
+#   worker:
+#     channel_buffer: 1000
+#     max_concurrency: 4
+#     timeout_ms: 30000
+#     max_analysis_text_bytes: 65536
+#     total_deadline_ms: 45000
+#   retry:
+#     max_retries: 2
+#     backoff_base_ms: 1000
+#   promotion:
+#     min_confidence: 0.7                     # pre-calibration placeholder
+#     min_security_score: 60
+#     require_ensemble_support: true
+#     shadow: false                           # set true during initial rollout
+#
+#   system_prompt: ""                         # "" uses built-in hardened default
+#   min_score_threshold: 30                   # only judge prompts with prior score >= this
+#   persist_verdicts: true

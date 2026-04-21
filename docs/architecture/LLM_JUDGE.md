@@ -453,16 +453,23 @@ applicable (matches the fix in commit `6364faa`).
 
 ## 6. Configuration Schema
 
+Authoritative reference. All fields have defaults — this block shows
+the full set for clarity. For an operator-oriented walkthrough, see
+[`guides/llm-judge.md`](../guides/llm-judge.md).
+
 ```yaml
 judge:
   enabled: false                           # runtime-toggleable via admin API
   backend: "vllm"                          # "vllm" | "openai" | "anthropic"
+
   vllm:
     base_url: "http://localhost:8000"
     model: "security-judge-v1"
     max_tokens: 512
     temperature: 0.1
+    allow_plaintext: false                 # #77: opt-in to plaintext HTTP on non-loopback
   openai:
+    base_url: "https://api.openai.com"     # any OpenAI-compatible gateway (OpenRouter, Azure, LiteLLM)
     model: "gpt-4o-mini"
     max_tokens: 512
     temperature: 0.1
@@ -470,17 +477,39 @@ judge:
     model: "claude-3-5-haiku-20241022"
     max_tokens: 512
     temperature: 0.1
+
   worker:
-    channel_buffer: 1000
-    max_concurrency: 4
-    timeout_ms: 30000
+    channel_buffer: 1000                   # bounded pending-request queue
+    max_concurrency: 4                     # in-flight backend calls
+    timeout_ms: 30000                      # per-call HTTP timeout
+    max_analysis_text_bytes: 65536         # #78: truncate candidate text above this
+    total_deadline_ms: 45000               # #73: hard ceiling incl. retries + backoff
+
   retry:
     max_retries: 2
-    backoff_base_ms: 1000
-  system_prompt: ""                        # "" uses built-in default
-  min_score_threshold: 30                  # only judge traces >= this score
-  persist_verdicts: true
+    backoff_base_ms: 1000                  # exponential with full jitter, honours Retry-After
+
+  promotion:
+    min_confidence: 0.7                    # pre-calibration placeholder; see §4.9
+    min_security_score: 60
+    require_ensemble_support: true         # require Medium+ prior finding before promote
+    shadow: false                          # #84: true -> persist verdicts but never Block
+
+  system_prompt: ""                        # "" uses hardened default from prompt.rs
+  min_score_threshold: 30                  # only judge candidates with prior score >= this
+  persist_verdicts: true                   # write verdicts to judge_verdicts table
 ```
+
+**API keys** are read from environment variables at startup:
+
+| Backend | Env var |
+|---|---|
+| `openai` | `LLMTRACE_JUDGE_OPENAI_API_KEY` |
+| `anthropic` | `LLMTRACE_JUDGE_ANTHROPIC_API_KEY` |
+| `vllm` | none |
+
+They are never read from the config file. The backend option structs
+have a custom `Debug` impl that redacts the key (#71).
 
 ---
 
