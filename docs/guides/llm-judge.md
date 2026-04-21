@@ -21,7 +21,7 @@ The judge is not a single remote call. It's a cascade:
 
 ```
 elevated candidate
-  → Tier 2: fast-judge (DeBERTa local, 20–50 ms)
+  → Tier 2: fast-judge (DeBERTa local, ~50 ms on GPU / ~2–3 s on CPU)
     → high or low confidence → final
     → ambiguous band         → Tier 3: slow-judge (local Qwen / remote LLM)
 ```
@@ -38,6 +38,44 @@ they have available:
 
 The rationale and per-tier responsibilities are documented in
 [`architecture/JUDGE_CASCADE.md`](../architecture/JUDGE_CASCADE.md).
+
+## Prerequisites (the config boxes you need ticked)
+
+The judge does **not** fire on its own. It runs downstream of the
+Action Router, so two config blocks besides `judge` must be enabled
+for any traffic to ever reach the judge worker. Missing either is the
+most common "I configured the judge but it never runs" problem.
+
+```yaml
+# 1. Action Router must be on; otherwise the judge channel is never
+#    even created.
+action_router:
+  enabled: true
+
+  # 2. The judge_route action must be in the rule that matches your
+  #    elevated traffic. The simplest form adds it to the global
+  #    default_actions so every elevated request routes through it.
+  default_actions: ["log", "judge_route"]
+
+  # Optional: inline-gate on an enforcement path. Requires raising
+  # inline_timeout_ms above the judge's p95 latency (see §performance
+  # in the evaluation report) or many verdicts will time out.
+  judge_route:
+    inline_await: false          # async by default; flip when you know the latency
+    inline_timeout_ms: 5000
+```
+
+If `action_router.enabled = false` (the default) the judge channel is
+never built, `take_judge_receiver()` returns None, and the judge
+worker never spawns. `/health` will report `judge.worker_spawned =
+false` even though `judge.enabled_at_startup = true`. That's the
+signal the Action Router is the culprit.
+
+If `action_router.enabled = true` but no rule matches with the
+`judge_route` action, every request will pass through with
+`llmtrace_action_executions_total{action_type="judge_route"}` staying
+at zero. Add `judge_route` to `default_actions` or to a rule that
+matches your prompt-injection finding types.
 
 ## Before you enable it
 

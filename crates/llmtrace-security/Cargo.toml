@@ -70,3 +70,7 @@ required-features = ["judge"]
 [[example]]
 name = "judge_benchmark"
 required-features = ["judge"]
+
+[[example]]
+name = "judge_cascade_smoke"
+required-features = ["judge", "ml"]

@@ -34,8 +34,9 @@ enforcement:
   elevated requests per day that's $12/day per tenant. Acceptable on one
   tenant; uncomfortable on dozens.
 
-Meanwhile, our existing DeBERTa ML tier runs locally in ~20–50 ms with F1 in
-the 0.95–0.98 range on matched distributions. It's fast and accurate but
+Meanwhile, our existing DeBERTa ML tier runs locally in ~50 ms on a
+modern GPU (or ~2–3 s on CPU, measured warm) with F1 in the 0.95–0.98
+range on matched distributions. It's fast and accurate but
 votes only once in the ensemble — it does not carry its own promotion gate,
 shadow mode, verdict persistence, or drift-tracking metrics, because those
 live on the `JudgeBackend` side of the pipeline.
@@ -68,7 +69,8 @@ Ship a three-tier judge cascade:
 ├──────────────────────────────────────────────────────────────────────┤
 │ Tier 2 — FAST-JUDGE (new: DebertaJudgeBackend)                       │
 │   runs the ML analyser as a JudgeBackend                             │
-│   ~20–50 ms local, p95 well inside any inline budget                 │
+│   ~50 ms on GPU / ~2–3 s on CPU, emitted synchronously from         │
+│   spawn_blocking; build with `--features cuda` or `metal` on GPU     │
 │   emits a 6-field JudgeVerdict (synthesised where DeBERTa cannot)    │
 │                                                                      │
 │   confidence ∉ [ambiguous_low, ambiguous_high] → final verdict       │
