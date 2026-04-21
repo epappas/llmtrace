@@ -2,7 +2,7 @@
 
 This guide covers how to configure LLMTrace's security policies, rate limiting, cost controls, alerting, and other operational features. Every option shown here corresponds to a real configuration field — copy the snippets directly into your `config.yaml`.
 
-> **Quick links:** [Minimal config](../../examples/config-minimal.yaml) · [Production config](../../examples/config-production.yaml) · [High-security config](../../examples/config-high-security.yaml) · [Cost-control config](../../examples/config-cost-control.yaml)
+> **Quick links:** [Minimal config](https://github.com/epappas/llmtrace/blob/main/examples/config-minimal.yaml) · [Production config](https://github.com/epappas/llmtrace/blob/main/examples/config-production.yaml) · [High-security config](https://github.com/epappas/llmtrace/blob/main/examples/config-high-security.yaml) · [Cost-control config](https://github.com/epappas/llmtrace/blob/main/examples/config-cost-control.yaml)
 
 ---
 
@@ -691,14 +691,14 @@ For detailed coverage breakdown, see [docs/security/OWASP_LLM_TOP10.md](../secur
 
 ## Putting It All Together
 
-The example configurations in the [`examples/`](../../examples/) directory show complete, ready-to-use setups:
+The example configurations in the [`examples/`](https://github.com/epappas/llmtrace/tree/main/examples) directory show complete, ready-to-use setups:
 
 | Config | Use Case | Key Features |
 |--------|----------|--------------|
-| [`config-minimal.yaml`](../../examples/config-minimal.yaml) | Getting started | SQLite, regex security, basic rate limits |
-| [`config-production.yaml`](../../examples/config-production.yaml) | Full production | ClickHouse + Postgres + Redis, all features, multi-channel alerts |
-| [`config-high-security.yaml`](../../examples/config-high-security.yaml) | Maximum security | ML detection, streaming analysis, strict limits, PagerDuty escalation |
-| [`config-cost-control.yaml`](../../examples/config-cost-control.yaml) | Cost management | Tight budgets, per-agent caps, cost anomaly alerts |
+| [`config-minimal.yaml`](https://github.com/epappas/llmtrace/blob/main/examples/config-minimal.yaml) | Getting started | SQLite, regex security, basic rate limits |
+| [`config-production.yaml`](https://github.com/epappas/llmtrace/blob/main/examples/config-production.yaml) | Full production | ClickHouse + Postgres + Redis, all features, multi-channel alerts |
+| [`config-high-security.yaml`](https://github.com/epappas/llmtrace/blob/main/examples/config-high-security.yaml) | Maximum security | ML detection, streaming analysis, strict limits, PagerDuty escalation |
+| [`config-cost-control.yaml`](https://github.com/epappas/llmtrace/blob/main/examples/config-cost-control.yaml) | Cost management | Tight budgets, per-agent caps, cost anomaly alerts |
 
 ### Recommended Rollout Order
 

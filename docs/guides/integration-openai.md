@@ -541,4 +541,4 @@ client = openai.OpenAI(
 - **[API Guide](API.md)** — REST queries + proxy paths
 - **[Custom Policies](custom-policies.md)** — Configure security and budgets
 
-**Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [troubleshooting guide](../deployment/troubleshooting.md).
+**Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [troubleshooting guide](troubleshooting.md).
