@@ -153,6 +153,40 @@ The proxy outcome and findings_include assertions stay strict — only the judge
 
 ---
 
+## Expectation DSL — comparator reference
+
+Every key under a scenario's `expected:` block maps to one comparator function in `tests/e2e/expect.py`. The orchestrator `assert_scenario(scenario, response, delta, verdict, judge_degraded)` returns one [`AssertionResult`](../../tests/e2e/expect.py) per comparator (no I/O — the test wrapper handles HTTP, metrics, and verdict polling, then hands the observed values in).
+
+| Key | Type | Semantics |
+|---|---|---|
+| `proxy_outcome.at_least` | enum (`allow`<`warn`<`block`) | Observed outcome must be **>=** the floor. |
+| `proxy_outcome.at_most` | enum (`allow`<`warn`<`block`) | Observed outcome must be **<=** the ceiling. |
+| `findings_include` | list of finding-type strings | Every listed `finding_type` must appear at least once in the per-scenario `llmtrace_security_findings_total` delta. |
+| `findings_min_severity` | enum (`Info`<`Low`<`Medium`<`High`<`Critical`) | Peak severity across observed findings must be **>=** the floor; "no findings observed" fails with an explicit message rather than a confusing `None < High`. |
+| `judge_verdict.is_threat` | bool | Exact match against polled `JudgeVerdict.is_threat`. |
+| `judge_verdict.category` | string | Exact match against polled `JudgeVerdict.category`. |
+| `judge_verdict.recommended_action.at_least` | enum (`allow`<`flag`<`block`) | Polled `recommended_action` must be **>=** the floor. |
+| `judge_verdict.recommended_action.at_most` | enum (`allow`<`flag`<`block`) | Polled `recommended_action` must be **<=** the ceiling. |
+
+### Pass / soft / fail
+
+Each `AssertionResult` carries a `passed: bool` and a `soft: bool` flag. Soft failures fire only on the `judge_verdict.*` block when the verdict is missing **and** the harness saw `llmtrace_judge_requests_total{status="backend_error"}` increment in the same window. The test wrapper aggregates as:
+
+- Any **hard** failure → `pytest.fail` with the full assertion summary attached (per-row markers `[ok]` / `[soft]` / `[FAIL]`, plus the metrics-delta context).
+- Only soft failures and zero passes (e.g. judge-only scenario whose tier flaked) → `pytest.skip`.
+- Any pass alongside soft failures → still passes (provider/upstream flake should not turn a real-LLMTrace observation red).
+
+### Adding a comparator
+
+1. Add a helper `_compare_<name>` in `tests/e2e/expect.py` returning an `AssertionResult`.
+2. Wire it into `_TOP_LEVEL_COMPARATORS` (top-level keys) or `_compare_judge_verdict` (judge-block keys).
+3. Add at least one passing + one failing unit test in `tests/e2e/test_expect_unit.py` (the synthetic-input pattern means no proxy boot required).
+4. Document the new key in this table.
+
+The orchestrator also surfaces an explicit failure when an unknown `expected.*` key (top-level or under `judge_verdict`) appears, so typos in scenario YAML cannot silently skip an assertion.
+
+---
+
 ## Failure-message anatomy
 
 Every assertion failure includes:
@@ -209,6 +243,8 @@ Per-tenant metric scoping that would make parallel runs safe is an explicit foll
 | First-cut test | `tests/e2e/test_cascade.py` |
 | Metrics observer | `tests/e2e/observer.py` |
 | Observer unit tests | `tests/e2e/test_observer_unit.py` |
+| Expectation DSL | `tests/e2e/expect.py` |
+| Expectation DSL unit tests | `tests/e2e/test_expect_unit.py` |
 | Proxy config (judge ON) | `tests/e2e/fixtures/config-e2e-judge.yaml` |
 | Proxy config (judge OFF) | `tests/e2e/fixtures/config-e2e.yaml` |
 | Proxy debug routes | `crates/llmtrace-proxy/src/debug.rs` |
