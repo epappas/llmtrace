@@ -1,0 +1,21 @@
+# HELP llmtrace_security_findings_total Total security findings detected
+# TYPE llmtrace_security_findings_total counter
+llmtrace_security_findings_total{finding_type="prompt_injection",severity="High"} 14.0
+llmtrace_security_findings_total{finding_type="prompt_injection",severity="Medium"} 1.0
+llmtrace_security_findings_total{finding_type="jailbreak",severity="Medium"} 4.0
+# HELP llmtrace_action_executions_total Total enforcement actions executed by the router
+# TYPE llmtrace_action_executions_total counter
+llmtrace_action_executions_total{action_type="judge_route",status="success",mode="active"} 9.0
+# HELP llmtrace_judge_queue_depth Current judge worker queue depth
+# TYPE llmtrace_judge_queue_depth gauge
+llmtrace_judge_queue_depth 5.0
+# HELP llmtrace_judge_latency_seconds Judge call latency in seconds
+# TYPE llmtrace_judge_latency_seconds histogram
+llmtrace_judge_latency_seconds_bucket{le="0.1",backend="deberta",mode="sync",model="x"} 2.0
+llmtrace_judge_latency_seconds_bucket{le="0.5",backend="deberta",mode="sync",model="x"} 6.0
+llmtrace_judge_latency_seconds_bucket{le="+Inf",backend="deberta",mode="sync",model="x"} 7.0
+llmtrace_judge_latency_seconds_count{backend="deberta",mode="sync",model="x"} 7.0
+llmtrace_judge_latency_seconds_sum{backend="deberta",mode="sync",model="x"} 0.61
+# HELP llmtrace_judge_dropped_total Judge requests dropped without a backend call, by reason
+# TYPE llmtrace_judge_dropped_total counter
+llmtrace_judge_dropped_total{reason="below_threshold"} 0.0
