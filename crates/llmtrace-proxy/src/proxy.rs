@@ -271,6 +271,29 @@ pub(crate) struct ChatMessage {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Header name for the end-to-end trace correlation id.
+///
+/// Clients MAY set this header to an RFC 4122 UUID on inbound requests; if
+/// present and parseable the proxy uses it as the per-request `trace_id`.
+/// Every response (success or error) echoes the effective `trace_id` back
+/// under the same header so callers can correlate per-request
+/// observations (findings, metrics deltas, judge verdicts) regardless of
+/// who generated the id.
+pub const TRACE_ID_HEADER: &str = "x-llmtrace-trace-id";
+
+/// Resolve the per-request `trace_id`.
+///
+/// Honors an inbound `X-LLMTrace-Trace-Id: <uuid>` header when the value
+/// parses as a UUID. Falls back to a fresh `Uuid::new_v4()` when the
+/// header is missing, non-UTF-8, or unparseable.
+pub(crate) fn extract_or_generate_trace_id(headers: &HeaderMap) -> Uuid {
+    headers
+        .get(TRACE_ID_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s.trim()).ok())
+        .unwrap_or_else(Uuid::new_v4)
+}
+
 /// Extract the agent ID from the `X-LLMTrace-Agent-ID` header.
 pub(crate) fn extract_agent_id(headers: &HeaderMap) -> Option<String> {
     headers
@@ -373,7 +396,7 @@ pub async fn proxy_handler(
 ) -> Response<Body> {
     state.metrics.active_connections.inc();
     let start_time = Utc::now();
-    let trace_id = Uuid::new_v4();
+    let trace_id = extract_or_generate_trace_id(req.headers());
     // Snapshot the live config for this request. `Arc<ProxyConfig>` is
     // `Send + 'static`, so it can cross `await` points freely.
     let cfg = state.config_handle.snapshot();
@@ -394,7 +417,11 @@ pub async fn proxy_handler(
             if cfg.auth.enabled {
                 // This shouldn't be reached if auth_middleware is working correctly
                 warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
-                return error_response(StatusCode::UNAUTHORIZED, "Authentication required");
+                return error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "Authentication required",
+                    trace_id,
+                );
             }
             // Fallback for when auth is disabled: use deterministic "Unknown" tenant
             TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
@@ -479,7 +506,7 @@ pub async fn proxy_handler(
                     "Rate limit exceeded"
                 );
                 state.metrics.active_connections.dec();
-                return rate_limit_response(tid, limit, retry_after_secs);
+                return rate_limit_response(tid, limit, retry_after_secs, trace_id);
             }
             crate::rate_limit::RateLimitResult::Allowed => {}
         }
@@ -500,7 +527,11 @@ pub async fn proxy_handler(
             Ok(b) => b,
             Err(e) => {
                 warn!(%trace_id, "Failed to read request body: {}", e);
-                return error_response(StatusCode::BAD_REQUEST, "Failed to read request body");
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    "Failed to read request body",
+                    trace_id,
+                );
             }
         };
 
@@ -551,7 +582,7 @@ pub async fn proxy_handler(
         );
         if let crate::cost_caps::CapCheckResult::TokenCapExceeded { reason } = token_result {
             warn!(%trace_id, %reason, "Token cap exceeded — rejecting request");
-            return cap_rejected_response(&reason, 0);
+            return cap_rejected_response(&reason, 0, trace_id);
         }
 
         // Budget cap
@@ -569,7 +600,7 @@ pub async fn proxy_handler(
                     "{window} budget exceeded: ${current_spend_usd:.4} / ${hard_limit_usd:.2}"
                 );
                 warn!(%trace_id, %msg, "Budget cap exceeded — rejecting request");
-                return cap_rejected_response(&msg, retry_after_secs);
+                return cap_rejected_response(&msg, retry_after_secs, trace_id);
             }
             crate::cost_caps::CapCheckResult::AllowedWithWarning { warnings } => {
                 for w in &warnings {
@@ -725,7 +756,7 @@ pub async fn proxy_handler(
         Ok(resp) => resp,
         Err(e) => {
             error!(%trace_id, "Upstream request failed: {}", e);
-            return error_response(StatusCode::BAD_GATEWAY, "Upstream request failed");
+            return error_response(StatusCode::BAD_GATEWAY, "Upstream request failed", trace_id);
         }
     };
 
@@ -1157,6 +1188,11 @@ pub async fn proxy_handler(
         }
     }
 
+    // Echo the effective trace id so callers can correlate per-request
+    // observations (findings, metrics deltas, judge verdicts). Set after
+    // the upstream-header copy loop so we always win on conflict.
+    builder = builder.header(TRACE_ID_HEADER, trace_id.to_string());
+
     // Inject enforcement flag headers if the request was flagged
     if !flagged_findings.is_empty() {
         builder = builder.header("x-llmtrace-flagged", "true");
@@ -1172,6 +1208,7 @@ pub async fn proxy_handler(
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to build response",
+                trace_id,
             )
         })
 }
@@ -1585,7 +1622,12 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
 // ---------------------------------------------------------------------------
 
 /// Build a 429 Too Many Requests response for rate limit violations.
-fn rate_limit_response(tenant_id: TenantId, limit: u32, retry_after_secs: u64) -> Response<Body> {
+fn rate_limit_response(
+    tenant_id: TenantId,
+    limit: u32,
+    retry_after_secs: u64,
+    trace_id: Uuid,
+) -> Response<Body> {
     let body = serde_json::json!({
         "error": {
             "message": format!("Rate limit exceeded for tenant {tenant_id}"),
@@ -1598,7 +1640,8 @@ fn rate_limit_response(tenant_id: TenantId, limit: u32, retry_after_secs: u64) -
     let mut builder = Response::builder()
         .status(StatusCode::TOO_MANY_REQUESTS)
         .header("content-type", "application/json")
-        .header("retry-after", retry_after_secs.to_string());
+        .header("retry-after", retry_after_secs.to_string())
+        .header(TRACE_ID_HEADER, trace_id.to_string());
     // Add standard rate limit headers
     builder = builder.header("x-ratelimit-limit", limit.to_string());
     builder = builder.header("x-ratelimit-remaining", "0");
@@ -1606,7 +1649,7 @@ fn rate_limit_response(tenant_id: TenantId, limit: u32, retry_after_secs: u64) -
 }
 
 /// Build a 429 Too Many Requests response for cost cap rejections.
-fn cap_rejected_response(message: &str, retry_after_secs: u64) -> Response<Body> {
+fn cap_rejected_response(message: &str, retry_after_secs: u64, trace_id: Uuid) -> Response<Body> {
     let body = serde_json::json!({
         "error": {
             "message": message,
@@ -1616,7 +1659,8 @@ fn cap_rejected_response(message: &str, retry_after_secs: u64) -> Response<Body>
     });
     let mut builder = Response::builder()
         .status(StatusCode::TOO_MANY_REQUESTS)
-        .header("content-type", "application/json");
+        .header("content-type", "application/json")
+        .header(TRACE_ID_HEADER, trace_id.to_string());
     if retry_after_secs > 0 {
         builder = builder.header("retry-after", retry_after_secs.to_string());
     }
@@ -1632,8 +1676,11 @@ fn circuit_breaker_state_label(state: crate::circuit_breaker::CircuitState) -> &
     }
 }
 
-/// Build a JSON error response.
-fn error_response(status: StatusCode, message: &str) -> Response<Body> {
+/// Build a JSON error response. Always stamps the `X-LLMTrace-Trace-Id`
+/// response header so clients can correlate failures with server-side
+/// logs, metrics, and judge verdicts using the same id they passed in
+/// (or one the proxy generated if the client omitted it).
+fn error_response(status: StatusCode, message: &str, trace_id: Uuid) -> Response<Body> {
     let body = serde_json::json!({
         "error": {
             "message": message,
@@ -1643,6 +1690,7 @@ fn error_response(status: StatusCode, message: &str) -> Response<Body> {
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
+        .header(TRACE_ID_HEADER, trace_id.to_string())
         .body(Body::from(body.to_string()))
         .unwrap()
 }
@@ -1743,11 +1791,20 @@ mod tests {
 
     #[test]
     fn test_cap_rejected_response_format() {
-        let resp = cap_rejected_response("budget exceeded", 3600);
+        let tid = Uuid::new_v4();
+        let resp = cap_rejected_response("budget exceeded", 3600, tid);
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             resp.headers().get("retry-after").unwrap().to_str().unwrap(),
             "3600"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(TRACE_ID_HEADER)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            tid.to_string()
         );
     }
 
@@ -1868,7 +1925,65 @@ mod tests {
 
     #[test]
     fn test_error_response_format() {
-        let resp = error_response(StatusCode::BAD_GATEWAY, "upstream down");
+        let tid = Uuid::new_v4();
+        let resp = error_response(StatusCode::BAD_GATEWAY, "upstream down", tid);
         assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+        assert_eq!(
+            resp.headers()
+                .get(TRACE_ID_HEADER)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            tid.to_string(),
+            "error responses must echo the trace_id so failures can be correlated"
+        );
+    }
+
+    #[test]
+    fn test_extract_or_generate_trace_id_honors_valid_inbound() {
+        let expected = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            TRACE_ID_HEADER,
+            expected.to_string().parse().expect("uuid parses as header"),
+        );
+        assert_eq!(extract_or_generate_trace_id(&headers), expected);
+    }
+
+    #[test]
+    fn test_extract_or_generate_trace_id_tolerates_surrounding_whitespace() {
+        let expected = Uuid::new_v4();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            TRACE_ID_HEADER,
+            format!("  {expected}  ")
+                .parse()
+                .expect("uuid parses as header"),
+        );
+        assert_eq!(extract_or_generate_trace_id(&headers), expected);
+    }
+
+    #[test]
+    fn test_extract_or_generate_trace_id_generates_when_missing() {
+        let headers = HeaderMap::new();
+        let a = extract_or_generate_trace_id(&headers);
+        let b = extract_or_generate_trace_id(&headers);
+        assert!(!a.is_nil());
+        assert!(!b.is_nil());
+        assert_ne!(
+            a, b,
+            "two independent calls on empty headers must each generate a fresh v4"
+        );
+    }
+
+    #[test]
+    fn test_extract_or_generate_trace_id_generates_when_unparseable() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            TRACE_ID_HEADER,
+            "not-a-uuid".parse().expect("ASCII parses as header"),
+        );
+        let id = extract_or_generate_trace_id(&headers);
+        assert!(!id.is_nil());
     }
 }
