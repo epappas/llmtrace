@@ -1,0 +1,72 @@
+# LLMTrace e2e test config — judge OFF.
+#
+# Used by the pytest harness in tests/e2e/. Loaded as a base; the harness
+# overrides per-session networking via environment variables:
+#
+#   LLMTRACE_LISTEN_ADDR           — bound to a free port at runtime
+#   LLMTRACE_UPSTREAM_URL          — pointed at the in-process FastAPI mock
+#   LLMTRACE_STORAGE_DATABASE_PATH — temp SQLite file for the session
+#
+# Auth is disabled so the harness does not need to bootstrap an API key.
+# Shutdown drain is short (5 s) so SIGTERM teardown completes inside the
+# harness's 10 s budget — see Loop E2E-L1 finding E2E-006.
+
+listen_addr: "127.0.0.1:8080"
+upstream_url: "http://127.0.0.1:1"
+timeout_ms: 30000
+connection_timeout_ms: 5000
+max_connections: 100
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 1048576
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
+
+storage:
+  profile: "lite"
+  database_path: "llmtrace-e2e.db"
+
+logging:
+  level: "info"
+  format: "text"
+
+auth:
+  enabled: false
+
+shutdown:
+  timeout_seconds: 5
+
+rate_limiting:
+  enabled: false
+  requests_per_second: 1000
+  burst_size: 2000
+  window_seconds: 60
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 100
+  recovery_timeout_ms: 5000
+  half_open_max_calls: 3
+
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3
+
+# Security enforcement is set to `flag` so findings surface as response
+# headers (`x-llmtrace-flagged`, `x-llmtrace-findings`). Default is `log`,
+# which detects findings but never surfaces them — the e2e harness needs
+# this signal to drive the proxy_outcome assertion.
+# min_severity is lowered from default High to Low so the harness sees
+# regex-tier signals from the example scenarios. The expectation DSL
+# (Loop E2E-L6) takes over per-scenario severity gating after L4.
+enforcement:
+  mode: flag
+  analysis_depth: fast
+  min_severity: Low
+  min_confidence: 0.5
+  timeout_ms: 2000

@@ -12,3 +12,17 @@
 # Scenario validation
 jsonschema==4.23.0
 PyYAML==6.0.2
+
+# Pytest harness (Loop E2E-L3) and HTTP client used to drive the proxy
+pytest==8.3.3
+requests==2.32.3
+
+# Prometheus exposition-format parser used by the metrics-delta observer
+# (Loop E2E-L4) and for fixture parsing in tests
+prometheus-client==0.21.0
+
+# In-process FastAPI mock upstream that the proxy forwards to during
+# PR-gate runs (Loop E2E-L9). Real upstream is configured at the CI
+# level for the nightly job (Loop E2E-L10).
+fastapi==0.115.6
+uvicorn==0.32.1

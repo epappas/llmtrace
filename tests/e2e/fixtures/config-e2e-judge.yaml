@@ -1,0 +1,72 @@
+# LLMTrace e2e test config — judge ON (cascade, slow tier disabled).
+#
+# Same shape as config-e2e.yaml but with the LLM-as-a-Judge cascade
+# enabled in fast-tier-only mode (DeBERTa fast-judge + null slow tier),
+# matching the PR-gate matrix dimension `cascade-null-slow` from
+# Loop E2E-L9.
+#
+# The harness applies the same env-var overrides as for config-e2e.yaml
+# (LLMTRACE_LISTEN_ADDR, LLMTRACE_UPSTREAM_URL, LLMTRACE_STORAGE_DATABASE_PATH).
+
+listen_addr: "127.0.0.1:8080"
+upstream_url: "http://127.0.0.1:1"
+timeout_ms: 30000
+connection_timeout_ms: 5000
+max_connections: 100
+enable_tls: false
+enable_security_analysis: true
+enable_trace_storage: true
+enable_streaming: true
+max_request_size_bytes: 1048576
+security_analysis_timeout_ms: 5000
+trace_storage_timeout_ms: 10000
+
+storage:
+  profile: "lite"
+  database_path: "llmtrace-e2e.db"
+
+logging:
+  level: "info"
+  format: "text"
+
+auth:
+  enabled: false
+
+shutdown:
+  timeout_seconds: 5
+
+rate_limiting:
+  enabled: false
+  requests_per_second: 1000
+  burst_size: 2000
+  window_seconds: 60
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 100
+  recovery_timeout_ms: 5000
+  half_open_max_calls: 3
+
+health_check:
+  enabled: true
+  path: "/health"
+  interval_seconds: 10
+  timeout_ms: 5000
+  retries: 3
+
+# See config-e2e.yaml for rationale on enforcement mode/min_severity.
+enforcement:
+  mode: flag
+  analysis_depth: fast
+  min_severity: Low
+  min_confidence: 0.5
+  timeout_ms: 2000
+
+judge:
+  enabled: true
+  backend: cascade
+  cascade:
+    fast_backend: deberta
+    slow_backend: null
+  promotion:
+    shadow: true
