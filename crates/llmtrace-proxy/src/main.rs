@@ -911,7 +911,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         // OpenAPI / Swagger UI (served by the proxy itself, not forwarded upstream).
         .merge(SwaggerUi::new("/swagger-ui").url("/api-doc/openapi.json", ApiDoc::openapi()))
         .route("/health", get(health_handler))
@@ -1014,7 +1014,27 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/v1/traces",
             post(llmtrace_proxy::otel::ingest_traces),
+        );
+
+    // Debug routes — registered only when `server.debug_endpoints: true`.
+    // Used by the e2e adversarial test framework (#91 / #95) to read
+    // judge verdicts back by trace_id. Default is OFF; production
+    // proxies must never enable this because verdicts are returned
+    // un-auth-gated by trace_id.
+    let router = if state.config_handle.snapshot().server.debug_endpoints {
+        tracing::warn!(
+            "Debug endpoints enabled (server.debug_endpoints=true). \
+             Do not run with this flag in production."
+        );
+        router.route(
+            "/debug/judge/verdicts",
+            get(llmtrace_proxy::debug::verdict_by_trace_id_handler),
         )
+    } else {
+        router
+    };
+
+    router
         // Fallback: proxy everything else to upstream
         .fallback(any(proxy_handler))
         // Auth middleware — applied to all routes (skips /health internally)
@@ -1110,6 +1130,123 @@ mod tests {
     async fn test_build_app_state_succeeds() {
         let state = build_app_state(memory_config(), None).await;
         assert!(state.is_ok());
+    }
+
+    // ---- /debug/judge/verdicts (Loop E2E-L5 of #91) -----------------
+
+    fn debug_endpoints_config(enabled: bool) -> ProxyConfig {
+        let mut cfg = memory_config();
+        cfg.server.debug_endpoints = enabled;
+        cfg
+    }
+
+    async fn insert_test_verdict(
+        state: &Arc<llmtrace_proxy::AppState>,
+        trace_id: uuid::Uuid,
+    ) -> llmtrace_core::JudgeVerdict {
+        use chrono::Utc;
+        let verdict = llmtrace_core::JudgeVerdict {
+            id: uuid::Uuid::new_v4(),
+            trace_id,
+            tenant_id: llmtrace_core::TenantId(uuid::Uuid::new_v4()),
+            is_threat: true,
+            category: "prompt_injection".to_string(),
+            confidence: 0.92,
+            security_score: 80,
+            recommended_action: "flag".to_string(),
+            reasoning: "test verdict".to_string(),
+            mode: llmtrace_core::JudgeMode::Async,
+            model_used: "test-model".to_string(),
+            latency_ms: 12,
+            prompt_tokens: None,
+            completion_tokens: None,
+            created_at: Utc::now(),
+        };
+        state
+            .storage
+            .judge_verdicts
+            .insert_verdict(&verdict)
+            .await
+            .expect("verdict insert");
+        verdict
+    }
+
+    #[tokio::test]
+    async fn test_debug_verdicts_returns_404_when_flag_off() {
+        let state = build_app_state(debug_endpoints_config(false), None)
+            .await
+            .unwrap();
+        let _ = insert_test_verdict(&state, uuid::Uuid::new_v4()).await;
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri(format!(
+                "/debug/judge/verdicts?trace_id={}",
+                uuid::Uuid::new_v4()
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "debug route must NOT be mounted when server.debug_endpoints=false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_debug_verdicts_returns_404_when_no_verdict_for_trace() {
+        let state = build_app_state(debug_endpoints_config(true), None)
+            .await
+            .unwrap();
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri(format!(
+                "/debug/judge/verdicts?trace_id={}",
+                uuid::Uuid::new_v4()
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_debug_verdicts_returns_verdict_when_present() {
+        let trace_id = uuid::Uuid::new_v4();
+        let state = build_app_state(debug_endpoints_config(true), None)
+            .await
+            .unwrap();
+        let inserted = insert_test_verdict(&state, trace_id).await;
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri(format!("/debug/judge/verdicts?trace_id={trace_id}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let payload: llmtrace_core::JudgeVerdict =
+            serde_json::from_slice(&body).expect("response is a JudgeVerdict");
+        assert_eq!(payload.id, inserted.id);
+        assert_eq!(payload.trace_id, trace_id);
+        assert_eq!(payload.category, "prompt_injection");
+        assert!(payload.is_threat);
+    }
+
+    #[tokio::test]
+    async fn test_debug_verdicts_rejects_non_uuid_trace_id() {
+        let state = build_app_state(debug_endpoints_config(true), None)
+            .await
+            .unwrap();
+        let app = build_router(state);
+        let req = Request::builder()
+            .uri("/debug/judge/verdicts?trace_id=not-a-uuid")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

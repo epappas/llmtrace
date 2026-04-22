@@ -17,7 +17,9 @@ import pytest
 from tests.e2e.observer import (
     MetricsSnapshot,
     collect_finding_types,
+    judge_backend_errored,
     render_assertion_context,
+    shadow_would_block_count,
 )
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -233,3 +235,61 @@ def test_diff_self_zeroes_counter_samples_but_keeps_gauge(
     )
     # Gauges report the latest absolute value, even on a self-diff.
     assert no_change.series("llmtrace_judge_queue_depth") == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Judge collector helpers (Loop E2E-L5)
+# ---------------------------------------------------------------------------
+
+
+def test_shadow_would_block_count_total_across_all_labels(
+    delta: MetricsSnapshot,
+) -> None:
+    # prompt_injection/block: 1 - 0 = 1; jailbreak/flag: 2 - 1 = 1.
+    assert shadow_would_block_count(delta) == 2.0
+
+
+def test_shadow_would_block_count_filtered_by_category(
+    delta: MetricsSnapshot,
+) -> None:
+    assert shadow_would_block_count(delta, category="prompt_injection") == 1.0
+    assert shadow_would_block_count(delta, category="jailbreak") == 1.0
+
+
+def test_shadow_would_block_count_filtered_by_recommended_action(
+    delta: MetricsSnapshot,
+) -> None:
+    assert shadow_would_block_count(delta, recommended_action="block") == 1.0
+    assert shadow_would_block_count(delta, recommended_action="flag") == 1.0
+
+
+def test_shadow_would_block_count_returns_zero_when_metric_absent() -> None:
+    empty = MetricsSnapshot()
+    assert shadow_would_block_count(empty) == 0.0
+
+
+def test_judge_backend_errored_true_when_status_label_ticks(
+    delta: MetricsSnapshot,
+) -> None:
+    # before: backend_error=1, after: backend_error=1 → delta=0 → not errored.
+    # We need an actual increment to flip True. Synthesise it.
+    fixture_text = (
+        "# HELP llmtrace_judge_requests_total .\n"
+        "# TYPE llmtrace_judge_requests_total counter\n"
+        "llmtrace_judge_requests_total"
+        '{backend="deberta",model="x",mode="async",status="backend_error"} 5.0\n'
+    )
+    after_with_error = MetricsSnapshot.parse(fixture_text)
+    assert judge_backend_errored(after_with_error.diff(MetricsSnapshot())) is True
+
+
+def test_judge_backend_errored_false_when_only_ok_status_increments(
+    delta: MetricsSnapshot,
+) -> None:
+    # The fixture's backend_error counter is unchanged between before/after
+    # (1 → 1), so the delta is 0; only the ok counter advanced.
+    assert judge_backend_errored(delta) is False
+
+
+def test_judge_backend_errored_false_when_metric_absent() -> None:
+    assert judge_backend_errored(MetricsSnapshot()) is False

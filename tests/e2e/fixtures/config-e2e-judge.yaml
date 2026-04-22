@@ -62,6 +62,17 @@ enforcement:
   min_confidence: 0.5
   timeout_ms: 2000
 
+# The judge worker only spawns when action_router.enabled is true (the
+# JudgeRouteAction owns the channel that hands requests to the worker).
+# Default-actions includes `judge_route` so every finding produced by
+# the ensemble fans out to the judge tier; without this the worker
+# spawns but never receives requests.
+action_router:
+  enabled: true
+  default_actions:
+    - log
+    - judge_route
+
 judge:
   enabled: true
   backend: cascade
@@ -70,3 +81,10 @@ judge:
     slow_backend: null
   promotion:
     shadow: true
+
+# Loop E2E-L5: register the /debug/judge/verdicts endpoint so the
+# harness can poll judge verdicts back by trace_id. This is OFF by
+# default in the proxy; we enable it ONLY in the test config because
+# debug routes return verdicts un-auth-gated.
+server:
+  debug_endpoints: true

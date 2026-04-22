@@ -1239,6 +1239,10 @@ pub struct ProxyConfig {
     /// clients.
     #[serde(default)]
     pub judge: JudgeConfig,
+    /// Server-level toggles. Currently only gates the e2e debug
+    /// endpoints (`/debug/judge/verdicts`) added in issue #95.
+    #[serde(default)]
+    pub server: ServerConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1280,6 +1284,7 @@ impl Default for ProxyConfig {
             boundary_defense: BoundaryTokenConfig::default(),
             action_router: ActionRouterConfig::default(),
             judge: JudgeConfig::default(),
+            server: ServerConfig::default(),
         }
     }
 }
@@ -2782,6 +2787,21 @@ pub struct AuthConfig {
     pub admin_key: Option<String>,
 }
 
+/// Server-level toggles.
+///
+/// Today this only controls the e2e debug endpoint family
+/// (`/debug/judge/verdicts`). The flag is `false` by default; production
+/// proxies should never expose `/debug/*` to untrusted callers because
+/// it returns un-auth-gated verdict payloads keyed by trace_id.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerConfig {
+    /// Enable the `/debug/*` route family. Used by the e2e adversarial
+    /// test framework (issue #91 / #95) to read judge verdicts back by
+    /// trace_id. Default: `false` — debug endpoints are not registered.
+    #[serde(default)]
+    pub debug_endpoints: bool,
+}
+
 /// gRPC ingestion gateway configuration.
 ///
 /// When enabled, the proxy starts a `tonic` gRPC server on a separate
@@ -3973,6 +3993,7 @@ mod tests {
             action_router: ActionRouterConfig::default(),
             boundary_defense: BoundaryTokenConfig::default(),
             judge: JudgeConfig::default(),
+            server: ServerConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

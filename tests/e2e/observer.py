@@ -176,6 +176,81 @@ def collect_finding_types(delta: MetricsSnapshot) -> set[str]:
     return out
 
 
+def poll_judge_verdict(
+    proxy_base_url: str,
+    trace_id,
+    *,
+    timeout_secs: float = 10.0,
+    poll_interval_secs: float = 0.25,
+) -> dict | None:
+    """Poll `GET /debug/judge/verdicts?trace_id=<uuid>` until verdict found.
+
+    The judge worker runs asynchronously after the upstream response
+    returns to the client, so the verdict for a request typically lands
+    in the store 10s–500ms later. The harness polls until either:
+
+      * the proxy returns 200 with a verdict body (returned as a dict),
+      * the proxy returns 404 for the entire `timeout_secs` window
+        (returned as None — caller decides whether that's a soft
+        skip-the-assertion or a hard failure),
+      * the proxy returns 4xx/5xx other than 404 (raised as
+        `requests.HTTPError` so misconfigurations surface loudly).
+
+    Returns the raw verdict dict (matches LLMTrace's JudgeVerdict
+    serialisation) or None on timeout. Requires `server.debug_endpoints:
+    true` in the proxy config — without it the endpoint returns 404
+    immediately and this helper times out.
+    """
+    url = f"{proxy_base_url.rstrip('/')}/debug/judge/verdicts"
+    deadline = time.monotonic() + timeout_secs
+    while time.monotonic() < deadline:
+        response = requests.get(url, params={"trace_id": str(trace_id)}, timeout=2.0)
+        if response.status_code == 200:
+            return response.json()
+        if response.status_code != 404:
+            response.raise_for_status()
+        time.sleep(poll_interval_secs)
+    return None
+
+
+def shadow_would_block_count(
+    delta: MetricsSnapshot,
+    *,
+    category: str | None = None,
+    recommended_action: str | None = None,
+) -> float:
+    """Sum the `llmtrace_judge_shadow_would_block_total` delta.
+
+    Returns 0.0 when the metric is absent so callers can treat
+    "no shadow-mode signal" symmetrically with "judge tier disabled".
+    The optional `category` / `recommended_action` filters narrow the
+    sum; with both `None` the result is the total across all label sets.
+    """
+    labels: dict[str, str] = {}
+    if category is not None:
+        labels["category"] = category
+    if recommended_action is not None:
+        labels["recommended_action"] = recommended_action
+    observed = delta.series(
+        "llmtrace_judge_shadow_would_block_total", labels
+    )
+    return observed if observed is not None else 0.0
+
+
+def judge_backend_errored(delta: MetricsSnapshot) -> bool:
+    """Return True iff the judge tier reported a backend error in the window.
+
+    Signals that a verdict assertion should be softened to a warning
+    (degraded mode) rather than fail the scenario. Per the #91 design
+    note: provider/upstream flakes must not turn e2e red — only
+    LLMTrace-side regressions should.
+    """
+    observed = delta.series(
+        "llmtrace_judge_requests_total", {"status": "backend_error"}
+    )
+    return observed is not None and observed > 0
+
+
 def fetch_after_until_settled(
     metrics_url: str,
     *,

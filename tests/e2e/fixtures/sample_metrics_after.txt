@@ -19,3 +19,11 @@ llmtrace_judge_latency_seconds_sum{backend="deberta",mode="sync",model="x"} 0.61
 # HELP llmtrace_judge_dropped_total Judge requests dropped without a backend call, by reason
 # TYPE llmtrace_judge_dropped_total counter
 llmtrace_judge_dropped_total{reason="below_threshold"} 0.0
+# HELP llmtrace_judge_shadow_would_block_total Verdicts suppressed by shadow mode that would have been blocked
+# TYPE llmtrace_judge_shadow_would_block_total counter
+llmtrace_judge_shadow_would_block_total{category="prompt_injection",recommended_action="block"} 1.0
+llmtrace_judge_shadow_would_block_total{category="jailbreak",recommended_action="flag"} 2.0
+# HELP llmtrace_judge_requests_total Judge invocations by backend, model, mode, and status
+# TYPE llmtrace_judge_requests_total counter
+llmtrace_judge_requests_total{backend="deberta",model="x",mode="async",status="ok"} 6.0
+llmtrace_judge_requests_total{backend="deberta",model="x",mode="async",status="backend_error"} 1.0

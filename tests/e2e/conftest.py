@@ -240,12 +240,16 @@ class ProxyHandle:
 
 @pytest.fixture(scope="session")
 def proxy_config_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Render the e2e (judge-off) config into a per-session temp file.
+    """Render the e2e (judge-on, debug-on) config into a per-session temp file.
 
     The base config is copied as-is; runtime networking + storage paths
-    are passed via env vars to the proxy subprocess.
+    are passed via env vars to the proxy subprocess. We default to the
+    cascade-null-slow judge configuration (matches the L9 PR-gate matrix
+    dimension) so verdict assertions and shadow-mode helpers are
+    exercised on every run. Loop E2E-L5 also requires
+    `server.debug_endpoints: true` for the verdict poller to work.
     """
-    src = FIXTURES_DIR / "config-e2e.yaml"
+    src = FIXTURES_DIR / "config-e2e-judge.yaml"
     dst = tmp_path_factory.mktemp("e2e-config") / "config.yaml"
     shutil.copyfile(src, dst)
     return dst
