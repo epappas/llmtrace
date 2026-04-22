@@ -1,0 +1,14 @@
+# Python dependencies for the e2e adversarial test framework (umbrella #91).
+# Pinned to the versions used to develop and validate the harness. Used by:
+#
+#   scripts/e2e/validate_scenarios.py              — Loop E2E-L2 (this file)
+#   tests/e2e/                                     — Loop E2E-L3 onward
+#   .github/workflows/ci.yml e2e-validate job      — Loop E2E-L2
+#
+# Install with:
+#
+#   python3 -m pip install -r requirements-e2e.txt
+
+# Scenario validation
+jsonschema==4.23.0
+PyYAML==6.0.2

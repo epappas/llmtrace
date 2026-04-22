@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/epappas/llmtrace/blob/main/benchmarks/attacks/schema.json",
+  "title": "LLMTrace Attack Scenario",
+  "description": "Declarative attack scenario consumed by the e2e adversarial test framework. One YAML file per scenario under benchmarks/attacks/<family>/<id>.yaml. See SCHEMA.md for canonical enums and field semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "source", "family", "prompt", "expected"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Globally unique scenario id. Lowercase letters, digits, and hyphens only.",
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+      "minLength": 3,
+      "maxLength": 80
+    },
+    "source": {
+      "type": "string",
+      "description": "Human-readable attribution of the attack origin (paper, dataset, observed incident).",
+      "minLength": 1
+    },
+    "family": {
+      "type": "string",
+      "description": "Canonical attack family. Closed enum.",
+      "enum": [
+        "prompt_injection",
+        "jailbreak",
+        "role_injection",
+        "data_exfiltration",
+        "prompt_extraction",
+        "policy_violation",
+        "over_defense",
+        "encoding_evasion",
+        "indirect_injection",
+        "tool_manipulation"
+      ]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Verbatim attack prompt sent to the proxy. Multi-line allowed.",
+      "minLength": 1
+    },
+    "system_prompt_canary": {
+      "type": "string",
+      "description": "Optional system-prompt fragment whose first 40 chars must NOT appear in the upstream response. Used by the L8 upstream-fell-for-it detector.",
+      "minLength": 1
+    },
+    "expected": {
+      "type": "object",
+      "description": "Tolerant expectations evaluated against the proxy decision, finding deltas, and (optionally) the judge verdict. Dotted keys (proxy_outcome.at_least, etc.) are flat string keys; the dot is part of the key, not a path.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "proxy_outcome.at_least": {
+          "$ref": "#/$defs/proxyOutcome",
+          "description": "Minimum acceptable proxy outcome (allow < warn < block)."
+        },
+        "proxy_outcome.at_most": {
+          "$ref": "#/$defs/proxyOutcome",
+          "description": "Maximum acceptable proxy outcome (allow < warn < block)."
+        },
+        "findings_include": {
+          "type": "array",
+          "description": "Each entry must appear at least once as the finding_type label on the per-scenario delta of llmtrace_security_findings_total.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "findings_min_severity": {
+          "$ref": "#/$defs/severity",
+          "description": "Peak severity across observed findings must be >= this value (Info < Low < Medium < High < Critical)."
+        },
+        "judge_verdict": {
+          "type": "object",
+          "description": "Assertions against the judge verdict polled from /debug/judge/verdicts. Optional — scenarios that run with the judge disabled omit this block.",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "is_threat": { "type": "boolean" },
+            "category": { "type": "string", "minLength": 1 },
+            "recommended_action.at_least": {
+              "$ref": "#/$defs/recommendedAction"
+            },
+            "recommended_action.at_most": {
+              "$ref": "#/$defs/recommendedAction"
+            }
+          }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form selection tags. Reserved values include 'pr-gate' (selects the scenario into the PR-gate subset).",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "upstream_fell_for_it": {
+      "type": "boolean",
+      "description": "Optional. Set to true when the scenario should run against a live upstream and the upstream is expected to comply with the attack. Drives the L8 upstream-fell-for-it detector. The full object form (with canaries[]) is added in Loop E2E-L8."
+    },
+    "skip": {
+      "type": "object",
+      "description": "Lifecycle hook to temporarily exclude the scenario. The reason field is mandatory whenever skip is present so dormant scenarios always carry an explanation.",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Why this scenario is currently skipped. Required.",
+          "minLength": 1
+        },
+        "until": {
+          "type": "string",
+          "description": "Optional unblock date in ISO 8601 (YYYY-MM-DD). The harness logs a warning past this date.",
+          "format": "date"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "proxyOutcome": {
+      "type": "string",
+      "enum": ["allow", "warn", "block"]
+    },
+    "recommendedAction": {
+      "type": "string",
+      "enum": ["allow", "flag", "block"]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["Info", "Low", "Medium", "High", "Critical"]
+    }
+  }
+}
