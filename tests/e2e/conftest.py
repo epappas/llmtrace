@@ -76,6 +76,26 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Repeatable; logical OR across tags."
         ),
     )
+    parser.addoption(
+        "--scenario-results-json",
+        action="store",
+        default=None,
+        help=(
+            "Path to write per-scenario results as JSON (Loop E2E-L10). "
+            "Sidecar consumed by scripts/e2e/generate_nightly_report.py."
+        ),
+    )
+    parser.addoption(
+        "--cost-cap-usd",
+        action="store",
+        type=float,
+        default=None,
+        help=(
+            "Per-session cost cap in USD (Loop E2E-L10). When the proxy's "
+            "llmtrace_cost_usd_total exceeds this value the session is "
+            "aborted. Unset = no cap."
+        ),
+    )
 
 
 def pytest_collection_modifyitems(
@@ -272,7 +292,12 @@ def proxy(
 
     env = os.environ.copy()
     env["LLMTRACE_LISTEN_ADDR"] = listen_addr
-    env["LLMTRACE_UPSTREAM_URL"] = mock_upstream.base_url
+    # Loop E2E-L10: when LLMTRACE_E2E_REAL_UPSTREAM_URL is set, point
+    # the proxy at that real LLM (used by the nightly workflow).
+    # Otherwise fall back to the in-process FastAPI mock so PR-gate
+    # runs stay self-contained and free.
+    real_upstream = os.environ.get("LLMTRACE_E2E_REAL_UPSTREAM_URL")
+    env["LLMTRACE_UPSTREAM_URL"] = real_upstream or mock_upstream.base_url
     env["LLMTRACE_STORAGE_DATABASE_PATH"] = str(db_path)
     env["LLMTRACE_STORAGE_PROFILE"] = "lite"
     env["RUST_LOG"] = env.get("RUST_LOG", "llmtrace_proxy=info,info")
@@ -357,3 +382,144 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     scenarios = discover_scenarios(families=families, tags=tags)
     ids = [s["id"] for s in scenarios]
     metafunc.parametrize("scenario", scenarios, ids=ids)
+
+
+# ---------------------------------------------------------------------------
+# Per-scenario sidecar collector + cost cap (Loop E2E-L10)
+# ---------------------------------------------------------------------------
+
+
+_SCENARIO_BY_ID: dict[str, dict] = {}
+_RESULTS: list[dict] = []
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Pre-populate the scenario lookup so the report has family/tags
+    even for scenarios that never invoked a fixture (e.g. errored at
+    collection)."""
+    families = config.getoption("--family") or []
+    tags = config.getoption("--tag") or []
+    for s in discover_scenarios(families=families, tags=tags):
+        _SCENARIO_BY_ID[s["id"]] = s
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
+    """Capture per-scenario outcome into the session results list.
+
+    Records once per item (the `call` phase). Setup/teardown phases are
+    folded into the same row via outcome priority: error > failed >
+    skipped > passed. The row carries enough data for L10's report
+    generator to produce family roll-ups and regression diffs without
+    re-reading any YAML."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" and not (
+        report.when == "setup" and report.outcome in ("failed", "skipped")
+    ):
+        return
+
+    scenario_id = _scenario_id_from_item(item)
+    if scenario_id is None:
+        return
+
+    scenario = _SCENARIO_BY_ID.get(scenario_id, {})
+    existing = next(
+        (r for r in _RESULTS if r["id"] == scenario_id), None
+    )
+    row = existing or {
+        "id": scenario_id,
+        "family": scenario.get("family"),
+        "tags": sorted(scenario.get("tags") or []),
+        "outcome": "passed",
+        "duration_secs": 0.0,
+    }
+    _merge_outcome(row, report)
+    for key, value in getattr(report, "user_properties", []) or []:
+        row[key] = value
+    if existing is None:
+        _RESULTS.append(row)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Write the JSON sidecar at session end."""
+    out_path = session.config.getoption("--scenario-results-json")
+    if not out_path:
+        return
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": 1,
+        "scenarios": sorted(_RESULTS, key=lambda r: r["id"]),
+    }
+    with out.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def _scenario_id_from_item(item: pytest.Item) -> str | None:
+    """Extract the scenario id from a parametrised pytest item.
+
+    Item ids look like `tests/e2e/test_cascade.py::test_scenario[<id>]`.
+    The bracketed segment is the scenario id we used in `parametrize`.
+    Non-parametrised items (e.g. unit tests) return None.
+    """
+    name = item.name
+    if "[" not in name:
+        return None
+    return name[name.index("[") + 1 : -1]
+
+
+_OUTCOME_PRIORITY = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
+
+
+def _merge_outcome(row: dict, report) -> None:
+    """Promote the row's outcome if `report` is more severe."""
+    incoming = "error" if (report.when == "setup" and report.failed) else report.outcome
+    if _OUTCOME_PRIORITY.get(incoming, 0) > _OUTCOME_PRIORITY.get(
+        row["outcome"], 0
+    ):
+        row["outcome"] = incoming
+        if getattr(report, "longrepr", None):
+            row["longrepr"] = str(report.longrepr)[:2000]
+    row["duration_secs"] = round(
+        row.get("duration_secs", 0.0) + float(getattr(report, "duration", 0.0)),
+        3,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _cost_cap_check(request):
+    """After each scenario, scrape /metrics and abort if the session
+    exceeds `--cost-cap-usd`. No-op when the option is unset OR the
+    test doesn't request the `proxy` fixture (unit tests under
+    test_*_unit.py don't talk to the proxy).
+    """
+    yield
+    cap = request.config.getoption("--cost-cap-usd")
+    if cap is None:
+        return
+    if "proxy" not in request.fixturenames:
+        return
+    proxy = request.getfixturevalue("proxy")
+    try:
+        import requests
+        from prometheus_client.parser import text_string_to_metric_families
+    except ImportError:
+        return
+    try:
+        text = requests.get(proxy.metrics_url, timeout=2.0).text
+    except Exception:
+        return
+    spent = 0.0
+    for family in text_string_to_metric_families(text):
+        if family.name != "llmtrace_cost_usd":
+            continue
+        for sample in family.samples:
+            if sample.name == "llmtrace_cost_usd_total":
+                spent += float(sample.value)
+    if spent > cap:
+        pytest.exit(
+            f"[e2e] cost cap exceeded: spent ${spent:.4f} > cap ${cap:.4f}",
+            returncode=2,
+        )

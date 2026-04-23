@@ -134,6 +134,7 @@ nav:
       - Monitoring: guides/monitoring.md
       - Troubleshooting: guides/troubleshooting.md
       - Integration Tests: guides/integration-tests.md
+      - E2E Adversarial Testing: guides/e2e-testing.md
       - Releasing: guides/releasing.md
       - REST API: guides/API.md
   - Security & ML:
@@ -197,6 +198,8 @@ nav:
       - Results:
           - Judge Evaluation — gpt-4o-mini (2026-04-20): research/results/judge_evaluation_gpt4o_mini_2026-04-20.md
           - Regex FPR Calibration: research/results/fpr_calibration_regex.md
+          - E2E Baseline (2026-04-23): research/results/e2e_2026-04-23_baseline.md
+          - E2E Nightly Report (2026-04-23): research/results/e2e_2026-04-23.md
       - Roadmap:
           - autoresearch-rl Judge Fine-Tuning Plan: research/autoresearch-rl-judge-training-plan.md
   - Reference:
