@@ -1,0 +1,28 @@
+# Python dependencies for the e2e adversarial test framework (umbrella #91).
+# Pinned to the versions used to develop and validate the harness. Used by:
+#
+#   scripts/e2e/validate_scenarios.py              — Loop E2E-L2 (this file)
+#   tests/e2e/                                     — Loop E2E-L3 onward
+#   .github/workflows/ci.yml e2e-validate job      — Loop E2E-L2
+#
+# Install with:
+#
+#   python3 -m pip install -r requirements-e2e.txt
+
+# Scenario validation
+jsonschema==4.23.0
+PyYAML==6.0.2
+
+# Pytest harness (Loop E2E-L3) and HTTP client used to drive the proxy
+pytest==8.3.3
+requests==2.32.3
+
+# Prometheus exposition-format parser used by the metrics-delta observer
+# (Loop E2E-L4) and for fixture parsing in tests
+prometheus-client==0.21.0
+
+# In-process FastAPI mock upstream that the proxy forwards to during
+# PR-gate runs (Loop E2E-L9). Real upstream is configured at the CI
+# level for the nightly job (Loop E2E-L10).
+fastapi==0.115.6
+uvicorn==0.32.1

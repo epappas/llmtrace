@@ -24,6 +24,22 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  # Validate every YAML file under benchmarks/attacks/ against the e2e
+  # scenario JSON Schema (Loop E2E-L2 of the framework tracked in #91).
+  # Fast, no Rust toolchain, no caching needed.
+  e2e-validate-scenarios:
+    name: E2E Scenario Schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: python3 -m pip install -r requirements-e2e.txt
+      - name: Validate scenarios
+        run: python3 scripts/e2e/validate_scenarios.py --verbose
+
   security-audit:
     name: Security Audit
     runs-on: ubuntu-latest

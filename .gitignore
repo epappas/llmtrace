@@ -53,3 +53,9 @@ benchmarks/datasets/training/training_dataset.json
 .next/
 site/
 .venv-docs/
+
+# E2E adversarial test framework — per-session subprocess logs
+tests/e2e/.logs/
+
+# Local Python venv used for running the e2e harness
+.venv-e2e/
