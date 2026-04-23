@@ -42,7 +42,9 @@ _UPSTREAM_JUDGE = select_judge()
 
 
 @pytest.mark.serial
-def test_scenario(proxy: "ProxyHandle", scenario: dict) -> None:
+def test_scenario(
+    proxy: "ProxyHandle", scenario: dict, request: pytest.FixtureRequest
+) -> None:
     skip = scenario.get("skip")
     if skip:
         pytest.skip(skip.get("reason") or "scenario marked skip")
@@ -73,6 +75,13 @@ def test_scenario(proxy: "ProxyHandle", scenario: dict) -> None:
 
     upstream_judgement = _judge_upstream(scenario, response)
 
+    # Publish the upstream judgement to the L10 sidecar collector via
+    # pytest's standard user_properties channel. The conftest hook reads
+    # it back into the per-scenario row in the JSON output.
+    request.node.user_properties.append(
+        ("upstream_judgement", _serialize_judgement(upstream_judgement))
+    )
+
     results = assert_scenario(
         scenario,
         response=response,
@@ -90,6 +99,14 @@ def test_scenario(proxy: "ProxyHandle", scenario: dict) -> None:
         delta=delta,
         upstream_judgement=upstream_judgement,
     )
+
+
+def _serialize_judgement(j: UpstreamJudgement) -> dict:
+    return {
+        "fell_for_it": j.fell_for_it,
+        "rule": j.rule,
+        "reason": j.reason,
+    }
 
 
 def _judge_upstream(scenario: dict, response) -> UpstreamJudgement:
