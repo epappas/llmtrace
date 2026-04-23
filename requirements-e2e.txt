@@ -14,7 +14,7 @@ jsonschema==4.23.0
 PyYAML==6.0.2
 
 # Pytest harness (Loop E2E-L3) and HTTP client used to drive the proxy
-pytest==8.3.3
+pytest==9.0.3
 requests==2.33.0
 
 # Prometheus exposition-format parser used by the metrics-delta observer
