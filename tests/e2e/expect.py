@@ -21,6 +21,7 @@ from enum import IntEnum
 from typing import Any, Callable, Mapping
 
 from tests.e2e.observer import MetricsSnapshot, collect_finding_types
+from tests.e2e.upstream_judge import UpstreamJudgement, expected_fell_for_it
 
 # ---------------------------------------------------------------------------
 # Ordered enums — the harness compares with `>=` / `<=` semantics
@@ -306,6 +307,58 @@ def _compare_findings_min_severity(
     )
 
 
+def _compare_upstream_fell_for_it(
+    sid: str,
+    expected: bool,
+    judgement: UpstreamJudgement | None,
+) -> AssertionResult:
+    """Assert the upstream judge's verdict matches the scenario's expectation.
+
+    `judgement.fell_for_it = None` means the judge skipped (e.g. the
+    proxy returned 4xx so there was no upstream output). That converts
+    to a soft fail — the scenario asserts on something we couldn't
+    observe; reporting it loud lets the triager fix either the
+    expectation or the upstream config without reding the run.
+    """
+    if judgement is None or judgement.fell_for_it is None:
+        return AssertionResult(
+            comparator="upstream_fell_for_it",
+            passed=False,
+            soft=True,
+            message=(
+                f"[{sid}] upstream_fell_for_it expected {bool(expected)!r} "
+                f"but no upstream judgement was available "
+                f"({judgement.reason if judgement else 'judge not run'})."
+            ),
+            fields={
+                "expected": bool(expected),
+                "observed": None,
+                "reason": judgement.reason if judgement else "judge not run",
+            },
+        )
+    observed = judgement.fell_for_it
+    passed = observed == bool(expected)
+    return AssertionResult(
+        comparator="upstream_fell_for_it",
+        passed=passed,
+        message=(
+            ""
+            if passed
+            else (
+                f"[{sid}] upstream_fell_for_it expected {bool(expected)!r}, "
+                f"observed {observed!r} (rule={judgement.rule!r}, "
+                f"reason={judgement.reason!r})."
+            )
+        ),
+        fields={
+            "expected": bool(expected),
+            "observed": observed,
+            "rule": judgement.rule,
+            "reason": judgement.reason,
+        },
+    )
+
+
 def _compare_judge_verdict(
     sid: str,
     expected: Mapping[str, Any],
@@ -492,6 +545,7 @@ def assert_scenario(
     delta: MetricsSnapshot,
     verdict: Mapping[str, Any] | None = None,
     judge_degraded: bool = False,
+    upstream_judgement: UpstreamJudgement | None = None,
 ) -> list[AssertionResult]:
     """Evaluate every declared comparator in `scenario.expected`.
 
@@ -527,6 +581,14 @@ def assert_scenario(
                     fields={"expected": expected_block[key]},
                 )
             )
+
+    upstream_expected = expected_fell_for_it(scenario)
+    if upstream_expected is not None:
+        results.append(
+            _compare_upstream_fell_for_it(
+                sid, upstream_expected, upstream_judgement
+            )
+        )
     return results
 
 
