@@ -101,8 +101,30 @@
       "uniqueItems": true
     },
     "upstream_fell_for_it": {
-      "type": "boolean",
-      "description": "Optional. Set to true when the scenario should run against a live upstream and the upstream is expected to comply with the attack. Drives the L8 upstream-fell-for-it detector. The full object form (with canaries[]) is added in Loop E2E-L8."
+      "description": "Optional. Drives the L8 upstream-fell-for-it detector. Boolean form is the legacy compact spelling; the object form lets a scenario contribute its own substring/regex canaries (regex matches use the 're:' prefix).",
+      "oneOf": [
+        { "type": "boolean" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "expected": {
+              "type": "boolean",
+              "description": "Whether the upstream is expected to comply with the attack. When set, the harness asserts; when omitted, the judgement is purely observational."
+            },
+            "canaries": {
+              "type": "array",
+              "description": "Per-scenario substrings or regex patterns the harness searches for in the upstream response. Plain strings match as substrings; entries prefixed with 're:' compile as regex.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
     },
     "skip": {
       "type": "object",

@@ -32,9 +32,13 @@ from tests.e2e.observer import (
     poll_judge_verdict,
     render_assertion_context,
 )
+from tests.e2e.upstream_judge import UpstreamJudgement, select_judge
 
 if TYPE_CHECKING:
     from .conftest import ProxyHandle
+
+
+_UPSTREAM_JUDGE = select_judge()
 
 
 @pytest.mark.serial
@@ -67,15 +71,73 @@ def test_scenario(proxy: "ProxyHandle", scenario: dict) -> None:
         else None
     )
 
+    upstream_judgement = _judge_upstream(scenario, response)
+
     results = assert_scenario(
         scenario,
         response=response,
         delta=delta,
         verdict=verdict,
         judge_degraded=judge_degraded,
+        upstream_judgement=upstream_judgement,
     )
 
-    _evaluate(results, sid=sid, trace_id=trace_id, response=response, delta=delta)
+    _evaluate(
+        results,
+        sid=sid,
+        trace_id=trace_id,
+        response=response,
+        delta=delta,
+        upstream_judgement=upstream_judgement,
+    )
+
+
+def _judge_upstream(scenario: dict, response) -> UpstreamJudgement:
+    """Run the upstream judge over the response body.
+
+    Always runs (observational signal). The judge itself skips when the
+    response is a 4xx LLMTrace-error envelope so we never feed
+    LLMTrace's own output into the rule classes.
+    """
+    response_text = _safe_response_text(response)
+    return _UPSTREAM_JUDGE.judge(
+        scenario=scenario,
+        response_status=response.status_code,
+        response_text=response_text,
+    )
+
+
+def _safe_response_text(response) -> str:
+    """Best-effort extraction of the upstream-visible text content.
+
+    Tries OpenAI chat-completions shape first; falls back to the raw
+    body text. Never raises — a malformed body just yields an empty
+    string and the judge marks the scenario as "no rule matched".
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        try:
+            return response.text or ""
+        except Exception:
+            return ""
+    if isinstance(body, dict):
+        choices = body.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                message = first.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        return content
+                text = first.get("text")
+                if isinstance(text, str):
+                    return text
+    try:
+        return response.text or ""
+    except Exception:
+        return ""
 
 
 def _evaluate(
@@ -85,6 +147,7 @@ def _evaluate(
     trace_id: uuid.UUID,
     response,
     delta: MetricsSnapshot,
+    upstream_judgement: UpstreamJudgement | None = None,
 ) -> None:
     """Aggregate the comparator rows into a pytest verdict.
 
@@ -98,6 +161,7 @@ def _evaluate(
 
     summary = render_assertion_summary(results)
     metrics_context = render_assertion_context(delta)
+    upstream_line = _format_upstream_judgement(upstream_judgement)
 
     if hard_failures:
         pytest.fail(
@@ -109,15 +173,20 @@ def _evaluate(
                     summary,
                     "non-zero metrics delta:",
                     metrics_context,
+                    "upstream judgement:",
+                    upstream_line,
                 ]
             )
         )
 
     if soft_failures and not [r for r in results if r.passed]:
-        # Every comparator was a soft fail (e.g. judge-only scenario whose
-        # tier flaked) — surface as a skip so the reporter can distinguish
-        # the run from a real green.
         pytest.skip(
             f"[{sid}] all {len(soft_failures)} comparator(s) soft-failed "
             f"(degraded judge tier; trace_id={trace_id})"
         )
+
+
+def _format_upstream_judgement(j: UpstreamJudgement | None) -> str:
+    if j is None:
+        return "  (judge not invoked)"
+    return f"  fell_for_it={j.fell_for_it} rule={j.rule!r} reason={j.reason!r}"
