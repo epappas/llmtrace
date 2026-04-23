@@ -55,12 +55,16 @@ health_check:
   retries: 3
 
 # See config-e2e.yaml for rationale on enforcement mode/min_severity.
+# analysis_depth=full so the pre-request enforcement decision sees BOTH
+# regex AND ML findings. With `fast` (regex only) the proxy_outcome
+# heuristic in the harness misses scenarios where only ML detected an
+# attack (e.g. obfuscated tensor-trust extraction prompts).
 enforcement:
   mode: flag
-  analysis_depth: fast
+  analysis_depth: full
   min_severity: Low
   min_confidence: 0.5
-  timeout_ms: 2000
+  timeout_ms: 5000
 
 # The judge worker only spawns when action_router.enabled is true (the
 # JudgeRouteAction owns the channel that hands requests to the worker).

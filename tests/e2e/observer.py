@@ -256,22 +256,34 @@ def fetch_after_until_settled(
     *,
     before: MetricsSnapshot,
     expect_metric_change: bool,
-    timeout_secs: float = 10.0,
+    timeout_secs: float = 15.0,
     poll_interval_secs: float = 0.25,
+    settle_polls_required: int = 8,
+    expect_finding_metric: bool = True,
 ) -> MetricsSnapshot:
     """Fetch /metrics, polling until the delta stops changing.
 
-    LLMTrace records security findings + costs in a background task that
-    runs *after* the upstream response returns to the client. A naive
-    `MetricsSnapshot.fetch` immediately after `proxy.post_chat()` will
-    miss those updates. This helper polls until either:
+    LLMTrace records security findings in a background task that runs
+    *after* the upstream response returns to the client. The post-
+    response analysis can take several seconds when ML detectors are
+    enabled, so a naive single fetch consistently misses them.
 
-      * `expect_metric_change=True`: the delta against `before` becomes
-        non-empty (background task wrote something), then waits one more
-        poll interval to confirm the writes settled.
+    The helper holds two termination conditions:
+
       * `expect_metric_change=False`: a single poll is taken (any
         background-only metrics stay zero, which is what we want for
         scenarios expected to produce no findings).
+      * `expect_metric_change=True`: poll until the non-zero sample
+        count matches across `settle_polls_required` consecutive
+        snapshots. Synchronous metrics like
+        `llmtrace_action_executions_total` fire immediately and would
+        prematurely "settle" with a low count; requiring a longer stable
+        window lets the post-response background task land its
+        `llmtrace_security_findings_total` increments.
+        When `expect_finding_metric=True` the helper also waits until
+        at least one `llmtrace_security_findings_total` sample is
+        observed (or the timeout elapses) — the security findings
+        counter is the slowest-firing signal the harness asserts against.
 
     On timeout the most recent snapshot is returned so callers still see
     something to assert against. The returned `MetricsSnapshot` is the
@@ -282,17 +294,25 @@ def fetch_after_until_settled(
         return after
     deadline = time.monotonic() + timeout_secs
     last_nonzero = len(after.diff(before).nonzero_items())
-    settle_seen = False
+    stable_in_a_row = 0
     while time.monotonic() < deadline:
         time.sleep(poll_interval_secs)
         after = MetricsSnapshot.fetch(metrics_url)
-        nonzero = len(after.diff(before).nonzero_items())
-        if nonzero > 0 and nonzero == last_nonzero:
-            if settle_seen:
+        delta = after.diff(before)
+        nonzero = len(delta.nonzero_items())
+        finding_seen = (
+            not expect_finding_metric
+            or any(
+                value > 0 and key[0] == "llmtrace_security_findings_total"
+                for key, value in delta.samples.items()
+            )
+        )
+        if nonzero > 0 and nonzero == last_nonzero and finding_seen:
+            stable_in_a_row += 1
+            if stable_in_a_row >= settle_polls_required:
                 return after
-            settle_seen = True
         else:
-            settle_seen = False
+            stable_in_a_row = 0
             last_nonzero = nonzero
     return after
 
