@@ -225,6 +225,19 @@ If you supply no header, the proxy generates a fresh `Uuid::new_v4()`. The harne
 | `404` | `{"error": {"message": "no verdict for trace_id", ...}}` | Either no verdict has landed yet (judge worker is async) or the flag is off |
 | `400` | `{"error": {"message": "trace_id must be a UUID", ...}}` | The query param is not a valid RFC 4122 UUID |
 
+### `GET /debug/judge/golden_set/replay`
+
+Replays every fixture under `$LLMTRACE_GOLDEN_SET_PATH` through the configured `state.security` analyzer and returns aggregate per-category alignment numbers. Used by the calibration tooling and the alerts in #66 T4.
+
+| Status | Body | Meaning |
+|---|---|---|
+| `200` | `GoldenSetReplay` JSON (`fixture_root`, `total_entries`, `categories[]`, `disagreement_ids[]`) | Replay succeeded; gauges updated. |
+| `503` | `{"error": {"message": "golden-set replay disabled: set LLMTRACE_GOLDEN_SET_PATH ..."}}` | The path env is unset; endpoint is a no-op until configured. |
+| `400` | `{"error": {"message": "load failed: ..."}}` | Fixture root does not exist or contains schema-invalid entries. |
+| `500` | `{"error": {"message": "replay failed: ..."}}` | Analyzer failed mid-replay. |
+
+Side effects on success: updates the `llmtrace_judge_golden_set_alignment{category=...}` and `llmtrace_judge_golden_set_false_positive_rate{category=...}` gauges.
+
 ---
 
 ## Failure-message anatomy

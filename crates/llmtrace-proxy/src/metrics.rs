@@ -167,6 +167,16 @@ pub struct Metrics {
     /// the enforcement rate in shadow mode before flipping enforcement
     /// on.
     pub judge_shadow_would_block_total: IntCounterVec,
+    /// Per-category alignment between the security analyzer and the
+    /// golden-set ground truth (#66 T3c). Updated by the
+    /// `/debug/judge/golden_set/replay` endpoint. Range `[0.0, 1.0]`.
+    /// A drop below the per-category floor (see
+    /// `tests/judge_golden_set.rs::alignment_floor`) is the
+    /// canonical drift signal alerted on in T4.
+    pub judge_golden_set_alignment: GaugeVec,
+    /// Per-category false-positive rate against benign golden-set
+    /// entries (#66 T3c). Range `[0.0, 1.0]`.
+    pub judge_golden_set_false_positive_rate: GaugeVec,
 }
 
 impl Metrics {
@@ -657,6 +667,30 @@ impl Metrics {
             .register(Box::new(judge_shadow_would_block_total.clone()))
             .expect("register judge_shadow_would_block_total");
 
+        let judge_golden_set_alignment = GaugeVec::new(
+            Opts::new(
+                "llmtrace_judge_golden_set_alignment",
+                "Per-category alignment between the security analyzer and the golden-set ground truth (0.0–1.0)",
+            ),
+            &["category"],
+        )
+        .expect("metric: judge_golden_set_alignment");
+        registry
+            .register(Box::new(judge_golden_set_alignment.clone()))
+            .expect("register judge_golden_set_alignment");
+
+        let judge_golden_set_false_positive_rate = GaugeVec::new(
+            Opts::new(
+                "llmtrace_judge_golden_set_false_positive_rate",
+                "Per-category false-positive rate against benign golden-set entries (0.0–1.0)",
+            ),
+            &["category"],
+        )
+        .expect("metric: judge_golden_set_false_positive_rate");
+        registry
+            .register(Box::new(judge_golden_set_false_positive_rate.clone()))
+            .expect("register judge_golden_set_false_positive_rate");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -708,7 +742,25 @@ impl Metrics {
             judge_dropped_total,
             judge_promotion_rejected_total,
             judge_shadow_would_block_total,
+            judge_golden_set_alignment,
+            judge_golden_set_false_positive_rate,
         }
+    }
+
+    /// Record a per-category alignment fraction from the golden-set
+    /// replay endpoint (#66 T3c).
+    pub fn record_golden_set_alignment(
+        &self,
+        category: &str,
+        alignment_rate: f64,
+        false_positive_rate: f64,
+    ) {
+        self.judge_golden_set_alignment
+            .with_label_values(&[category])
+            .set(alignment_rate);
+        self.judge_golden_set_false_positive_rate
+            .with_label_values(&[category])
+            .set(false_positive_rate);
     }
 
     /// Render all registered metrics in Prometheus text exposition format.
