@@ -268,11 +268,11 @@ async fn benign_fixtures_are_not_overflagged() {
     for category in categories {
         let (n, fp) = tally[category];
         let rate = f64::from(fp) / f64::from(n);
-        eprintln!(
-            "[golden_set] benign category={category} n={n} flagged={fp} fpr={rate:.3}"
-        );
+        eprintln!("[golden_set] benign category={category} n={n} flagged={fp} fpr={rate:.3}");
         if rate > 0.25 {
-            failures.push(format!("{category}: fpr {rate:.3} > ceiling 0.250 ({fp}/{n})"));
+            failures.push(format!(
+                "{category}: fpr {rate:.3} > ceiling 0.250 ({fp}/{n})"
+            ));
         }
     }
     assert!(
