@@ -176,7 +176,9 @@ mod tests {
         // Cross-check: the `is_threat` key must appear before
         // `security_score` and `confidence` in the JSON schema list.
         let is_threat_pos = p.find("\"is_threat\":").expect("is_threat in prompt");
-        let score_pos = p.find("\"security_score\":").expect("security_score in prompt");
+        let score_pos = p
+            .find("\"security_score\":")
+            .expect("security_score in prompt");
         let conf_pos = p.find("\"confidence\":").expect("confidence in prompt");
         assert!(
             is_threat_pos < score_pos && is_threat_pos < conf_pos,

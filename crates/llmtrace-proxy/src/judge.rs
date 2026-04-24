@@ -1207,13 +1207,11 @@ mod tests {
     fn collision_openai_judge_with_azure_openai_upstream_warns() {
         // Azure OpenAI is the same model family — collision applies.
         let cfg = cfg_with_backend(JudgeBackendKind::Openai);
-        assert!(
-            detect_judge_family_collision(
-                &cfg,
-                "https://my-resource.openai.azure.com/openai/deployments"
-            )
-            .is_some()
-        );
+        assert!(detect_judge_family_collision(
+            &cfg,
+            "https://my-resource.openai.azure.com/openai/deployments"
+        )
+        .is_some());
     }
 
     #[test]
@@ -1229,17 +1227,13 @@ mod tests {
         // Different family — explicit cross-family pairing is the
         // recommended posture; must NOT warn.
         let cfg = cfg_with_backend(JudgeBackendKind::Openai);
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none());
     }
 
     #[test]
     fn collision_anthropic_judge_with_openai_upstream_no_warning() {
         let cfg = cfg_with_backend(JudgeBackendKind::Anthropic);
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
     }
 
     #[test]
@@ -1248,12 +1242,8 @@ mod tests {
         // self-enhancement bias is not a meaningful concern at the
         // family-detection level.
         let cfg = cfg_with_backend(JudgeBackendKind::Vllm);
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none()
-        );
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+        assert!(detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none());
     }
 
     #[test]
@@ -1261,18 +1251,14 @@ mod tests {
         // DeBERTa is a local discriminative classifier, not a
         // generator from any LLM family.
         let cfg = cfg_with_backend(JudgeBackendKind::Deberta);
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
     }
 
     #[test]
     fn collision_disabled_judge_never_warns() {
         let mut cfg = cfg_with_backend(JudgeBackendKind::Openai);
         cfg.enabled = false;
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
     }
 
     #[test]
@@ -1296,16 +1282,12 @@ mod tests {
         let mut cfg = cfg_with_backend(JudgeBackendKind::Cascade);
         cfg.cascade.fast_backend = JudgeBackendKind::Deberta;
         cfg.cascade.slow_backend = Some(JudgeBackendKind::Vllm);
-        assert!(
-            detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none()
-        );
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
     }
 
     #[test]
     fn collision_url_match_is_case_insensitive() {
         let cfg = cfg_with_backend(JudgeBackendKind::Openai);
-        assert!(
-            detect_judge_family_collision(&cfg, "HTTPS://API.OPENAI.COM/v1").is_some()
-        );
+        assert!(detect_judge_family_collision(&cfg, "HTTPS://API.OPENAI.COM/v1").is_some());
     }
 }
