@@ -604,7 +604,15 @@ async fn build_app_state(
     #[cfg(feature = "judge")]
     let judge_worker_spawned: bool = {
         if let Some(rx) = judge_rx {
-            let judge_cfg = config_handle.snapshot().judge.clone();
+            let snapshot = config_handle.snapshot();
+            let judge_cfg = snapshot.judge.clone();
+            // #66 T2: warn on self-enhancement bias before spawning the
+            // worker. Helper is a no-op when the judge is disabled or
+            // the family doesn't collide.
+            llmtrace_proxy::judge::warn_on_judge_family_collision(
+                &judge_cfg,
+                &snapshot.upstream_url,
+            );
             match llmtrace_proxy::judge::build_judge_backend(&judge_cfg, client.clone()).await {
                 Ok(Some(backend)) => {
                     let store = Arc::clone(&storage.judge_verdicts);
