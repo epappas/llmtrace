@@ -49,4 +49,56 @@ spec:
           annotations:
             summary: "LLMTrace critical finding rate is high"
             description: "Critical security findings exceeded 10 per minute."
+        # ---- Judge golden-set drift (#66 T4) -----------------------------
+        # Updated by GET /debug/judge/golden_set/replay; the nightly
+        # cron in CronJob `llmtrace-judge-golden-set-replay` calls it.
+        # Floors mirror crates/llmtrace-security/tests/judge_golden_set.rs::alignment_floor.
+        - alert: LLMTraceJudgeGoldenSetAlignmentDrift
+          expr: |
+            llmtrace_judge_golden_set_alignment{category="prompt_injection"} < 0.85
+            or
+            llmtrace_judge_golden_set_alignment{category="jailbreak"}        < 0.85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "LLMTrace judge golden-set alignment dropped below floor"
+            description: |
+              Per-category alignment between the security analyzer and
+              the curated golden set has been below the 0.85 floor for
+              15 minutes. The fast detection tier is drifting; new
+              regex / ML weights or a corpus drift may be the cause.
+            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
+        - alert: LLMTraceJudgeGoldenSetFprDrift
+          expr: llmtrace_judge_golden_set_false_positive_rate > 0.25
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "LLMTrace judge golden-set false-positive rate exceeded ceiling"
+            description: |
+              The benign-fixture false-positive rate has been above the
+              0.25 ceiling for 15 minutes. The detector is over-flagging;
+              recent regex tightening or a new ML model is the likely
+              culprit.
+            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
+        - alert: LLMTraceJudgeGoldenSetReplayStale
+          expr: |
+            time()
+              - max by (category) (
+                  timestamp(llmtrace_judge_golden_set_alignment)
+                )
+              > 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "LLMTrace judge golden-set replay has not run in 24h"
+            description: |
+              The /debug/judge/golden_set/replay endpoint has not
+              updated the alignment gauges in over 24 hours. Either
+              the nightly CronJob is failing, the LLMTRACE_GOLDEN_SET_PATH
+              env var is unset on the running proxy, or
+              server.debug_endpoints is OFF in production.
+            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
 {{- end }}

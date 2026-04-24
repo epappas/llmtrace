@@ -151,6 +151,7 @@ nav:
       - Secrets Management: deployment/secrets-management.md
   - Operations:
       - Feature Flags: runbooks/feature-flags.md
+      - Judge Golden-Set Drift: runbooks/judge-golden-set-drift.md
       - Dashboard Features: dashboard-features.md
   - Architecture:
       - System Architecture: architecture/SYSTEM_ARCHITECTURE.md
