@@ -44,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-nightly-${{ steps.report.outputs.date }}
           path: |
@@ -113,8 +113,17 @@ jobs:
       # branch creation, push, and PR open in one step. It's a no-op if
       # there are no changes (e.g. byte-identical report from yesterday)
       # so we can run unconditionally.
+      #
+      # `continue-on-error: true` keeps the run green when the repo's
+      # "Allow GitHub Actions to create and approve pull requests" flag
+      # is OFF (Settings → Actions → General). The actual e2e suite has
+      # already passed at this point and the report sits in the artifact
+      # bundle either way. The next step makes the failure visible in
+      # the workflow summary so it's never silently ignored.
       - name: Open report PR
-        uses: peter-evans/create-pull-request@v7
+        id: open_pr
+        continue-on-error: true
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(e2e): nightly report ${{ steps.report.outputs.date }}"
@@ -133,6 +142,26 @@ jobs:
           labels: |
             e2e-nightly
             automated
+
+      - name: Surface PR-step status
+        if: always()
+        run: |
+          if [ "${{ steps.open_pr.outcome }}" = "success" ]; then
+            echo "::notice title=Nightly report PR opened::Auto-PR submitted (or no diff vs previous run)."
+          else
+            {
+              echo "## Nightly report PR step failed"
+              echo ""
+              echo "The full e2e corpus passed; only the auto-PR step failed."
+              echo "Most common cause: repo Settings → Actions → General →"
+              echo "Workflow permissions → 'Allow GitHub Actions to create and"
+              echo "approve pull requests' is OFF."
+              echo ""
+              echo "Report and sidecar are still available in the run artifact"
+              echo "(\`e2e-nightly-${{ steps.report.outputs.date }}\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Nightly auto-PR step failed::Check workflow summary for the fix."
+          fi
 
       # Helper — fail-loud if we hit the wall-clock cap (matches L10
       # acceptance). cancelled() fires on timeout-minutes.
