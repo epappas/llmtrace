@@ -580,6 +580,138 @@ fn build_anthropic(
 }
 
 // ---------------------------------------------------------------------------
+// Cross-family collision detection (#66 T2)
+// ---------------------------------------------------------------------------
+
+/// Reason a judge backend's family collides with the upstream provider.
+///
+/// Self-enhancement bias: when the same model family judges its own
+/// outputs, it tends to under-flag its own failure modes. The classic
+/// case is OpenAI judging an OpenAI upstream — the judge model has
+/// learned to trust patterns the generator produces. Cross-family pairs
+/// (e.g., Anthropic judging an OpenAI upstream) avoid this by design.
+///
+/// vLLM and DeBERTa cannot collide here: vLLM is self-hosted and the
+/// operator has explicit control over which weights it serves; DeBERTa
+/// is a local discriminative classifier with no generative coupling to
+/// any LLM family. Cascade is composite — its inner backends carry
+/// the collision risk, not the cascade itself; we surface the inner
+/// hit rather than reporting on the cascade wrapper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollisionReason {
+    /// Which judge backend kind triggered the warning.
+    pub judge_kind: JudgeBackendKind,
+    /// Which upstream provider matched the judge family.
+    pub upstream_family: &'static str,
+    /// Stable code suitable for log filtering / alerting.
+    pub reason_code: &'static str,
+    /// Operator-facing remediation hint (one sentence).
+    pub remediation: &'static str,
+}
+
+/// Detect a same-family judge/upstream pairing.
+///
+/// Returns `Some(CollisionReason)` only when the judge backend's family
+/// matches the upstream provider's family in a way that's known to
+/// invite self-enhancement bias. Returns `None` for safe pairings
+/// (different family, vLLM, DeBERTa, or judge disabled).
+///
+/// Inputs are intentionally minimal so this is callable from
+/// `build_app_state` before the worker is spawned and from unit tests
+/// without booting the proxy.
+pub fn detect_judge_family_collision(
+    config: &JudgeConfig,
+    upstream_url: &str,
+) -> Option<CollisionReason> {
+    if !config.enabled {
+        return None;
+    }
+    detect_for_kind(config.backend, upstream_url, config)
+}
+
+fn detect_for_kind(
+    kind: JudgeBackendKind,
+    upstream_url: &str,
+    config: &JudgeConfig,
+) -> Option<CollisionReason> {
+    match kind {
+        JudgeBackendKind::Openai => {
+            if upstream_is_openai_family(upstream_url) {
+                Some(CollisionReason {
+                    judge_kind: JudgeBackendKind::Openai,
+                    upstream_family: "openai",
+                    reason_code: "judge_family_collision_openai",
+                    remediation: "switch judge.backend to anthropic, vllm, or deberta to avoid self-enhancement bias",
+                })
+            } else {
+                None
+            }
+        }
+        JudgeBackendKind::Anthropic => {
+            if upstream_is_anthropic_family(upstream_url) {
+                Some(CollisionReason {
+                    judge_kind: JudgeBackendKind::Anthropic,
+                    upstream_family: "anthropic",
+                    reason_code: "judge_family_collision_anthropic",
+                    remediation: "switch judge.backend to openai, vllm, or deberta to avoid self-enhancement bias",
+                })
+            } else {
+                None
+            }
+        }
+        JudgeBackendKind::Cascade => {
+            // Surface the inner backend's collision rather than the
+            // cascade wrapper: the worry is bias inside the inner
+            // generator, not the composition itself.
+            let inner = match (config.cascade.fast_backend, config.cascade.slow_backend) {
+                (k, _) if matches!(k, JudgeBackendKind::Openai | JudgeBackendKind::Anthropic) => {
+                    Some(k)
+                }
+                (_, Some(k))
+                    if matches!(k, JudgeBackendKind::Openai | JudgeBackendKind::Anthropic) =>
+                {
+                    Some(k)
+                }
+                _ => None,
+            };
+            inner.and_then(|k| detect_for_kind(k, upstream_url, config))
+        }
+        // Self-hosted vLLM and local DeBERTa: no collision risk.
+        JudgeBackendKind::Vllm | JudgeBackendKind::Deberta => None,
+    }
+}
+
+fn upstream_is_openai_family(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("api.openai.com")
+        || lower.contains("openai.azure.com")
+        || lower.contains("cognitiveservices.azure.com")
+}
+
+fn upstream_is_anthropic_family(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    lower.contains("api.anthropic.com")
+}
+
+/// Emit a startup `warn!` when `detect_judge_family_collision` returns
+/// a hit. Centralised here so the call site in `build_app_state` stays
+/// a one-liner and the log-line shape is testable in isolation.
+pub fn warn_on_judge_family_collision(config: &JudgeConfig, upstream_url: &str) {
+    if let Some(c) = detect_judge_family_collision(config, upstream_url) {
+        tracing::warn!(
+            reason_code = c.reason_code,
+            judge_kind = ?c.judge_kind,
+            upstream_family = c.upstream_family,
+            upstream_url = %upstream_url,
+            remediation = c.remediation,
+            "Judge backend family matches upstream provider family. \
+             Self-enhancement bias may mask regressions because the same \
+             model family is grading its own outputs."
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1041,5 +1173,121 @@ mod tests {
 
         let text = metrics.gather_text().unwrap();
         assert!(text.contains("reason=\"shutdown\""));
+    }
+
+    // -----------------------------------------------------------------
+    // #66 T2: cross-family collision detection
+    // -----------------------------------------------------------------
+
+    fn cfg_with_backend(kind: JudgeBackendKind) -> JudgeConfig {
+        JudgeConfig {
+            enabled: true,
+            backend: kind,
+            ..JudgeConfig::default()
+        }
+    }
+
+    #[test]
+    fn collision_openai_judge_with_openai_upstream_warns() {
+        let cfg = cfg_with_backend(JudgeBackendKind::Openai);
+        let c = detect_judge_family_collision(&cfg, "https://api.openai.com/v1").unwrap();
+        assert_eq!(c.judge_kind, JudgeBackendKind::Openai);
+        assert_eq!(c.upstream_family, "openai");
+        assert_eq!(c.reason_code, "judge_family_collision_openai");
+        assert!(
+            c.remediation.contains("anthropic")
+                || c.remediation.contains("vllm")
+                || c.remediation.contains("deberta"),
+            "remediation should suggest a different family: {}",
+            c.remediation
+        );
+    }
+
+    #[test]
+    fn collision_openai_judge_with_azure_openai_upstream_warns() {
+        // Azure OpenAI is the same model family — collision applies.
+        let cfg = cfg_with_backend(JudgeBackendKind::Openai);
+        assert!(detect_judge_family_collision(
+            &cfg,
+            "https://my-resource.openai.azure.com/openai/deployments"
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn collision_anthropic_judge_with_anthropic_upstream_warns() {
+        let cfg = cfg_with_backend(JudgeBackendKind::Anthropic);
+        let c = detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").unwrap();
+        assert_eq!(c.upstream_family, "anthropic");
+        assert_eq!(c.reason_code, "judge_family_collision_anthropic");
+    }
+
+    #[test]
+    fn collision_openai_judge_with_anthropic_upstream_no_warning() {
+        // Different family — explicit cross-family pairing is the
+        // recommended posture; must NOT warn.
+        let cfg = cfg_with_backend(JudgeBackendKind::Openai);
+        assert!(detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_anthropic_judge_with_openai_upstream_no_warning() {
+        let cfg = cfg_with_backend(JudgeBackendKind::Anthropic);
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_vllm_judge_never_warns() {
+        // vLLM is self-hosted; operator-controlled weights mean
+        // self-enhancement bias is not a meaningful concern at the
+        // family-detection level.
+        let cfg = cfg_with_backend(JudgeBackendKind::Vllm);
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+        assert!(detect_judge_family_collision(&cfg, "https://api.anthropic.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_deberta_judge_never_warns() {
+        // DeBERTa is a local discriminative classifier, not a
+        // generator from any LLM family.
+        let cfg = cfg_with_backend(JudgeBackendKind::Deberta);
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_disabled_judge_never_warns() {
+        let mut cfg = cfg_with_backend(JudgeBackendKind::Openai);
+        cfg.enabled = false;
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_cascade_surfaces_inner_collision() {
+        // Cascade with OpenAI as the slow tier and the upstream is
+        // OpenAI: the inner collision should be reported. We name the
+        // inner backend, not the cascade wrapper.
+        let mut cfg = cfg_with_backend(JudgeBackendKind::Cascade);
+        cfg.cascade.fast_backend = JudgeBackendKind::Deberta;
+        cfg.cascade.slow_backend = Some(JudgeBackendKind::Openai);
+        let c = detect_judge_family_collision(&cfg, "https://api.openai.com/v1").unwrap();
+        assert_eq!(c.judge_kind, JudgeBackendKind::Openai);
+        assert_eq!(c.upstream_family, "openai");
+    }
+
+    #[test]
+    fn collision_cascade_with_safe_inner_does_not_warn() {
+        // Cascade composed of DeBERTa fast + vLLM slow against an
+        // OpenAI upstream: no inner backend is in the OpenAI family,
+        // so no warning.
+        let mut cfg = cfg_with_backend(JudgeBackendKind::Cascade);
+        cfg.cascade.fast_backend = JudgeBackendKind::Deberta;
+        cfg.cascade.slow_backend = Some(JudgeBackendKind::Vllm);
+        assert!(detect_judge_family_collision(&cfg, "https://api.openai.com/v1").is_none());
+    }
+
+    #[test]
+    fn collision_url_match_is_case_insensitive() {
+        let cfg = cfg_with_backend(JudgeBackendKind::Openai);
+        assert!(detect_judge_family_collision(&cfg, "HTTPS://API.OPENAI.COM/v1").is_some());
     }
 }
