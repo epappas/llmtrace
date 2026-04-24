@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- E2E adversarial test framework (#91, L1–L10): 50-scenario YAML corpus across 8 attack families, pytest harness with per-scenario `/metrics` delta + judge-verdict polling, expectation DSL, regex upstream-fell-for-it judge with six rule classes, PR-gate workflow on every PR, nightly cron with auto-PR'd deterministic markdown report.
+- Judge reliability patterns (#66): binary-first prompt, cross-family startup warning, per-id golden-set fixtures with a shared loader/replay module, integration test with per-category alignment floors, `GET /debug/judge/golden_set/replay` debug endpoint, two new gauges (`llmtrace_judge_golden_set_alignment`, `llmtrace_judge_golden_set_false_positive_rate`), three new PrometheusRule alerts with operator runbook at `docs/runbooks/judge-golden-set-drift.md`.
+- New attack-detection coverage in `RegexSecurityAnalyzer`: rot13 and leetspeak encoding evasion now emit `encoding_attack` findings (previously only base64 was covered).
+- `X-LLMTrace-Trace-Id` request header is honored by the proxy and echoed back on every response (`L1a` of #91).
+
+### Changed
+- E2E nightly workflow's auto-PR step is `continue-on-error: true` so a missing `Allow GitHub Actions to create and approve pull requests` repo setting surfaces as a workflow-summary warning rather than a red run while the corpus replay still passes.
+- Bumped GitHub Actions: `actions/setup-python` v5→v6, `actions/upload-artifact` v4→v7, `peter-evans/create-pull-request` v7→v8 (Node 24 ahead of the 2026-06-02 forced cutover).
+- `pytest.ini` sets `pythonpath = .` so e2e tests run without a manual `PYTHONPATH` export from the repo root.
+- Dashboard ships `"overrides": { "postcss": "^8.5.10" }` so npm audit catches Next.js's nested transitive postcss copy (GHSA-qx2v-qp2m-jg93).
+
+### Documentation
+- New guide: `docs/guides/e2e-testing.md` (in mkdocs nav under Guides) — quick start, comparator reference, CI workflow contract, scenario authoring.
+- New runbook: `docs/runbooks/judge-golden-set-drift.md` (under Operations) — per-alert diagnose + mitigate steps for the three new PrometheusRule alerts.
+- New section in `docs/guides/llm-judge.md`: "Golden-set calibration loop (#66)" — operator workflow for the replay endpoint, the new gauges, and how to add a fixture.
+- New baseline reports: `docs/research/results/e2e_2026-04-23_baseline.md`, `e2e_2026-04-23.md`, `e2e_2026-04-24.md`.
+
 ## [0.2.0] - 2026-04-17
 
 - chore: bump workspace version to 0.2.0 (6647795)

@@ -219,9 +219,15 @@ for one backend do not transfer to another without re-measurement.
    promotes Block. Operators watch `llmtrace_judge_shadow_would_block_total`
    to measure the *would-block* rate under current thresholds.
 2. Collect >=1,000 verdicts across the traffic profile you intend to protect.
-3. Run the golden-set reliability workflow in issue #66: group verdicts by
-   self-reported confidence, plot observed precision vs. reported confidence,
-   fit a calibrator.
+3. Run the golden-set reliability workflow (issue #66, **shipped**): the
+   in-process replay endpoint `GET /debug/judge/golden_set/replay` reads
+   per-id fixtures from `crates/llmtrace-security/fixtures/judge_golden_set/`
+   and updates two gauges, `llmtrace_judge_golden_set_alignment{category}` and
+   `llmtrace_judge_golden_set_false_positive_rate{category}`. Group verdicts
+   by self-reported confidence, plot observed precision vs. reported
+   confidence, fit a calibrator. See the [judge guide](../guides/llm-judge.md#golden-set-calibration-loop-66)
+   for the operator workflow and the [drift runbook](../runbooks/judge-golden-set-drift.md)
+   for alert triage.
 4. Pick `min_confidence` at the target false-positive rate (typical starting
    point: FP <= 1% of legitimate traffic). Re-pick `min_security_score` from
    the same reliability diagram if the score distribution is bimodal.
@@ -230,8 +236,8 @@ for one backend do not transfer to another without re-measurement.
    silent regression.
 
 Re-run steps 2-5 whenever the judge model, provider, or system prompt
-changes. Issue #83 (per-model metrics) and issue #66 (golden-set patterns)
-are prerequisites for doing this rigorously.
+changes. Issue #83 (per-model metrics) and issue #66 (golden-set patterns,
+**shipped**) provide the calibration plumbing.
 
 ---
 
