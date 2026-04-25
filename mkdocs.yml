@@ -201,6 +201,7 @@ nav:
           - Regex FPR Calibration: research/results/fpr_calibration_regex.md
           - E2E Baseline (2026-04-23): research/results/e2e_2026-04-23_baseline.md
           - E2E Nightly Report (2026-04-23): research/results/e2e_2026-04-23.md
+          - Upstream Judge Calibration (2026-04-25): research/results/upstream_judge_calibration_2026-04-25.md
       - Roadmap:
           - autoresearch-rl Judge Fine-Tuning Plan: research/autoresearch-rl-judge-training-plan.md
   - Reference:

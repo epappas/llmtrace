@@ -322,6 +322,18 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - LLM upstream judge filed as a follow-up issue (do not implement here).
 - 4xx response bodies are excluded from detector input (LLMTrace blocking ≠ upstream output).
 
+#### L8 follow-up — `LLMUpstreamJudge` (issue #123, shipped 2026-04-25)
+
+The reserved `llm` seam is now an Anthropic-backed implementation:
+
+- `tests/e2e/upstream_judge.py::LLMUpstreamJudge` — defaults to `claude-haiku-4-5`, prompt-cached system prompt, JSON-verdict parser tolerant of prose-wrapped output, observational on every error path (network, parse, cost-cap).
+- Constructor cost cap surfaces as `CostCapExceeded`; subsequent `judge()` calls raise hard. Mirrors L10's `--cost-cap-usd` fixture.
+- Env-driven config: `LLMTRACE_E2E_UPSTREAM_JUDGE_{MODEL,COST_CAP_USD,MAX_OUTPUT_TOKENS,MAX_INPUT_CHARS}`.
+- Calibration runner: `scripts/e2e/calibrate_upstream_judge.py` produces `docs/research/results/upstream_judge_calibration_<date>.md` — the `(regex_verdict, llm_verdict, expected)` triples + disagreement detail the issue called for.
+- First calibration run (2026-04-25, haiku-4-5, 12-case corpus, $0.008): regex 10/12 = 83.3%, LLM 12/12 = 100%, 2 regex blind spots (compliance with no DAN/persona marker; indirect-injection compliance with no rule-class keyword).
+
+See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the operator-facing reference.
+
 ---
 
 ## Phase E2E-CI
