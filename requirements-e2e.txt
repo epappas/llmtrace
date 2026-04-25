@@ -26,3 +26,10 @@ prometheus-client==0.21.0
 # level for the nightly job (Loop E2E-L10).
 fastapi==0.115.6
 uvicorn==0.32.1
+
+# Anthropic SDK for the LLM-backed upstream-fell-for-it judge (#123).
+# Used by tests/e2e/upstream_judge.py:LLMUpstreamJudge when the harness
+# is invoked with LLMTRACE_E2E_UPSTREAM_JUDGE=llm. CI never calls live
+# APIs (the unit suite injects a stub client); the real-API path is
+# exercised by scripts/e2e/calibrate_upstream_judge.py only.
+anthropic==0.97.0
