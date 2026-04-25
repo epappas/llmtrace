@@ -78,8 +78,24 @@ jobs:
           # whether or not the secret is configured.
           LLMTRACE_E2E_REAL_UPSTREAM_URL: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_URL }}
           LLMTRACE_JUDGE_OPENAI_API_KEY: ${{ secrets.LLMTRACE_JUDGE_OPENAI_API_KEY }}
+          # LLM-backed upstream-fell-for-it judge (#123). The judge is
+          # auto-enabled when ANTHROPIC_API_KEY is configured as a repo
+          # secret; without it the harness keeps the regex baseline so
+          # the nightly never breaks on a missing secret.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL: claude-haiku-4-5
+          LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD: "0.50"
         run: |
           mkdir -p out
+          # Defensive gate: only flip to the LLM judge when its
+          # credential is present. RegexUpstreamJudge stays the
+          # fallback so the workflow degrades gracefully.
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            export LLMTRACE_E2E_UPSTREAM_JUDGE=llm
+            echo "::notice title=Upstream judge::LLMUpstreamJudge (model=${LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL}, cap=\$${LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD})"
+          else
+            echo "::notice title=Upstream judge::RegexUpstreamJudge (ANTHROPIC_API_KEY secret not set; LLM backend skipped)"
+          fi
           # `|| true` so the report still generates on test failures —
           # a regression IS the report's reason to exist.
           python3 -m pytest tests/e2e/test_cascade.py \
