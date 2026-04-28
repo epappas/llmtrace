@@ -331,10 +331,22 @@ class LLMCallResult:
 # values; the constructor accepts an override for fine-grained
 # accounting. Source: anthropic.com/pricing as of 2026-04-25.
 _PRICING_PER_MTOK: dict[str, tuple[float, float]] = {
+    # Anthropic
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-haiku-4-5-20251001": (1.00, 5.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-opus-4-7": (5.00, 25.00),
+    # Moonshot Kimi (api.moonshot.ai). Reasoning-capable kimi-k2.6 is the
+    # default for the openai-compat backend. List prices as of 2026-04-28.
+    "kimi-k2.6": (0.60, 2.50),
+    "kimi-k2.5": (0.30, 1.20),
+    "moonshot-v1-8k": (0.15, 0.60),
+    "moonshot-v1-32k": (0.30, 1.20),
+    "moonshot-v1-128k": (0.60, 2.50),
+    # OpenAI / OpenRouter passthroughs (representative)
+    "gpt-4o-mini": (0.15, 0.60),
+    "anthropic/claude-haiku-4-5": (1.00, 5.00),
+    "moonshotai/kimi-k2": (0.60, 2.50),
 }
 _DEFAULT_PRICING = (1.00, 5.00)  # haiku-tier fallback for unknown ids
 
@@ -378,7 +390,17 @@ class LLMUpstreamJudge:
     Constructor knobs are deliberate: the nightly run sweeps 50
     scenarios, so each call must be cheap and bounded.
 
-      * `model` — default `claude-haiku-4-5` (lowest-cost tier).
+      * `model` — default `claude-haiku-4-5` (anthropic backend) or
+        `kimi-k2.6` etc. for the openai-compatible backend.
+      * `backend` — `"anthropic"` (default) talks to Anthropic's
+        Messages API; `"openai"` talks to any OpenAI-compatible
+        endpoint (Moonshot/Kimi, OpenRouter, OpenAI itself, vLLM).
+      * `base_url` — only honoured for `backend="openai"`. Defaults to
+        OpenAI's. Set to `https://api.moonshot.ai/v1` for Kimi or
+        `https://openrouter.ai/api/v1` for OpenRouter.
+      * `api_key_env` — name of the env var holding the credential.
+        Defaults to `ANTHROPIC_API_KEY` for the anthropic backend and
+        `OPENAI_API_KEY` for the openai backend.
       * `cost_cap_usd` — session cost ceiling. Once breached, every
         subsequent `judge()` raises `CostCapExceeded`. Mirrors L10's
         proxy-side cost-cap fixture.
@@ -387,13 +409,16 @@ class LLMUpstreamJudge:
         API.
       * `max_output_tokens` — verdict JSON is small; 256 is generous.
       * `client` — callable used to talk to the model. Tests inject a
-        fake; production builds an Anthropic client from env.
+        fake; production builds the right adapter from `backend`.
     """
 
     def __init__(
         self,
         *,
         model: str = "claude-haiku-4-5",
+        backend: str = "anthropic",
+        base_url: str | None = None,
+        api_key_env: str | None = None,
         cost_cap_usd: float = 1.0,
         max_input_chars: int = 8000,
         max_output_tokens: int = 256,
@@ -408,12 +433,21 @@ class LLMUpstreamJudge:
             raise ValueError("max_output_tokens must be > 0")
 
         self._model = model
+        self._backend = backend
         self._cost_cap_usd = float(cost_cap_usd)
         self._max_input_chars = int(max_input_chars)
         self._max_output_tokens = int(max_output_tokens)
         self._cost_used_usd = 0.0
         self._calls_made = 0
-        self._client = client or _build_anthropic_client(model)
+        if client is None:
+            self._client = _build_default_client(
+                backend=backend,
+                model=model,
+                base_url=base_url,
+                api_key_env=api_key_env,
+            )
+        else:
+            self._client = client
         self._pricing = pricing or _PRICING_PER_MTOK.get(model, _DEFAULT_PRICING)
 
     @property
@@ -427,6 +461,10 @@ class LLMUpstreamJudge:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def backend(self) -> str:
+        return self._backend
 
     def judge(
         self,
@@ -584,7 +622,30 @@ def _parse_llm_verdict(text: str) -> tuple[bool, str, str] | None:
     return None
 
 
-def _build_anthropic_client(model: str) -> Callable[..., LLMCallResult]:
+def _build_default_client(
+    *,
+    backend: str,
+    model: str,
+    base_url: str | None,
+    api_key_env: str | None,
+) -> Callable[..., LLMCallResult]:
+    """Dispatch to the right SDK adapter for `backend`."""
+    backend = (backend or "anthropic").strip().lower()
+    if backend == "anthropic":
+        return _build_anthropic_client(model, api_key_env=api_key_env)
+    if backend == "openai":
+        return _build_openai_client(
+            model, base_url=base_url, api_key_env=api_key_env
+        )
+    raise ValueError(
+        f"unknown LLMUpstreamJudge backend {backend!r}; "
+        "valid: anthropic, openai"
+    )
+
+
+def _build_anthropic_client(
+    model: str, *, api_key_env: str | None = None
+) -> Callable[..., LLMCallResult]:
     """Return a thunk that calls Anthropic's Messages API.
 
     Imported lazily so the module remains importable without the SDK
@@ -601,13 +662,15 @@ def _build_anthropic_client(model: str) -> Callable[..., LLMCallResult]:
             "install via `pip install -r requirements-e2e.txt`"
         ) from exc
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    env = api_key_env or "ANTHROPIC_API_KEY"
+    api_key = os.environ.get(env)
+    if not api_key:
         raise RuntimeError(
-            "LLMUpstreamJudge requires ANTHROPIC_API_KEY to be set in the "
-            "environment (the SDK reads it on construction)"
+            f"LLMUpstreamJudge anthropic backend requires {env} to be set "
+            "in the environment"
         )
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=api_key)
 
     def _call(
         *,
@@ -651,6 +714,72 @@ def _build_anthropic_client(model: str) -> Callable[..., LLMCallResult]:
     return _call
 
 
+def _build_openai_client(
+    model: str,
+    *,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+) -> Callable[..., LLMCallResult]:
+    """Return a thunk that calls any OpenAI-compatible Chat Completions API.
+
+    Works against OpenAI itself, OpenRouter, Moonshot/Kimi, and any
+    other endpoint that speaks the OpenAI /v1/chat/completions shape.
+    The system prompt rides as a `system` role message — we intentionally
+    do not emit Anthropic-specific `cache_control` here because not
+    every gateway forwards it; cost is already trivial without caching.
+    """
+    try:
+        import openai  # noqa: PLC0415 — lazy import on purpose
+    except ImportError as exc:  # pragma: no cover - exercised in CI prep
+        raise RuntimeError(
+            "LLMUpstreamJudge openai backend requires the `openai` package; "
+            "install via `pip install -r requirements-e2e.txt`"
+        ) from exc
+
+    env = api_key_env or "OPENAI_API_KEY"
+    api_key = os.environ.get(env)
+    if not api_key:
+        raise RuntimeError(
+            f"LLMUpstreamJudge openai backend requires {env} to be set "
+            "in the environment"
+        )
+
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    client = openai.OpenAI(**kwargs)
+
+    def _call(
+        *,
+        model: str,
+        system: str,
+        user: str,
+        max_tokens: int,
+    ) -> LLMCallResult:
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        choice = response.choices[0] if response.choices else None
+        text = ""
+        if choice is not None and choice.message is not None:
+            text = choice.message.content or ""
+        usage = response.usage
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        return LLMCallResult(
+            text=text,
+            input_tokens=int(prompt_tokens),
+            output_tokens=int(completion_tokens),
+        )
+
+    return _call
+
+
 # ---------------------------------------------------------------------------
 # Plug-in seam
 # ---------------------------------------------------------------------------
@@ -661,6 +790,9 @@ _ENV_MODEL = "LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL"
 _ENV_COST_CAP = "LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD"
 _ENV_MAX_OUTPUT = "LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_OUTPUT_TOKENS"
 _ENV_MAX_INPUT_CHARS = "LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_INPUT_CHARS"
+_ENV_BACKEND = "LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND"
+_ENV_BASE_URL = "LLMTRACE_E2E_UPSTREAM_JUDGE_BASE_URL"
+_ENV_API_KEY_ENV = "LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV"
 
 
 def select_judge() -> UpstreamJudge:
@@ -669,7 +801,10 @@ def select_judge() -> UpstreamJudge:
     Returns the regex judge by default. The LLM judge is opt-in via
     `LLMTRACE_E2E_UPSTREAM_JUDGE=llm` and reads its knobs from
     `LLMTRACE_E2E_UPSTREAM_JUDGE_{MODEL,COST_CAP_USD,MAX_OUTPUT_TOKENS,
-    MAX_INPUT_CHARS}` with sensible defaults.
+    MAX_INPUT_CHARS,BACKEND,BASE_URL,API_KEY_ENV}` with sensible
+    defaults. `BACKEND` picks between `anthropic` (default) and
+    `openai` (the OpenAI-compatible adapter — works for Moonshot/Kimi,
+    OpenRouter, OpenAI, vLLM).
     """
     choice = (os.environ.get(_ENV_VAR) or "regex").strip().lower()
     if choice == "regex":
@@ -684,6 +819,12 @@ def select_judge() -> UpstreamJudge:
             kwargs["max_output_tokens"] = int(max_out)
         if max_in := os.environ.get(_ENV_MAX_INPUT_CHARS):
             kwargs["max_input_chars"] = int(max_in)
+        if backend := os.environ.get(_ENV_BACKEND):
+            kwargs["backend"] = backend
+        if base_url := os.environ.get(_ENV_BASE_URL):
+            kwargs["base_url"] = base_url
+        if api_key_env := os.environ.get(_ENV_API_KEY_ENV):
+            kwargs["api_key_env"] = api_key_env
         return LLMUpstreamJudge(**kwargs)
     raise ValueError(
         f"{_ENV_VAR}={choice!r} is not a recognised judge id; "
