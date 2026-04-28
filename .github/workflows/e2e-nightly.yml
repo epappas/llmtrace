@@ -78,8 +78,32 @@ jobs:
           # whether or not the secret is configured.
           LLMTRACE_E2E_REAL_UPSTREAM_URL: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_URL }}
           LLMTRACE_JUDGE_OPENAI_API_KEY: ${{ secrets.LLMTRACE_JUDGE_OPENAI_API_KEY }}
+          # LLM-backed upstream-fell-for-it judge (#123). Auto-enabled
+          # when MOONSHOT_API_KEY is configured as a repo secret. Without
+          # it the harness keeps the regex baseline so the nightly never
+          # breaks on a missing secret. Calibration evidence committed
+          # at docs/research/results/upstream_judge_calibration_kimi-k2-6_2026-04-28.md
+          # — kimi-k2.6 hit 12/12 = 100% vs regex's 10/12 = 83.3% at
+          # ~$0.0016/call, so per-session cap of $0.50 is a safety margin
+          # not a budget.
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND: openai
+          LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL: kimi-k2.6
+          LLMTRACE_E2E_UPSTREAM_JUDGE_BASE_URL: https://api.moonshot.ai/v1
+          LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV: MOONSHOT_API_KEY
+          LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD: "0.50"
         run: |
           mkdir -p out
+          # Defensive gate: only flip to the LLM judge when its
+          # credential is present. RegexUpstreamJudge stays the
+          # fallback so the workflow degrades gracefully when no
+          # secret is configured.
+          if [ -n "${MOONSHOT_API_KEY:-}" ]; then
+            export LLMTRACE_E2E_UPSTREAM_JUDGE=llm
+            echo "::notice title=Upstream judge::LLMUpstreamJudge (backend=${LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND}, model=${LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL}, cap=\$${LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD})"
+          else
+            echo "::notice title=Upstream judge::RegexUpstreamJudge (MOONSHOT_API_KEY secret not set; LLM backend skipped)"
+          fi
           # `|| true` so the report still generates on test failures —
           # a regression IS the report's reason to exist.
           python3 -m pytest tests/e2e/test_cascade.py \
