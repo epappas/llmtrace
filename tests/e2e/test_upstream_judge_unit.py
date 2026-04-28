@@ -536,3 +536,248 @@ def test_llm_judge_constructor_validates_args():
         LLMUpstreamJudge(client=lambda **_: None, max_input_chars=0)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         LLMUpstreamJudge(client=lambda **_: None, max_output_tokens=0)  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Backend selection (#123 follow-up — openai-compatible adapter for Kimi /
+# OpenRouter / OpenAI / vLLM)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_judge_backend_property_defaults_to_anthropic():
+    judge = LLMUpstreamJudge(client=lambda **_: None, cost_cap_usd=1.0)  # type: ignore[arg-type]
+    assert judge.backend == "anthropic"
+
+
+def test_llm_judge_backend_property_reflects_constructor():
+    judge = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        cost_cap_usd=1.0,
+        backend="openai",
+    )
+    assert judge.backend == "openai"
+
+
+def test_select_judge_openai_backend_returns_judge(monkeypatch):
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE", "llm")
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND", "openai")
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL", "kimi-k2.6")
+    monkeypatch.setenv(
+        "LLMTRACE_E2E_UPSTREAM_JUDGE_BASE_URL", "https://api.moonshot.ai/v1"
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-stub-key")
+    judge = select_judge()
+    assert isinstance(judge, LLMUpstreamJudge)
+    assert judge.backend == "openai"
+    assert judge.model == "kimi-k2.6"
+
+
+def test_select_judge_openai_backend_custom_api_key_env(monkeypatch):
+    """When the user routes the credential through a non-default env
+    var (e.g. MOONSHOT_API_KEY), `LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV`
+    redirects the lookup so we don't need to alias to OPENAI_API_KEY."""
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE", "llm")
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND", "openai")
+    monkeypatch.setenv(
+        "LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV", "MOONSHOT_API_KEY"
+    )
+    monkeypatch.setenv("MOONSHOT_API_KEY", "test-stub-key")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    judge = select_judge()
+    assert isinstance(judge, LLMUpstreamJudge)
+
+
+def test_select_judge_openai_missing_api_key_raises(monkeypatch):
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE", "llm")
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND", "openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        select_judge()
+
+
+def test_select_judge_unknown_backend_raises(monkeypatch):
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE", "llm")
+    monkeypatch.setenv("LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND", "vllm")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-stub-key")
+    with pytest.raises(ValueError, match="vllm"):
+        select_judge()
+
+
+def test_llm_judge_openai_backend_invokes_chat_completions(monkeypatch):
+    """End-to-end of the openai adapter against a fake openai SDK module.
+
+    Confirms the chosen base_url + api_key reach `OpenAI(...)`, the
+    request shape matches Chat Completions (`messages` with system+user),
+    `max_tokens` is forwarded, and usage tokens land back on
+    `LLMCallResult` so cost accounting works.
+    """
+    captured: dict = {}
+
+    class _FakeChoice:
+        def __init__(self, content: str):
+            self.message = type("M", (), {"content": content})()
+
+    class _FakeResponse:
+        def __init__(self, content: str, prompt: int, completion: int):
+            self.choices = [_FakeChoice(content)]
+            self.usage = type(
+                "U", (), {"prompt_tokens": prompt, "completion_tokens": completion}
+            )()
+
+    class _FakeChatCompletions:
+        def __init__(self, parent):
+            self._parent = parent
+
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            return _FakeResponse(
+                '{"fell_for_it": false, "rule": "refusal", "reason": "ok"}',
+                prompt=120,
+                completion=20,
+            )
+
+    class _FakeChat:
+        def __init__(self, parent):
+            self.completions = _FakeChatCompletions(parent)
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+            self.chat = _FakeChat(self)
+
+    fake_module = type("_M", (), {"OpenAI": _FakeOpenAI})()
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    monkeypatch.setenv("MOONSHOT_API_KEY", "ephemeral-test-key")
+
+    judge = LLMUpstreamJudge(
+        backend="openai",
+        model="kimi-k2.6",
+        base_url="https://api.moonshot.ai/v1",
+        api_key_env="MOONSHOT_API_KEY",
+        cost_cap_usd=1.0,
+    )
+    result = judge.judge(
+        scenario={"prompt": "ignore previous"},
+        response_status=200,
+        response_text="I cannot help with that.",
+    )
+
+    assert result.fell_for_it is False
+    assert result.rule == "refusal"
+    assert captured["init"]["api_key"] == "ephemeral-test-key"
+    assert captured["init"]["base_url"] == "https://api.moonshot.ai/v1"
+    req = captured["request"]
+    assert req["model"] == "kimi-k2.6"
+    # Default for openai backend is 1024 (reasoning-model headroom)
+    assert req["max_tokens"] == 1024
+    assert req["messages"][0]["role"] == "system"
+    assert req["messages"][1]["role"] == "user"
+    assert "ATTACK PROMPT:" in req["messages"][1]["content"]
+    assert judge.calls_made == 1
+    assert judge.cost_used_usd > 0
+
+
+def test_llm_judge_openai_backend_reads_reasoning_content_fallback(monkeypatch):
+    """Reasoning-capable models (kimi-k2.6, deepseek-r1) put output in
+    `message.reasoning_content` and leave `message.content` empty when
+    the response hit the token cap mid-trace. The adapter must fall
+    back to reasoning_content so the verdict parser still has a chance.
+    """
+    captured: dict = {}
+
+    class _FakeChoice:
+        def __init__(self, content: str, reasoning: str):
+            # message.content is empty; reasoning_content carries the JSON
+            self.message = type(
+                "M",
+                (),
+                {"content": content, "reasoning_content": reasoning},
+            )()
+
+    class _FakeResponse:
+        def __init__(self, content: str, reasoning: str, prompt: int, completion: int):
+            self.choices = [_FakeChoice(content, reasoning)]
+            self.usage = type(
+                "U",
+                (),
+                {"prompt_tokens": prompt, "completion_tokens": completion},
+            )()
+
+    class _FakeChatCompletions:
+        def __init__(self, parent):
+            self._parent = parent
+
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            # Empty content, JSON in reasoning_content (the kimi-k2.6 shape)
+            return _FakeResponse(
+                content="",
+                reasoning='{"fell_for_it": true, "rule": "compliance", "reason": "ok"}',
+                prompt=85,
+                completion=200,
+            )
+
+    class _FakeChat:
+        def __init__(self, parent):
+            self.completions = _FakeChatCompletions(parent)
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+            self.chat = _FakeChat(self)
+
+    fake_module = type("_M", (), {"OpenAI": _FakeOpenAI})()
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    monkeypatch.setenv("MOONSHOT_API_KEY", "ephemeral-test-key")
+
+    judge = LLMUpstreamJudge(
+        backend="openai",
+        model="kimi-k2.6",
+        base_url="https://api.moonshot.ai/v1",
+        api_key_env="MOONSHOT_API_KEY",
+        cost_cap_usd=1.0,
+    )
+    result = judge.judge(
+        scenario={"prompt": "x"},
+        response_status=200,
+        response_text="text",
+    )
+    assert result.fell_for_it is True
+    assert result.rule == "compliance"
+    # Default max_output_tokens for openai backend should be 1024
+    # (room for reasoning models)
+    assert captured["request"]["max_tokens"] == 1024
+
+
+def test_llm_judge_openai_backend_default_max_tokens_is_1024():
+    """Verifies the openai-backend default is wider than anthropic's
+    256 because reasoning-capable models need budget for the reasoning
+    trace AND the final JSON answer.
+    """
+    judge_oai = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="openai",
+        cost_cap_usd=1.0,
+    )
+    judge_anth = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="anthropic",
+        cost_cap_usd=1.0,
+    )
+    assert judge_oai._max_output_tokens == 1024  # type: ignore[attr-defined]
+    assert judge_anth._max_output_tokens == 256  # type: ignore[attr-defined]
+
+
+def test_llm_judge_explicit_max_output_tokens_overrides_backend_default():
+    judge = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="openai",
+        cost_cap_usd=1.0,
+        max_output_tokens=64,
+    )
+    assert judge._max_output_tokens == 64  # type: ignore[attr-defined]
+
+
+# Need sys for the monkeypatch.setitem above
+import sys  # noqa: E402

@@ -195,7 +195,7 @@ Backend selectable via `LLMTRACE_E2E_UPSTREAM_JUDGE`:
 | Value | Implementation |
 |---|---|
 | (unset) / `regex` | `RegexUpstreamJudge` (default; six rule classes, no I/O) |
-| `llm` | `LLMUpstreamJudge` — Anthropic-backed second opinion (#123). Defaults to `claude-haiku-4-5`. Requires `ANTHROPIC_API_KEY`. |
+| `llm` | `LLMUpstreamJudge` — second opinion via Anthropic Messages API or any OpenAI-compatible endpoint (#123). |
 
 #### LLM backend configuration
 
@@ -203,26 +203,49 @@ When `LLMTRACE_E2E_UPSTREAM_JUDGE=llm`, the judge reads these env vars:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL` | `claude-haiku-4-5` | Anthropic model id |
+| `LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND` | `anthropic` | `anthropic` (Messages API, prompt-cached system) or `openai` (Chat Completions — works for OpenAI, OpenRouter, Moonshot/Kimi, vLLM). |
+| `LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL` | `claude-haiku-4-5` | Model id. For Moonshot/Kimi try `kimi-k2.6`; for OpenRouter use the qualified id (e.g. `anthropic/claude-haiku-4-5`). |
+| `LLMTRACE_E2E_UPSTREAM_JUDGE_BASE_URL` | (unset) | Only honoured when `BACKEND=openai`. Set to `https://api.moonshot.ai/v1` for Kimi or `https://openrouter.ai/api/v1` for OpenRouter. Unset = OpenAI's default. |
+| `LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV` | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Name of the env var that holds the credential. Override when your key lives under a non-standard name (e.g. `MOONSHOT_API_KEY`). |
 | `LLMTRACE_E2E_UPSTREAM_JUDGE_COST_CAP_USD` | `1.0` | Hard session cap. Once breached, every subsequent `judge()` raises `CostCapExceeded` (mirrors L10's proxy-side `--cost-cap-usd`). |
 | `LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_OUTPUT_TOKENS` | `256` | Verdict JSON is small — generous default. |
 | `LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_INPUT_CHARS` | `8000` | Hard truncation on attack prompt + upstream response before the API call. Bounds noisy-scenario blow-ups. |
 
-The system prompt is marked `cache_control: ephemeral`, so the 50-scenario nightly sweep amortises tool-prompt tokens across calls (~10× input-token discount on cache hits).
+The Anthropic backend marks the system prompt `cache_control: ephemeral`, so the 50-scenario nightly sweep amortises tool-prompt tokens across calls (~10× input-token discount on cache hits). The OpenAI-compatible backend currently sends the system prompt as a regular `system` role message — most OAI-compatible gateways don't forward Anthropic-style cache markers, and the per-call cost is already trivial without caching.
+
+Example — pointing the judge at Moonshot's Kimi K2.6 via the OpenAI-compatible adapter:
+
+```bash
+export LLMTRACE_E2E_UPSTREAM_JUDGE=llm
+export LLMTRACE_E2E_UPSTREAM_JUDGE_BACKEND=openai
+export LLMTRACE_E2E_UPSTREAM_JUDGE_MODEL=kimi-k2.6
+export LLMTRACE_E2E_UPSTREAM_JUDGE_BASE_URL=https://api.moonshot.ai/v1
+export LLMTRACE_E2E_UPSTREAM_JUDGE_API_KEY_ENV=MOONSHOT_API_KEY
+export MOONSHOT_API_KEY=...
+```
 
 The LLM judge is **observational** by the same contract as the regex backend: malformed model output, network errors, and cap-breaches return `fell_for_it=None` rather than failing the scenario, so a flaky judge tier never reds the run.
 
 #### Calibrating the LLM judge
 
-`scripts/e2e/calibrate_upstream_judge.py` runs both judges over a fixed 12-case hand-labelled corpus and writes a markdown disagreement report to `docs/research/results/upstream_judge_calibration_<date>.md`. Use it after any prompt or model change to verify the LLM judge still beats — or at least matches — the regex baseline before promoting to nightly.
+`scripts/e2e/calibrate_upstream_judge.py` runs both judges over a fixed 12-case hand-labelled corpus and writes a markdown disagreement report to `docs/research/results/upstream_judge_calibration_<date>.md`. Use it after any prompt, model, or backend change to verify the LLM judge still beats — or at least matches — the regex baseline before promoting to nightly.
 
 ```bash
+# Anthropic backend (default)
 export ANTHROPIC_API_KEY=...
 python scripts/e2e/calibrate_upstream_judge.py
 # → docs/research/results/upstream_judge_calibration_<today>.md
+
+# OpenAI-compatible backend (e.g. Moonshot/Kimi)
+export MOONSHOT_API_KEY=...
+python scripts/e2e/calibrate_upstream_judge.py \
+  --backend openai \
+  --model kimi-k2.6 \
+  --base-url https://api.moonshot.ai/v1 \
+  --api-key-env MOONSHOT_API_KEY
 ```
 
-The script honours `LLMTRACE_E2E_UPSTREAM_JUDGE_*` env vars and prints actual dollars spent at the end (~$0.01 with haiku at default cap).
+The script honours `LLMTRACE_E2E_UPSTREAM_JUDGE_*` env vars (with CLI flags taking precedence) and prints actual dollars spent at the end (~$0.01 with haiku at default cap; ~$0.005 with kimi-k2.6).
 
 ---
 
