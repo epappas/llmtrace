@@ -421,7 +421,7 @@ class LLMUpstreamJudge:
         api_key_env: str | None = None,
         cost_cap_usd: float = 1.0,
         max_input_chars: int = 8000,
-        max_output_tokens: int = 256,
+        max_output_tokens: int | None = None,
         client: Callable[..., LLMCallResult] | None = None,
         pricing: tuple[float, float] | None = None,
     ) -> None:
@@ -429,6 +429,12 @@ class LLMUpstreamJudge:
             raise ValueError("cost_cap_usd must be > 0")
         if max_input_chars <= 0:
             raise ValueError("max_input_chars must be > 0")
+        if max_output_tokens is None:
+            # Anthropic Messages: 256 is plenty for the JSON verdict.
+            # OpenAI-compat: bump default to 1024 because reasoning-capable
+            # models (kimi-k2.6, deepseek-r1, etc.) burn the budget on
+            # internal reasoning before emitting the answer.
+            max_output_tokens = 1024 if backend == "openai" else 256
         if max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be > 0")
 
@@ -768,6 +774,20 @@ def _build_openai_client(
         text = ""
         if choice is not None and choice.message is not None:
             text = choice.message.content or ""
+            # Reasoning-model fallback: when content is empty but the
+            # model populated `reasoning_content` (Moonshot/Kimi K2.6,
+            # DeepSeek R1, etc.), try the reasoning trace. The verdict
+            # parser is JSON-extracting, so it will still pull a clean
+            # object out of the trailing reasoning if the model emitted
+            # one before hitting `finish_reason=length`.
+            if not text:
+                reasoning = (
+                    getattr(choice.message, "reasoning_content", None)
+                    or getattr(choice.message, "reasoning", None)
+                    or ""
+                )
+                if reasoning:
+                    text = str(reasoning)
         usage = response.usage
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0

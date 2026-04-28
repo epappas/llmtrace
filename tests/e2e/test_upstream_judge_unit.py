@@ -669,12 +669,114 @@ def test_llm_judge_openai_backend_invokes_chat_completions(monkeypatch):
     assert captured["init"]["base_url"] == "https://api.moonshot.ai/v1"
     req = captured["request"]
     assert req["model"] == "kimi-k2.6"
-    assert req["max_tokens"] == 256
+    # Default for openai backend is 1024 (reasoning-model headroom)
+    assert req["max_tokens"] == 1024
     assert req["messages"][0]["role"] == "system"
     assert req["messages"][1]["role"] == "user"
     assert "ATTACK PROMPT:" in req["messages"][1]["content"]
     assert judge.calls_made == 1
     assert judge.cost_used_usd > 0
+
+
+def test_llm_judge_openai_backend_reads_reasoning_content_fallback(monkeypatch):
+    """Reasoning-capable models (kimi-k2.6, deepseek-r1) put output in
+    `message.reasoning_content` and leave `message.content` empty when
+    the response hit the token cap mid-trace. The adapter must fall
+    back to reasoning_content so the verdict parser still has a chance.
+    """
+    captured: dict = {}
+
+    class _FakeChoice:
+        def __init__(self, content: str, reasoning: str):
+            # message.content is empty; reasoning_content carries the JSON
+            self.message = type(
+                "M",
+                (),
+                {"content": content, "reasoning_content": reasoning},
+            )()
+
+    class _FakeResponse:
+        def __init__(self, content: str, reasoning: str, prompt: int, completion: int):
+            self.choices = [_FakeChoice(content, reasoning)]
+            self.usage = type(
+                "U",
+                (),
+                {"prompt_tokens": prompt, "completion_tokens": completion},
+            )()
+
+    class _FakeChatCompletions:
+        def __init__(self, parent):
+            self._parent = parent
+
+        def create(self, **kwargs):
+            captured["request"] = kwargs
+            # Empty content, JSON in reasoning_content (the kimi-k2.6 shape)
+            return _FakeResponse(
+                content="",
+                reasoning='{"fell_for_it": true, "rule": "compliance", "reason": "ok"}',
+                prompt=85,
+                completion=200,
+            )
+
+    class _FakeChat:
+        def __init__(self, parent):
+            self.completions = _FakeChatCompletions(parent)
+
+    class _FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+            self.chat = _FakeChat(self)
+
+    fake_module = type("_M", (), {"OpenAI": _FakeOpenAI})()
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    monkeypatch.setenv("MOONSHOT_API_KEY", "ephemeral-test-key")
+
+    judge = LLMUpstreamJudge(
+        backend="openai",
+        model="kimi-k2.6",
+        base_url="https://api.moonshot.ai/v1",
+        api_key_env="MOONSHOT_API_KEY",
+        cost_cap_usd=1.0,
+    )
+    result = judge.judge(
+        scenario={"prompt": "x"},
+        response_status=200,
+        response_text="text",
+    )
+    assert result.fell_for_it is True
+    assert result.rule == "compliance"
+    # Default max_output_tokens for openai backend should be 1024
+    # (room for reasoning models)
+    assert captured["request"]["max_tokens"] == 1024
+
+
+def test_llm_judge_openai_backend_default_max_tokens_is_1024():
+    """Verifies the openai-backend default is wider than anthropic's
+    256 because reasoning-capable models need budget for the reasoning
+    trace AND the final JSON answer.
+    """
+    judge_oai = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="openai",
+        cost_cap_usd=1.0,
+    )
+    judge_anth = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="anthropic",
+        cost_cap_usd=1.0,
+    )
+    assert judge_oai._max_output_tokens == 1024  # type: ignore[attr-defined]
+    assert judge_anth._max_output_tokens == 256  # type: ignore[attr-defined]
+
+
+def test_llm_judge_explicit_max_output_tokens_overrides_backend_default():
+    judge = LLMUpstreamJudge(
+        client=lambda **_: None,  # type: ignore[arg-type]
+        backend="openai",
+        cost_cap_usd=1.0,
+        max_output_tokens=64,
+    )
+    assert judge._max_output_tokens == 64  # type: ignore[attr-defined]
 
 
 # Need sys for the monkeypatch.setitem above
