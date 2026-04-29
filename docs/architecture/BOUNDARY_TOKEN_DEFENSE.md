@@ -610,6 +610,11 @@ Each test validates a specific functional requirement.
 
 ### 7.3 Integration Tests (`tests/integration_test.rs`)
 
+> **Status: pending — tracked in [#149](https://github.com/epappas/llmtrace/issues/149).**
+> Will land bundled with IS-060 PR 1, which exercises the same proxy-handler path.
+> The unit tests in §7.1 and §7.2 are present and passing; only these
+> proxy-handler integration tests are missing.
+
 | Test | Validates | Pass Criteria |
 |------|-----------|---------------|
 | `test_boundary_defense_modifies_upstream_body` | FR-01, FR-06 | Mock upstream receives wrapped content; Content-Length matches |
@@ -647,7 +652,7 @@ The feature is considered delivered when ALL of the following are true:
 
 1. All unit tests in `boundary.rs` pass (Section 7.1)
 2. All modified unit tests in `proxy.rs` pass (Section 7.2)
-3. All integration tests pass (Section 7.3)
+3. All integration tests pass (Section 7.3) — *pending, tracked in [#149](https://github.com/epappas/llmtrace/issues/149); will land bundled with IS-060 PR 1*
 4. E2E benchmark shows no accuracy regression (Section 7.4)
 5. Shadow mode validated for minimum 24 hours with zero serialization errors
 6. At least one contract test against a live OpenAI endpoint passes (Section 7.5)
