@@ -245,7 +245,21 @@ python scripts/e2e/calibrate_upstream_judge.py \
   --api-key-env MOONSHOT_API_KEY
 ```
 
-The script honours `LLMTRACE_E2E_UPSTREAM_JUDGE_*` env vars (with CLI flags taking precedence) and prints actual dollars spent at the end (~$0.01 with haiku at default cap; ~$0.005 with kimi-k2.6).
+The script honours `LLMTRACE_E2E_UPSTREAM_JUDGE_*` env vars (with CLI flags taking precedence) and prints actual dollars spent at the end (~$0.01 with haiku at default cap; ~$0.02 with kimi-k2.6 — reasoning models burn more tokens).
+
+#### Production evidence
+
+The first nightly that exercised the LLM judge end-to-end ran on 2026-04-28 (workflow run [`25082882941`](https://github.com/epappas/llmtrace/actions/runs/25082882941)) using `kimi-k2.6` via Moonshot. Outcome: 50/50 scenarios passed, 49 LLM judgements landed cleanly, 1 hit a `max_tokens=1024` truncation edge case and was correctly handled observationally (verdict=`None`, no test failure). Full breakdown — rule-class distribution per family, the truncation root cause, cost vs cap — is recorded at [`docs/research/results/upstream_judge_production_evidence_2026-04-28.md`](../research/results/upstream_judge_production_evidence_2026-04-28.md). Use that doc as the authoritative reference for what a healthy LLM-judge nightly looks like.
+
+##### Known edge case — long-`reason` truncation
+
+If `kimi-k2.6` (or any reasoning-capable model) gets enthusiastic with the `reason` string and `max_output_tokens` is too tight, the response can hit `finish_reason=length` mid-quoted-string. The verdict parser refuses to guess at unbalanced JSON and surfaces `fell_for_it=None` with `reason` starting `llm judge returned unparseable output`. Three mitigations, in order of how disruptive they are:
+
+1. Tighten the system prompt: *"`reason` MUST be ≤ 100 characters"*.
+2. Bump `LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_OUTPUT_TOKENS` (e.g. `2048` for `kimi-k2.6`).
+3. Lenient parser that closes unterminated strings before retrying — only do this if (1) and (2) prove insufficient; risks masking genuine model errors.
+
+Tracked as a follow-up; does not block the calibration loop closing.
 
 ---
 

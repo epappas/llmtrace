@@ -203,6 +203,7 @@ nav:
           - E2E Nightly Report (2026-04-23): research/results/e2e_2026-04-23.md
           - Upstream Judge Calibration (2026-04-25): research/results/upstream_judge_calibration_2026-04-25.md
           - Upstream Judge Calibration — kimi-k2.6 (2026-04-28): research/results/upstream_judge_calibration_kimi-k2-6_2026-04-28.md
+          - Upstream Judge Production Evidence (2026-04-28): research/results/upstream_judge_production_evidence_2026-04-28.md
       - Roadmap:
           - autoresearch-rl Judge Fine-Tuning Plan: research/autoresearch-rl-judge-training-plan.md
   - Reference:
