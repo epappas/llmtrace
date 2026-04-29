@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import os
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -266,6 +268,21 @@ def _disagreement_count(rows: list[Row]) -> int:
     )
 
 
+def _rule_tally(rows: list[Row], pick) -> list[tuple[str, int]]:
+    """Tally rule labels across rows, sorted by (count desc, label asc).
+
+    Sort order is fully deterministic so the rendered markdown is stable
+    when the same set of (rule, count) pairs reoccurs day-over-day.
+    """
+    counter: Counter[str] = Counter()
+    for row in rows:
+        verdict = pick(row)
+        label = verdict.rule or "<none>"
+        counter[label] += 1
+    # (-count, label) — descending count, ascending label as tie-breaker.
+    return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
 def _render_markdown(
     rows: list[Row],
     *,
@@ -273,7 +290,21 @@ def _render_markdown(
     backend: str,
     cost_used_usd: float,
     calls_made: int,
+    sidecar_filename: str,
 ) -> str:
+    """Render a deterministic markdown report.
+
+    The markdown contains only stable-count fields:
+      * Summary (accuracy, disagreement count, total cost rounded to ¢)
+      * Per-case verdict matrix (id, family, expected, regex, llm, match)
+      * Per-rule-class tally for both judges
+      * Disagreement matrix (no free text)
+
+    Free-text `reason` strings, exact rule wording, and per-call cost
+    data live in the sidecar JSON written next to this report — *not*
+    in the markdown — so the auto-PR no-ops on days where verdicts are
+    identical, mirroring the e2e_<date>.md determinism contract.
+    """
     today = _dt.date.today().isoformat()
     regex_correct, regex_total = _accuracy(rows, lambda r: r.regex)
     llm_correct, llm_total = _accuracy(rows, lambda r: r.llm)
@@ -290,7 +321,15 @@ def _render_markdown(
         f"`RegexUpstreamJudge` against `LLMUpstreamJudge` "
         f"(backend `{backend}`, model `{model}`) "
         f"over a fixed {len(rows)}-case corpus with hand-labelled "
-        f"`expected` values. See issue #123 for context."
+        f"`expected` values."
+    )
+    lines.append("")
+    lines.append(
+        f"Free-text `reason` strings, exact rule wording, and per-call "
+        f"cost data live in the sidecar `{sidecar_filename}` (not "
+        f"committed via the auto-PR — kept stable here so the "
+        f"diff-vs-previous report no-ops on days when verdicts "
+        f"are unchanged). See issue #123 for context."
     )
     lines.append("")
     lines.append("## Summary")
@@ -309,8 +348,8 @@ def _render_markdown(
     lines.append(f"**Disagreements (regex ≠ llm, both non-None):** {disagreements}")
     lines.append("")
     lines.append(
-        f"**LLM judge spend:** ${cost_used_usd:.6f} across {calls_made} calls "
-        f"(avg ${(cost_used_usd / calls_made if calls_made else 0):.6f}/call)."
+        f"**LLM judge spend:** ~${cost_used_usd:.2f} across {calls_made} calls "
+        f"(exact figure in sidecar JSON)."
     )
     lines.append("")
     lines.append("## Per-case verdicts")
@@ -332,37 +371,89 @@ def _render_markdown(
             f"{'yes' if agree else 'NO'} |"
         )
     lines.append("")
-    lines.append("## Disagreement detail")
+    lines.append("## Rule-class tally")
+    lines.append("")
+    lines.append("LLM rule classes observed across the corpus:")
+    lines.append("")
+    lines.append("| Rule | Count |")
+    lines.append("|---|---:|")
+    for label, count in _rule_tally(rows, lambda r: r.llm):
+        lines.append(f"| `{label}` | {count} |")
+    lines.append("")
+    lines.append("Regex rule classes observed across the corpus:")
+    lines.append("")
+    lines.append("| Rule | Count |")
+    lines.append("|---|---:|")
+    for label, count in _rule_tally(rows, lambda r: r.regex):
+        lines.append(f"| `{label}` | {count} |")
+    lines.append("")
+    lines.append("## Disagreements")
     lines.append("")
     has_any = False
+    disagreement_lines: list[str] = [
+        "| ID | Family | Expected | Regex verdict / rule | LLM verdict / rule |",
+        "|---|---|:---:|---|---|",
+    ]
     for row in rows:
         if row.regex.fell_for_it is None or row.llm.fell_for_it is None:
             continue
         if row.regex.fell_for_it == row.llm.fell_for_it:
             continue
         has_any = True
-        lines.append(f"### `{row.case.id}` ({row.case.family})")
-        lines.append("")
-        lines.append(f"- **Expected:** `{row.case.expected}`")
-        lines.append(f"- **Regex:** `{row.regex.fell_for_it}` — rule=`{row.regex.rule}` — {row.regex.reason}")
-        lines.append(f"- **LLM:** `{row.llm.fell_for_it}` — rule=`{row.llm.rule}` — {row.llm.reason}")
-        lines.append("")
-        lines.append("**Attack prompt:**")
-        lines.append("")
-        lines.append("```")
-        lines.append(row.case.scenario.get("prompt", ""))
-        lines.append("```")
-        lines.append("")
-        lines.append("**Upstream response:**")
-        lines.append("")
-        lines.append("```")
-        lines.append(row.case.response[:600])
-        lines.append("```")
-        lines.append("")
-    if not has_any:
+        disagreement_lines.append(
+            f"| `{row.case.id}` | {row.case.family} | "
+            f"`{row.case.expected}` | "
+            f"`{row.regex.fell_for_it}` / `{row.regex.rule or '<none>'}` | "
+            f"`{row.llm.fell_for_it}` / `{row.llm.rule or '<none>'}` |"
+        )
+    if has_any:
+        lines.extend(disagreement_lines)
+    else:
         lines.append("_No disagreements — both judges agreed on every scored case._")
-        lines.append("")
+    lines.append("")
     return "\n".join(lines)
+
+
+def _render_sidecar_json(
+    rows: list[Row],
+    *,
+    model: str,
+    backend: str,
+    cost_used_usd: float,
+    calls_made: int,
+) -> str:
+    """Render the JSON sidecar with full per-call data.
+
+    This is *not* committed through the auto-PR add-paths — it is the
+    audit trail of free-text reasons and exact cost figures, available
+    as a workflow artifact and on the runner's filesystem.
+    """
+    payload = {
+        "date": _dt.date.today().isoformat(),
+        "model": model,
+        "backend": backend,
+        "cost_used_usd": round(cost_used_usd, 6),
+        "calls_made": calls_made,
+        "rows": [
+            {
+                "id": row.case.id,
+                "family": row.case.family,
+                "expected": row.case.expected,
+                "regex": {
+                    "fell_for_it": row.regex.fell_for_it,
+                    "rule": row.regex.rule,
+                    "reason": row.regex.reason,
+                },
+                "llm": {
+                    "fell_for_it": row.llm.fell_for_it,
+                    "rule": row.llm.rule,
+                    "reason": row.llm.reason,
+                },
+            }
+            for row in rows
+        ],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -460,13 +551,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"LLM cost spent: ${llm.cost_used_usd:.6f}")
     print(f"Disagreements: {_disagreement_count(rows)}")
 
-    md = _render_markdown(
-        rows,
-        model=llm.model,
-        backend=llm.backend,
-        cost_used_usd=llm.cost_used_usd,
-        calls_made=llm.calls_made,
-    )
     today = _dt.date.today().isoformat()
     out_path = Path(args.output) if args.output else (
         REPO_ROOT
@@ -475,9 +559,29 @@ def main(argv: list[str] | None = None) -> int:
         / "results"
         / f"upstream_judge_calibration_{today}.md"
     )
+    sidecar_path = out_path.with_suffix(".json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    md = _render_markdown(
+        rows,
+        model=llm.model,
+        backend=llm.backend,
+        cost_used_usd=llm.cost_used_usd,
+        calls_made=llm.calls_made,
+        sidecar_filename=sidecar_path.name,
+    )
     out_path.write_text(md, encoding="utf-8")
-    print(f"Wrote report: {out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
+    sidecar_path.write_text(
+        _render_sidecar_json(
+            rows,
+            model=llm.model,
+            backend=llm.backend,
+            cost_used_usd=llm.cost_used_usd,
+            calls_made=llm.calls_made,
+        ),
+        encoding="utf-8",
+    )
+    print(f"Wrote report:   {out_path.relative_to(REPO_ROOT) if out_path.is_relative_to(REPO_ROOT) else out_path}")
+    print(f"Wrote sidecar:  {sidecar_path.relative_to(REPO_ROOT) if sidecar_path.is_relative_to(REPO_ROOT) else sidecar_path}")
     return 0
 
 
