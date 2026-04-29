@@ -101,6 +101,7 @@ exclude_docs: |
   README.md
   prompts/
   TODO.md
+  TODO_E2E.md
 
 validation:
   omitted_files: warn
@@ -159,6 +160,7 @@ nav:
       - LLM Judge: architecture/LLM_JUDGE.md
       - Judge Cascade (ADR): architecture/JUDGE_CASCADE.md
       - Boundary Token Defense: architecture/BOUNDARY_TOKEN_DEFENSE.md
+      - Spotlighting Indirect Injection (Investigation): architecture/SPOTLIGHTING_INDIRECT_INJECTION.md
       - ML Long-Input Defense: architecture/ML_LONG_INPUT_DEFENSE.md
       - DMPI Average Pooling: architecture/DMPI_001_AVERAGE_POOLING.md
       - DMPI Two FC Layers: architecture/DMPI_002_TWO_FC_LAYERS.md
@@ -201,6 +203,9 @@ nav:
           - Regex FPR Calibration: research/results/fpr_calibration_regex.md
           - E2E Baseline (2026-04-23): research/results/e2e_2026-04-23_baseline.md
           - E2E Nightly Report (2026-04-23): research/results/e2e_2026-04-23.md
+          - E2E Nightly Report (2026-04-24): research/results/e2e_2026-04-24.md
+          - E2E Nightly Report (2026-04-25): research/results/e2e_2026-04-25.md
+          - E2E Nightly Report (2026-04-28): research/results/e2e_2026-04-28.md
           - Upstream Judge Calibration (2026-04-25): research/results/upstream_judge_calibration_2026-04-25.md
           - Upstream Judge Calibration — kimi-k2.6 (2026-04-28): research/results/upstream_judge_calibration_kimi-k2-6_2026-04-28.md
           - Upstream Judge Production Evidence (2026-04-28): research/results/upstream_judge_production_evidence_2026-04-28.md
