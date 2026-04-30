@@ -2508,6 +2508,20 @@ pub struct SecurityAnalysisConfig {
     /// Inputs larger than this are truncated before normalization and scanning.
     #[serde(default = "default_max_analysis_text_bytes")]
     pub max_analysis_text_bytes: usize,
+    /// Zone-aware injection scanning (IS-060 PR-1).
+    ///
+    /// When enabled, the proxy splits each chat message into instruction
+    /// and data zones (heuristically and/or via operator-supplied markers)
+    /// and runs the ensemble per data zone. Findings carry zone metadata
+    /// so the over-defence suppressor can let data-zone findings through
+    /// even when single-detector and ML-only.
+    ///
+    /// Default OFF: the design ships behind a flag so existing scenarios
+    /// remain byte-identical until an operator opts in. See
+    /// `docs/architecture/SPOTLIGHTING_INDIRECT_INJECTION.md` for the
+    /// rationale and threat model.
+    #[serde(default)]
+    pub zone_detection: ZoneDetectionConfig,
 }
 
 fn default_ml_enabled() -> bool {
@@ -2566,6 +2580,47 @@ fn default_max_analysis_text_bytes() -> usize {
     1_048_576 // 1MB
 }
 
+// ---------------------------------------------------------------------------
+// Zone detection (IS-060 PR-1)
+// ---------------------------------------------------------------------------
+
+/// How zones are sourced when `ZoneDetectionConfig::enabled` is true.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneDetectionMode {
+    /// Only run the format-detection FSM (HTML tables, code fences, etc.).
+    /// Operator markers and the X-LLMTrace-Data-Boundary header are ignored.
+    Heuristic,
+    /// Only honour operator-supplied zones — inline `<llmtrace-data>` markers
+    /// and the `X-LLMTrace-Data-Boundary` request header. Heuristics are off.
+    Operator,
+    /// Default — heuristics first, operator markers override on overlap.
+    /// Operator-marked spans always win when they overlap a heuristic span.
+    #[default]
+    Both,
+}
+
+/// Configuration for zone-aware injection scanning (IS-060 PR-1).
+///
+/// All fields default to a no-op (disabled). Existing scenarios are
+/// byte-identical with `enabled: false` — the contract for the safe
+/// default rollout. See `SecurityAnalysisConfig::zone_detection`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ZoneDetectionConfig {
+    /// Master toggle. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Source policy for zones. Default: `Both`.
+    #[serde(default)]
+    pub mode: ZoneDetectionMode,
+    /// When `false` (default), instruction zones are skipped entirely so
+    /// the ensemble only spends budget on data zones. When `true`, both
+    /// kinds are scanned; useful for evaluation runs where operators want
+    /// to compare the zone-aware path against a non-zone-aware baseline.
+    #[serde(default)]
+    pub scan_instruction_zones: bool,
+}
+
 impl Default for SecurityAnalysisConfig {
     fn default() -> Self {
         Self {
@@ -2590,6 +2645,7 @@ impl Default for SecurityAnalysisConfig {
             operating_point: OperatingPoint::default(),
             over_defence: false,
             max_analysis_text_bytes: default_max_analysis_text_bytes(),
+            zone_detection: ZoneDetectionConfig::default(),
         }
     }
 }
@@ -3978,6 +4034,7 @@ mod tests {
                 operating_point: OperatingPoint::default(),
                 over_defence: false,
                 max_analysis_text_bytes: default_max_analysis_text_bytes(),
+                zone_detection: ZoneDetectionConfig::default(),
             },
             otel_ingest: OtelIngestConfig::default(),
             auth: AuthConfig::default(),
@@ -4490,6 +4547,7 @@ mod tests {
             operating_point: OperatingPoint::default(),
             over_defence: false,
             max_analysis_text_bytes: default_max_analysis_text_bytes(),
+            zone_detection: ZoneDetectionConfig::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SecurityAnalysisConfig = serde_json::from_str(&json).unwrap();

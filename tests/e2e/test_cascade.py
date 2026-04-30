@@ -15,6 +15,7 @@ on a per-scenario basis.
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import TYPE_CHECKING
 
@@ -52,6 +53,19 @@ def test_scenario(
     trace_id = uuid.uuid4()
     sid = scenario.get("id") or "<unknown>"
     expected = scenario.get("expected") or {}
+
+    # IS-060 PR-1: scenarios that assert on zone-aware detection skip
+    # cleanly when the proxy is running with `zone_detection.enabled`
+    # off. The env var is set by the operator running the nightly with
+    # zone detection live (or by a dedicated workflow_dispatch). Off by
+    # default — preserves "no regression with flag OFF" from the brief.
+    if expected.get("zone_detection_enabled"):
+        env = os.environ.get("LLMTRACE_ZONE_DETECTION_ENABLED", "").lower()
+        if env not in ("1", "true", "yes"):
+            pytest.skip(
+                f"[{sid}] requires zone_detection; "
+                "set LLMTRACE_ZONE_DETECTION_ENABLED=true to run"
+            )
 
     before = MetricsSnapshot.fetch(proxy.metrics_url)
     response = proxy.post_chat(prompt=scenario["prompt"], trace_id=trace_id)

@@ -897,6 +897,8 @@ mod tests {
             storage,
             fast_analyzer: security.clone(),
             security,
+            #[cfg(feature = "ml")]
+            security_ensemble: None,
             ensemble_runtime: Arc::new(EnsembleRuntimeHandle::inert()),
             storage_breaker,
             security_breaker,

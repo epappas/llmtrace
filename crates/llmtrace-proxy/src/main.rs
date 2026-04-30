@@ -467,6 +467,10 @@ async fn build_app_state(
         .map_err(|e| anyhow::anyhow!("Failed to initialize storage: {}", e))?;
 
     // Build the security analyzer — attempt ML warm-up if enabled and compiled
+    #[cfg(feature = "ml")]
+    let (security, security_ensemble, ml_status, ensemble_runtime) =
+        build_security_analyzer(&config).await?;
+    #[cfg(not(feature = "ml"))]
     let (security, ml_status, ensemble_runtime) = build_security_analyzer(&config).await?;
 
     // Regex-only analyzer for fast-path enforcement (near-zero latency).
@@ -665,6 +669,8 @@ async fn build_app_state(
         client,
         storage,
         security,
+        #[cfg(feature = "ml")]
+        security_ensemble,
         ensemble_runtime,
         fast_analyzer,
         storage_breaker,
@@ -702,13 +708,28 @@ async fn build_app_state(
 /// When the `ml` feature is compiled in and `ml_preload: true` (also default),
 /// this loads the prompt injection and NER models eagerly.
 /// On failure, it falls back to the regex-only analyzer and logs a warning.
-async fn build_security_analyzer(
-    config: &ProxyConfig,
-) -> anyhow::Result<(
+/// Return type for [`build_security_analyzer`]. The second element is
+/// the concrete `Arc<EnsembleSecurityAnalyzer>` (when the `ml` feature
+/// is compiled in) used by the IS-060 PR-1 zone-aware request path.
+/// When `ml` is off the variant collapses and only the trait object,
+/// status, and runtime handle are returned.
+#[cfg(feature = "ml")]
+type SecurityAnalyzerBuildResult = (
+    Arc<dyn SecurityAnalyzer>,
+    Option<Arc<llmtrace_security::EnsembleSecurityAnalyzer>>,
+    MlModelStatus,
+    Arc<llmtrace_security::EnsembleRuntimeHandle>,
+);
+#[cfg(not(feature = "ml"))]
+type SecurityAnalyzerBuildResult = (
     Arc<dyn SecurityAnalyzer>,
     MlModelStatus,
     Arc<llmtrace_security::EnsembleRuntimeHandle>,
-)> {
+);
+
+async fn build_security_analyzer(
+    config: &ProxyConfig,
+) -> anyhow::Result<SecurityAnalyzerBuildResult> {
     // Optional runtime overrides (useful for local stacks and CI).
     // These do not modify the loaded config; they only affect analyzer wiring.
     let mut ml_enabled = config.security_analysis.ml_enabled;
@@ -838,8 +859,10 @@ async fn build_security_analyzer(
                     handle.set_injecguard(config.security_analysis.injecguard_enabled);
                     handle.set_piguard(config.security_analysis.piguard_enabled);
                     handle.set_jailbreak(config.security_analysis.jailbreak_enabled);
+                    let ensemble_arc = Arc::new(ensemble);
                     Ok((
-                        Arc::new(ensemble) as Arc<dyn SecurityAnalyzer>,
+                        Arc::clone(&ensemble_arc) as Arc<dyn SecurityAnalyzer>,
+                        Some(ensemble_arc),
                         status,
                         Arc::new(handle),
                     ))
@@ -855,6 +878,7 @@ async fn build_security_analyzer(
                     })?;
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                        None,
                         MlModelStatus::Failed { error: err_msg },
                         Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
@@ -873,6 +897,7 @@ async fn build_security_analyzer(
                     })?;
                     Ok((
                         Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                        None,
                         MlModelStatus::Failed { error: err_msg },
                         Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
                     ))
@@ -885,6 +910,7 @@ async fn build_security_analyzer(
                 .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                None,
                 MlModelStatus::Disabled,
                 Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
@@ -893,6 +919,7 @@ async fn build_security_analyzer(
                 .map_err(|e| anyhow::anyhow!("Failed to initialize security analyzer: {}", e))?;
             Ok((
                 Arc::new(regex) as Arc<dyn SecurityAnalyzer>,
+                None,
                 MlModelStatus::Disabled,
                 Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
             ))
