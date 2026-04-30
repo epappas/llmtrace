@@ -31,6 +31,7 @@ pub mod rate_limit;
 pub mod shutdown;
 pub mod streaming;
 pub mod tenant_api;
+pub mod zone_pipeline;
 
 // Re-export key types for convenience
 pub use action_router::ActionRouter;

@@ -86,6 +86,23 @@ pub struct Metrics {
     /// Whether shadow mode is active (1) or not (0).
     pub boundary_defense_shadow_mode: IntGauge,
 
+    /// Zones emitted by the IS-060 zone detector, labelled by
+    /// kind (`instruction`/`data`), origin
+    /// (`role`/`heuristic`/`operator_inline`/`operator_header`), and
+    /// `framing` (heuristic label, or `_` when `origin != heuristic`).
+    pub zone_detection_zones_total: IntCounterVec,
+
+    /// Findings produced by zone-aware analysis, labelled by
+    /// `finding_type` and `zone_kind`. Combined with
+    /// `security_findings_total{finding_type}` this lets dashboards
+    /// attribute each finding to the zone path.
+    pub zone_detection_findings_total: IntCounterVec,
+
+    /// Zone-detection failures (header parse errors, byte-range
+    /// out-of-bounds against the message content, etc.), labelled by
+    /// reason.
+    pub zone_detection_failures_total: IntCounterVec,
+
     /// ML sliding window chunks processed per classify call.
     pub ml_chunks_total: HistogramVec,
 
@@ -382,6 +399,43 @@ impl Metrics {
         registry
             .register(Box::new(boundary_defense_shadow_mode.clone()))
             .expect("register boundary_defense_shadow_mode");
+
+        // Zone-detection metrics (IS-060 PR-1)
+        let zone_detection_zones_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_zone_detection_zones_total",
+                "Zones emitted by the IS-060 zone detector",
+            ),
+            &["kind", "origin", "framing"],
+        )
+        .expect("metric: zone_detection_zones_total");
+        registry
+            .register(Box::new(zone_detection_zones_total.clone()))
+            .expect("register zone_detection_zones_total");
+
+        let zone_detection_findings_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_zone_detection_findings_total",
+                "Findings produced by zone-aware analysis, by finding_type and zone_kind",
+            ),
+            &["finding_type", "zone_kind"],
+        )
+        .expect("metric: zone_detection_findings_total");
+        registry
+            .register(Box::new(zone_detection_findings_total.clone()))
+            .expect("register zone_detection_findings_total");
+
+        let zone_detection_failures_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_zone_detection_failures_total",
+                "Zone-detection failures (header parse errors, byte-range mismatches)",
+            ),
+            &["reason"],
+        )
+        .expect("metric: zone_detection_failures_total");
+        registry
+            .register(Box::new(zone_detection_failures_total.clone()))
+            .expect("register zone_detection_failures_total");
 
         // ML long-input defense metrics
         let ml_chunks_total = HistogramVec::new(
@@ -720,6 +774,9 @@ impl Metrics {
             boundary_defense_errors_total,
             boundary_defense_skipped_total,
             boundary_defense_shadow_mode,
+            zone_detection_zones_total,
+            zone_detection_findings_total,
+            zone_detection_failures_total,
             ml_chunks_total,
             ml_input_truncated_total,
             response_truncated_total,
@@ -884,6 +941,40 @@ impl Metrics {
         self.boundary_defense_overhead_bytes
             .with_label_values(&[provider])
             .observe(overhead_bytes as f64);
+    }
+
+    /// Record zone-detection outcome (IS-060 PR-1).
+    ///
+    /// `zones` is a slice of `(kind, origin, framing)` triples — one
+    /// per emitted zone. `failure_reasons` is a slice of stable
+    /// reason labels (`header_parse_failed`, `header_range_out_of_bounds`,
+    /// etc.); one entry per failure occurrence. The findings counter
+    /// is bumped separately by [`Metrics::record_zone_findings`] after
+    /// the ensemble returns.
+    pub fn record_zone_detection(&self, zones: &[(&str, &str, &str)], failure_reasons: &[&str]) {
+        for (kind, origin, framing) in zones {
+            self.zone_detection_zones_total
+                .with_label_values(&[kind, origin, framing])
+                .inc();
+        }
+        for reason in failure_reasons {
+            self.zone_detection_failures_total
+                .with_label_values(&[reason])
+                .inc();
+        }
+    }
+
+    /// Record findings produced by zone-aware analysis. Reads
+    /// `zone_kind` from each finding's metadata; findings without
+    /// the metadata are skipped (they were not zone-aware).
+    pub fn record_zone_findings(&self, findings: &[llmtrace_core::SecurityFinding]) {
+        for f in findings {
+            if let Some(zone_kind) = f.metadata.get("zone_kind") {
+                self.zone_detection_findings_total
+                    .with_label_values(&[&f.finding_type, zone_kind])
+                    .inc();
+            }
+        }
     }
 
     /// Record anomalies detected.

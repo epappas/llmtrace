@@ -149,6 +149,15 @@ pub struct AppState {
     pub storage: Storage,
     /// Security analyzer for scanning requests and responses.
     pub security: Arc<dyn SecurityAnalyzer>,
+    /// Concrete ensemble handle used by the zone-aware request path
+    /// (IS-060 PR-1). `Some` when the proxy is running with the
+    /// `EnsembleSecurityAnalyzer` (the default when `ml` feature is
+    /// compiled in); `None` when the regex-only fallback is in use.
+    /// The legacy `analyze_request` path always goes through
+    /// [`AppState::security`]; only the zone-aware path needs the
+    /// concrete type.
+    #[cfg(feature = "ml")]
+    pub security_ensemble: Option<Arc<llmtrace_security::EnsembleSecurityAnalyzer>>,
     /// Runtime handle for toggling ensemble feature flags from the admin
     /// API (issue #42). When the ensemble is not constructed (regex-only
     /// fallback path), this is an inert handle whose writes round-trip
@@ -370,6 +379,125 @@ fn messages_to_analysis_text(messages: &[ChatMessage]) -> String {
         .map(|m| extract_content_text(&m.content))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Run pre-request enforcement, picking between the legacy
+/// `analyze_request` path and the IS-060 PR-1 zone-aware path based on
+/// the live config and the zone pipeline outcome.
+///
+/// Falls back to the legacy path whenever:
+///   * `cfg.security_analysis.zone_detection.enabled` is false, OR
+///   * the proxy is running with the regex-only fallback (no concrete
+///     ensemble in `state.security_ensemble`), OR
+///   * the zone pipeline produced zero zones (e.g. body parse failed
+///     or no string-content messages).
+///
+/// Existing scenarios with the flag off therefore exercise the same
+/// `analyze_request` code path they did before — the constraint
+/// captured in the brief's "Existing PR-gate suite green (no
+/// regression with flag OFF)" requirement.
+async fn run_request_enforcement(
+    analysis_text: &str,
+    context: &AnalysisContext,
+    cfg: &llmtrace_core::ProxyConfig,
+    state: &Arc<AppState>,
+    zone_detection_active: bool,
+    zone_outcome: &crate::zone_pipeline::ZonePipelineOutcome,
+) -> (
+    crate::enforcement::EnforcementDecision,
+    Vec<llmtrace_core::SecurityFinding>,
+) {
+    #[cfg(feature = "ml")]
+    {
+        let take_zone_path = zone_detection_active && state.security_ensemble.is_some();
+        if take_zone_path {
+            if let Some(ensemble) = state.security_ensemble.as_ref() {
+                let scan_instr = cfg.security_analysis.zone_detection.scan_instruction_zones;
+                // Clone outcome bits we need; the ensemble call moves
+                // its inputs into spawned tasks.
+                let zone_inputs: Vec<_> = clone_zone_inputs(zone_outcome, scan_instr);
+                if zone_inputs.is_empty() {
+                    return crate::enforcement::run_enforcement(
+                        analysis_text,
+                        context,
+                        &cfg.enforcement,
+                        &state.security,
+                        &state.fast_analyzer,
+                    )
+                    .await;
+                }
+                let timeout = std::time::Duration::from_millis(cfg.enforcement.timeout_ms);
+                let ensemble = Arc::clone(ensemble);
+                let ctx_owned = context.clone();
+                let analyzed = tokio::time::timeout(
+                    timeout,
+                    ensemble.analyze_request_with_zones(zone_inputs, scan_instr, ctx_owned),
+                )
+                .await;
+                let findings = match analyzed {
+                    Ok(Ok(f)) => f,
+                    Ok(Err(e)) => {
+                        tracing::warn!(error = %e, "zone-aware analysis failed (fail-open)");
+                        return (crate::enforcement::EnforcementDecision::Allow, Vec::new());
+                    }
+                    Err(_) => {
+                        tracing::warn!(
+                            timeout_ms = cfg.enforcement.timeout_ms,
+                            "zone-aware analysis timed out (fail-open)"
+                        );
+                        return (crate::enforcement::EnforcementDecision::Allow, Vec::new());
+                    }
+                };
+                state.metrics.record_zone_findings(&findings);
+                if findings.is_empty() {
+                    return (crate::enforcement::EnforcementDecision::Allow, Vec::new());
+                }
+                let decision =
+                    crate::enforcement::evaluate_enforcement(&findings, &cfg.enforcement);
+                return (decision, findings);
+            }
+        }
+        crate::enforcement::run_enforcement(
+            analysis_text,
+            context,
+            &cfg.enforcement,
+            &state.security,
+            &state.fast_analyzer,
+        )
+        .await
+    }
+    #[cfg(not(feature = "ml"))]
+    {
+        let _ = (zone_detection_active, zone_outcome);
+        crate::enforcement::run_enforcement(
+            analysis_text,
+            context,
+            &cfg.enforcement,
+            &state.security,
+            &state.fast_analyzer,
+        )
+        .await
+    }
+}
+
+#[cfg(feature = "ml")]
+fn clone_zone_inputs(
+    outcome: &crate::zone_pipeline::ZonePipelineOutcome,
+    scan_instruction_zones: bool,
+) -> Vec<(llmtrace_security::zone_detector::Zone, String)> {
+    let mut out = Vec::new();
+    for (zones, text) in outcome.zones_per_message.iter().zip(outcome.texts.iter()) {
+        for zone in zones {
+            if zone.kind == llmtrace_security::zone_detector::ZoneKind::Instruction
+                && !scan_instruction_zones
+            {
+                continue;
+            }
+            let slice = text.get(zone.byte_range.clone()).unwrap_or("").to_string();
+            out.push((zone.clone(), slice));
+        }
+    }
+    out
 }
 
 /// Build the upstream URL for a given request path.
@@ -627,6 +755,36 @@ pub async fn proxy_handler(
         }
     }
 
+    // --- IS-060 PR-1: zone-aware pipeline (header parse + inline marker strip) ---
+    //
+    // Always runs the pipeline (cheap when flag is OFF — short-circuits to
+    // passthrough). When flag is ON and the pipeline rewrote the body
+    // (inline `<llmtrace-data>` markers stripped), `zone_body` carries
+    // the rewritten bytes that boundary defense and forwarding will use
+    // instead of the original `body_bytes`.
+    let zone_header = headers
+        .get(crate::zone_pipeline::DATA_BOUNDARY_HEADER)
+        .and_then(|v| v.to_str().ok());
+    let zone_outcome = crate::zone_pipeline::run(
+        &body_bytes,
+        zone_header,
+        &cfg.security_analysis.zone_detection,
+    );
+    let zone_detection_active =
+        cfg.security_analysis.zone_detection.enabled && !zone_outcome.zones_per_message.is_empty();
+
+    if zone_detection_active {
+        let zone_metric_inputs = zone_outcome.metric_zones();
+        let zone_metric_refs: Vec<(&str, &str, &str)> = zone_metric_inputs
+            .iter()
+            .map(|(a, b, c)| (*a, *b, *c))
+            .collect();
+        let failure_refs: Vec<&str> = zone_outcome.failures.to_vec();
+        state
+            .metrics
+            .record_zone_detection(&zone_metric_refs, &failure_refs);
+    }
+
     // --- Pre-request security enforcement ---
     let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
     if cfg.enable_security_analysis {
@@ -638,12 +796,13 @@ pub async fn proxy_handler(
             model_name: model_name.clone(),
             parameters: std::collections::HashMap::new(),
         };
-        let (mut decision, pre_findings) = crate::enforcement::run_enforcement(
+        let (mut decision, pre_findings) = run_request_enforcement(
             &analysis_text,
             &enf_context,
-            &cfg.enforcement,
-            &state.security,
-            &state.fast_analyzer,
+            &cfg,
+            &state,
+            zone_detection_active,
+            &zone_outcome,
         )
         .await;
 
@@ -680,14 +839,25 @@ pub async fn proxy_handler(
     }
 
     // --- Boundary token injection defense ---
+    // When the zone pipeline rewrote the body (inline `<llmtrace-data>`
+    // markers stripped), boundary defense and forwarding both work on
+    // the rewritten bytes — the markers must not leak upstream.
+    let pre_boundary_body: &[u8] = if zone_outcome.body_rewritten {
+        &zone_outcome.body
+    } else {
+        &body_bytes
+    };
     let boundary_result = crate::boundary::apply_boundary_defense(
-        &body_bytes,
+        pre_boundary_body,
         &cfg.boundary_defense,
         &detected_provider,
     );
     let boundary_active = cfg.boundary_defense.enabled
         && !cfg.boundary_defense.shadow_mode
         && boundary_result.messages_wrapped > 0;
+    // The proxy must forward modified bytes whenever EITHER boundary
+    // defense rewrote the body OR the zone pipeline did.
+    let body_was_rewritten = boundary_active || zone_outcome.body_rewritten;
 
     if boundary_result.messages_wrapped > 0 {
         let mode = if cfg.boundary_defense.shadow_mode {
@@ -732,7 +902,7 @@ pub async fn proxy_handler(
         if name == "host" || name == "accept-encoding" {
             continue;
         }
-        if boundary_active && name == "content-length" {
+        if body_was_rewritten && name == "content-length" {
             continue;
         }
         if let Ok(rname) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
@@ -743,9 +913,12 @@ pub async fn proxy_handler(
     }
     upstream_req = upstream_req.headers(forwarded_headers);
 
-    // Forward the modified body when boundary defense is active, original otherwise
+    // Forward the modified body when EITHER boundary defense or the
+    // zone pipeline rewrote it; otherwise forward the original.
     let forward_body = if boundary_active {
         boundary_result.body
+    } else if zone_outcome.body_rewritten {
+        zone_outcome.body.clone()
     } else {
         body_bytes.to_vec()
     };

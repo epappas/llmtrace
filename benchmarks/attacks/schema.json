@@ -87,6 +87,10 @@
               "$ref": "#/$defs/recommendedAction"
             }
           }
+        },
+        "zone_detection_enabled": {
+          "type": "boolean",
+          "description": "When true, the harness skips this scenario unless the proxy is running with zone detection enabled (env LLMTRACE_ZONE_DETECTION_ENABLED=true). Lets IS-060 PR-1 ship asserting scenarios without breaking the PR-gate when the flag is off."
         }
       }
     },

@@ -44,6 +44,7 @@ pub mod result_parser;
 pub mod session_analyzer;
 pub mod tool_firewall;
 pub mod tool_registry;
+pub mod zone_detector;
 
 pub use action_policy::{
     ActionPolicy, ContextMinimizer, EnforcementMode, Message, PolicyDecision, PolicyEngine,

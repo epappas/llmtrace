@@ -272,6 +272,27 @@ def proxy_config_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
     src = FIXTURES_DIR / "config-e2e-judge.yaml"
     dst = tmp_path_factory.mktemp("e2e-config") / "config.yaml"
     shutil.copyfile(src, dst)
+
+    # IS-060 PR-1: when the operator opts in via env, overlay
+    # `security_analysis.zone_detection.enabled: true` into the temp
+    # config so the proxy under test actually runs the zone-aware
+    # request path. Default off; the harness skip-gate at
+    # tests/e2e/test_cascade.py:55 keeps PR-gate runs green when this
+    # env is not set.
+    if os.environ.get("LLMTRACE_ZONE_DETECTION_ENABLED", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        with open(dst, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        sec = cfg.setdefault("security_analysis", {})
+        zd = sec.setdefault("zone_detection", {})
+        zd["enabled"] = True
+        zd.setdefault("mode", "both")
+        zd.setdefault("scan_instruction_zones", False)
+        with open(dst, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, sort_keys=False)
     return dst
 
 

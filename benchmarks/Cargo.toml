@@ -46,3 +46,7 @@ harness = false
 [[bench]]
 name = "fpr_calibration"
 harness = false
+
+[[bench]]
+name = "zone_detection"
+harness = false
