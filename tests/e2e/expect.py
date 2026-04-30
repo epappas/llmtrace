@@ -572,6 +572,20 @@ def assert_scenario(
                     judge_degraded=judge_degraded,
                 )
             )
+        elif key == "zone_detection_enabled":
+            # IS-060 PR-1 gate, not an assertion. The skip-gate at
+            # test_cascade.py:55 already handled the env-var check
+            # before the scenario reached assertions; if we got here
+            # the gate said "run", and the comparator is a no-op pass.
+            results.append(
+                AssertionResult(
+                    comparator="zone_detection_enabled",
+                    passed=True,
+                    soft=False,
+                    message=f"[{sid}] zone_detection_enabled gate satisfied",
+                    fields={"expected": expected_block[key]},
+                )
+            )
         else:
             results.append(
                 AssertionResult(
