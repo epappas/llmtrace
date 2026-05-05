@@ -96,6 +96,28 @@ markdown_extensions:
 
 plugins:
   - search
+  - timetoread:
+      wpm: 210
+  - table-reader
+  - tags
+  - minify:
+      minify_html: true
+      minify_css: true
+
+hooks:
+  - hooks/llm_utils.py
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+  - https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js
+  - javascripts/tablesort.js
+  - javascripts/tts.js
+  - javascripts/copy-llm.js
+
+extra_css:
+  - css/custom.css
 
 exclude_docs: |
   README.md

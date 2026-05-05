@@ -9,3 +9,6 @@ pymdown-extensions==10.16.1
 # ships a release that threads a non-None filename through the
 # HtmlFormatter call. See dependabot PR #112 for the full trace.
 Pygments>=2.19.2,<2.20
+mkdocs-minify-plugin==0.8.0
+mkdocs-table-reader-plugin==3.1.0
+mkdocs-timetoread-plugin==0.0.4
