@@ -105,25 +105,23 @@ Single-detector findings are capped at a score of 60, limiting their impact rela
 
 ## Pipeline Summary
 
-```
-Request text
-  |
-  v
-[Regex Analyzer] ----+
-[DeBERTa ML]    ----+|
-[InjecGuard]    ---+||   (run in parallel)
-[PIGuard]       --+|||
-[Jailbreak]     -+||||
-                 |||||
-                 vvvvv
-           [ Merge & Vote ]
-                 |
-                 v
-        [ Threshold Filter ]
-                 |
-                 v
-        [ Over-Defence ]
-                 |
-                 v
-         Final Findings
+```mermaid
+graph TD
+    Req["Request text"]
+    
+    Req --> Regex["Regex Analyzer"]
+    Req --> DeBerta["DeBERTa ML"]
+    Req --> InjecGuard["InjecGuard"]
+    Req --> PIGuard["PIGuard"]
+    Req --> Jailbreak["Jailbreak"]
+    
+    Regex --> Merge["Merge & Vote"]
+    DeBerta --> Merge
+    InjecGuard --> Merge
+    PIGuard --> Merge
+    Jailbreak --> Merge
+    
+    Merge --> Threshold["Threshold Filter"]
+    Threshold --> OverDef["Over-Defence"]
+    OverDef --> Final["Final Findings"]
 ```
