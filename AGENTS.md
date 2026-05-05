@@ -93,3 +93,56 @@ IT IS IMPORTANT TO ADHERE TO THE GOOD SOFTWARE QUALITY PRINCIPLES SUCH AS DRY, S
 THIS IS IMPORTANT: KEEP THE CODE ROBUST, SIMPLE, SOLID AND KISS.
 
 critical reminder: NEVER LIE, DO NOT LIE! THERE IS ZERO TOLERANCE FOR FAKE OR TODO OR MOCK OR STUB OR PLACEHOLDER OR ANYTHING ELSE OTHER THAN 100% REAL WORKING CODE AND SOLUTIONS.
+
+## Documentation & Style Standards
+
+This section establishes the authoritative standards for the documentation portal. All contributors (Human or AI) must adhere to these rules to maintain a professional, consistent, and engineering-expert voice.
+
+### 1. Governance & Voice
+- **Tone**: Authoritative, pragmatic, and engineering-led.
+- **Voice**: Professional second-person ("You should...") or first-person plural ("We recommend..."). Avoid generic promotional language.
+- **AI Signature Control**: 
+  - Never use "Discover the power of..." or "In today's world...".
+  - Strictly avoid generic conclusion sections that do not add technical value.
+  - No "Conclusion" or "Summary" H2 headers unless they contain unique [Next Steps] or [Key Takeaways].
+  - **Preservation Rule**: Always maintain existing in-prose "In conclusion" paragraphs; only robot-style headers are to be removed.
+
+### 2. Linguistic Standards (UK English)
+The repository enforces **UK English** exclusively for all documentation prose and metadata. 
+
+| Requirement | Standard (UK) | Prohibited (US) |
+| :--- | :--- | :--- |
+| **Auth** | Authorisation, authorise | Authorization, authorize |
+| **Infrastructure** | data centre, centre | datacenter, center |
+| **Verbs/Suffixes** | -ise / -isation | -ize / -ization |
+| **Analysis** | analyse / analysing | analyze / analyzing |
+| **Customisation** | customise, customised | customize, customized |
+| **Organisation** | organisation | organization |
+| **General** | behaviour, colour | behavior, color |
+
+> [!IMPORTANT]
+> Technical code snippets (SQL, CSS, Python) must retain their functional US-standard syntax (e.g., `text-align: center`, `color: #fff`).
+
+### 3. Markdown & UI Formatting
+- **Headings**:
+  - **H1/H2/H3/H4**: Title Case (e.g., `# Mastering Git Commands` or `## Statistical Value Imputation`).
+  - **De-punctuation**: Headers must **never** end with a colon or trailing punctuation.
+  - **No Serialisation**: Headers must **never** start with numbers or serialisation markers (e.g., `## 1. Title` is prohibited). Use purely descriptive, architectural titles.
+  - **No Horizontal Rules**: The use of `---` or `***` as section or content separators is strictly prohibited. Sectioning must be handled exclusively by headers and Isolated Bold Paragraphs.
+- **Lists & Points**:
+  - **De-numbering**: Numbered lists (1. 2. 3.) are prohibited. Use bullet points (`-`) or Bold Paragraphs.
+  - **Prohibited Patterns**: Bulleted bold points (e.g., `* **Key**: Description` or `- **Key**: Description`) are strictly prohibited as they create AI-generated boilerplate. 
+  - **Bold Paragraphs**: This is the mandatory standard for technical definitions, concept mapping, and step-by-step guides. 
+  - **Format**: Use the `**Key**: Description` pattern (e.g., `**Partitioned Architecture Strategy**: Partition your tables...`). Use colons, not dashes.
+  - **Isolation**: Bold Paragraphs must **always** be isolated by an empty line before and after to ensure they render as distinct, high-impact blocks. Use double-newlines.
+- **Code Blocks**:
+  - **De-titling**: Titles (`title=`) and filenames (`filename=`) are prohibited. Code blocks must present pure technical snippets without redundant labels.
+  - **Command Wrapping**: All stand-alone commands (e.g., Git commands, CLI instructions) must be wrapped in ` ```bash ` or relevant language blocks. "Naked" text or isolated inline backticks for primary instructions are prohibited.
+- **Callouts**: Use **Material for MkDocs Admonitions** (`!!! note`) over standard blockquotes (`>`).
+- **Links**: Use relative paths for internal cross-linking to ensure portability.
+- **Horizontal Separators**: Prohibited as content dividers. Horizontal rules (`---`) must only be used in YAML frontmatter.
+
+### 4. Maintenance & Linting
+To verify style and linguistic compliance before committing:
+- Re-read all modifications against the rules above.
+- Run `mkdocs build` to ensure all links and admonitions render correctly without warnings.
