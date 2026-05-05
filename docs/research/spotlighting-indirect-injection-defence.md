@@ -60,7 +60,7 @@ The untrusted input is transformed using a well-known encoding algorithm (e.g., 
 
 **Attack corpus:** 1000 synthetic documents with keyword payload attacks (model urged to forget instructions and return a special keyword "canary"). ASR measured as fraction of corpus where the attack fully overtakes the model.
 
-#### Baseline ASR (no defense)
+#### Baseline ASR (no defence)
 
 | Model | Summarization ASR | Q&A ASR |
 |-------|-------------------|---------|
@@ -156,7 +156,7 @@ The authors caution against over-reliance on few-shot examples: they reflect cur
 **Simple keyword-payload attacks only**: -- does not test sophisticated multi-step, semantic, or tool-calling attacks
 
 
-**No adaptive adversary evaluation**: -- does not test adversaries who know the defense is in place and craft attacks accordingly (except theoretical analysis)
+**No adaptive adversary evaluation**: -- does not test adversaries who know the defence is in place and craft attacks accordingly (except theoretical analysis)
 
 
 **Encoding is model-capacity-gated**: -- GPT-3.5 and below cannot reliably decode base64 while performing tasks
@@ -176,11 +176,11 @@ The authors caution against over-reliance on few-shot examples: they reflect cur
 | Paper Technique | LLMTrace Coverage | Gap | Planned Feature |
 |---|---|---|---|
 | Delimiting (boundary tokens around untrusted content) | Partial -- BIPIA-style `<data>`/`</data>` injection planned (AS-001/AS-002) | Delimiting alone is weak; LLMTrace should implement but not rely on it | AS-001, AS-002 cover this as part of tool-boundary firewalling |
-| Datamarking (whitespace replacement with special token) | Missing -- no input transformation capability | **Major gap**: datamarking is the best cost/benefit defense and is trivially implementable at proxy level | New feature needed: proxy-level datamarking transformation |
-| Encoding (base64 transformation of untrusted content) | Missing -- no encoding transformation | **Moderate gap**: strongest defense but model-capacity-gated | New feature needed: optional encoding mode for high-capacity models |
+| Datamarking (whitespace replacement with special token) | Missing -- no input transformation capability | **Major gap**: datamarking is the best cost/benefit defence and is trivially implementable at proxy level | New feature needed: proxy-level datamarking transformation |
+| Encoding (base64 transformation of untrusted content) | Missing -- no encoding transformation | **Moderate gap**: strongest defence but model-capacity-gated | New feature needed: optional encoding mode for high-capacity models |
 | Dynamic/randomized marking tokens | Missing | **Significant gap**: static tokens are subvertable if system prompt leaks | Should be part of datamarking implementation |
 | System prompt augmentation with provenance instructions | Missing -- no automatic instruction injection for data provenance | Overlaps with BIPIA explicit reminder injection | Extend planned reminder injection to include spotlighting instructions |
-| Few-shot injection defense | Missing -- no few-shot example injection | Moderate gap, but paper cautions against over-reliance | Low priority; spotlighting is more generalizable |
+| Few-shot injection defence | Missing -- no few-shot example injection | Moderate gap, but paper cautions against over-reliance | Low priority; spotlighting is more generalizable |
 | Perplexity/anomaly detection | Missing (IS-050 planned) | Orthogonal to spotlighting; detects GCG strings | IS-050 addresses different attack class |
 | Tool output sanitization | Partial (AS-002 planned) | Spotlighting is complementary to sanitization | Datamarking can be applied as pre-sanitization step |
 
@@ -189,10 +189,10 @@ The authors caution against over-reliance on few-shot examples: they reflect cur
 **AS-001/AS-002 (tool-boundary firewalling):**: Spotlighting transforms are a natural addition to the tool-output sanitizer pipeline. After sanitizing tool output content (AS-002), apply datamarking before reinserting into the agent prompt.
 
 
-**IS-050 (perplexity-based anomaly detection):**: Orthogonal defense. Spotlighting handles natural-language XPIA; IS-050 handles gradient-optimised adversarial strings. Both should be layered.
+**IS-050 (perplexity-based anomaly detection):**: Orthogonal defence. Spotlighting handles natural-language XPIA; IS-050 handles gradient-optimised adversarial strings. Both should be layered.
 
 
-**IS-005 (three-dimensional evaluation):**: Spotlighting's zero NLP quality impact validates that defensive transforms can be evaluated on the benign/malicious/over-defense axes without degrading benign performance.
+**IS-005 (three-dimensional evaluation):**: Spotlighting's zero NLP quality impact validates that defensive transforms can be evaluated on the benign/malicious/over-defence axes without degrading benign performance.
 
 
 ## Actionable Recommendations
@@ -225,7 +225,7 @@ Add a configurable encoding mode that base64-encodes untrusted content before in
 
 **Effort:** 2 weeks
 
-Position datamarking as a stage in the AS-002 tool-output firewall pipeline. Execution order: (1) IS-052 perplexity-based stripping, (2) AS-002 pattern-based sanitization, (3) spotlighting datamarking transformation. This provides defense-in-depth: sanitization removes known patterns, datamarking prevents the model from following anything that slips through.
+Position datamarking as a stage in the AS-002 tool-output firewall pipeline. Execution order: (1) IS-052 perplexity-based stripping, (2) AS-002 pattern-based sanitization, (3) spotlighting datamarking transformation. This provides defence-in-depth: sanitization removes known patterns, datamarking prevents the model from following anything that slips through.
 
 ### Benchmark Spotlighting Across Open-Source Models (P2)
 
@@ -237,17 +237,17 @@ The paper only tested GPT-family models. Validate datamarking and encoding effec
 
 ## Key Takeaways
 
-**Datamarking is the best cost/benefit XPIA defense available today.**: It reduces ASR from >50% to <3% across models with zero measurable impact on NLP task quality. It requires only a trivial string transformation and system prompt update -- fully implementable at the proxy layer.
+**Datamarking is the best cost/benefit XPIA defence available today.**: It reduces ASR from >50% to <3% across models with zero measurable impact on NLP task quality. It requires only a trivial string transformation and system prompt update -- fully implementable at the proxy layer.
 
 
 **Delimiting alone is insufficient.**: While easy to implement, delimiter-based boundaries can be trivially subverted by an adversary who knows the system prompt. Datamarking and encoding provide continuous provenance signals throughout the input, not just at boundaries.
 
 
-**Encoding (base64) is the strongest defense but is model-capacity-gated.**: It achieves 0.0% ASR on summarization tasks but causes severe quality degradation on GPT-3.5-class models. Reserve for GPT-4-class and above, with per-model validation.
+**Encoding (base64) is the strongest defence but is model-capacity-gated.**: It achieves 0.0% ASR on summarization tasks but causes severe quality degradation on GPT-3.5-class models. Reserve for GPT-4-class and above, with per-model validation.
 
 
-**Dynamic/randomized marking tokens are essential for production deployments.**: The paper explicitly assumes the system prompt will leak. Static marking tokens become a known constant the adversary can exploit. Randomizing the token per-invocation makes the defense robust against system prompt leakage.
+**Dynamic/randomized marking tokens are essential for production deployments.**: The paper explicitly assumes the system prompt will leak. Static marking tokens become a known constant the adversary can exploit. Randomizing the token per-invocation makes the defence robust against system prompt leakage.
 
 
-**Spotlighting addresses the structural root cause of XPIA**: -- the inability of LLMs to distinguish code from data in a shared token stream. This makes it more generalizable than few-shot or instruction-based defenses that depend on knowledge of specific attack tactics. It complements (not replaces) classification-based detection and tool-output sanitization.
+**Spotlighting addresses the structural root cause of XPIA**: -- the inability of LLMs to distinguish code from data in a shared token stream. This makes it more generalizable than few-shot or instruction-based defences that depend on knowledge of specific attack tactics. It complements (not replaces) classification-based detection and tool-output sanitization.
 

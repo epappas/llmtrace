@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-07
 **Classification**: Internal -- Architecture Reference
-**Scope**: Threat model mapping, coverage assessment, defense-in-depth recommendations
+**Scope**: Threat model mapping, coverage assessment, defence-in-depth recommendations
 
 
 ## Executive Summary
@@ -32,14 +32,14 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 | P2SQL injection patterns | `crates/llmtrace-security/src/lib.rs` | `build_p2sql_patterns()` |
 | Header injection patterns | `crates/llmtrace-security/src/lib.rs` | `build_header_patterns()` |
 | DeBERTa ML classifier | `crates/llmtrace-security/src/ml_detector.rs` | `MLSecurityAnalyzer` |
-| Ensemble analyzer (majority voting) | `crates/llmtrace-security/src/ensemble.rs` | `EnsembleSecurityAnalyzer` |
+| Ensemble analyser (majority voting) | `crates/llmtrace-security/src/ensemble.rs` | `EnsembleSecurityAnalyzer` |
 | InjecGuard auxiliary model | `crates/llmtrace-security/src/injecguard.rs` | `InjecGuardAnalyzer` |
-| PIGuard (reduced over-defense) | `crates/llmtrace-security/src/piguard.rs` | `PIGuardAnalyzer` |
+| PIGuard (reduced over-defence) | `crates/llmtrace-security/src/piguard.rs` | `PIGuardAnalyzer` |
 | Unicode normalisation (anti-evasion) | `crates/llmtrace-security/src/normalise.rs` | `normalise_text()` |
 | Feature-level fusion classifier | `crates/llmtrace-security/src/fusion_classifier.rs` | `FusionClassifier` |
 | Feature extraction (heuristic) | `crates/llmtrace-security/src/feature_extraction.rs` | `extract_heuristic_features()` |
 | Basic stemming | `crates/llmtrace-security/src/lib.rs` | `basic_stem()`, `stem_text()` |
-| Adversarial defense pipeline | `crates/llmtrace-security/src/adversarial_defense.rs` | `AdversarialDefense` |
+| Adversarial defence pipeline | `crates/llmtrace-security/src/adversarial_defense.rs` | `AdversarialDefense` |
 | FPR calibration | `crates/llmtrace-security/src/fpr_calibration.rs` | `ThresholdCalibrator` |
 | FPR drift monitoring | `crates/llmtrace-security/src/fpr_monitor.rs` | `FprMonitor` |
 | Jailbreak detector | `crates/llmtrace-security/src/jailbreak_detector.rs` | `JailbreakDetector` |
@@ -50,7 +50,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 
 #### 2 Threat Scenarios Where Proxy Position is Uniquely Valuable
 
-**Direct injection via user messages**: LLMTrace intercepts every user message before it reaches the LLM provider. The ensemble pipeline (regex + DeBERTa + optional InjecGuard/PIGuard) analyses the full message content after Unicode normalisation, providing defense that is independent of the LLM provider's own safety mechanisms. This is valuable because provider-side defenses vary widely and are opaque.
+**Direct injection via user messages**: LLMTrace intercepts every user message before it reaches the LLM provider. The ensemble pipeline (regex + DeBERTa + optional InjecGuard/PIGuard) analyses the full message content after Unicode normalisation, providing defence that is independent of the LLM provider's own safety mechanisms. This is valuable because provider-side defences vary widely and are opaque.
 
 **Indirect injection via tool outputs**: The `ToolOutputSanitizer` in `crates/llmtrace-security/src/tool_firewall.rs` scans tool responses for embedded injection instructions before they are passed back to the agent. Since LLMTrace mediates tool calls, it can strip malicious content at the trust boundary -- the exact approach that the ServiceNow/Mila paper demonstrated achieves 0% ASR.
 
@@ -62,7 +62,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 
 #### 3 Detection Strategies to Implement
 
-**Perplexity-based anomaly detection for GCG strings**: The Agent-as-a-Proxy paper (arXiv 2602.05066, Feb 2026) demonstrates that GCG-optimised adversarial strings bypass monitoring-based defenses at 90%+ ASR. These strings have characteristically high perplexity. Implementing a perplexity scorer as a pre-filter would detect adversarial suffixes before they reach the ML classifiers.
+**Perplexity-based anomaly detection for GCG strings**: The Agent-as-a-Proxy paper (arXiv 2602.05066, Feb 2026) demonstrates that GCG-optimised adversarial strings bypass monitoring-based defences at 90%+ ASR. These strings have characteristically high perplexity. Implementing a perplexity scorer as a pre-filter would detect adversarial suffixes before they reach the ML classifiers.
 
 
 **Boundary token injection**: The BIPIA benchmark shows that injecting `<data>`/`</data>` boundary tokens around external content reduces indirect injection ASR by 1064% in ablation studies. LLMTrace's proxy position allows it to inject these tokens transparently.
@@ -74,7 +74,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 **Multi-language injection expansion**: The current `multilingual_ignore` pattern covers 4 languages. Extending to cover Mandarin, Japanese, Korean, Arabic, and Portuguese injection patterns would close a gap against multilingual evasion.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Layer 1 (Pre-processing)**: Unicode normalisation (already implemented in `normalise.rs`).
 
@@ -91,7 +91,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 **Layer 5 (Policy Enforcement)**: `evaluate_enforcement()` in `enforcement.rs` supports log/block/flag modes with per-category overrides.
 
 
-**Layer 6 (Structural Defense)**: Boundary token injection at tool-call boundaries (to implement).
+**Layer 6 (Structural Defence)**: Boundary token injection at tool-call boundaries (to implement).
 
 
 **Layer 7 (Session-level)**: `SessionAnalyzer` for multi-turn extraction detection.
@@ -102,7 +102,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 
 #### 5 Gaps That LLMTrace Cannot Address
 
-**Model-internal safety alignment**: LLMTrace cannot modify the LLM's internal representation of instructions. If an injection reaches the model after all proxy-level checks, the model's own alignment is the final defense.
+**Model-internal safety alignment**: LLMTrace cannot modify the LLM's internal representation of instructions. If an injection reaches the model after all proxy-level checks, the model's own alignment is the final defence.
 
 
 **Semantic injection without syntactic markers**: Attacks that achieve goal hijacking through pure semantic manipulation (no detectable keywords, no structural patterns) will evade both regex and pattern-trained ML classifiers. Only LLM-judge models can catch these, at significant latency cost.
@@ -125,7 +125,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 | NER-based PII detection (BERT NER) | `crates/llmtrace-security/src/ner_detector.rs` |
 | Secret scanning (JWT, AWS keys, GitHub tokens, GCP SA, Slack, SSH private keys, generic API keys) | `crates/llmtrace-security/src/lib.rs` -- `build_leakage_patterns()` |
 | Data leakage response scanning | `crates/llmtrace-security/src/lib.rs` -- `analyze_response()` |
-| Output analyzer (PII + secrets in responses) | `crates/llmtrace-security/src/output_analyzer.rs` |
+| Output analyser (PII + secrets in responses) | `crates/llmtrace-security/src/output_analyzer.rs` |
 | Compliance reporting (SOC2, GDPR, HIPAA) | `crates/llmtrace-proxy/src/compliance.rs` |
 
 #### 2 Threat Scenarios Where Proxy Position is Uniquely Valuable
@@ -147,7 +147,7 @@ LLMTrace occupies a unique position in the LLM security landscape: a transparent
 **Gradual disclosure detection**: Track PII disclosure across a session. If an LLM reveals partial PII in turn 1 and the remainder in turn 3, the `SessionAnalyzer` should flag the cumulative disclosure.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Input-side**: Detect PII in user messages (warn or redact before sending to LLM).
 
@@ -204,7 +204,7 @@ LLMTrace does not directly address supply chain security. However, several archi
 **Dependency attestation**: Integrate SLSA or Sigstore verification for model artifacts downloaded from HuggingFace Hub.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 - LLMTrace should not be the primary supply chain control. Pair with: cargo-deny/cargo-audit for Rust dependencies, container image scanning (Trivy) in CI, SBOM generation, and provider contract SLAs for model version guarantees.
 
@@ -243,9 +243,9 @@ No direct implementation. Partial mitigation through:
 **Output consistency checking**: For deterministic queries, compare responses across time. Significant drift may indicate model poisoning or unauthorized fine-tuning.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
-- Data poisoning defense primarily requires controls at the training pipeline level, which is outside LLMTrace's scope.
+- Data poisoning defence primarily requires controls at the training pipeline level, which is outside LLMTrace's scope.
 - LLMTrace's contribution is at the runtime inference boundary: sanitizing inputs to and outputs from models, and logging all interactions for forensic analysis.
 
 #### 5 Gaps
@@ -263,7 +263,7 @@ No direct implementation. Partial mitigation through:
 
 | Component | File |
 |-----------|------|
-| Output analyzer (composite pipeline) | `crates/llmtrace-security/src/output_analyzer.rs` |
+| Output analyser (composite pipeline) | `crates/llmtrace-security/src/output_analyzer.rs` |
 | Toxicity detection (BERT-based, 6 categories) | `crates/llmtrace-security/src/toxicity_detector.rs` |
 | Hallucination detection (cross-encoder) | `crates/llmtrace-security/src/hallucination_detector.rs` |
 | Code security analysis (SQL injection, command injection, XSS, hardcoded creds, insecure crypto) | `crates/llmtrace-security/src/code_security.rs` |
@@ -275,7 +275,7 @@ No direct implementation. Partial mitigation through:
 
 **XSS via LLM output**: If an LLM generates HTML/JavaScript that a downstream application renders without sanitization, XSS is possible. The `code_security.rs` module detects `innerHTML`, `document.write()`, and `dangerouslySetInnerHTML` patterns in code blocks within responses.
 
-**Command injection via generated code**: The code security analyzer detects `os.system()`, `eval()`, `subprocess.run()` with shell=True, and similar patterns in LLM-generated code, flagging code that a downstream system might execute unsafely.
+**Command injection via generated code**: The code security analyser detects `os.system()`, `eval()`, `subprocess.run()` with shell=True, and similar patterns in LLM-generated code, flagging code that a downstream system might execute unsafely.
 
 **SSRF via generated URLs**: When the LLM generates URLs that a downstream system will fetch, the proxy can detect internal IP ranges (`10.x`, `172.16.x`, `192.168.x`, `169.254.x`) and localhost references in response content.
 
@@ -290,7 +290,7 @@ No direct implementation. Partial mitigation through:
 **Structured output schema validation**: When the API response contains structured JSON (function calls, tool_use), validate that output conforms to the declared schema. Unexpected fields or types may indicate output manipulation.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Proxy layer**: LLMTrace scans response content for dangerous patterns before forwarding to the client.
 
@@ -325,9 +325,9 @@ No direct implementation. Partial mitigation through:
 | Tool registry (categories, rate limiting, allowlisting) | `crates/llmtrace-security/src/tool_registry.rs` |
 | Action policy engine (allowlist enforcement, context minimization) | `crates/llmtrace-security/src/action_policy.rs` |
 | Action correlator (multi-step action tracking) | `crates/llmtrace-security/src/action_correlator.rs` |
-| Multi-agent defense pipeline (trust levels, privilege boundaries) | `crates/llmtrace-security/src/multi_agent.rs` |
+| Multi-agent defence pipeline (trust levels, privilege boundaries) | `crates/llmtrace-security/src/multi_agent.rs` |
 | MCP protocol monitor (server allowlist, tool shadowing, schema injection) | `crates/llmtrace-security/src/mcp_monitor.rs` |
-| Agent action analysis in regex analyzer | `crates/llmtrace-security/src/lib.rs` -- dangerous command, URL, and file access detection |
+| Agent action analysis in regex analyser | `crates/llmtrace-security/src/lib.rs` -- dangerous command, URL, and file access detection |
 
 #### 2 Threat Scenarios Where Proxy Position is Uniquely Valuable
 
@@ -347,10 +347,10 @@ No direct implementation. Partial mitigation through:
 **Dynamic capability adjustment**: Reduce available tools as session risk score increases. If prompt injection is suspected, disable high-privilege tools for the remainder of the session.
 
 
-**Confirmation gates for destructive actions**: The defense pipeline design document specifies "require confirmation" as an action type. Implementing this for destructive operations (delete, overwrite, send-email) would provide human-in-the-loop control.
+**Confirmation gates for destructive actions**: The defence pipeline design document specifies "require confirmation" as an action type. Implementing this for destructive operations (delete, overwrite, send-email) would provide human-in-the-loop control.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Tool allowlisting**: Use `ActionPolicy::restrictive()` in production to deny-by-default.
 
@@ -402,10 +402,10 @@ No direct implementation. Partial mitigation through:
 **Semantic similarity between system prompt and response**: When the proxy has access to the system prompt (from the request), compute a similarity score between the system prompt and the response. High similarity indicates potential leakage even without exact text matches.
 
 
-**Structured query defense**: Automatically wrap user messages in structured formats (e.g., XML tags, JSON) that make it harder for injection attacks to break out of the user context and access the system prompt.
+**Structured query defence**: Automatically wrap user messages in structured formats (e.g., XML tags, JSON) that make it harder for injection attacks to break out of the user context and access the system prompt.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Canary tokens**: (implemented): Inject per-session canary tokens for definitive leakage detection.
 
@@ -424,7 +424,7 @@ No direct implementation. Partial mitigation through:
 **Paraphrased leakage**: If the model paraphrases the system prompt rather than quoting it verbatim, neither canary tokens nor regex patterns will detect it.
 
 
-**Indirect leakage via behaviour**: An attacker can infer system prompt content by observing the model's behavioral constraints without the model ever explicitly disclosing the prompt text.
+**Indirect leakage via behaviour**: An attacker can infer system prompt content by observing the model's behavioural constraints without the model ever explicitly disclosing the prompt text.
 
 
 
@@ -443,7 +443,7 @@ No dedicated implementation. Partial relevance:
 
 #### 2 Threat Scenarios Where Proxy Position is Uniquely Valuable
 
-**RAG poisoning at the retrieval boundary**: When agents retrieve documents via tools (vector search, web search), LLMTrace mediates the returned content. The `ToolOutputSanitizer` can strip embedded injection instructions from retrieved documents before they enter the model context. This is the most practical defense against embedding manipulation, since the proxy cannot inspect the vector database internals but can sanitize the output.
+**RAG poisoning at the retrieval boundary**: When agents retrieve documents via tools (vector search, web search), LLMTrace mediates the returned content. The `ToolOutputSanitizer` can strip embedded injection instructions from retrieved documents before they enter the model context. This is the most practical defence against embedding manipulation, since the proxy cannot inspect the vector database internals but can sanitize the output.
 
 **Anomalous retrieval patterns**: The proxy can log similarity scores and document counts from retrieval tool calls. Statistical anomalies (e.g., retrieval returning unusually high similarity for a query, or returning documents with markedly different semantic content than the query) may indicate embedding poisoning.
 
@@ -458,7 +458,7 @@ No dedicated implementation. Partial relevance:
 **Cross-encoder re-ranking validation**: Use a cross-encoder model (similar to the hallucination detector's architecture) to independently score the relevance of retrieved documents against the query. Discrepancies between the vector search ranking and cross-encoder ranking may indicate embedding manipulation.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 - LLMTrace's primary contribution is at the retrieval output boundary: sanitizing retrieved content.
 - Embedding integrity controls must be implemented at the vector database level (e.g., document provenance metadata, embedding versioning, access controls on vector write operations).
@@ -480,7 +480,7 @@ No dedicated implementation. Partial relevance:
 | Component | File |
 |-----------|------|
 | Hallucination detector (two-stage: sentinel + cross-encoder) | `crates/llmtrace-security/src/hallucination_detector.rs` |
-| Output analyzer (integrates hallucination + toxicity + PII) | `crates/llmtrace-security/src/output_analyzer.rs` |
+| Output analyser (integrates hallucination + toxicity + PII) | `crates/llmtrace-security/src/output_analyzer.rs` |
 
 #### 2 Threat Scenarios Where Proxy Position is Uniquely Valuable
 
@@ -499,7 +499,7 @@ No dedicated implementation. Partial relevance:
 **Confidence calibration for factual claims**: Use the cross-encoder scores to assign confidence levels to factual claims. Low-confidence claims could be annotated rather than blocked.
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Proxy layer**: Hallucination detection on response content, with configurable thresholds for blocking vs. flagging.
 
@@ -553,7 +553,7 @@ No dedicated implementation. Partial relevance:
 **Anomalous usage pattern detection**: The `anomaly.rs` module can track per-tenant usage patterns and alert on statistical anomalies (e.g., sudden 10x increase in request volume, unusual model selection patterns).
 
 
-#### 4 Defense-in-Depth Recommendations
+#### 4 Defence-in-Depth Recommendations
 
 **Request-level**: Max request size, context flooding detection, token cap per request.
 
@@ -624,7 +624,7 @@ LLMTrace is itself a security-critical component. Its compromise would undermine
 
 ## Security Architecture Patterns
 
-### 1 Defense-in-Depth with LLMTrace
+### 1 Defence-in-Depth with LLMTrace
 
 ```
                     Client Application
@@ -646,9 +646,9 @@ LLMTrace is itself a security-critical component. Its compromise would undermine
 
 **L2 -- Security Analysis**: LLMTrace provides the core security analysis layer: prompt injection detection, PII scanning, tool firewalling, rate limiting, cost caps, and enforcement decisions.
 
-**L3 -- Provider Safety**: LLM providers have their own safety mechanisms (content filtering, RLHF alignment). LLMTrace's defenses are additive to, not replacements for, provider-side safety.
+**L3 -- Provider Safety**: LLM providers have their own safety mechanisms (content filtering, RLHF alignment). LLMTrace's defences are additive to, not replacements for, provider-side safety.
 
-**L4 -- Output Safety**: LLMTrace's output analyzer, toxicity detector, hallucination detector, and code security analyzer provide response-side analysis.
+**L4 -- Output Safety**: LLMTrace's output analyser, toxicity detector, hallucination detector, and code security analyser provide response-side analysis.
 
 **L5 -- Application Logic**: Applications must still implement input validation, output sanitization, parameterized queries, and sandboxed execution for LLM-generated content.
 
@@ -781,7 +781,7 @@ Finding Generated (SecurityFinding)
 | **Technical documentation** | Trace storage provides complete interaction logs |
 | **Transparency** | Finding metadata attached to responses (in flag mode); hallucination scores |
 | **Human oversight** | "Require confirmation" enforcement action; compliance reports for human review |
-| **Accuracy and robustness** | Multi-model ensemble with FPR calibration; adversarial defense module |
+| **Accuracy and robustness** | Multi-model ensemble with FPR calibration; adversarial defence module |
 
 
 ## Red Team Testing Recommendations
@@ -843,7 +843,7 @@ Finding Generated (SecurityFinding)
 | **LLM04** | Data and Model Poisoning | Minimal | 2/10 | Tool output sanitization | Training pipeline controls, embedding integrity |
 | **LLM05** | Improper Output Handling | Moderate | 6/10 | Code security analysis, toxicity detection, leakage patterns | Streaming output blocking, SSRF detection, template injection |
 | **LLM06** | Excessive Agency | Strong | 7/10 | Tool firewall, action policy, action correlator, multi-agent pipeline, MCP monitor | Semantic intent verification, post-execution rollback |
-| **LLM07** | System Prompt Leakage | Moderate | 7/10 | Canary tokens, extraction detection, response leak patterns, session analysis | Paraphrased leakage, behavioral inference |
+| **LLM07** | System Prompt Leakage | Moderate | 7/10 | Canary tokens, extraction detection, response leak patterns, session analysis | Paraphrased leakage, behavioural inference |
 | **LLM08** | Vector/Embedding Weaknesses | Low | 2/10 | Tool output sanitization | Embedding integrity, retrieval anomaly detection |
 | **LLM09** | Misinformation | Moderate | 5/10 | Hallucination detector (sentinel + cross-encoder) | Citation verification, world-knowledge grounding |
 | **LLM10** | Unbounded Consumption | Strong | 7/10 | Rate limiting, cost caps, context flooding detection, circuit breaker | Streaming cost cutoff, predictive cost estimation |
@@ -878,7 +878,7 @@ The strongest areas (LLM01, LLM02, LLM06, LLM10) align well with the threats mos
 
 ### Medium-Term (Q3-Q4 2026)
 
-**Evaluate against AgentDojo and BIPIA benchmarks**: for agent security and indirect injection defense.
+**Evaluate against AgentDojo and BIPIA benchmarks**: for agent security and indirect injection defence.
 
 
 **Implement retrieval anomaly monitoring**: for LLM08 coverage: track similarity score distributions per tenant.
@@ -895,8 +895,8 @@ The strongest areas (LLM01, LLM02, LLM06, LLM10) align well with the threats mos
 
 | File | Purpose |
 |------|---------|
-| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/lib.rs` | Core regex analyzer with all detection patterns |
-| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/ensemble.rs` | Ensemble analyzer combining regex + ML |
+| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/lib.rs` | Core regex analyser with all detection patterns |
+| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/ensemble.rs` | Ensemble analyser combining regex + ML |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/ml_detector.rs` | DeBERTa ML classifier |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/normalise.rs` | Unicode normalisation (anti-evasion) |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/tool_firewall.rs` | Tool-boundary firewalling |
@@ -908,7 +908,7 @@ The strongest areas (LLM01, LLM02, LLM06, LLM10) align well with the threats mos
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/code_security.rs` | LLM-generated code security analysis |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/action_policy.rs` | Action policy enforcement |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/mcp_monitor.rs` | MCP protocol security |
-| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/multi_agent.rs` | Multi-agent defense pipeline |
+| `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/multi_agent.rs` | Multi-agent defence pipeline |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-security/src/adversarial_defense.rs` | Adversarial ML robustness |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-proxy/src/enforcement.rs` | Pre-request enforcement decisions |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-proxy/src/rate_limit.rs` | Per-tenant rate limiting |
@@ -917,6 +917,6 @@ The strongest areas (LLM01, LLM02, LLM06, LLM10) align well with the threats mos
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-proxy/src/compliance.rs` | Compliance reporting |
 | `/root/workspace/spacejar/llmtrace/crates/llmtrace-proxy/src/auth.rs` | Authentication and RBAC |
 | `/root/workspace/spacejar/llmtrace/config.yaml` | Proxy configuration |
-| `/root/workspace/spacejar/llmtrace/docs/research/llmtrace-defense-pipeline-design.md` | Defense pipeline architecture |
+| `/root/workspace/spacejar/llmtrace/docs/research/llmtrace-defence-pipeline-design.md` | Defence pipeline architecture |
 | `/root/workspace/spacejar/llmtrace/docs/research/security-state-of-art-2026.md` | Security state-of-art analysis |
 | `/root/workspace/spacejar/llmtrace/docs/research/benchmarks-and-tools-landscape.md` | Benchmarks and tools landscape |

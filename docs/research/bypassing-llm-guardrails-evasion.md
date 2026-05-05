@@ -16,7 +16,7 @@
 
 ## Executive Summary
 
-This research demonstrates systematic vulnerabilities in LLM guardrail systems through two attack categories: character injection (Unicode/homoglyphs) and algorithmic Adversarial ML evasion. Testing against six prominent guardrail systems revealed up to **100% evasion success rates**, highlighting critical gaps in current defense mechanisms.
+This research demonstrates systematic vulnerabilities in LLM guardrail systems through two attack categories: character injection (Unicode/homoglyphs) and algorithmic Adversarial ML evasion. Testing against six prominent guardrail systems revealed up to **100% evasion success rates**, highlighting critical gaps in current defence mechanisms.
 
 ## Paper Summary
 
@@ -163,9 +163,9 @@ Using white-box models (ProtectAI v2) to compute word rankings improved black-bo
 
 ## Feature Delta with LLMTrace
 
-Comprehensive analysis of our current defenses against the demonstrated attacks:
+Comprehensive analysis of our current defences against the demonstrated attacks:
 
-| Feature | Paper's Attacks | LLMTrace Defense | Coverage |
+| Feature | Paper's Attacks | LLMTrace Defence | Coverage |
 |---------|----------------|-----------------|----------|
 | **Unicode Normalisation** | Homoglyphs (Cyrillic а→a, Greek ο→o) | ✅ NFKC + extensive homoglyph mapping | **STRONG** - Covers Cyrillic & Greek confusables |
 | **Zero-width Characters** | Embedding \u{200B} in keywords | ✅ Comprehensive stripping (12 characters) | **STRONG** - Covers all demonstrated zero-width chars |
@@ -207,7 +207,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 
 ### 🔴 Critical Vulnerabilities
 
-**Emoji Smuggling**: 100% evasion success, no LLMTrace defense
+**Emoji Smuggling**: 100% evasion success, no LLMTrace defence
 
 
 **ProtectAI Model Exploitation**: Our DeBERTa model has documented 20-95% ASR
@@ -230,7 +230,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 **AML Ensemble Bypass**: Even with multiple models, sophisticated AML can evade detection
 
 
-### 🟢 Strong Defenses
+### 🟢 Strong Defences
 
 **Homoglyph Attacks**: Comprehensive Cyrillic/Greek→Latin mapping
 
@@ -275,7 +275,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
    ];
    ```
 
-### Priority 2: ML Defense Hardening (High Risk)
+### Priority 2: ML Defence Hardening (High Risk)
 
 **Ensemble Diversification**: 
 ```rust
@@ -301,7 +301,7 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
    }
    ```
 
-### Priority 3: Advanced Defense (Medium Risk)
+### Priority 3: Advanced Defence (Medium Risk)
 
 **Transferability Mitigation**: 
 ```rust
@@ -341,14 +341,14 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 - Implement ensemble voting with multiple model architectures
 - Add adaptive thresholding based on evasion risk
 
-**Week 5-8: Advanced Defenses**
+**Week 5-8: Advanced Defences**
 - Implement confidence calibration
 - Add multi-pass normalisation strategies
 - Develop transferability mitigation techniques
 
 ## Testing Strategy
 
-**Regression Testing**: Validate all paper's attack examples against updated defenses
+**Regression Testing**: Validate all paper's attack examples against updated defences
 
 
 **Adversarial Dataset**: Create comprehensive test suite with character injection + AML variants
@@ -361,8 +361,8 @@ model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
 
 
 ## Conclusion
-This research reveals significant vulnerabilities in current LLM guardrail approaches, with LLMTrace having **strong defenses against 60% of demonstrated attacks** but **critical gaps in emoji smuggling and model-specific exploits**. Our use of the ProtectAI DeBERTa model creates a known vulnerability requiring immediate ensemble diversification.
+This research reveals significant vulnerabilities in current LLM guardrail approaches, with LLMTrace having **strong defences against 60% of demonstrated attacks** but **critical gaps in emoji smuggling and model-specific exploits**. Our use of the ProtectAI DeBERTa model creates a known vulnerability requiring immediate ensemble diversification.
 
-The high success rates of character injection attacks (up to 100%) demonstrate that normalisation-only approaches are insufficient - we need defense-in-depth with multiple detection layers, robust ML ensembles, and proactive adversarial testing.
+The high success rates of character injection attacks (up to 100%) demonstrate that normalisation-only approaches are insufficient - we need defence-in-depth with multiple detection layers, robust ML ensembles, and proactive adversarial testing.
 
 **Immediate action required on emoji smuggling and ML model diversification to prevent exploitation of documented attack vectors.**

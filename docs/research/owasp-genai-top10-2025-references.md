@@ -8,7 +8,7 @@
 
 ## Overview
 
-The OWASP Top 10 for Large Language Model Applications (2025) identifies the most critical security risks in GenAI systems. This document catalogs research references, attack techniques, and defense strategies for each category, with specific relevance to LLMTrace's transparent proxy architecture.
+The OWASP Top 10 for Large Language Model Applications (2025) identifies the most critical security risks in GenAI systems. This document catalogs research references, attack techniques, and defence strategies for each category, with specific relevance to LLMTrace's transparent proxy architecture.
 
 **Official Resources**:
 - OWASP LLM Top 10 Project: https://owasp.org/www-project-top-10-for-large-language-model-applications/
@@ -60,7 +60,7 @@ Prompt injection occurs when attacker-crafted inputs manipulate an LLM into devi
 - Core principle: LLM responses are untrusted data
 - Injection impact varies by deployment: XSS in web apps, SQL injection in databases, OS command execution in shells
 - Data exfiltration via URL preview in chat platforms
-- Defense: threat modeling, fuzzing, least-privilege, human-in-the-loop
+- Defence: threat modeling, fuzzing, least-privilege, human-in-the-loop
 
 **Survey of Attacks on Large Vision-Language Models** (Liu et al., 2024)
 - Paper: https://arxiv.org/abs/2407.07403
@@ -92,7 +92,7 @@ LLMs may reveal sensitive information including PII, proprietary data, credentia
 - Users receiving another user's personal data due to inadequate sanitization
 - System prompt leakage exposing internal configurations
 
-**Defense Strategies** (per OWASP):
+**Defence Strategies** (per OWASP):
 - Strict input validation to filter harmful or sensitive data inputs
 - Principle of least privilege for data access
 - Data sanitization to prevent user data from entering training pipelines
@@ -138,7 +138,7 @@ LLM supply chain risks include compromised pre-trained models, poisoned training
 - Exploiting LoRA support in inference platforms (vLLM, OpenLLM) to inject adapters
 - Poisoned training data from third-party sources
 
-**Defense Strategies** (per OWASP):
+**Defence Strategies** (per OWASP):
 - Vet data sources and suppliers rigorously
 - Validate model outputs against trusted sources for poisoning indicators
 - Implement strict sandboxing to limit model exposure to unverified data
@@ -173,7 +173,7 @@ LLM supply chain risks include compromised pre-trained models, poisoned training
 - Docs: https://docs.vllm.ai/en/stable/features/lora/
 - LoRA (Low-Rank Adaptation) enables fine-tuning with minimal parameter changes
 - Supply chain risk: malicious LoRA adapters can subtly alter model behaviour
-- Defense: adapter provenance verification and behavioral testing before deployment
+- Defence: adapter provenance verification and behavioural testing before deployment
 
 ### LLMTrace Relevance
 
@@ -197,7 +197,7 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 - Embedding poisoning (corrupting numerical vector representations)
 - Supply chain poisoning through compromised third-party data sources
 
-**Defense Strategies** (per OWASP):
+**Defence Strategies** (per OWASP):
 - Vet data vendors; validate model outputs against trusted sources
 - Implement strict sandboxing for unverified data sources
 - Use Data Version Control (DVC) to track dataset changes and detect manipulation
@@ -210,7 +210,7 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 - Paper: https://arxiv.org/abs/2305.00944
 - As few as 100 poisoned examples suffice to consistently manipulate model outputs across hundreds of tasks
 - Larger LMs are increasingly vulnerable to poisoning (size paradox)
-- Defenses based on data filtering or reducing model capacity provide only moderate protection while reducing accuracy
+- Defences based on data filtering or reducing model capacity provide only moderate protection while reducing accuracy
 - Uses bag-of-words approximation for efficient poison example crafting
 
 **Sleeper Agents: Deceptive LLMs That Persist Through Safety Training** (Anthropic, 2024)
@@ -225,7 +225,7 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 - Blog: https://www.cobalt.io/blog/backdoor-attacks-on-ai-models
 - Five primary attack vectors: data poisoning, model manipulation, environmental manipulation, trigger insertion, clean label attacks
 - Clean label attacks insert backdoors without obvious data tampering
-- Defenses: model auditing, data security, anomaly detection, adaptive retraining, penetration testing
+- Defences: model auditing, data security, anomaly detection, adaptive retraining, penetration testing
 
 ### LLMTrace Relevance
 
@@ -262,7 +262,7 @@ Improper output handling occurs when LLM-generated content is passed to downstre
 - Blog: https://embracethered.com/blog/posts/2023/ai-injections-threats-context-matters/
 - LLM output can manifest as XSS, SQL injection, or OS commands depending on receiving system
 - URL preview auto-fetch enables data exfiltration through crafted hyperlinks
-- Defense requires treating LLM output as untrusted across all contexts
+- Defence requires treating LLM output as untrusted across all contexts
 
 ### LLMTrace Relevance
 
@@ -388,7 +388,7 @@ LLMs can generate false, misleading, or fabricated information (hallucinations) 
 - ChatGPT fabricated fake legal cases cited in court proceedings
 - Air Canada's chatbot provided misinformation to travelers, leading to legal complications
 
-**Defense Strategies** (per OWASP):
+**Defence Strategies** (per OWASP):
 - Use Retrieval-Augmented Generation (RAG) to ground outputs in verified databases
 - Cross-check LLM outputs with trusted external sources
 - Implement human oversight and fact-checking for critical information
@@ -434,7 +434,7 @@ LLM applications can consume excessive computational resources through crafted i
 - Denial of wallet: exploiting pay-per-use pricing to cause runaway costs
 - Bypassing input filtering to perform side-channel attacks for model extraction
 
-**Defense Strategies** (per OWASP):
+**Defence Strategies** (per OWASP):
 - Continuous resource monitoring with logging for unusual consumption patterns
 - Implement watermarking frameworks to detect unauthorized use of LLM outputs
 - Rate limiting and input validation
@@ -455,7 +455,7 @@ LLM applications can consume excessive computational resources through crafted i
 - Energy consumption increased 10-200x
 - Attacks portable across CPUs, GPUs, and specialized accelerators
 - Threatens real-time systems where latency is critical
-- Defense: shift from average-case to worst-case hardware performance analysis
+- Defence: shift from average-case to worst-case hardware performance analysis
 
 **Power Side-Channel Attack on CNN Accelerators** (Wei et al., 2018)
 - Paper: https://arxiv.org/abs/1803.05847
@@ -483,7 +483,7 @@ LLMTrace addresses LLM10 through:
 - Covers secure architecture, authentication, authorisation, validation, session isolation, and hardened deployment
 - Operates under Zero Trust Model: "never trust, always verify" for every MCP interaction
 - Key threats: tool poisoning, prompt injection, memory poisoning, tool interference
-- Defenses: network segmentation, application gateway controls, just-in-time access, behavioral anomaly detection
+- Defences: network segmentation, application gateway controls, just-in-time access, behavioural anomaly detection
 - Relevant to LLM06 (Excessive Agency) and LLMTrace's `mcp_monitor.rs`
 
 **Vendor Evaluation Criteria for AI Red Teaming** (OWASP, 2026)
@@ -505,7 +505,7 @@ LLMTrace addresses LLM10 through:
 
 **LLM Security Comprehensive Survey** (IEEE, 2024)
 - Reference: https://ieeexplore.ieee.org/document/10579515
-- Comprehensive survey of LLM security covering prompt injection, data poisoning, model extraction, and defense mechanisms
+- Comprehensive survey of LLM security covering prompt injection, data poisoning, model extraction, and defence mechanisms
 
 ### AVID ML Vulnerability Database
 

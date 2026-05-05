@@ -33,7 +33,7 @@ LLMTrace occupies a unique architectural position in the GenAI security landscap
 | Monitoring only (2-3/10) | LLM03, LLM04 | 2 |
 | Gap (0-1/10) | LLM08, LLM09 | 2 |
 
-**Key Finding**: LLMTrace provides strong defense-in-depth for injection-class attacks (LLM01) and information disclosure (LLM02), with a comprehensive multi-model ensemble pipeline. The primary gaps are in RAG/embedding security (LLM08) and misinformation/hallucination detection (LLM09), both of which are addressable from the proxy vantage point.
+**Key Finding**: LLMTrace provides strong defence-in-depth for injection-class attacks (LLM01) and information disclosure (LLM02), with a comprehensive multi-model ensemble pipeline. The primary gaps are in RAG/embedding security (LLM08) and misinformation/hallucination detection (LLM09), both of which are addressable from the proxy vantage point.
 
 **Architecture Strengths**:
 - Rust-native performance: sub-millisecond regex analysis, ~50-100ms ML inference
@@ -43,7 +43,7 @@ LLMTrace occupies a unique architectural position in the GenAI security landscap
 - Streaming security analysis during SSE for real-time detection
 - Tool firewall with schema validation and allowlisting
 - MCP protocol monitoring
-- Multi-agent defense pipeline with trust levels
+- Multi-agent defence pipeline with trust levels
 
 
 ## LLMTrace Architecture Overview
@@ -67,15 +67,15 @@ llmtrace/
 
 ### 2 Security Crate Components
 
-The `llmtrace-security` crate is the core defense engine, containing:
+The `llmtrace-security` crate is the core defence engine, containing:
 
 **Detection Engines**:
 - `ensemble.rs` -- Combines regex + ML with majority voting and confidence boosting
 - `ml_detector.rs` -- DeBERTa-v3-base prompt injection classifier via Candle
 - `feature_extraction.rs` -- Heuristic feature extraction (synonym matching, pattern detection)
 - `fusion_classifier.rs` -- Feature-level fusion (DeBERTa embeddings + heuristic features)
-- `injecguard.rs` -- InjecGuard model for over-defense-aware detection
-- `piguard.rs` -- PIGuard model with MOF (Mitigating Over-defense for Free)
+- `injecguard.rs` -- InjecGuard model for over-defence-aware detection
+- `piguard.rs` -- PIGuard model with MOF (Mitigating Over-defence for Free)
 - `prompt_guard.rs` -- Meta PromptGuard integration
 - `jailbreak_detector.rs` -- Dedicated jailbreak detection
 - `ner_detector.rs` -- BERT NER for PII entity detection
@@ -83,13 +83,13 @@ The `llmtrace-security` crate is the core defense engine, containing:
 - `hallucination_detector.rs` -- Hallucination detection pipeline
 - `output_analyzer.rs` -- Response content safety analysis
 
-**Defense Infrastructure**:
+**Defence Infrastructure**:
 - `tool_firewall.rs` -- Schema validation, input minimization, output sanitization
 - `tool_registry.rs` -- Tool allowlisting, categorization, rate limiting
 - `mcp_monitor.rs` -- Model Context Protocol security monitoring
 - `action_correlator.rs` -- Multi-step action sequence correlation
 - `action_policy.rs` -- Policy engine with enforcement modes
-- `multi_agent.rs` -- Multi-agent defense pipeline with trust levels
+- `multi_agent.rs` -- Multi-agent defence pipeline with trust levels
 - `session_analyzer.rs` -- Cross-request session analysis
 - `canary.rs` -- Canary token injection and detection
 - `adversarial_defense.rs` -- Multi-pass normalization, perturbation detection
@@ -150,7 +150,7 @@ The detection pipeline uses a layered ensemble:
 - DeBERTa-v3-base -- ProtectAI prompt injection classifier
 
 **Auxiliary Detectors** (additive-only, no voting participation):
-- InjecGuard -- Over-defense-aware, capped at confidence 0.60 unless corroborated
+- InjecGuard -- Over-defence-aware, capped at confidence 0.60 unless corroborated
 - PIGuard -- MOF-trained, same capping strategy
 
 **Fusion Path** (when enabled):
@@ -171,13 +171,13 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 |-----------|---------------|----------------|
 | Regex heuristics | 13+ pattern categories for known injection signatures | `lib.rs` (RegexSecurityAnalyzer) |
 | DeBERTa classifier | ProtectAI deberta-v3-base-prompt-injection-v2 | `ml_detector.rs` |
-| InjecGuard | Over-defense-aware auxiliary detector | `injecguard.rs` |
+| InjecGuard | Over-defence-aware auxiliary detector | `injecguard.rs` |
 | PIGuard | MOF-trained auxiliary detector | `piguard.rs` |
 | PromptGuard | Meta's 86M param classifier | `prompt_guard.rs` |
 | Feature fusion | DeBERTa embeddings + heuristic features | `fusion_classifier.rs` |
 | Ensemble voting | Majority voting with confidence boosting | `ensemble.rs` |
 | Unicode normalization | NFKC + zero-width stripping | `normalise.rs` |
-| Adversarial defense | Multi-pass normalization, perturbation detection | `adversarial_defense.rs` |
+| Adversarial defence | Multi-pass normalization, perturbation detection | `adversarial_defense.rs` |
 | FPR calibration | Threshold optimisation at target FPR rates | `fpr_calibration.rs` |
 | Streaming analysis | Real-time injection detection during SSE | `streaming.rs` |
 | Jailbreak detection | Dedicated jailbreak classifier | `jailbreak_detector.rs` |
@@ -187,7 +187,7 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 **Gaps**:
 - No multi-turn injection sequence detection across conversation turns
 - Limited adversarial robustness testing against GCG-optimised attacks (per Agent-as-a-Proxy research)
-- No boundary token injection defense (highest-impact per BIPIA ablation)
+- No boundary token injection defence (highest-impact per BIPIA ablation)
 
 **Key References**:
 - HouYi (Liu et al., 2023): 31/36 real-world apps susceptible -- validates need for proxy-level detection
@@ -231,12 +231,12 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 | Model cache directory | Configurable cache with env var override | `LLMTRACE_ML_CACHE_DIR` |
 | Docker hardening | Non-root container, minimal base image | Dockerfile |
 
-**Proxy Advantage**: Limited. Supply chain attacks target build-time and distribution, not runtime. However, LLMTrace can detect behavioral anomalies that may indicate a compromised upstream model.
+**Proxy Advantage**: Limited. Supply chain attacks target build-time and distribution, not runtime. However, LLMTrace can detect behavioural anomalies that may indicate a compromised upstream model.
 
 **Gaps**:
 - No model provenance verification for proxied LLM providers
 - No plugin/extension integrity checking
-- No behavioral drift detection for upstream model changes
+- No behavioural drift detection for upstream model changes
 
 **Key References**:
 - Silent Sabotage (HiddenLayer): Hugging Face Safetensors conversion service weaponized
@@ -253,7 +253,7 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 | Anomaly detection | Basic response pattern monitoring | `anomaly.rs` |
 | Model integrity | Hash verification for LLMTrace's own models | Config-level |
 
-**Proxy Advantage**: LLMTrace observes all model outputs over time, creating a statistical baseline. Behavioral shifts (e.g., a poisoned model producing systematically different outputs for trigger phrases) could be detected through response distribution monitoring.
+**Proxy Advantage**: LLMTrace observes all model outputs over time, creating a statistical baseline. Behavioural shifts (e.g., a poisoned model producing systematically different outputs for trigger phrases) could be detected through response distribution monitoring.
 
 **Gaps**:
 - No trigger pattern detection in upstream model responses
@@ -652,9 +652,9 @@ Client/User  --->  LLMTrace Proxy  --->  LLM Provider
                        +--->  Tool/RAG Services [Untrusted]
 ```
 
-### 2 Defense-in-Depth Architecture
+### 2 Defence-in-Depth Architecture
 
-LLMTrace implements defense-in-depth through layered controls at each pipeline stage:
+LLMTrace implements defence-in-depth through layered controls at each pipeline stage:
 
 **Layer 1 -- Network Controls**:
 - Rate limiting (`rate_limit.rs`)
@@ -696,9 +696,9 @@ LLMTrace implements defense-in-depth through layered controls at each pipeline s
 ### 3 Per-Category Security Recommendations
 
 **LLM01 (Prompt Injection) -- Strengthen**:
-- Implement boundary token injection (`<data>`/`</data>`) as a proxy-level defense. BIPIA research shows 1064% ASR increase without boundary tokens.
-- Add adversarial robustness testing against GCG-optimised attacks. The Agent-as-a-Proxy paper demonstrates 90%+ ASR against monitoring-based defenses.
-- Implement structural defenses (sanitization, boundary tokens) as primary controls; ML detection as secondary. Structural defenses are validated as more robust against adaptive attacks.
+- Implement boundary token injection (`<data>`/`</data>`) as a proxy-level defence. BIPIA research shows 1064% ASR increase without boundary tokens.
+- Add adversarial robustness testing against GCG-optimised attacks. The Agent-as-a-Proxy paper demonstrates 90%+ ASR against monitoring-based defences.
+- Implement structural defences (sanitization, boundary tokens) as primary controls; ML detection as secondary. Structural defences are validated as more robust against adaptive attacks.
 
 **LLM02 (Sensitive Info) -- Enhance**:
 - Add context-aware PII confidence boosting. A "customer ID" near a 10-digit number should boost PII confidence; a random number in code should suppress.
@@ -706,7 +706,7 @@ LLMTrace implements defense-in-depth through layered controls at each pipeline s
 - Add data classification labels for different PII tiers (public, internal, confidential, restricted).
 
 **LLM03 (Supply Chain) -- Monitor**:
-- Implement behavioral fingerprinting for upstream models. Track response distributions; alert on significant shifts that could indicate model replacement or compromise.
+- Implement behavioural fingerprinting for upstream models. Track response distributions; alert on significant shifts that could indicate model replacement or compromise.
 - Verify model version headers in provider API responses.
 - Monitor for unexpected capability changes (new tools, changed function signatures).
 
@@ -747,7 +747,7 @@ LLMTrace, as a security control, is itself an attack target:
 | Attack Vector | Risk | Mitigation |
 |--------------|------|------------|
 | Proxy bypass | Clients connect directly to LLM provider, skipping proxy | Network policy enforcement (only proxy IP can reach provider) |
-| Model evasion | Adversarial inputs crafted to bypass detection | Multi-model ensemble, adversarial training, structural defenses |
+| Model evasion | Adversarial inputs crafted to bypass detection | Multi-model ensemble, adversarial training, structural defences |
 | Denial of service | Overwhelm proxy to force circuit-breaker bypass | Rate limiting, connection limits, graceful degradation |
 | Model poisoning | Compromise LLMTrace's own ML models | Hash verification, signed models, isolated download |
 | Configuration tampering | Modify config to disable detection | File integrity monitoring, RBAC on config files |
@@ -857,13 +857,13 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 
 | Priority | Gap | OWASP Category | Effort | Impact |
 |----------|-----|----------------|--------|--------|
-| P0 | Boundary token injection defense | LLM01 | Small | High (1064% ASR increase without) |
+| P0 | Boundary token injection defence | LLM01 | Small | High (1064% ASR increase without) |
 | P0 | Adversarial robustness testing | LLM01 | Medium | High (validates detection) |
 | P1 | Embedding/RAG security monitoring | LLM08 | Medium | High (new OWASP category) |
 | P1 | Hallucination detection pipeline | LLM09 | Large | High (new OWASP category) |
 | P1 | System prompt extraction detection | LLM07 | Medium | Medium |
 | P2 | Dynamic capability restriction | LLM06 | Medium | Medium |
-| P2 | Model behavioral fingerprinting | LLM03, LLM04 | Medium | Medium |
+| P2 | Model behavioural fingerprinting | LLM03, LLM04 | Medium | Medium |
 | P2 | Sponge-example detection | LLM10 | Small | Low |
 | P3 | Context-aware PII boosting | LLM02 | Small | Low |
 | P3 | Code output vulnerability scanning | LLM05 | Medium | Medium |
@@ -880,7 +880,7 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 - Build RAG/embedding security monitoring (LLM08)
 - Implement HaluGate-style hallucination detection leveraging proxy traffic (LLM09)
 - Add dynamic capability restriction based on risk score (LLM06)
-- Implement model behavioral fingerprinting for supply chain detection (LLM03/04)
+- Implement model behavioural fingerprinting for supply chain detection (LLM03/04)
 
 **Phase 3: Medium-term (Q3 2026)** -- Advanced capabilities
 - Full taint tracking across tool chains
@@ -956,6 +956,6 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 ### LLMTrace Internal Research
 - `docs/research/security-state-of-art-2026.md` -- Comprehensive security literature survey and gap analysis
 - `docs/research/benchmarks-and-tools-landscape.md` -- Benchmark evaluation and tool comparison
-- `docs/research/llmtrace-defense-pipeline-design.md` -- Defense pipeline architecture specification
+- `docs/research/llmtrace-defence-pipeline-design.md` -- Defence pipeline architecture specification
 - `docs/research/owasp-genai-top10-2025-references.md` -- OWASP Top 10 reference catalog
 - `docs/security/OWASP_GENAI_TOP10_2025_ARCHITECTURE.md` -- Security-engineer detailed code-level analysis with 40+ specific code references

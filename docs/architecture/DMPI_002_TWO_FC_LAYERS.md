@@ -112,7 +112,7 @@ All existing tests pass without modification:
 
 | Risk | Mitigation |
 |------|-----------|
-| Breaking trained weights | No trained weights exist yet (random initialization only) |
+| Breaking trained weights | No trained weights exist yet (random initialisation only) |
 | Changed output distribution | Softmax still produces valid probabilities; tests verify sum-to-1.0 |
 | Caller impact | Public API unchanged; `ensemble.rs` uses same `new_random`/`load`/`predict` |
 | Input dimension change | Input dim is 778 (768 + 10) after DMPI-003 |

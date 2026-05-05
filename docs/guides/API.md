@@ -27,7 +27,7 @@ If auth is disabled, all endpoints are accessible without a key.
 
 ## Request Headers
 
-Optional headers recognized by the proxy:
+Optional headers recognised by the proxy:
 - `X-LLMTrace-Tenant-ID`: UUID for tenant isolation. If missing or invalid, tenant ID is derived from the API key (or defaults when auth is disabled).
 - `X-LLMTrace-Agent-ID`: Agent identifier used for cost caps and spend snapshots.
 - `X-LLMTrace-Provider`: Force provider detection (`openai`, `anthropic`, `ollama`, `bedrock`, etc.).

@@ -12,12 +12,12 @@ This runbook covers the three alerts emitted by the LLMTrace Helm chart's Promet
 
 ## Background
 
-The **golden set** (`crates/llmtrace-security/fixtures/judge_golden_set/`) is a small, hand-curated corpus where every entry is a known-good or known-bad example we expect the security analyzer to agree with deterministically. Drift in the fast tier (regex / DeBERTa) shows up here first, before it shows up in production findings counts or in the much-noisier full benchmark corpora.
+The **golden set** (`crates/llmtrace-security/fixtures/judge_golden_set/`) is a small, hand-curated corpus where every entry is a known-good or known-bad example we expect the security analyser to agree with deterministically. Drift in the fast tier (regex / DeBERTa) shows up here first, before it shows up in production findings counts or in the much-noisier full benchmark corpora.
 
-The endpoint `GET /debug/judge/golden_set/replay` (see [E2E testing guide](../guides/e2e-testing.md#get-debugjudgegoldenset-replay)) loads every fixture, runs each prompt through the configured `state.security` analyzer, and updates two Prometheus gauges:
+The endpoint `GET /debug/judge/golden_set/replay` (see [E2E testing guide](../guides/e2e-testing.md#get-debugjudgegoldenset-replay)) loads every fixture, runs each prompt through the configured `state.security` analyser, and updates two Prometheus gauges:
 
-- `llmtrace_judge_golden_set_alignment{category=...}` — fraction of `is_threat=true` fixtures the analyzer flagged
-- `llmtrace_judge_golden_set_false_positive_rate{category=...}` — fraction of `is_threat=false` fixtures the analyzer flagged
+- `llmtrace_judge_golden_set_alignment{category=...}` — fraction of `is_threat=true` fixtures the analyser flagged
+- `llmtrace_judge_golden_set_false_positive_rate{category=...}` — fraction of `is_threat=false` fixtures the analyser flagged
 
 The PrometheusRule alerts on these gauges. The alert thresholds (`0.85`, `0.25`) mirror the per-category floor / ceiling pinned in `crates/llmtrace-security/tests/judge_golden_set.rs::alignment_floor` and `false_positive_ceiling`. Keep them in sync.
 
@@ -53,7 +53,7 @@ curl -s "${PROXY}/debug/judge/golden_set/replay" | jq .
 # }
 ```
 
-Then re-run the offending fixtures locally against the analyzer to confirm:
+Then re-run the offending fixtures locally against the analyser to confirm:
 
 ```bash
 cargo test -p llmtrace-security --test judge_golden_set -- --nocapture 2>&1 \
@@ -81,7 +81,7 @@ Read the disagreement-ids' fixture files (`crates/llmtrace-security/fixtures/jud
 
 **Most common causes**:
 
-**Detector tier tightened**: — a regex was widened or an ML threshold lowered, and the analyzer now flags benign content.
+**Detector tier tightened**: — a regex was widened or an ML threshold lowered, and the analyser now flags benign content.
 
 
 **Benign-fixture corpus extended**: — somebody added benign fixtures that resemble attacks (e.g. legitimate questions about security). The detector legitimately can't distinguish without more context.
@@ -145,7 +145,7 @@ kubectl exec -n llmtrace deploy/llmtrace-proxy -- \
 **If `LLMTRACE_GOLDEN_SET_PATH` is unset**: set it via the Helm chart values (`extraEnv`) or the deployment spec. The path must point at a directory shipped alongside the binary — the recommended layout is to bake the fixtures into a sidecar ConfigMap or a baked-in image path like `/etc/llmtrace/golden_set/`.
 
 
-**If `server.debug_endpoints: false` in production**: (the right default): silence this alert in production and run the replay loop in staging only. The drift question is *"is the analyzer drifting"* — that question doesn't need production data; the calibration corpus is the same everywhere.
+**If `server.debug_endpoints: false` in production**: (the right default): silence this alert in production and run the replay loop in staging only. The drift question is *"is the analyser drifting"* — that question doesn't need production data; the calibration corpus is the same everywhere.
 
 
 

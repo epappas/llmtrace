@@ -18,7 +18,7 @@
 
 ### Core Concept
 
-The paper introduces a **simple, modular, and model-agnostic defense** for tool-calling LLM agents based on two firewalls operating at the agent-tool boundary:
+The paper introduces a **simple, modular, and model-agnostic defence** for tool-calling LLM agents based on two firewalls operating at the agent-tool boundary:
 
 **Tool-Input Firewall (Minimizer)**: — Filters sensitive information from tool call arguments before execution
 
@@ -73,7 +73,7 @@ User Task → Agent → [Minimizer] → Tool → [Sanitizer] → Agent Response
 
 **Combined approach**: (Minimizer + Sanitizer) showed slightly lower utility due to aggressive input redaction
 
-- Outperformed complex defenses like CaMeL and Melon while maintaining higher utility
+- Outperformed complex defences like CaMeL and Melon while maintaining higher utility
 
 ### Critical Benchmark Limitations Identified
 
@@ -93,7 +93,7 @@ The paper exposed significant flaws in existing security benchmarks:
 
    - Overly simplistic attack patterns
 
-### Defense Limitations
+### Defence Limitations
 
 Despite strong benchmark performance, the authors demonstrated successful bypass using **Braille encoding** to defeat the GPT-4o-based Sanitizer, highlighting the need for stronger, more diverse attack strategies in future benchmarks.
 
@@ -132,7 +132,7 @@ LLMTrace operates as a **transparent proxy** (WAF-like architecture) providing r
 **Streaming Security:**: Real-time token-level analysis during SSE streams
 
 
-**Behavioral Analysis:**: Statistical anomaly detection and cost monitoring
+**Behavioural Analysis:**: Statistical anomaly detection and cost monitoring
 
 
 **Agent Action Analysis:**: Command execution, file access, web request monitoring
@@ -422,10 +422,10 @@ The paper's firewall approach is **highly applicable** to LLMTrace's proxy archi
 **Reduced False Positives:**: Context-aware analysis vs. generic pattern matching
 
 
-**Proactive Defense:**: Content filtering vs. passive detection
+**Proactive Defence:**: Content filtering vs. passive detection
 
 
-**Tool-Specific Security:**: Tailored defenses per tool category
+**Tool-Specific Security:**: Tailored defences per tool category
 
 
 **Enhanced Coverage:**: Address indirect prompt injection specifically

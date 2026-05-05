@@ -1,7 +1,7 @@
 # Runtime Feature Flags (issue #42) — Operator Runbook
 
 The runtime feature-flag admin API at `/api/v1/config/features` lets an
-operator toggle analyzer behaviour, enforcement mode, rate limiting,
+operator toggle analyser behaviour, enforcement mode, rate limiting,
 cost caps, and ensemble tuning without restarting the proxy. This
 runbook covers the four operational failure modes flagged in the
 review of PR #64.

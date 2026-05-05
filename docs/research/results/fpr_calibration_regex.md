@@ -1,8 +1,8 @@
 # FPR Calibration Report — Regex Baseline (NotInject)
 
 **Run date:** 2026-02-04
-**Analyzer:** `LLMTrace Regex`
-**Datasets:** 110 benign + 110 malicious + 339 NotInject (over-defense) = 559 total
+**Analyser:** `LLMTrace Regex`
+**Datasets:** 110 benign + 110 malicious + 339 NotInject (over-defence) = 559 total
 **FPR targets:** 0.1%, 0.5%, 1.0% (PromptShield methodology)
 
 ## Raw Report Output
@@ -29,7 +29,7 @@
 **Moderate/Permissive points:**: TPR improves to 43.64%, but still trails literature baselines like PromptShield and InjecGuard.
 
 
-**Over-defense control:**: od_fpr remains very low, confirming regex is conservative but at the cost of missing real attacks.
+**Over-defence control:**: od_fpr remains very low, confirming regex is conservative but at the cost of missing real attacks.
 
 
 ## Literature Alignment
@@ -37,7 +37,7 @@
 **PromptShield (CODASPY 2025):**: demonstrates the need to evaluate at 0.1% FPR and shows Meta PromptGuard at 9.4% TPR; our regex baseline is comparable at 8.18% but far below PromptShield’s 65.3% TPR.
 
 
-**InjecGuard:**: requires MOF training and over-defense mitigation to maintain high TPR while controlling FPR.
+**InjecGuard:**: requires MOF training and over-defence mitigation to maintain high TPR while controlling FPR.
 
 
 ## Improvement Path (per literature)

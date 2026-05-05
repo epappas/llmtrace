@@ -396,7 +396,7 @@ you can compare judges without grouping yourself.
 | `llmtrace_judge_dropped_total{reason}` | counter | Requests the worker never sent a backend call for; reasons: disabled, below_threshold, channel_full, channel_closed, persist_failure, semaphore_closed, shutdown, analysis_text_truncated |
 | `llmtrace_judge_promotion_rejected_total{reason}` | counter | Verdicts the gate held back: not_threat_or_block, below_confidence, below_score, no_ensemble_support |
 | `llmtrace_judge_shadow_would_block_total{category,recommended_action}` | counter | Shadow-mode would-block rate — your primary calibration signal |
-| `llmtrace_judge_golden_set_alignment{category}` | gauge | Per-category alignment between the analyzer and the curated golden set (0.0–1.0). Drops below 0.85 = drift. See [calibration loop](#golden-set-calibration-loop-66). |
+| `llmtrace_judge_golden_set_alignment{category}` | gauge | Per-category alignment between the analyser and the curated golden set (0.0–1.0). Drops below 0.85 = drift. See [calibration loop](#golden-set-calibration-loop-66). |
 | `llmtrace_judge_golden_set_false_positive_rate{category}` | gauge | Per-category false-positive rate against benign golden-set entries. Stays below 0.25 in a healthy detector. |
 
 ### Dashboards
@@ -425,9 +425,9 @@ you can compare judges without grouping yourself.
 
 ## Golden-set calibration loop (#66)
 
-The judge / analyzer ships with a small, hand-curated **golden set** of attack and benign prompts under [`crates/llmtrace-security/fixtures/judge_golden_set/`](https://github.com/epappas/llmtrace/blob/main/crates/llmtrace-security/fixtures/judge_golden_set/). One JSON file per fixture; each carries an `is_threat` ground truth and a `rationale`. This is the smallest possible regression suite for the fast tier — drift here lands before drift in production findings counts.
+The judge / analyser ships with a small, hand-curated **golden set** of attack and benign prompts under [`crates/llmtrace-security/fixtures/judge_golden_set/`](https://github.com/epappas/llmtrace/blob/main/crates/llmtrace-security/fixtures/judge_golden_set/). One JSON file per fixture; each carries an `is_threat` ground truth and a `rationale`. This is the smallest possible regression suite for the fast tier — drift here lands before drift in production findings counts.
 
-The **integration test** [`crates/llmtrace-security/tests/judge_golden_set.rs`](https://github.com/epappas/llmtrace/blob/main/crates/llmtrace-security/tests/judge_golden_set.rs) replays every fixture against the regex analyzer in CI and asserts per-category alignment ≥ 0.85 and false-positive rate ≤ 0.25.
+The **integration test** [`crates/llmtrace-security/tests/judge_golden_set.rs`](https://github.com/epappas/llmtrace/blob/main/crates/llmtrace-security/tests/judge_golden_set.rs) replays every fixture against the regex analyser in CI and asserts per-category alignment ≥ 0.85 and false-positive rate ≤ 0.25.
 
 The **debug endpoint** does the same thing at runtime. Enable it once and let the gauges feed your monitoring:
 

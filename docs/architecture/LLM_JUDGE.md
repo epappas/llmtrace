@@ -459,7 +459,7 @@ CREATE INDEX idx_judge_verdicts_tenant_time ON judge_verdicts (tenant_id, create
 ### 8 Metrics
 
 All follow the existing `metrics.rs` conventions (private registry, label
-naming, `IntCounterVec` / `HistogramVec`). Pre-initialized to zero where
+naming, `IntCounterVec` / `HistogramVec`). Pre-initialised to zero where
 applicable (matches the fix in commit `6364faa`).
 
 | Metric                                 | Type        | Labels                                      |

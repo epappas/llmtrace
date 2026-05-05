@@ -12,7 +12,7 @@
 ## LLMTrace Application Notes
 
 - Required signals/features: external content boundaries (tool outputs, retrieved documents), prompt template structure, user instruction vs third-party content separation, response text for ASR evaluation.
-- Runtime characteristics: black-box defenses (prompt rewriting) add zero model latency; white-box defenses require fine-tuned model. Benchmark evaluation is offline.
+- Runtime characteristics: black-box defences (prompt rewriting) add zero model latency; white-box defences require fine-tuned model. Benchmark evaluation is offline.
 - Integration surface (proxy): LLMTrace can implement boundary awareness by injecting `<data>`/`</data>` tokens around external content in forwarded requests; explicit reminder injection into system prompts; detection of indirect injection patterns in tool outputs before they reach the LLM.
 - Productizable vs research-only: boundary token injection and explicit reminder injection are productizable at proxy level; white-box adversarial fine-tuning is research-only (requires model retraining). BIPIA benchmark is usable for evaluation.
 
@@ -22,7 +22,7 @@
 
 LLMs integrated with external content (Microsoft Copilot, Google Workspace, LangChain agents) are vulnerable to **indirect prompt injection**: malicious instructions embedded in third-party content (emails, web pages, documents, code) that manipulate LLM outputs without the user's knowledge.
 
-This paper introduces **BIPIA** (Benchmark for Indirect Prompt Injection Attacks), the first systematic benchmark for this attack class, evaluates 25 LLMs, identifies two root causes, and proposes both black-box and white-box defenses.
+This paper introduces **BIPIA** (Benchmark for Indirect Prompt Injection Attacks), the first systematic benchmark for this attack class, evaluates 25 LLMs, identifies two root causes, and proposes both black-box and white-box defences.
 
 > "the root causes of indirect prompt injection attacks are twofold: (1) the inability of LLMs to effectively differentiate between informational context and actionable instructions; and (2) the lack of awareness in LLMs to avoid executing instructions embedded within external content."
 
@@ -125,9 +125,9 @@ Two root causes identified:
 **Execution awareness gap:**: LLMs lack awareness to suppress instruction execution within external content
 
 
-### Defense Mechanisms
+### Defence Mechanisms
 
-#### Black-Box Defenses (no model access required)
+#### Black-Box Defences (no model access required)
 
 Two components, combinable:
 
@@ -143,7 +143,7 @@ Two components, combinable:
 
 **Ablation finding:** Boundary awareness contributes more than explicit reminder (21-23% vs 10-16% impact).
 
-#### White-Box Defenses (model access required)
+#### White-Box Defences (model access required)
 
 Four-step adversarial fine-tuning:
 
@@ -162,9 +162,9 @@ Four-step adversarial fine-tuning:
 **Add explicit reminder**: in inference template
 
 
-### Defense Evaluation Results
+### Defence Evaluation Results
 
-**Black-Box Defenses (ASR reduction):**
+**Black-Box Defences (ASR reduction):**
 
 | Model | Original ASR | In-Context Learning | Multi-Turn Dialogue |
 |-------|-------------|--------------------|--------------------|
@@ -177,20 +177,20 @@ Four-step adversarial fine-tuning:
 - In-context learning increases ASR for Vicuna-13B (negative result)
 - Multi-turn dialogue consistently reduces ASR across all models
 
-**White-Box Defenses (Vicuna-7B):**
+**White-Box Defences (Vicuna-7B):**
 
 | Response Construction | ASR | ASR Reduction | ROUGE-1 | MT-Bench |
 |----------------------|-----|---------------|---------|----------|
-| No defense | 0.1237 | - | 0.6187 | 4.8063 |
+| No defence | 0.1237 | - | 0.6187 | 4.8063 |
 | BIPIA labels | 0.0214 | -82.7% | 0.5306 (-14.2%) | 4.2938 (-10.7%) |
 | Original LLM responses | 0.0240 | -80.6% | 0.6122 (-1.0%) | 4.5687 (-5.0%) |
 | GPT-4 responses | **0.0053** | **-95.7%** | 0.6260 (+1.2%) | 4.8312 (+0.5%) |
 
-**White-Box Defenses (Vicuna-13B):**
+**White-Box Defences (Vicuna-13B):**
 
 | Response Construction | ASR | ASR Reduction | ROUGE-1 | MT-Bench |
 |----------------------|-----|---------------|---------|----------|
-| No defense | 0.1531 | - | 0.6134 | 5.2062 |
+| No defence | 0.1531 | - | 0.6134 | 5.2062 |
 | BIPIA labels | 0.0192 | -87.5% | 0.6109 (-0.4%) | 1.6625 (-68.1%) |
 | Original LLM responses | 0.0046 | -97.0% | 0.6240 (+1.7%) | 4.3375 (-16.8%) |
 | GPT-4 responses | **0.0047** | **-96.9%** | 0.6337 (+3.3%) | 4.5500 (-12.6%) |
@@ -215,10 +215,10 @@ Four-step adversarial fine-tuning:
 | Feature | BIPIA | LLMTrace | Gap Analysis |
 |---------|-------|----------|--------------|
 | **Indirect injection benchmark** | 5 scenarios, 50 attack types, 86K test prompts | No indirect injection benchmark | **Major**: No systematic evaluation for indirect injection |
-| **Boundary awareness defense** | `<data>`/`</data>` tokens + adversarial training | No content boundary marking | **Major**: Proxy could inject boundary tokens |
+| **Boundary awareness defence** | `<data>`/`</data>` tokens + adversarial training | No content boundary marking | **Major**: Proxy could inject boundary tokens |
 | **Explicit reminder injection** | System prompt augmentation | No automatic reminder injection | **Significant**: Trivially implementable at proxy level |
-| **Multi-turn dialogue defense** | Move content to previous turn | No multi-turn restructuring | **Moderate**: Proxy could restructure requests |
-| **In-context learning defense** | Few-shot examples in prompt | No few-shot injection | **Moderate**: Proxy could inject examples |
+| **Multi-turn dialogue defence** | Move content to previous turn | No multi-turn restructuring | **Moderate**: Proxy could restructure requests |
+| **In-context learning defence** | Few-shot examples in prompt | No few-shot injection | **Moderate**: Proxy could inject examples |
 | **Content-instruction separation** | Identified as root cause | Detects injection patterns but no separation | **Significant**: Detection vs prevention gap |
 | **Adversarial fine-tuning** | Training pipeline with 3 response strategies | No fine-tuning capability | N/A (out of proxy scope) |
 | **25-model vulnerability baseline** | Comprehensive ASR per model | No per-model vulnerability tracking | **Moderate**: Could inform model-specific thresholds |
@@ -233,10 +233,10 @@ Four-step adversarial fine-tuning:
 **Systematic indirect injection benchmark**: 5 application scenarios with 50 diverse attack types
 
 
-**Black-box defenses at prompt level**: Boundary awareness and explicit reminder injection require zero model access
+**Black-box defences at prompt level**: Boundary awareness and explicit reminder injection require zero model access
 
 
-**Content-instruction boundary marking**: `<data>`/`</data>` tokens as a defense primitive
+**Content-instruction boundary marking**: `<data>`/`</data>` tokens as a defence primitive
 
 
 **Capability-vulnerability correlation data**: More capable models are more susceptible (r=0.6423)
@@ -256,7 +256,7 @@ Four-step adversarial fine-tuning:
 **PII protection and secret scanning**: Orthogonal security capabilities
 
 
-**Unicode/encoding evasion defense**: Normalization layer BIPIA doesn't address
+**Unicode/encoding evasion defence**: Normalization layer BIPIA doesn't address
 
 
 **Multi-model ensemble detection**: Diverse architectures for robustness
@@ -269,7 +269,7 @@ Four-step adversarial fine-tuning:
 **Implement Boundary Token Injection at Proxy Level**: **Effort:** 1 week
 
    - When LLMTrace detects external content in tool outputs or retrieved documents, wrap it with `<data>`/`</data>` boundary markers before forwarding to the LLM
-   - This is the single most impactful defense from the paper (1064% ASR increase without it)
+   - This is the single most impactful defence from the paper (1064% ASR increase without it)
 
 **Code Impact:**: Request rewriting in proxy forwarding logic, configurable per-tenant
 
@@ -277,7 +277,7 @@ Four-step adversarial fine-tuning:
 **Implement Explicit Reminder Injection**: **Effort:** 3 days
 
    - Inject a system prompt reminder instructing the LLM to ignore instructions found in external content
-   - Combinable with boundary tokens for defense-in-depth
+   - Combinable with boundary tokens for defence-in-depth
 
 **Code Impact:**: System prompt augmentation in proxy, configurable templates
 
@@ -297,7 +297,7 @@ Four-step adversarial fine-tuning:
    - Weight injection detection higher for content at the end of external data (highest ASR position)
    - Align with paper finding that end-of-content injections exploit training data distribution bias
 
-**Code Impact:**: Detection scoring in security analyzer
+**Code Impact:**: Detection scoring in security analyser
 
 
 **Multi-Turn Dialogue Restructuring**: **Effort:** 2 weeks
@@ -331,20 +331,20 @@ Four-step adversarial fine-tuning:
 **All 25 LLMs are universally vulnerable**: to indirect prompt injection, with an average 11.8% ASR across all models and scenarios.
 
 
-**More capable models are more vulnerable**: GPT-4 (31% ASR) > GPT-3.5 (26% ASR) > most open-source models. This counterintuitive finding means stronger models need stronger external defenses.
+**More capable models are more vulnerable**: GPT-4 (31% ASR) > GPT-3.5 (26% ASR) > most open-source models. This counterintuitive finding means stronger models need stronger external defences.
 
 
-**Boundary awareness is the critical defense**: Removing boundary tokens from white-box defense increases ASR by 1064%. This is the single most important intervention -- and it's implementable at proxy level.
+**Boundary awareness is the critical defence**: Removing boundary tokens from white-box defence increases ASR by 1064%. This is the single most important intervention -- and it's implementable at proxy level.
 
 
-**Black-box defenses are practical but incomplete**: 22-50% ASR reduction with minimal output quality impact. Multi-turn dialogue is more reliable than in-context learning.
+**Black-box defences are practical but incomplete**: 22-50% ASR reduction with minimal output quality impact. Multi-turn dialogue is more reliable than in-context learning.
 
 
-**White-box defenses achieve near-zero ASR**: (0.47-0.53%) with GPT-4 response construction, while maintaining or improving output quality. This validates adversarial fine-tuning as a viable strategy.
+**White-box defences achieve near-zero ASR**: (0.47-0.53%) with GPT-4 response construction, while maintaining or improving output quality. This validates adversarial fine-tuning as a viable strategy.
 
 
 **Summarization and code tasks are most vulnerable**: No appended user instructions (summarization) and inherent instruction-following intent (code) make these tasks easier to exploit.
 
 
-**Proxy-level defenses are viable**: Boundary token injection and explicit reminder injection require zero model access and can be implemented entirely at the proxy layer -- directly applicable to LLMTrace.
+**Proxy-level defences are viable**: Boundary token injection and explicit reminder injection require zero model access and can be implemented entirely at the proxy layer -- directly applicable to LLMTrace.
 

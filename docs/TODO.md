@@ -15,15 +15,15 @@
 ## Acceptance Criteria (Literature-Anchored)
 These criteria define when a task can be marked ✅. If any criterion is not met, status must remain 🔄 or ⬜.
 
-Input Security (IS): Must implement the specific algorithmic behaviours described in the literature, not heuristic approximations. For IS-001–IS-003, MOF requires token-wise bias detection, debiasing data generation, and retraining with reported over-defense gains in `docs/research/injecguard-over-defense-mitigation.md`. For IS-006/IS-007, thresholds must be calibrated at 0.1/0.5/1% FPR with TPR reporting per `docs/research/security-state-of-art-2026.md`. For IS-010/IS-011, WordNet-style synonym expansion and true lemmatization are required, not regex-only stems, per `docs/research/dmpi-pmhfe-prompt-injection-detection.md`. For IS-024–IS-029, adversarial robustness must include attack-specific defenses and calibration beyond normalization per `docs/research/bypassing-llm-guardrails-evasion.md`.
+Input Security (IS): Must implement the specific algorithmic behaviours described in the literature, not heuristic approximations. For IS-001–IS-003, MOF requires token-wise bias detection, debiasing data generation, and retraining with reported over-defence gains in `docs/research/injecguard-over-defence-mitigation.md`. For IS-006/IS-007, thresholds must be calibrated at 0.1/0.5/1% FPR with TPR reporting per `docs/research/security-state-of-art-2026.md`. For IS-010/IS-011, WordNet-style synonym expansion and true lemmatization are required, not regex-only stems, per `docs/research/dmpi-pmhfe-prompt-injection-detection.md`. For IS-024–IS-029, adversarial robustness must include attack-specific defences and calibration beyond normalization per `docs/research/bypassing-llm-guardrails-evasion.md`.
 
 DMPI-PMHFE Architecture (DMPI-001–DMPI-006): The fusion pipeline matches the paper's dual-channel design. All 6 deviations resolved: average pooling (DMPI-001), 2 FC layers (DMPI-002), 10 binary heuristic features with paper keyword sets (DMPI-003, DMPI-005), repetition threshold >=3 (DMPI-004), `is_*` naming convention (DMPI-006). See Loop 12a and `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for full specification. ML-001 (fusion training) is no longer blocked by DMPI deviations.
 
-Tool/Agent Security (AS): Tool boundary defenses must parse/sanitize with LLM-based extraction and CheckTool-style triggering detection, not heuristic filters, per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense requires an explicit coordinator + guard multi-pass architecture (and second opinion path) rather than a single-pass heuristic pipeline, per `docs/research/multi-agent-defense-pipeline.md`. Pattern enforcement must detect plan compliance and routing by trust level as defined in `docs/research/design-patterns-securing-agents.md`.
+Tool/Agent Security (AS): Tool boundary defences must parse/sanitize with LLM-based extraction and CheckTool-style triggering detection, not heuristic filters, per `docs/research/defence-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defence requires an explicit coordinator + guard multi-pass architecture (and second opinion path) rather than a single-pass heuristic pipeline, per `docs/research/multi-agent-defence-pipeline.md`. Pattern enforcement must detect plan compliance and routing by trust level as defined in `docs/research/design-patterns-securing-agents.md`.
 
 Output Security (OS): HaluGate-style token-level detection requires ModernBERT token classification and NLI explanation layer, not heuristic or sentence-only checks, per `docs/research/security-state-of-art-2026.md`. Streaming safety must use partial-sequence models and progressive confidence (SCM), not re-running full-text detectors, per `docs/research/security-state-of-art-2026.md`. CodeShield parity requires Semgrep integration and coverage beyond basic static rules, per `docs/research/security-state-of-art-2026.md`.
 
-Privacy/Protocol/Multimodal (PR/AS/MM/SA): Membership inference, poisoning, MINJA, and protocol exploit defenses must match the threat models in `docs/research/prompt-injections-to-protocol-exploits.md`. Multimodal defenses must include OCR and modality-specific detectors as described in the same literature. Policy language and taint/blast-radius controls must align with `docs/research/llmtrace-defense-pipeline-design.md`.
+Privacy/Protocol/Multimodal (PR/AS/MM/SA): Membership inference, poisoning, MINJA, and protocol exploit defences must match the threat models in `docs/research/prompt-injections-to-protocol-exploits.md`. Multimodal defences must include OCR and modality-specific detectors as described in the same literature. Policy language and taint/blast-radius controls must align with `docs/research/llmtrace-defence-pipeline-design.md`.
 
 Evaluation (EV): Benchmarks must implement the named suites with published dataset sizes and result formatting per `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
 
@@ -31,24 +31,24 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 ## Phase 1: Critical / Quick Wins
 
-### Loop 1 — Unicode Evasion Defenses
+### Loop 1 — Unicode Evasion Defences
 > Close the 100% ASR emoji smuggling and upside-down text gaps
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-020 | Emoji normalisation/stripping — 100% ASR, zero current defense | Low | ✅ `a62855b` |
+| IS-020 | Emoji normalisation/stripping — 100% ASR, zero current defence | Low | ✅ `a62855b` |
 | IS-021 | Upside-down text mapping — 100% jailbreak evasion | Low | ✅ `a62855b` |
 | IS-022 | Unicode tag character stripping (U+E0001–U+E007F) | Low | ✅ `a62855b` |
-| IS-031 | Diacritics-based evasion defense — accent marks | Low | ✅ `a62855b` |
-| IS-015 | Braille encoding evasion defense | Low | ✅ `a62855b` |
+| IS-031 | Diacritics-based evasion defence — accent marks | Low | ✅ `a62855b` |
+| IS-015 | Braille encoding evasion defence | Low | ✅ `a62855b` |
 
 ### Loop 2 — NotInject Benchmark + 3D Evaluation
-> Establish over-defense baseline and evaluation framework (current dataset: 210 samples, difficulty split 90/60/60)
+> Establish over-defence baseline and evaluation framework (current dataset: 210 samples, difficulty split 90/60/60)
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-004 | NotInject-style over-defense benchmark dataset (339 samples, 3 difficulty levels) | Low | ✅ |
-| IS-005 | Three-dimensional evaluation metrics (benign/malicious/over-defense) | Low | ✅ `33b3f55` |
+| IS-004 | NotInject-style over-defence benchmark dataset (339 samples, 3 difficulty levels) | Low | ✅ |
+| IS-005 | Three-dimensional evaluation metrics (benign/malicious/over-defence) | Low | ✅ `33b3f55` |
 | EV-002 | NotInject evaluation runner (dataset complete: 339 samples) | Low | ✅ |
 | EV-010 | Paper-table output format for results | Low | ✅ `33b3f55` |
 
@@ -88,7 +88,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| RL0-01 | Initialize Cargo workspace and required crates | Medium | ✅ |
+| RL0-01 | Initialise Cargo workspace and required crates | Medium | ✅ |
 | RL0-02 | Add root README, .gitignore, rustfmt config | Low | ✅ |
 | RL0-03 | Ensure crates compile cleanly | Medium | ✅ |
 
@@ -214,7 +214,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | AS-013 | Dual LLM routing for trusted/untrusted data | High | ⬜ |
 | AS-016 | Trust-based routing by data source | High | ⬜ |
 
-### Loop 10 — Multi-Agent Defense Coordination
+### Loop 10 — Multi-Agent Defence Coordination
 > Coordinator + Guard architecture — reported low ASR on paper benchmarks (scope-specific)
 
 | ID | Feature | Complexity | Status |
@@ -233,8 +233,8 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
 | AS-030 | MCP monitoring — detect manipulation and server-side attacks | High | ✅ `mcp_monitor.rs` |
-| AS-035 | Toxic Agent Flow defense — GitHub MCP vulnerability (generic MCP scanning only) | Medium | 🔄 |
-| AS-036 | ToolHijacker defense — tool selection manipulation (generic MCP scanning only) | High | 🔄 |
+| AS-035 | Toxic Agent Flow defence — GitHub MCP vulnerability (generic MCP scanning only) | Medium | 🔄 |
+| AS-036 | ToolHijacker defence — tool selection manipulation (generic MCP scanning only) | High | 🔄 |
 
 ### Loop 12 — Advanced Prompt Injection Detection
 > Synonym expansion, lemmatisation, P2SQL
@@ -245,7 +245,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | IS-011 | Lemmatisation before pattern matching (basic stemming, not true lemmatization) | Low | 🔄 |
 | IS-012 | P2SQL injection detection (regex only, no structured SQL parsing) | Medium | 🔄 |
 | IS-013 | Long-context jailbreak detection (position-aware sliding window) | High | ⬜ |
-| IS-014 | Automated jailbreak defense (GPTFuzz-style genetic templates) | High | ⬜ |
+| IS-014 | Automated jailbreak defence (GPTFuzz-style genetic templates) | High | ⬜ |
 | IS-016 | Multi-turn extraction detection (session-aware probing) | High | 🔄 |
 | IS-040 | Data format coverage expansion (17 formats) | Medium | ⬜ |
 | IS-041 | Multi-language trigger detection | High | ⬜ |
@@ -302,7 +302,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 |----|---------|-----------|--------|
 | ML-001 | Joint end-to-end training for fusion FC layer | High | ✅ |
 | ML-014 | Curated training dataset (61k benign + 16k injection) | Medium | ✅ |
-| IS-001 | Token-wise bias detection for over-defense | High | ⬜ |
+| IS-001 | Token-wise bias detection for over-defence | High | ⬜ |
 | IS-002 | Adaptive debiasing data generation (1–3 token combos) | High | ⬜ |
 | IS-003 | MOF retraining pipeline on debiased data | High | ⬜ |
 | ML-010 | MOF training pipeline (token bias → debiasing → retraining) | High | ⬜ |
@@ -336,7 +336,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | EV-018 | Cross-model transfer attack resistance testing across ensemble members | Medium | ✅ |
 | EV-019 | Tensor Trust prompt hijacking/extraction evaluation (1000 sampled attacks) | Low | ✅ |
 | EV-020 | Harelix mixed-techniques evaluation (1174 samples, tri-class) | Low | ❌ (dataset deleted from HuggingFace) |
-| EV-021 | Jackhhao jailbreak-classification over-defense test (1306 samples, balanced) | Low | ✅ |
+| EV-021 | Jackhhao jailbreak-classification over-defence test (1306 samples, balanced) | Low | ✅ |
 
 
 ### Loop R9 — REST Query API
@@ -447,9 +447,9 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 ### Loop 20 — Advanced Privacy
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| PR-001 | Membership inference defense | High | ⬜ |
+| PR-001 | Membership inference defence | High | ⬜ |
 | PR-002 | Data extraction prevention | High | ⬜ |
-| PR-003 | Federated learning poisoning defense | High | ⬜ |
+| PR-003 | Federated learning poisoning defence | High | ⬜ |
 | PR-004 | Vector/embedding poisoning detection | High | ⬜ |
 | PR-005 | RAG retrieval anomaly monitoring | Medium | ⬜ |
 | PR-006 | Multi-language PII detection (non-Latin scripts) | High | 🔄 |
@@ -458,7 +458,7 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | PR-010 | Memory poisoning detection (MINJA) | High | ⬜ |
 | PR-011 | Cross-session state integrity | High | ⬜ |
 | PR-008 | Custom PII entity type plugins | Medium | ⬜ |
-| PR-012 | Speculative side-channel defense | High | ⬜ |
+| PR-012 | Speculative side-channel defence | High | ⬜ |
 
 ### Loop 21 — Policy Language
 | ID | Feature | Complexity | Status |
@@ -469,14 +469,14 @@ Non-Functional Requirements (NFR): Security-critical detections must be determin
 | SA-005 | Backdoor detection (prompt/parameter level) | High | ⬜ |
 | SA-006 | Composite backdoor detection (CBA-style) | High | ⬜ |
 | SA-007 | Data poisoning detection (PoisonedRAG) | High | ⬜ |
-| SA-008 | Social engineering simulation defense | High | ⬜ |
-| SA-009 | Contagious recursive blocking defense | High | ⬜ |
+| SA-008 | Social engineering simulation defence | High | ⬜ |
+| SA-009 | Contagious recursive blocking defence | High | ⬜ |
 | SA-010 | GuardReasoner integration | High | ⬜ |
 
 ### Loop 22 — Adversarial ML Robustness
 | ID | Feature | Complexity | Status |
 |----|---------|-----------|--------|
-| IS-024 | AML evasion resistance (TextFooler, BERT-Attack, BAE) — normalization only, no attack-specific defenses | High | 🔄 |
+| IS-024 | AML evasion resistance (TextFooler, BERT-Attack, BAE) — normalization only, no attack-specific defences | High | 🔄 |
 | IS-025 | Ensemble diversification against transferability — no transferability testing or training | High | 🔄 |
 | IS-026 | Adversarial training integration (TextAttack samples) | High | ⬜ |
 | IS-027 | Adaptive thresholding for evasion indicators | Medium | ⬜ |
@@ -553,7 +553,7 @@ ML-031 (multilingual calibration, depends on language detection infra)
 | ML-032 | **Short-input confidence scaling** — For inputs < 10 tokens, scale confidence threshold linearly from 0.95 (at 1 token) to normal threshold (at 10 tokens). Do NOT bypass ML entirely to avoid blind spots for short attacks like "Ignore all previous instructions" (5 tokens). Estimated impact: -1 FP. | Low | P1 | ⬜ |
 | ML-034 | **Encoding decoder preprocessor** — Before ML inference, apply decoding pipeline: base64, rot13, leetspeak, hex, binary, upside-down text, Cyrillic homoglyphs. Add content-type heuristic before decoding (skip base64 if string contains spaces/punctuation). Specify latency cap (5ms max). Must define integration plan with existing `jailbreak_detector.rs` encoding detection (augment, not replace). 7/11 encoding evasion test cases detected (64%); 4 misses are encoded payloads without plaintext injection markers. | Medium | P1 | ⬜ |
 | ML-033 | **Confidence recalibration (Platt scaling)** — Apply Platt scaling (logistic regression) to recalibrate DeBERTa output probabilities. Supersedes IS-029 temperature scaling. Requires OPS-007 (1,000+ calibration samples). Calibration set MUST be disjoint from ML-030 training set. Specify per-model vs post-ensemble calibration. Re-derive operating point thresholds after calibration (current HighRecall/Balanced/HighPrecision values become invalid). Estimated impact: -2 to -4 FPs. Depends on: OPS-007. | Medium | P1 | ⬜ |
-| IS-060 | **Spotlighting/datamarking for indirect injection** — Split input into instruction zones and data zones using configurable boundary markers. Apply injection detection only to data zones. Sub-tasks: (a) zone boundary detection heuristics for common data formats (HTML tables, email headers, CSV, JSON data fields), (b) config-declared boundary support, (c) ensemble integration (feed datamarking results into existing voting). Targets 4 BIPIA FNs (40% of all FNs). Reference: `docs/research/spotlighting-indirect-injection-defense.md` (datamarking reduces ASR from >50% to <3%). | High | P0 | ⬜ |
+| IS-060 | **Spotlighting/datamarking for indirect injection** — Split input into instruction zones and data zones using configurable boundary markers. Apply injection detection only to data zones. Sub-tasks: (a) zone boundary detection heuristics for common data formats (HTML tables, email headers, CSV, JSON data fields), (b) config-declared boundary support, (c) ensemble integration (feed datamarking results into existing voting). Targets 4 BIPIA FNs (40% of all FNs). Reference: `docs/research/spotlighting-indirect-injection-defence.md` (datamarking reduces ASR from >50% to <3%). | High | P0 | ⬜ |
 | IS-070 | **Shell command injection detection** — Detect dangerous shell commands (curl with exfiltration, python -c with socket, wget, reverse shell, rm -rf) in prompt content. Extend existing RL3-02 regex patterns (do not duplicate). Distinct from prompt injection; targets 2 FN code execution attacks. Critical for agent systems with tool-use capabilities. | Medium | P1 | ⬜ |
 | ML-030 | **DeBERTa fine-tuning on NotInject dataset** — Fine-tune `protectai/deberta-v3-base-prompt-injection-v2` using 339 NotInject samples + 15 stress test FPs + 10-20 "creative writing instruction" samples as hard negatives. Mix with full training set (61k benign + 16k injection from ML-014) to prevent catastrophic forgetting. Training: 3 epochs, lr=2e-5, batch_size=16. Reserve 20% of NotInject for validation. Acceptance criteria: F1 >= 0.88 on held-out set, no per-class recall regression > 2%, full benchmark suite pass. Estimated impact: -5 to -10 FPs. Depends on: OPS-002, OPS-004, OPS-005, OPS-006. Triggers: ML-001 re-evaluation. | High | P0 | ⬜ |
 | ML-031 | **Multilingual calibration** — Two sub-tasks: (a) add language detection to ensemble pipeline (e.g., `lingua-rs` or trigram detector), (b) calibrate per-language confidence thresholds using holdout set. Collect 1,000+ benign Chinese samples (traditional + simplified, technical/conversational/educational). Fine-tuning is a separate future item. Estimated impact: -2 FPs. Depends on: ML-030. | Medium | P2 | ⬜ |
@@ -747,16 +747,16 @@ ML-031 (multilingual calibration, depends on language detection infra)
 - RALPH quality policy: no placeholders/mocks; if spec requires ML, implement real ML inference (regex fallback only when model weights unavailable).
 - AS-004/AS-006/AS-007 are 🔄 because literature expects LLM-based parsing/sanitization for tool outputs; current implementation is heuristic only.
 - AS-020/AS-021/AS-023/AS-024 are 🔄 because literature expects multi-agent LLM coordination; current implementation is heuristic/policy-only.
-- IS-024/IS-027/IS-028/IS-029 are 🔄 because only normalization/temperature scaling exists (no attack-specific defenses or Platt scaling). ML-033 (Loop 23) supersedes IS-029 for Platt scaling; IS-029 remains for temperature-scaling-only scope.
+- IS-024/IS-027/IS-028/IS-029 are 🔄 because only normalization/temperature scaling exists (no attack-specific defences or Platt scaling). ML-033 (Loop 23) supersedes IS-029 for Platt scaling; IS-029 remains for temperature-scaling-only scope.
 - PR-006 is 🔄 because full non-Latin PII coverage and a custom-entity plugin architecture are not fully implemented.
-- Tool parsing expectations come from `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`.
-- Multi-agent expectations come from `docs/research/multi-agent-defense-pipeline.md`.
+- Tool parsing expectations come from `docs/research/defence-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`.
+- Multi-agent expectations come from `docs/research/multi-agent-defence-pipeline.md`.
 - Adversarial robustness expectations come from `docs/research/bypassing-llm-guardrails-evasion.md`.
-- Over-defense mitigation expectations come from `docs/research/injecguard-over-defense-mitigation.md`.
+- Over-defence mitigation expectations come from `docs/research/injecguard-over-defence-mitigation.md`.
 - Benchmark coverage expectations come from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
 - CyberSecEval 2 benchmark expectations (EV-006) come from `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 attack sample count is sourced from DMPI-PMHFE (arXiv 2506.06384) which used the CyberSecEval 2 prompt injection dataset; the full paper covers additional suites (500 code interpreter abuse prompts, exploit generation, FRR).
-- BIPIA benchmark expectations (EV-014) come from `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197): 86,250 test prompts, 50 attack types, 25-model baseline. Boundary token defense (`<data>`/`</data>`) is most impactful intervention (1064% ASR increase without it) and is implementable at proxy level (relevant to AS-001/AS-002).
-- Agent-as-a-Proxy attack implications (EV-016) come from `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses (including LLMTrace proxy monitoring) are fundamentally fragile: 90%+ ASR via GCG-optimised adversarial strings. Validates that structural defenses (AS-001/AS-002 sanitization, boundary tokens) are more robust than observation-based monitoring. High-perplexity detection in tool outputs is a viable countermeasure.
+- BIPIA benchmark expectations (EV-014) come from `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197): 86,250 test prompts, 50 attack types, 25-model baseline. Boundary token defence (`<data>`/`</data>`) is most impactful intervention (1064% ASR increase without it) and is implementable at proxy level (relevant to AS-001/AS-002).
+- Agent-as-a-Proxy attack implications (EV-016) come from `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defences (including LLMTrace proxy monitoring) are fundamentally fragile: 90%+ ASR via GCG-optimised adversarial strings. Validates that structural defences (AS-001/AS-002 sanitization, boundary tokens) are more robust than observation-based monitoring. High-perplexity detection in tool outputs is a viable countermeasure.
 - IS-050 -> IS-052 dependency: IS-052 (adversarial string propagation blocking) depends on IS-050 (perplexity-based anomaly detection) for surprisal scoring. IS-050 must be implemented first. IS-052 runs before AS-002 in the tool-output sanitization pipeline.
 - IS-050 -> IS-051 implicit dependency: IS-051 (adaptive monitoring scope) auto-switches to input-only mode when IS-050 detects sustained high-perplexity anomalies in tool outputs (suggests active adaptive attack). IS-050 must be implemented first for auto-switching; manual override works independently.
 - ML-016 and EV-017 share GCG Python/PyTorch offline tooling (`tools/gcg/` or `scripts/adversarial/`). Not part of the Rust proxy runtime.
@@ -765,9 +765,9 @@ ML-031 (multilingual calibration, depends on language detection infra)
 - ML-016 (GCG adversarial sample generation) is in Loop 15 (Fusion Training Pipeline). Requires Python/PyTorch offline tooling, not Rust proxy code. Shared with EV-017.
 - Token-level perplexity detection expectations (IS-050) come from `docs/research/token-level-perplexity-detection.md`. PGM-based per-token detection with GPT-2 124M (CPU-only, <1GB) achieves perfect sequence-level detection and 0.93+ token-level F1. O(n) DP algorithm. Core implementation reference for IS-050.
 - Perplexity-based attack detection expectations (IS-050) come from `docs/research/perplexity-based-attack-detection.md`. Two-feature LightGBM (PPL + token length) achieves 99.1% F2 on GCG attacks. GCG mean PPL 3525 vs benign ~30-45. Perplexity alone is insufficient (false positives on code/non-English); token length as second feature resolves this.
-- Task Shield alignment expectations (ML-016) come from `docs/research/task-shield-alignment-defense.md`. Task-alignment defense ("does this serve the user?") achieves 2.07% ASR with 69.79% utility on GPT-4o. ContributesTo scoring at message boundaries. Directly informs ML-016 goal-drift detector design; provides EV-016 baseline comparison targets.
-- Spotlighting expectations (IS-004, AS-001/AS-002) come from `docs/research/spotlighting-indirect-injection-defense.md`. Datamarking reduces ASR from >50% to <3% with zero NLP quality impact. Dynamic/randomized tokens essential. Encoding (base64) achieves 0% ASR but requires GPT-4-class models. Validates and extends boundary tag approach.
-- Instruction hierarchy expectations (IS-004, SA-003) come from `docs/research/instruction-hierarchy-defense.md`. Privilege hierarchy (system > user > tool) via SFT+RLHF. +63.1 pp on system message extraction defense. Validates proxy-level boundary tags as complement to model-level hierarchy. Over-refusal is main trade-off (-22.7 pp).
+- Task Shield alignment expectations (ML-016) come from `docs/research/task-shield-alignment-defence.md`. Task-alignment defence ("does this serve the user?") achieves 2.07% ASR with 69.79% utility on GPT-4o. ContributesTo scoring at message boundaries. Directly informs ML-016 goal-drift detector design; provides EV-016 baseline comparison targets.
+- Spotlighting expectations (IS-004, AS-001/AS-002) come from `docs/research/spotlighting-indirect-injection-defence.md`. Datamarking reduces ASR from >50% to <3% with zero NLP quality impact. Dynamic/randomized tokens essential. Encoding (base64) achieves 0% ASR but requires GPT-4-class models. Validates and extends boundary tag approach.
+- Instruction hierarchy expectations (IS-004, SA-003) come from `docs/research/instruction-hierarchy-defence.md`. Privilege hierarchy (system > user > tool) via SFT+RLHF. +63.1 pp on system message extraction defence. Validates proxy-level boundary tags as complement to model-level hierarchy. Over-refusal is main trade-off (-22.7 pp).
 - DMPI-001–DMPI-006 (Loop 12a) were prerequisites for ML-001 (Loop 15). All 6 deviations are now resolved; the fusion classifier architecture matches the DMPI-PMHFE specification. See `docs/research/dmpi-pmhfe-prompt-injection-detection.md` for the authoritative paper breakdown.
 - DMPI-003 and DMPI-005 resolved together: feature vector is now 10 binary dimensions matching paper Appendix A. See `docs/architecture/DMPI_003_TEN_BINARY_FEATURES.md`.
 - DMPI-006 (naming) resolved: all 8 finding types renamed to paper's `is_*` convention.

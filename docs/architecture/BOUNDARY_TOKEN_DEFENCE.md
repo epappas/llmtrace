@@ -1,4 +1,4 @@
-# Boundary Token Injection Defense -- Implementation Architecture
+# Boundary Token Injection Defence -- Implementation Architecture
 
 Date: 2026-03-08
 Status: Approved for implementation
@@ -8,7 +8,7 @@ Authors: Engineering (AI-Engineer + MLOps-Engineer reviewed)
 ## Executive Summary
 
 This document specifies the implementation architecture for adding a boundary token
-injection defense to the LLMTrace proxy. The defense wraps untrusted content (tool
+injection defence to the LLMTrace proxy. The defence wraps untrusted content (tool
 outputs, RAG retrieval results) in structural delimiters before forwarding requests
 to upstream LLM providers, reducing indirect prompt injection attack success rate
 from ~6.17% to ~0.53% (BIPIA benchmark, KDD 2025).
@@ -26,9 +26,9 @@ treat all text in the context as a flat sequence, so attacker-controlled data in
 tool outputs or RAG results can impersonate system instructions.
 
 Current LLMTrace detection (regex + DeBERTa) is monitoring-based. Per the
-Agent-as-a-Proxy research, monitoring-based defenses are fundamentally fragile
+Agent-as-a-Proxy research, monitoring-based defences are fundamentally fragile
 because an attacker who controls the data can craft payloads that evade detection.
-Structural defenses (boundary tokens, explicit reminders) are categorically more
+Structural defences (boundary tokens, explicit reminders) are categorically more
 robust because they change what the model sees.
 
 **Evidence** (BIPIA benchmark, arXiv 2312.14197, KDD 2025):
@@ -51,7 +51,7 @@ Client --> proxy_handler() --> body_bytes read (proxy.rs:315)
 ```
 
 Key observation: the proxy currently forwards `body_bytes` **verbatim** to
-upstream. The defense changes this by re-serializing a modified request body
+upstream. The defence changes this by re-serializing a modified request body
 when boundary tokens are enabled and tool messages are present.
 
 ### 2 Affected Components
@@ -62,9 +62,9 @@ when boundary tokens are enabled and tool messages are present.
 | proxy_handler | `llmtrace-proxy/src/proxy.rs:215` | Insert boundary transform step |
 | ChatMessage | `llmtrace-proxy/src/proxy.rs:127` | Widen `content` to `serde_json::Value` |
 | LLMRequestBody | `llmtrace-proxy/src/proxy.rs:114` | Add `system` field for Anthropic |
-| Metrics | `llmtrace-proxy/src/metrics.rs` | Add boundary defense metrics |
+| Metrics | `llmtrace-proxy/src/metrics.rs` | Add boundary defence metrics |
 | config.yaml | `config.yaml` | Add `boundary_defense` section |
-| New module | `llmtrace-proxy/src/boundary.rs` | Core defense logic |
+| New module | `llmtrace-proxy/src/boundary.rs` | Core defence logic |
 
 ### 3 Unchanged Components
 
@@ -321,7 +321,7 @@ content.** Boundary tokens are a forwarding concern only.
 
 ### 7 Fail-Open Semantics
 
-The boundary defense must NEVER cause a request to fail. If any step in the
+The boundary defence must NEVER cause a request to fail. If any step in the
 boundary pipeline errors (deserialization, re-serialization, content mutation),
 the module returns the original `body_bytes` unchanged and logs a warning.
 
@@ -358,7 +358,7 @@ the `Content-Length` header in `forwarded_headers` must be updated to match
 the new body length, or removed (letting reqwest set it automatically).
 
 Approach: remove `content-length` from forwarded headers alongside `host`
-and `accept-encoding` when boundary defense is active. The reqwest client
+and `accept-encoding` when boundary defence is active. The reqwest client
 will set the correct Content-Length from the body it sends.
 
 
@@ -369,7 +369,7 @@ will set the correct Content-Length from the body it sends.
 **Description:** When enabled, wrap the content of messages matching
 `wrap_roles` with configurable boundary delimiter tags.
 
-**Rationale:** Primary defense mechanism. BIPIA shows 10x ASR reduction with
+**Rationale:** Primary defence mechanism. BIPIA shows 10x ASR reduction with
 boundary tokens alone.
 
 **Input:**
@@ -394,7 +394,7 @@ boundary tokens alone.
   (e.g., `<llmtrace-boundary-a7f3>`) that is consistent between open and
   close tags within the same message but different across requests.
 - AC-01g: Content containing the literal delimiter string is still wrapped
-  (no escaping -- the defense relies on the system prompt instruction, not
+  (no escaping -- the defence relies on the system prompt instruction, not
   on delimiter uniqueness; nonce mode mitigates this further).
 
 ### FR-02: System Prompt Reminder Injection
@@ -422,18 +422,18 @@ achieves 0.53% ASR vs ~2-3% for tokens alone.
 
 ### FR-03: Configuration Toggle
 
-**Description:** The boundary defense is controlled via `config.yaml` and
+**Description:** The boundary defence is controlled via `config.yaml` and
 defaults to disabled.
 
 **Acceptance Criteria:**
 - AC-03a: When `boundary_defense.enabled: false` (default), `body_bytes`
-  is forwarded verbatim to upstream -- zero behavioral change.
-- AC-03b: When `boundary_defense.enabled: true`, the defense pipeline
+  is forwarded verbatim to upstream -- zero behavioural change.
+- AC-03b: When `boundary_defense.enabled: true`, the defence pipeline
   activates for every request that parses as `LLMRequestBody`.
 - AC-03c: `BoundaryTokenConfig` deserializes from YAML with serde defaults
   for all fields.
 - AC-03d: The `validate_config()` function in `config.rs` validates boundary
-  defense config: `delimiter` must be non-empty, `wrap_roles` must be
+  defence config: `delimiter` must be non-empty, `wrap_roles` must be
   non-empty when enabled.
 
 ### FR-04: Fail-Open on Error
@@ -441,8 +441,8 @@ defaults to disabled.
 **Description:** If any step in the boundary pipeline fails, forward the
 original request body unchanged.
 
-**Rationale:** The proxy must never cause a request to fail due to a defense
-mechanism. Availability takes precedence over defense.
+**Rationale:** The proxy must never cause a request to fail due to a defence
+mechanism. Availability takes precedence over defence.
 
 **Acceptance Criteria:**
 - AC-04a: If `serde_json::from_slice` fails to parse the body, the original
@@ -459,7 +459,7 @@ mechanism. Availability takes precedence over defense.
 **Description:** When `shadow_mode: true`, compute the modified body and
 record all metrics, but forward the original `body_bytes` to upstream.
 
-**Rationale:** Allows operators to validate the defense in production
+**Rationale:** Allows operators to validate the defence in production
 without risk. MLOps-engineer recommended 1-2 week shadow rollout.
 
 **Acceptance Criteria:**
@@ -478,22 +478,22 @@ without risk. MLOps-engineer recommended 1-2 week shadow rollout.
 forwarded to upstream must match the actual body size.
 
 **Acceptance Criteria:**
-- AC-06a: When boundary defense is enabled (not shadow mode), the
+- AC-06a: When boundary defence is enabled (not shadow mode), the
   `content-length` header is removed from forwarded headers before
   setting the body on the upstream request (reqwest recalculates it).
-- AC-06b: When boundary defense is disabled or in shadow mode, headers
+- AC-06b: When boundary defence is disabled or in shadow mode, headers
   are forwarded unchanged (existing behaviour preserved).
 
 ### FR-07: Provider-Aware Behaviour
 
-**Description:** The defense applies provider-appropriate wrapping based
+**Description:** The defence applies provider-appropriate wrapping based
 on the detected `LLMProvider`.
 
 **Acceptance Criteria:**
 - AC-07a: For `LLMProvider::OpenAI`, `AzureOpenAI`, `VLLm`, `SGLang`,
   `TGI`, and `Ollama`: messages with `role == "tool"` are wrapped.
 - AC-07b: For `LLMProvider::Anthropic`: no wrapping is applied in
-  Phase 1. A debug-level log states "Anthropic boundary defense not
+  Phase 1. A debug-level log states "Anthropic boundary defence not
   yet supported" when tool-like content is detected.
 - AC-07c: The `BoundaryResult` accurately reflects what was done
   (0 messages wrapped for Anthropic).
@@ -526,7 +526,7 @@ original, unmodified message content.
 - AC-09b: The analysis text passed to `run_enforcement()` does NOT
   contain boundary delimiter tags.
 - AC-09c: The security score for a given request is identical whether
-  boundary defense is enabled or disabled.
+  boundary defence is enabled or disabled.
 
 
 ## Metrics and Observability
@@ -538,7 +538,7 @@ existing metrics, following the same pattern.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `llmtrace_boundary_defense_applied_total` | IntCounterVec | `provider`, `mode` | Requests where boundary defense was applied. `mode` = `active` or `shadow`. |
+| `llmtrace_boundary_defense_applied_total` | IntCounterVec | `provider`, `mode` | Requests where boundary defence was applied. `mode` = `active` or `shadow`. |
 | `llmtrace_boundary_defense_messages_wrapped` | HistogramVec | `provider` | Number of messages wrapped per request. Buckets: [0, 1, 2, 3, 5, 10, 20]. |
 | `llmtrace_boundary_defense_reminder_injected_total` | IntCounterVec | `provider` | Requests where system prompt reminder was injected. |
 | `llmtrace_boundary_defense_overhead_bytes` | HistogramVec | `provider` | Byte delta per request. Buckets: [0, 50, 100, 200, 500, 1000, 5000]. |
@@ -550,16 +550,16 @@ existing metrics, following the same pattern.
 
 | Level | Event | Fields |
 |-------|-------|--------|
-| `debug` | "Boundary defense applied" | `trace_id`, `provider`, `messages_wrapped`, `reminder_injected`, `overhead_bytes`, `mode` |
-| `warn` | "Boundary defense failed, forwarding original body" | `trace_id`, `error` |
-| `debug` | "Boundary defense skipped" | `trace_id`, `reason` |
-| `info` | "Boundary defense enabled" | `shadow_mode`, `delimiter`, `wrap_roles`, `randomize_nonce` | (startup only) |
+| `debug` | "Boundary defence applied" | `trace_id`, `provider`, `messages_wrapped`, `reminder_injected`, `overhead_bytes`, `mode` |
+| `warn` | "Boundary defence failed, forwarding original body" | `trace_id`, `error` |
+| `debug` | "Boundary defence skipped" | `trace_id`, `reason` |
+| `info` | "Boundary defence enabled" | `shadow_mode`, `delimiter`, `wrap_roles`, `randomize_nonce` | (startup only) |
 
 ### 3 Dashboard Indicators
 
 For the Next.js dashboard on port 3000:
 
-**Boundary Defense Status**: enabled/disabled/shadow badge
+**Boundary Defence Status**: enabled/disabled/shadow badge
 
 
 **Messages Wrapped / hour**: time-series chart from `_applied_total`
@@ -621,7 +621,7 @@ Each test validates a specific functional requirement.
 | `test_boundary_defense_shadow_mode_passthrough` | FR-05 | Mock upstream receives original body in shadow mode |
 | `test_boundary_defense_disabled_passthrough` | FR-03 | Mock upstream receives original body when disabled |
 | `test_boundary_defense_preserves_non_tool_fields` | FR-08 | All request fields survive through proxy |
-| `test_security_analysis_unaffected_by_boundary` | FR-09 | Security findings identical with/without defense |
+| `test_security_analysis_unaffected_by_boundary` | FR-09 | Security findings identical with/without defence |
 
 ### 4 E2E Benchmark Validation
 
@@ -630,8 +630,8 @@ Using the existing stress test (`benchmarks/scripts/proxy_stress_test_v2.py`,
 
 | Criterion | Pass Threshold |
 |-----------|---------------|
-| Detection accuracy with boundary defense enabled | >= 83% (no regression from 83.7% baseline) |
-| Detection F1 with boundary defense enabled | >= 84% (no regression from 84.7% baseline) |
+| Detection accuracy with boundary defence enabled | >= 83% (no regression from 83.7% baseline) |
+| Detection F1 with boundary defence enabled | >= 84% (no regression from 84.7% baseline) |
 | Latency p99 delta | < 5ms added |
 | Requests with serialization errors | 0 |
 | Upstream 4xx rate delta | 0 new errors |
@@ -657,7 +657,7 @@ The feature is considered delivered when ALL of the following are true:
 - Shadow mode validated for minimum 24 hours with zero serialization errors
 - At least one contract test against a live OpenAI endpoint passes (Section 7.5)
 - All Prometheus metrics emit correctly and are scrapeable at `/metrics`
-- Config validation rejects invalid boundary defense configurations
+- Config validation rejects invalid boundary defence configurations
 - `cargo clippy` and `cargo test` pass with no new warnings
 
 
@@ -691,17 +691,17 @@ The feature is considered delivered when ALL of the following are true:
 - Verify: all boundary.rs unit tests pass
 
 **Step 4: Integrate into proxy_handler()**
-- Insert boundary defense call between enforcement and upstream forwarding
+- Insert boundary defence call between enforcement and upstream forwarding
 - Handle shadow mode: use original bytes when shadow_mode is true
-- Strip `content-length` from forwarded headers when defense modifies body
+- Strip `content-length` from forwarded headers when defence modifies body
 - Verify: integration tests pass (Section 7.3)
 
 **Step 5: Add metrics**
 - Register all metrics from Section 6.1 in `Metrics::new()`
 - Add `record_boundary_defense()` helper to `Metrics`
-- Record metrics in proxy_handler after boundary defense returns
-- Add startup log line when boundary defense is enabled
-- Verify: `/metrics` endpoint includes boundary defense metrics
+- Record metrics in proxy_handler after boundary defence returns
+- Add startup log line when boundary defence is enabled
+- Verify: `/metrics` endpoint includes boundary defence metrics
 
 **Step 6: Validation**
 - Run E2E benchmark with `boundary_defense.enabled: true`
@@ -748,7 +748,7 @@ data regions.
 
 LLMs are not guaranteed to respect boundary tokens or system prompt instructions.
 Sophisticated prompt injection can convince models to ignore instructions. This
-defense is probabilistic, not absolute. It reduces ASR by ~10x (BIPIA evidence)
+defence is probabilistic, not absolute. It reduces ASR by ~10x (BIPIA evidence)
 but does not eliminate it. This is why it complements detection (regex + DeBERTa)
 rather than replacing it.
 
@@ -760,7 +760,7 @@ rather than replacing it.
 | Re-serialization drops unknown fields | Low | High | `#[serde(flatten)]` preserves unknowns; round-trip tests validate |
 | Content-Length mismatch causes upstream 400 | Medium | High | Strip Content-Length when body modified; reqwest auto-sets |
 | Token cost at scale ($600-1000/day at 1M req/day) | Medium | Medium | ~20 tokens/request overhead; track via `_overhead_bytes` metric |
-| Defense breaks specific client libraries | Low | Medium | Shadow mode validates before going live; fail-open on errors |
+| Defence breaks specific client libraries | Low | Medium | Shadow mode validates before going live; fail-open on errors |
 | Delimiter collision with content | Low | Low | Synthetic delimiter unlikely in data; nonce mode available |
 | Performance regression | Very Low | Low | Re-serialization is sub-microsecond; no model inference added |
 
@@ -772,8 +772,8 @@ rather than replacing it.
 | Fixed delimiter default, nonce opt-in | BIPIA achieved 0.53% ASR with fixed delimiters; nonce adds complexity for marginal gain | Nonce default (MLOps recommendation) -- deferred to config toggle |
 | `llmtrace-boundary` as default delimiter | Synthetic tag unlikely in real data; avoids collision with XML/HTML in tool outputs | `<data>` (too generic), `<<<UNTRUSTED_DATA>>>` (verbose) |
 | Phase 1 = OpenAI only | OpenAI format is simpler, covers the majority of proxy deployments, Anthropic requires content-block inspection | Ship both simultaneously (higher risk, slower delivery) |
-| Separate `boundary.rs` module | Keeps proxy.rs focused on orchestration; defense logic independently testable | Inline in proxy.rs (rejected: proxy.rs already ~1500 lines) |
+| Separate `boundary.rs` module | Keeps proxy.rs focused on orchestration; defence logic independently testable | Inline in proxy.rs (rejected: proxy.rs already ~1500 lines) |
 | `content: serde_json::Value` | Handles string, array (multimodal), and null content across providers | `content: String` (breaks Anthropic, multimodal); enum wrapper (over-engineered) |
 | Shadow mode as config option | Enables safe production validation without risk | Feature flags via environment variable (less discoverable) |
-| Fail-open semantics | Availability > defense; proxy must never cause request failure | Fail-closed (rejected: unacceptable availability risk) |
+| Fail-open semantics | Availability > defence; proxy must never cause request failure | Fail-closed (rejected: unacceptable availability risk) |
 | Append reminder (not prepend) | Less likely to interfere with application's system prompt structure | Prepend (could override application instructions) |

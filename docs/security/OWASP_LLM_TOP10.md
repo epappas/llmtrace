@@ -131,5 +131,5 @@ cargo test --test owasp_llm_top10 owasp_llm07    # Insecure Plugin Design
 | LLM04 | Model Denial of Service | Partially mitigated by cost caps and rate limiting (tested elsewhere). |
 | LLM05 | Supply Chain Vulnerabilities | CI/CD concern — handled by `cargo audit` and dependency scanning in GitHub Actions. |
 | LLM08 | Excessive Agency | Partially mitigated by agent action tracing and anomaly detection (tested in their respective modules). |
-| LLM09 | Overreliance | UX/behavioral concern — cannot be detected by a proxy. |
+| LLM09 | Overreliance | UX/behavioural concern — cannot be detected by a proxy. |
 | LLM10 | Model Theft | Infrastructure/access-control concern — out of scope for a proxy. |

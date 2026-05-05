@@ -25,7 +25,7 @@
 
 ### Problem Statement and Motivation
 
-LLMs are vulnerable to adversarial prompt attacks generated through discrete optimisation (specifically the GCG attack from Zou et al., 2023). These adversarial suffixes bypass moderation and alignment by appending out-of-distribution (OOD) token sequences to harmful queries. Prior perplexity-based defenses (Alon & Kamfonas, 2023; Jain et al., 2023) operate at the sequence level only -- they flag entire sequences but cannot localize which tokens are adversarial. This paper addresses two gaps: (1) token-level localization of adversarial content, and (2) incorporation of contextual information from neighboring tokens to reduce false positives on isolated high-perplexity tokens in otherwise benign text.
+LLMs are vulnerable to adversarial prompt attacks generated through discrete optimisation (specifically the GCG attack from Zou et al., 2023). These adversarial suffixes bypass moderation and alignment by appending out-of-distribution (OOD) token sequences to harmful queries. Prior perplexity-based defences (Alon & Kamfonas, 2023; Jain et al., 2023) operate at the sequence level only -- they flag entire sequences but cannot localize which tokens are adversarial. This paper addresses two gaps: (1) token-level localization of adversarial content, and (2) incorporation of contextual information from neighboring tokens to reduce false positives on isolated high-perplexity tokens in otherwise benign text.
 
 ### Proposed Approach
 
@@ -160,7 +160,7 @@ Larger models improve token-level localization (Llama2 models reach ~0.998+ F1),
 
 ## Key Takeaways
 
-- A small language model (GPT-2 124M, CPU-only, <1GB memory) achieves perfect sequence-level detection of GCG-style adversarial suffixes using token perplexity alone. This validates IS-050 as a lightweight, deployable defense layer.
+- A small language model (GPT-2 124M, CPU-only, <1GB memory) achieves perfect sequence-level detection of GCG-style adversarial suffixes using token perplexity alone. This validates IS-050 as a lightweight, deployable defence layer.
 
 - The fused-lasso contextual regularization is the key contribution beyond naive perplexity thresholding. It reduces false positives by requiring adversarial tokens to appear in contiguous spans, which matches the structure of GCG-optimised suffixes. Isolated high-perplexity tokens in benign text are not flagged.
 

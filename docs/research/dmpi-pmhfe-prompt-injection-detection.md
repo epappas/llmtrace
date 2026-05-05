@@ -8,7 +8,7 @@
 **Source PDF:** `docs/research/papers/2506.06384.pdf`
 
 ## Summary
-DMPI-PMHFE is a dual-channel feature fusion framework for detecting direct prompt injection attacks. It combines DeBERTa-v3-base semantic feature extraction with heuristic feature engineering (synonym matching + pattern matching) to capture both implicit semantic and explicit structural attack signals. Features from both channels are concatenated and classified via fully connected layers. The paper reports state-of-the-art accuracy, recall, and F1 across three benchmark datasets, and significant attack success rate reductions when deployed as an active defense across five mainstream LLMs.
+DMPI-PMHFE is a dual-channel feature fusion framework for detecting direct prompt injection attacks. It combines DeBERTa-v3-base semantic feature extraction with heuristic feature engineering (synonym matching + pattern matching) to capture both implicit semantic and explicit structural attack signals. Features from both channels are concatenated and classified via fully connected layers. The paper reports state-of-the-art accuracy, recall, and F1 across three benchmark datasets, and significant attack success rate reductions when deployed as an active defence across five mainstream LLMs.
 
 ## Architecture
 
@@ -107,7 +107,7 @@ Threshold of 3 selected via systematic sensitivity analysis balancing precision 
 - Quality assurance: 3-stage process (manual label verification, dedup + format standardisation, balanced distribution via random sampling)
 - Split: 10,400 training (80%), 1,300 validation (10%), 1,300 test (10%)
 
-### Defense Evaluation
+### Defence Evaluation
 
 | Dataset | Samples | Source |
 |---------|---------|--------|
@@ -136,14 +136,14 @@ Covers attack patterns: "ignore previous instructions", "format manipulation", "
 | Fmops | fmops/distilbert-prompt-injection | [19] |
 | ProtectAI | deberta-v3-base-prompt-injection-v2 | [20] |
 | SafeGuard | Benchmark suite for LLM safety | [21] |
-| InjecGuard | Benchmarking and mitigating over-defense in prompt injection guardrails | [22] |
+| InjecGuard | Benchmarking and mitigating over-defence in prompt injection guardrails | [22] |
 
-### Defense Baselines
+### Defence Baselines
 
 | Method | Description | Reference |
 |--------|-------------|-----------|
 | Self-Reminder | Integrates system prompts into user queries as self-reminders | [27] |
-| Self-Defense | LLMs evaluate their own generated text for harmful content | [26] |
+| Self-Defence | LLMs evaluate their own generated text for harmful content | [26] |
 
 ## Results
 
@@ -211,9 +211,9 @@ Modules: M1 = DeBERTa feature extraction, M2 = Synonym matching, M3 = Pattern ma
 
 **Key finding:** Each module contributes positively to accuracy, recall, and F1 across all datasets. M3 (pattern matching) slightly decreases precision on safeguard-v2 (99.58% -> 98.00%) and Ivanleomk-v2 (98.70% -> 98.22%) because it expands detection coverage to more attack variants, introducing some false positives. The tradeoff yields higher recall and better overall F1.
 
-### Table 3: Defense Effectiveness (ASR %, total attacks = 251)
+### Table 3: Defence Effectiveness (ASR %, total attacks = 251)
 
-| Model | Base Model | Self-Reminder | Self-Defense | DMPI-PMHFE |
+| Model | Base Model | Self-Reminder | Self-Defence | DMPI-PMHFE |
 |-------|------------|---------------|--------------|------------|
 | glm-4-9b-chat | 71.71 (180) | 35.45 (89) | 39.04 (98) | **14.34 (36)** |
 | Llama-3-8B-Instruct | 50.19 (126) | 37.45 (94) | 19.92 (50) | **13.54 (34)** |
@@ -224,10 +224,10 @@ Modules: M1 = DeBERTa feature extraction, M2 = Synonym matching, M3 = Pattern ma
 Numbers in parentheses = count of successful attacks out of 251 total.
 
 **Key findings:**
-- All tested LLMs are vulnerable without defense. glm-4-9b-chat is the most susceptible (71.71% base ASR).
+- All tested LLMs are vulnerable without defence. glm-4-9b-chat is the most susceptible (71.71% base ASR).
 - DMPI-PMHFE achieves lowest ASR on all five LLMs, reducing glm-4-9b-chat from 71.71% to 14.34%.
-- Self-Reminder and Self-Defense vary significantly across LLMs (e.g. Self-Reminder: 19.52% on Llama-3.3-70B vs 39.84% on Qwen2.5-7B) due to reliance on the model's own capabilities.
-- DMPI-PMHFE offers the most consistent defense across diverse LLM architectures and scales.
+- Self-Reminder and Self-Defence vary significantly across LLMs (e.g. Self-Reminder: 19.52% on Llama-3.3-70B vs 39.84% on Qwen2.5-7B) due to reliance on the model's own capabilities.
+- DMPI-PMHFE offers the most consistent defence across diverse LLM architectures and scales.
 
 ## Limitations
 

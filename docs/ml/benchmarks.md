@@ -141,7 +141,7 @@ The benchmark reports per-category breakdowns:
 **Edge cases**: boundary conditions (very short, very long, buried payloads)
 
 
-**Over-defense**: NotInject difficulty-stratified false positive testing
+**Over-defence**: NotInject difficulty-stratified false positive testing
 
 
 ## Raw Data

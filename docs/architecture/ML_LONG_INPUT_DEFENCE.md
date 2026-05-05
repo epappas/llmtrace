@@ -1,4 +1,4 @@
-# ML Long Input Defense -- Implementation Architecture
+# ML Long Input Defence -- Implementation Architecture
 
 Date: 2026-03-15
 Status: Proposed
@@ -200,7 +200,7 @@ upstream response stream
 - DeBERTa model implementation (`candle-transformers` DebertaV2) -- no changes.
 - `normalise_text()` internals -- the function is correct; we bound its input.
 - Ensemble voting logic (`multi_model_ensemble.rs`) -- unchanged.
-- Boundary defense, enforcement, storage -- unaffected.
+- Boundary defence, enforcement, storage -- unaffected.
 - `RegexSecurityAnalyzer` pattern matching -- unaffected.
 
 
@@ -286,7 +286,7 @@ fn classify(text) -> (score, label, token_count):
 
 **Max chunks = 10**: (covers ~5100 content tokens / ~20K characters). Beyond this,
 
-   remaining tokens are not analysed by ML. The regex analyzer still scans the full
+   remaining tokens are not analysed by ML. The regex analyser still scans the full
    text. This cap prevents DoS via artificially enormous inputs.
 
 - **Short-circuit on detection**. If any chunk's injection score exceeds the
@@ -325,7 +325,7 @@ tokenizer.with_truncation(Some(TruncationParams {
 
 This ensures that even if the chunking logic has a bug, the tokenizer itself will
 never produce more than `max_seq_length` tokens. The chunking logic handles long
-inputs correctly; the truncation is a defense-in-depth safety net.
+inputs correctly; the truncation is a defence-in-depth safety net.
 
 **Note:** The `extract_embedding()` method also calls `tokenizer.encode()` and has
 the same vulnerability. The tokenizer-level truncation fix protects both code paths.
@@ -434,7 +434,7 @@ overlapping windows and run independent forward passes.
 ### FR-02: Tokenizer Truncation Safety Net
 
 **Description:** Configure the HuggingFace tokenizer with truncation enabled as a
-defense-in-depth measure.
+defence-in-depth measure.
 
 **Acceptance Criteria:**
 - AC-08: `with_truncation()` called during model loading with `max_length = max_seq_length`
@@ -703,7 +703,7 @@ config files continue to work without modification.
 |------|-----------|--------|------------|
 | Chunking logic bug produces wrong chunk boundaries | Low | High | Tokenizer truncation safety net catches any overflow; unit tests verify boundaries |
 | Sliding window increases latency beyond acceptable | Low | Medium | Short-circuit optimisation; 99%+ of real traffic is < 512 tokens (no overhead); histogram metric to monitor |
-| Max chunks cap creates blind spot for very long inputs | Medium | Low | Regex analyzer still scans full text; cap is configurable; 5100 tokens covers most adversarial inputs |
+| Max chunks cap creates blind spot for very long inputs | Medium | Low | Regex analyser still scans full text; cap is configurable; 5100 tokens covers most adversarial inputs |
 | `max_response_size_bytes` too low truncates legitimate traces | Low | Low | Default 50MB matches request limit; configurable; client always gets full response |
 | `max_analysis_text_bytes` truncation misses tail-end patterns | Low | Low | 1MB = ~250K words, far beyond realistic injection payloads; ML sliding window is independent |
 | Backward compatibility: old configs missing new fields | None | None | All fields use `#[serde(default)]` |
@@ -719,7 +719,7 @@ config files continue to work without modification.
 | Max 10 chunks | DoS prevention; covers ~5100 tokens / ~20K chars | Unlimited (DoS risk), 5 chunks (~2550 tokens, too restrictive) |
 | Truncate analysis text, not rewrite normalise_text | KISS: bound the input rather than rewrite a correct function | Streaming normalization (complex, fragile), in-place mutation (unsafe) |
 | Response truncation = trace only, not client | Fail-open: never degrade the client experience for observability | Block large responses (breaks proxy contract) |
-| Tokenizer truncation as safety net | Defense-in-depth: even if chunking has a bug, no panic | Trust chunking only (single point of failure) |
+| Tokenizer truncation as safety net | Defence-in-depth: even if chunking has a bug, no panic | Trust chunking only (single point of failure) |
 | CLS/SEP IDs from tokenizer, not hardcoded | DeBERTa-v3 uses SentencePiece; token IDs vary by model | Hardcode 1/2 (fragile, breaks on different tokenizers) |
 | Partial chunk failure = continue | Return best partial result; one bad chunk shouldn't void the rest | Fail entire call (loses coverage), ignore errors (hides bugs) |
 | Same threshold for chunked and single-pass | Simpler; monitor FP rate via metrics and adjust if needed | Separate chunked_threshold (adds config complexity before data justifies it) |

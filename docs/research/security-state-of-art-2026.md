@@ -203,7 +203,7 @@ Adding heuristic features boosted recall by **+6.39 percentage points** and F1 b
 **Problem**: Existing prompt guard models (including ProtectAI) suffer from **over-defence** — they trigger on benign inputs containing words like "ignore", "system", or "instructions" that happen to appear in normal conversation.
 
 
-**Solution**: PIGuard introduces "Mitigating Over-defense for Free" (MOF) training strategy that reduces trigger word bias. Surpasses existing best model by 30.8% on the NotInject benchmark.
+**Solution**: PIGuard introduces "Mitigating Over-defence for Free" (MOF) training strategy that reduces trigger word bias. Surpasses existing best model by 30.8% on the NotInject benchmark.
 
 
 **Implication for LLMTrace**: Our regex patterns for "ignore previous instructions" will over-trigger on legitimate mentions of these phrases. We need an over-defence mitigation strategy.

@@ -1,20 +1,20 @@
-# LLMTrace Defense Pipeline Design
+# LLMTrace Defence Pipeline Design
 
 Last updated: 2026-02-03
 
 ## Executive Summary
 
-LLMTrace is evolving from a passive observability proxy into a security-aware enforcement layer for LLM systems. The goal is to deliver a staged defense pipeline that can evaluate and act on risk signals at multiple points in the request lifecycle: before a request is sent, at tool-call boundaries, after responses are generated, and asynchronously after the fact. This document specifies what we are adding, why it matters, and how it will be implemented in a way that is compatible with LLMTrace's proxy architecture.
+LLMTrace is evolving from a passive observability proxy into a security-aware enforcement layer for LLM systems. The goal is to deliver a staged defence pipeline that can evaluate and act on risk signals at multiple points in the request lifecycle: before a request is sent, at tool-call boundaries, after responses are generated, and asynchronously after the fact. This document specifies what we are adding, why it matters, and how it will be implemented in a way that is compatible with LLMTrace's proxy architecture.
 
 We are adding five core capabilities.
 
-- A structured defense pipeline with explicit hook points and deterministic decision paths, so policy can be enforced before an LLM or tool is called and after a response is generated.
+- A structured defence pipeline with explicit hook points and deterministic decision paths, so policy can be enforced before an LLM or tool is called and after a response is generated.
 - A detector/guard plugin interface that normalizes risk scores, evidence spans, and recommended actions across heuristics, ML classifiers, and LLM-judge models.
 - A policy engine with a clear precedence model and actions that include allow, block, redact, rewrite, require confirmation, downgrade model, and tool disabling.
 - A data model that captures request/response/tool events with PII-safe storage, auditable evidence, and retention controls.
 - A metrics and tracing layer that quantifies latency, risk, and action outcomes so security posture can be monitored and improved over time.
 
-These additions are driven by the literature on prompt injection, indirect tool injection, and multi-agent defenses. The papers emphasize that prompt-only defenses are insufficient, evasion is practical, and tool boundaries are the real security perimeter. LLMTrace is well positioned to enforce guardrails at that perimeter because it already mediates traffic between clients, LLMs, and tools. Our strategy is to combine low-latency heuristics and ML classifiers for inline decisions with heavier LLM-judge models and clustering for asynchronous review.
+These additions are driven by the literature on prompt injection, indirect tool injection, and multi-agent defences. The papers emphasize that prompt-only defences are insufficient, evasion is practical, and tool boundaries are the real security perimeter. LLMTrace is well positioned to enforce guardrails at that perimeter because it already mediates traffic between clients, LLMs, and tools. Our strategy is to combine low-latency heuristics and ML classifiers for inline decisions with heavier LLM-judge models and clustering for asynchronous review.
 
 The design also emphasizes what LLMTrace will not do. It will not attempt to fully replace application-level logic, nor will it execute arbitrary actions on behalf of the app. Instead, it provides a policy-driven enforcement and observability layer that can inform, restrict, or redact traffic based on risk, while maintaining clear trust boundaries and respecting privacy constraints.
 
@@ -40,7 +40,7 @@ Trust boundaries and control:
 - LLMTrace controls the proxy path for requests, tool calls, and responses.
 - LLMTrace does not control model weights, provider-side safety mechanisms, or upstream client behaviour.
 - Tool outputs and external content are untrusted by default and must be treated as tainted.
-- The policy engine can block or redact, but cannot guarantee behavioral correctness of the model.
+- The policy engine can block or redact, but cannot guarantee behavioural correctness of the model.
 
 ## Design Goals and Non-Goals
 
@@ -55,7 +55,7 @@ Design goals:
 Non-goals:
 
 - Replacing application-level authorisation logic.
-- Guaranteeing perfect detection (defense-in-depth only).
+- Guaranteeing perfect detection (defence-in-depth only).
 - Running high-latency LLM judges on every request.
 - Storing raw sensitive data without explicit configuration.
 
@@ -170,7 +170,7 @@ flowchart LR
   class External trust
 ```
 
-## Defense Pipeline Design (Core)
+## Defence Pipeline Design (Core)
 
 ### Stage 1: Pre-Request
 

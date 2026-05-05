@@ -94,7 +94,7 @@ Implemented in `crates/llmtrace-proxy/src/proxy.rs`:
 
 Implemented by `llmtrace-security`:
 
-- Default: regex analyzer for prompt injection, PII, leakage, jailbreak patterns
+- Default: regex analyser for prompt injection, PII, leakage, jailbreak patterns
 - Optional ML ensemble when `ml` feature and `ml_preload` are enabled
 - Output safety analysis uses `OutputAnalyzer` with response-only checks
 
@@ -118,7 +118,7 @@ Implemented in `crates/llmtrace-proxy/src/auth.rs`:
 Implemented in `crates/llmtrace-proxy/src/alerts.rs`:
 
 - Supported: webhook, Slack, PagerDuty
-- Email channel is recognized in config but not implemented
+- Email channel is recognised in config but not implemented
 - Cooldown-based deduplication per finding type
 
 
@@ -166,4 +166,4 @@ Key proxy controls (see `ProxyConfig` in `llmtrace-core`):
 - Streaming monitors: `crates/llmtrace-proxy/src/streaming.rs`
 - Auth and RBAC: `crates/llmtrace-proxy/src/auth.rs`
 - Storage profiles: `crates/llmtrace-storage/src/lib.rs`
-- Security analyzers: `crates/llmtrace-security/src/lib.rs`
+- Security analysers: `crates/llmtrace-security/src/lib.rs`

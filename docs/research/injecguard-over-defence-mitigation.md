@@ -1,7 +1,7 @@
-# InjecGuard: Over-Defense Mitigation for Prompt Injection Detection
+# InjecGuard: Over-Defence Mitigation for Prompt Injection Detection
 
 **Date:** 2026-02-01  
-**Paper:** InjecGuard: Benchmarking and Mitigating Over-defense in Prompt Injection Guardrail Models  
+**Paper:** InjecGuard: Benchmarking and Mitigating Over-defence in Prompt Injection Guardrail Models  
 **Authors:** Hao Li, Xiaogeng Liu, Chaowei Xiao (University of Wisconsin-Madison)  
 **arXiv:** [2410.22770v1](https://arxiv.org/html/2410.22770v1)  
 **Published:** October 29, 2024  
@@ -9,20 +9,20 @@
 
 ## LLMTrace Application Notes
 
-- Required signals/features: raw prompt text, classifier logits, trigger-word feature flags, and a benign/malicious/over-defense label set for calibration.
+- Required signals/features: raw prompt text, classifier logits, trigger-word feature flags, and a benign/malicious/over-defence label set for calibration.
 - Runtime characteristics: DeBERTa-class detector with low-latency inference; streaming compatible only if content is buffered or chunked.
 - Integration surface (proxy): run pre-request injection classifier and track false-positive rates on benign traffic for guard calibration.
-- Productizable vs research-only: over-defense metrics and monitoring are productizable; MOF training data generation is research-heavy.
+- Productizable vs research-only: over-defence metrics and monitoring are productizable; MOF training data generation is research-heavy.
 
 ## Paper Summary
 
 ### Problem Statement and Motivation
 
-InjecGuard addresses a critical limitation in existing prompt guard models: **over-defense**, where benign inputs are incorrectly flagged as malicious due to trigger word bias. This phenomenon severely impacts usability as legitimate user requests containing words like "ignore", "cancel", or "override" get blocked, reducing LLM accessibility in real-world applications like virtual assistants and diagnostic tools.
+InjecGuard addresses a critical limitation in existing prompt guard models: **over-defence**, where benign inputs are incorrectly flagged as malicious due to trigger word bias. This phenomenon severely impacts usability as legitimate user requests containing words like "ignore", "cancel", or "override" get blocked, reducing LLM accessibility in real-world applications like virtual assistants and diagnostic tools.
 
-> "Over-defense arises when models misclassify inputs due to reliance on shortcuts, resulting in false positives where benign inputs are incorrectly flagged as threats."
+> "Over-defence arises when models misclassify inputs due to reliance on shortcuts, resulting in false positives where benign inputs are incorrectly flagged as threats."
 
-The authors demonstrate that current state-of-the-art models like ProtectAIv2 achieve over-defense accuracy as low as 56.64% (barely better than random guessing at 50%) on their NotInject benchmark.
+The authors demonstrate that current state-of-the-art models like ProtectAIv2 achieve over-defence accuracy as low as 56.64% (barely better than random guessing at 50%) on their NotInject benchmark.
 
 ### Proposed Approach
 
@@ -38,9 +38,9 @@ The authors demonstrate that current state-of-the-art models like ProtectAIv2 ac
   - LLM-based filtering and manual verification
   - GPT-4o-mini generation with safety refinement
 
-#### Mitigating Over-defense for Free (MOF) Training Strategy
+#### Mitigating Over-defence for Free (MOF) Training Strategy
 
-MOF is a novel training approach that addresses over-defense without requiring specific over-defense datasets:
+MOF is a novel training approach that addresses over-defence without requiring specific over-defence datasets:
 
 **Standard Training**: Train model normally on curated dataset (61,089 benign + 15,666 injection samples)
 
@@ -66,7 +66,7 @@ Addresses long-tail formats in prompt injection attacks by generating samples in
 **Average Accuracy:**: 83.48% (vs. ProtectAIv2: 63.81%, +30.8% improvement)
 
 
-**Over-defense Accuracy:**: 87.32% (vs. ProtectAIv2: 56.64%, +54.17% improvement)  
+**Over-defence Accuracy:**: 87.32% (vs. ProtectAIv2: 56.64%, +54.17% improvement)  
 
 
 **Benign Accuracy:**: 85.74%
@@ -107,10 +107,10 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 | Feature | InjecGuard | LLMTrace Security | Gap |
 |---------|------------|-------------------|-----|
 | **Architecture** | DeBERTa-v3-base classification | DeBERTa-v2 + Regex hybrid | Minor - similar transformer base |
-| **Over-defense Mitigation** | ✅ MOF strategy with bias detection | ❌ No explicit over-defense handling | **Critical gap** |
+| **Over-defence Mitigation** | ✅ MOF strategy with bias detection | ❌ No explicit over-defence handling | **Critical gap** |
 | **Trigger Word Analysis** | ✅ Automatic bias token identification | ❌ Static regex patterns only | **Major gap** |
 | **Training Strategy** | ✅ Adaptive retraining from scratch | ❌ Standard fine-tuning | **Significant gap** |
-| **Evaluation Framework** | ✅ 3D metrics (benign/malicious/over-defense) | ❌ Binary classification only | **Major gap** |
+| **Evaluation Framework** | ✅ 3D metrics (benign/malicious/over-defence) | ❌ Binary classification only | **Major gap** |
 | **Encoding Detection** | ✅ Base64/ROT13/leetspeak/reversed | ✅ Base64 + manual pattern detection | Moderate gap |
 | **Multi-language Support** | ✅ Includes Chinese, Russian samples | ❌ English-focused patterns | Moderate gap |
 | **Format Coverage** | ✅ 17 data formats (CSV, XML, JSON, etc.) | ✅ Basic format detection | Minor gap |
@@ -123,13 +123,13 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 ### What InjecGuard Does That We Don't
 
-**Systematic Over-defense Mitigation**: MOF training strategy specifically targets and reduces false positives
+**Systematic Over-defence Mitigation**: MOF training strategy specifically targets and reduces false positives
 
 
-**Bias Token Detection**: Automated identification of problematic tokens that cause over-defense
+**Bias Token Detection**: Automated identification of problematic tokens that cause over-defence
 
 
-**Three-Dimensional Evaluation**: Separate metrics for benign, malicious, and over-defense scenarios
+**Three-Dimensional Evaluation**: Separate metrics for benign, malicious, and over-defence scenarios
 
 
 **Adaptive Training Data Generation**: Automatically generates training data to counteract discovered biases
@@ -170,9 +170,9 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 ### P0 (Critical - Immediate Implementation)
 
-**Implement Over-defense Detection**: **Effort:** 2-3 weeks
+**Implement Over-defence Detection**: **Effort:** 2-3 weeks
 
-   - Add evaluation metric for over-defense accuracy in `MLSecurityAnalyzer`
+   - Add evaluation metric for over-defence accuracy in `MLSecurityAnalyzer`
    - Create benchmark dataset similar to NotInject for LLMTrace testing
 
 **Code Impact:**: New metric in `AnalysisContext`, test dataset in `tests/`
@@ -190,8 +190,8 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 **Three-Dimensional Evaluation Framework**: **Effort:** 2 weeks
 
-   - Separate benign/malicious/over-defense accuracy tracking
-   - Update `SecurityFinding` to include over-defense classification
+   - Separate benign/malicious/over-defence accuracy tracking
+   - Update `SecurityFinding` to include over-defence classification
 
 **Code Impact:**: Enhanced metrics in `inference_stats.rs`
 
@@ -251,7 +251,7 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 **Average Accuracy:**: 83.48%
 
 
-**Over-defense Accuracy:**: 87.32% (most critical metric)
+**Over-defence Accuracy:**: 87.32% (most critical metric)
 
 
 **Malicious Detection:**: 77.39%
@@ -266,7 +266,7 @@ InjecGuard vs. ProtectAI DeBERTa v2 (which we use):
 **Overall Performance:**: +30.8% improvement in average accuracy
 
 
-**Over-defense:**: +54.17% improvement (87.32% vs 56.64%)
+**Over-defence:**: +54.17% improvement (87.32% vs 56.64%)
 
 
 **Architecture:**: Similar (both DeBERTa-based)
@@ -276,21 +276,21 @@ InjecGuard vs. ProtectAI DeBERTa v2 (which we use):
 
 
 ### NotInject Benchmark Results
-Current SOTA models perform poorly on over-defense:
+Current SOTA models perform poorly on over-defence:
 
-**PromptGuard (Meta):**: 0.88% over-defense accuracy
-
-
-**Deepset:**: 5.31% over-defense accuracy  
+**PromptGuard (Meta):**: 0.88% over-defence accuracy
 
 
-**Fmops:**: 5.60% over-defense accuracy
+**Deepset:**: 5.31% over-defence accuracy  
 
 
-**ProtectAI v2:**: 56.64% over-defense accuracy
+**Fmops:**: 5.60% over-defence accuracy
 
 
-> "None of the existing open-source prompt guard models achieve an over-defense accuracy greater than 60%, where 50% represents random guessing."
+**ProtectAI v2:**: 56.64% over-defence accuracy
+
+
+> "None of the existing open-source prompt guard models achieve an over-defence accuracy greater than 60%, where 50% represents random guessing."
 
 ## Technical Implementation Notes
 
@@ -324,4 +324,4 @@ The MOF strategy could be integrated into our ensemble approach:
 - Retrain ensemble components with augmented dataset
 - Maintain compatibility with existing regex-based detection
 
-This represents a significant opportunity to improve LLMTrace's robustness against over-defense while maintaining our strengths in PII detection, agent security analysis, and real-time streaming capabilities.
+This represents a significant opportunity to improve LLMTrace's robustness against over-defence while maintaining our strengths in PII detection, agent security analysis, and real-time streaming capabilities.

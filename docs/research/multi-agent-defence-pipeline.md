@@ -1,6 +1,6 @@
-# Multi-Agent LLM Defense Pipeline Research Analysis
+# Multi-Agent LLM Defence Pipeline Research Analysis
 
-**Paper:** A Multi-Agent LLM Defense Pipeline Against Prompt Injection Attacks  
+**Paper:** A Multi-Agent LLM Defence Pipeline Against Prompt Injection Attacks  
 **arXiv:** 2509.14285v1  
 **Date:** September 23, 2024  
 **Analysis Date:** February 1, 2026  
@@ -23,9 +23,9 @@
 - M. F. Mridha⁴ (American International University-Bangladesh)
 - Jungpil Shin⁵ (University of Aizu, Japan)
 
-### Core Innovation: Multi-Agent Coordinated Defense
+### Core Innovation: Multi-Agent Coordinated Defence
 
-The paper presents a **dual-architecture multi-agent framework** that coordinates specialized LLM agents for prompt injection defense:
+The paper presents a **dual-architecture multi-agent framework** that coordinates specialized LLM agents for prompt injection defence:
 
 #### Sequential Chain-of-Agents Pipeline
 ```
@@ -118,7 +118,7 @@ API Gateway → Event Orchestrator → Coordinator → [Attack=Safe Refusal | Sa
 **Category-specific**: Delegate attacks (100% ASR), Role-play (66.7%), Reconnaissance (60%)
 
 
-#### Defense Effectiveness
+#### Defence Effectiveness
 
 **All architectures**: **0% ASR** (complete mitigation)
 
@@ -134,7 +134,7 @@ API Gateway → Event Orchestrator → Coordinator → [Attack=Safe Refusal | Sa
    - Domain LLM: Core task execution  
    - Guard: Output validation and sanitization
 
-**Layered Defense-in-Depth**: Input-side gating (Coordinator)
+**Layered Defence-in-Depth**: Input-side gating (Coordinator)
 
    - Output-side validation (Guard)
    - Policy enforcement at multiple checkpoints
@@ -153,11 +153,11 @@ API Gateway → Event Orchestrator → Coordinator → [Attack=Safe Refusal | Sa
 
 | Feature | Multi-Agent Pipeline | LLMTrace | Gap Analysis |
 |---------|---------------------|----------|--------------|
-| **Defense Architecture** | Multi-agent coordinated (Coordinator + Guard) | Single-pass analysis engine | **MAJOR**: LLMTrace lacks multi-pass validation |
+| **Defence Architecture** | Multi-agent coordinated (Coordinator + Guard) | Single-pass analysis engine | **MAJOR**: LLMTrace lacks multi-pass validation |
 | **Attack Detection** | Sequential validation with specialized agents | Real-time security analysis | **MODERATE**: Single point vs distributed detection |
 | **Response Handling** | Pre-input filtering + post-output validation | Transparent proxy with analysis | **SIGNIFICANT**: No pre-filtering in LLMTrace |
 | **Agent Specialization** | Role-specific (Coordinator, Domain, Guard) | Monolithic security engine | **MAJOR**: No agent specialization |
-| **Defense Depth** | Input-side + output-side + policy enforcement | Proxy-layer analysis | **SIGNIFICANT**: Single layer vs multi-layer |
+| **Defence Depth** | Input-side + output-side + policy enforcement | Proxy-layer analysis | **SIGNIFICANT**: Single layer vs multi-layer |
 | **Attack Success Rate** | 0% (complete mitigation) | Unknown (needs evaluation) | **UNKNOWN**: LLMTrace ASR not benchmarked |
 | **Coordination** | Hierarchical orchestration with routing | Independent analysis modules | **MAJOR**: No inter-module coordination |
 | **Policy Management** | Centralized policy store with multi-agent access | Configuration-based rules | **MODERATE**: Less dynamic policy coordination |
@@ -189,7 +189,7 @@ API Gateway → Event Orchestrator → Coordinator → [Attack=Safe Refusal | Sa
 **Adaptability**: Agent roles can be updated independently
 
 
-**Defense-in-Depth**: Multiple failure modes required for bypass
+**Defence-in-Depth**: Multiple failure modes required for bypass
 
 
 ## Implementation Feasibility for LLMTrace
@@ -258,7 +258,7 @@ impl SecondOpinionEngine {
 }
 ```
 
-### Defense-in-Depth Pipeline Integration
+### Defence-in-Depth Pipeline Integration
 
 **Implementation Strategy**: Layer multi-agent coordination within existing proxy architecture
 
@@ -400,7 +400,7 @@ Request → Coordinator → [High Risk = Block | Medium Risk = Enhanced Analysis
 
 
 ## Conclusion
-The multi-agent defense pipeline research demonstrates a compelling approach to achieving comprehensive prompt injection mitigation. For LLMTrace, the key insight is that **defense-in-depth through agent coordination** can significantly enhance security effectiveness beyond single-pass analysis.
+The multi-agent defence pipeline research demonstrates a compelling approach to achieving comprehensive prompt injection mitigation. For LLMTrace, the key insight is that **defence-in-depth through agent coordination** can significantly enhance security effectiveness beyond single-pass analysis.
 
 The paper's **0% Attack Success Rate** across 400 diverse attack instances suggests that multi-agent architectures can approach perfect security when properly implemented. However, adaptation to LLMTrace's transparent proxy model requires careful consideration of:
 

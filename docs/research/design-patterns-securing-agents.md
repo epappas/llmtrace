@@ -128,7 +128,7 @@ The paper includes comprehensive case studies demonstrating real-world applicabi
 **Provability Approach:**
 - Patterns provide **formal guarantees** under specific constraints
 - Security holds **even if underlying LLM is vulnerable** to prompt injection
-- Focus on **system-level isolation** rather than model-level defenses
+- Focus on **system-level isolation** rather than model-level defences
 
 **Threat Models:**
 
@@ -252,7 +252,7 @@ The paper includes comprehensive case studies demonstrating real-world applicabi
 **Medium Priority:**
 - Can LLMTrace help implement Context-Minimization automatically?
 - How can we support Dual LLM routing with trust-level classification?
-- What behavioral signatures indicate agent pattern adherence?
+- What behavioural signatures indicate agent pattern adherence?
 
 **Long-term:**
 - Should LLMTrace provide a pattern-compliance-as-a-service layer?
@@ -270,7 +270,7 @@ The paper includes comprehensive case studies demonstrating real-world applicabi
 **Phase 3 (4-6 months):**: Full pattern compliance monitoring and trust-based routing
 
 
-**Phase 4 (6+ months):**: Advanced behavioral analysis and pattern recommendation
+**Phase 4 (6+ months):**: Advanced behavioural analysis and pattern recommendation
 
 
 ### Strategic Value Proposition

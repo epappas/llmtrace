@@ -66,13 +66,13 @@ The `/metrics` endpoint returns metrics in Prometheus exposition format.
 | `llmtrace_anomalies_total` | Counter | `anomaly_type` | Anomalies detected |
 | `llmtrace_active_connections` | Gauge | (none) | Current active connections |
 
-### Boundary Defense Metrics
+### Boundary Defence Metrics
 
-These metrics track the boundary token injection defense. They are emitted when `boundary_defense.enabled: true` in config, including in shadow mode.
+These metrics track the boundary token injection defence. They are emitted when `boundary_defense.enabled: true` in config, including in shadow mode.
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `llmtrace_boundary_defense_applied_total` | Counter | `provider`, `mode` | Requests where defense was applied (`mode` = `active` or `shadow`) |
+| `llmtrace_boundary_defense_applied_total` | Counter | `provider`, `mode` | Requests where defence was applied (`mode` = `active` or `shadow`) |
 | `llmtrace_boundary_defense_messages_wrapped` | Histogram | `provider` | Number of tool messages wrapped per request |
 | `llmtrace_boundary_defense_reminder_injected_total` | Counter | `provider` | Requests where system prompt reminder was injected |
 | `llmtrace_boundary_defense_overhead_bytes` | Histogram | `provider` | Byte delta per request from boundary wrapping |
@@ -121,12 +121,12 @@ rate(llmtrace_security_findings_total[5m])
 llmtrace_circuit_breaker_state{state="open"}
 ```
 
-**Boundary Defense -- Messages Wrapped / hour**:
+**Boundary Defence -- Messages Wrapped / hour**:
 ```promql
 sum(rate(llmtrace_boundary_defense_applied_total[5m])) by (provider, mode)
 ```
 
-**Boundary Defense -- Error Rate**:
+**Boundary Defence -- Error Rate**:
 ```promql
 rate(llmtrace_boundary_defense_errors_total[5m])
 ```
@@ -141,7 +141,7 @@ Suggested Grafana alert rules:
 | High latency | P95 > 5s for 5 minutes | Warning |
 | Circuit breaker open | `llmtrace_circuit_breaker_state{state="open"} == 1` for > 30s | Critical |
 | Security spike | Finding rate > 10/min for 5 minutes | Warning |
-| Boundary defense errors | `rate(llmtrace_boundary_defense_errors_total[5m]) > 0` for 5 minutes | Warning |
+| Boundary defence errors | `rate(llmtrace_boundary_defense_errors_total[5m]) > 0` for 5 minutes | Warning |
 
 ## Logging
 

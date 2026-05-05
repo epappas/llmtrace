@@ -218,7 +218,7 @@ alerts:
   #   escalate_after_seconds: 600
 ```
 
-Note: `email` channels are recognized in config but are not implemented yet.
+Note: `email` channels are recognised in config but are not implemented yet.
 
 ## Cost Estimation and Cost Caps
 
@@ -242,7 +242,7 @@ cost_caps:
   #   max_completion_tokens: 4096
 ```
 
-## Boundary Token Defense
+## Boundary Token Defence
 
 Structural prevention for indirect prompt injection. Wraps untrusted tool message content with delimiter tags before forwarding to the upstream LLM. Reduces attack success rate by ~10x (BIPIA benchmark).
 
@@ -268,7 +268,7 @@ A system prompt reminder is also injected telling the model to treat delimited c
 
 **Rollout recommendation:** Enable with `shadow_mode: true` first, monitor metrics for 24+ hours, then set `shadow_mode: false` to activate.
 
-See [Boundary Token Defense Architecture](../architecture/BOUNDARY_TOKEN_DEFENSE.md) for full design details.
+See [Boundary Token Defence Architecture](../architecture/BOUNDARY_TOKEN_DEFENCE.md) for full design details.
 
 ## Auth (API Keys)
 

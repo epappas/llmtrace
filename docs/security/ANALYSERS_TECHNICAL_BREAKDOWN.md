@@ -1,11 +1,11 @@
-# LLMTrace Security Analyzers -- Technical Breakdown
+# LLMTrace Security Analysers -- Technical Breakdown
 
 ## System Overview
 
-LLMTrace runs **6 analyzers** (3 active by default, 3 optional) through an ensemble pipeline producing a unified security verdict per request. Total: **185 regex patterns + 4 ML models + 1 fusion classifier**.
+LLMTrace runs **6 analysers** (3 active by default, 3 optional) through an ensemble pipeline producing a unified security verdict per request. Total: **185 regex patterns + 4 ML models + 1 fusion classifier**.
 
 
-## Regex Security Analyzer
+## Regex Security Analyser
 
 **File:** `crates/llmtrace-security/src/lib.rs`
 **Type:** Deterministic pattern matching
@@ -95,7 +95,7 @@ RegexSecurityAnalyzer {
 Suspicious phrases checked in decoded content: "ignore", "override", "system prompt", "instructions", "you are now", "forget", "disregard", "act as", "new role", "jailbreak".
 
 
-## DeBERTa ML Analyzer
+## DeBERTa ML Analyser
 
 **File:** `crates/llmtrace-security/src/ml_detector.rs` (1,229 lines)
 **Type:** Transformer neural network (Candle)
@@ -132,7 +132,7 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Fallback:** If model fails to load, falls back to `RegexSecurityAnalyzer`.
 
 
-## InjecGuard Analyzer (Auxiliary)
+## InjecGuard Analyser (Auxiliary)
 
 **File:** `crates/llmtrace-security/src/injecguard.rs`
 **Model:** `leolee99/InjecGuard`
@@ -145,7 +145,7 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Execution:** `tokio::task::spawn_blocking` (concurrent with async ML)
 
 
-## PIGuard Analyzer (Auxiliary)
+## PIGuard Analyser (Auxiliary)
 
 **File:** `crates/llmtrace-security/src/piguard.rs` (362 lines)
 **Model:** `leolee99/PIGuard`
@@ -153,7 +153,7 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Config:** `piguard_enabled: false` (default), `threshold: 0.85`
 **Role:** Additive-only auxiliary
 
-**Key differentiator:** MOF (Mitigating Over-defense for Free) training -- 30.8% improvement on NotInject benchmark. Reduces false positives on benign security terminology.
+**Key differentiator:** MOF (Mitigating Over-defence for Free) training -- 30.8% improvement on NotInject benchmark. Reduces false positives on benign security terminology.
 
 **Finding type:** `piguard_injection`
 **Implementation:** Delegates to InjecGuardAnalyzer internally, transforms finding types.
@@ -321,7 +321,7 @@ For diverse model architectures (not just DeBERTa), supports configurable voting
 
 | Component | Path |
 |---|---|
-| Regex analyzer + patterns | `crates/llmtrace-security/src/lib.rs` |
+| Regex analyser + patterns | `crates/llmtrace-security/src/lib.rs` |
 | Jailbreak detector | `crates/llmtrace-security/src/jailbreak_detector.rs` |
 | DeBERTa ML detector | `crates/llmtrace-security/src/ml_detector.rs` |
 | InjecGuard | `crates/llmtrace-security/src/injecguard.rs` |

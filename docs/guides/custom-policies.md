@@ -63,7 +63,7 @@ storage:
 
 ## Security Analysis Policies
 
-LLMTrace provides regex-based security analysis by default. When the binary is built with the `ml` feature and ML is enabled in config, the proxy uses an ensemble analyzer that combines regex findings with ML classifiers.
+LLMTrace provides regex-based security analysis by default. When the binary is built with the `ml` feature and ML is enabled in config, the proxy uses an ensemble analyser that combines regex findings with ML classifiers.
 
 ### Regex-Based Detection (Default)
 
@@ -143,7 +143,7 @@ security_analysis:
 **When to use ML detection:**
 - You need to catch adversarial prompt injections that evade regex patterns
 - You handle untrusted user input at scale
-- You want NER-based PII detection for names and organizations (regex can only catch structured formats like emails/SSNs)
+- You want NER-based PII detection for names and organisations (regex can only catch structured formats like emails/SSNs)
 
 **When regex-only is sufficient:**
 - Internal tools where inputs are semi-trusted
@@ -152,7 +152,7 @@ security_analysis:
 
 ### Ensemble Behaviour
 
-When ML is enabled, LLMTrace uses the ensemble analyzer:
+When ML is enabled, LLMTrace uses the ensemble analyser:
 - Regex findings are always included.
 - ML findings are added when the model is loaded successfully.
 - Findings are merged and deduplicated; overlapping items include metadata such as `ensemble_agreement`.
@@ -403,7 +403,7 @@ alerts:
 
 ### Alert Severity Mapping
 
-LLMTrace compares each finding's severity (`Info` → `Critical`) and confidence score (0–100) against the configured minimums. There is no fixed mapping between score and severity; both are emitted by the analyzers.
+LLMTrace compares each finding's severity (`Info` → `Critical`) and confidence score (0–100) against the configured minimums. There is no fixed mapping between score and severity; both are emitted by the analysers.
 
 ### Alert Deduplication
 
@@ -557,7 +557,7 @@ streaming_analysis:
 
 ## PII Detection & Redaction
 
-Beyond detecting PII, LLMTrace can optionally **redact** it inside the security analyzer output. The proxy does **not** currently replace upstream responses or stored traces with redacted text — redaction is available for downstream processing and future pipeline use.
+Beyond detecting PII, LLMTrace can optionally **redact** it inside the security analyser output. The proxy does **not** currently replace upstream responses or stored traces with redacted text — redaction is available for downstream processing and future pipeline use.
 
 ```yaml
 pii:

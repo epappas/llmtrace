@@ -1,11 +1,11 @@
 ---
 title: Research library
-description: The research corpus that informs LLMTrace's defense pipeline, detection models, and threat coverage.
+description: The research corpus that informs LLMTrace's defence pipeline, detection models, and threat coverage.
 ---
 
 # Research library
 
-This is the living research corpus behind LLMTrace — the academic papers, benchmarks, attack taxonomies, and defense techniques that shape what the proxy actually does. Every detector, threshold, and architectural decision is traceable to the material here.
+This is the living research corpus behind LLMTrace — the academic papers, benchmarks, attack taxonomies, and defence techniques that shape what the proxy actually does. Every detector, threshold, and architectural decision is traceable to the material here.
 
 ## Landscape & OWASP
 
@@ -14,7 +14,7 @@ This is the living research corpus behind LLMTrace — the academic papers, benc
 - [Benchmarks & tools landscape](benchmarks-and-tools-landscape.md) — what exists to measure detectors.
 - [OWASP GenAI Top 10 2025 references](owasp-genai-top10-2025-references.md) — primary source index.
 - [LLMTrace OWASP GenAI architecture report](llmtrace-owasp-genai-architecture-report.md) — how our design maps to the Top 10.
-- [LLMTrace defense pipeline design](llmtrace-defense-pipeline-design.md) — the blueprint the proxy implements.
+- [LLMTrace defence pipeline design](llmtrace-defence-pipeline-design.md) — the blueprint the proxy implements.
 
 ## Attacks & benchmarks
 
@@ -26,15 +26,15 @@ This is the living research corpus behind LLMTrace — the academic papers, benc
 - [Agent-as-a-proxy attacks](agent-as-a-proxy-attacks.md)
 - [LLM jailbreaks prompt collection](llm-jailbreaks-prompt-collection.md)
 
-## Defense techniques
+## Defence techniques
 
-- [Spotlighting indirect injection](spotlighting-indirect-injection-defense.md)
-- [Instruction hierarchy](instruction-hierarchy-defense.md)
-- [Task Shield alignment](task-shield-alignment-defense.md)
-- [Tool result parsing](defense-tool-result-parsing.md)
+- [Spotlighting indirect injection](spotlighting-indirect-injection-defence.md)
+- [Instruction hierarchy](instruction-hierarchy-defence.md)
+- [Task Shield alignment](task-shield-alignment-defence.md)
+- [Tool result parsing](defence-tool-result-parsing.md)
 - [Indirect injection firewalls](indirect-injection-firewalls.md)
-- [Multi-agent defense pipeline](multi-agent-defense-pipeline.md)
-- [InjecGuard over-defense mitigation](injecguard-over-defense-mitigation.md)
+- [Multi-agent defence pipeline](multi-agent-defence-pipeline.md)
+- [InjecGuard over-defence mitigation](injecguard-over-defence-mitigation.md)
 - [Design patterns for securing agents](design-patterns-securing-agents.md)
 
 ## Detection methods

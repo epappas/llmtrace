@@ -118,7 +118,7 @@ Targets Gemini. Rated as low implementation complexity but high potential impact
 | Model | Primary Vectors | Unique Bypass | Relative Robustness |
 |---|---|---|---|
 | DeepSeek | Role-based, format manipulation | GODMODE markers, word count forcing | Fewer targeted mitigations (newer model) |
-| Grok3 | Language switching | Chinese prompt filter bypass | Weak non-English defenses |
+| Grok3 | Language switching | Chinese prompt filter bypass | Weak non-English defences |
 | Gemini 2.0 | Context framing, prompt leaking | Literary justification, reference manipulation | Vulnerable to both semantic and technical |
 | ChatGPT | Role-based (DAN v13.0) | Dual-response format, token punishment | More mitigated in newer versions; evolved through DAN iterations |
 | Claude | Role-based (character RP) | Structured tag rules, fictional narrative | Moderate; effective with creative/fictional contexts |
@@ -177,7 +177,7 @@ Targets Gemini. Rated as low implementation complexity but high potential impact
 ## Limitations
 
 - Small collection (~12 prompts total). Our existing benchmark suite (30+ datasets, thousands of samples) provides far broader coverage.
-- No detection or defense tooling; purely a prompt reference.
+- No detection or defence tooling; purely a prompt reference.
 - Taxonomy is shallow (5 categories vs our ~20+ finding types).
 - Prompts may already be mitigated by latest model versions.
 - No indirect prompt injection, encoding evasion, tool-use attacks, or agentic attack vectors.

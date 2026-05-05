@@ -12,7 +12,7 @@
 - Required signals/features: message type classification (system/user/tool), privilege level assignment per message, aligned vs misaligned instruction detection, and conflict identification between instruction levels.
 - Runtime characteristics: zero additional inference latency -- the hierarchy is baked into the model via fine-tuning (SFT + RLHF), not enforced at runtime. LLMTrace benefits are in detection and enforcement at the proxy layer, not in retraining.
 - Integration surface (proxy): enforce instruction-data boundary tags on tool outputs before they reach the LLM; detect when user messages attempt to override system-level instructions; flag privilege escalation attempts in requests.
-- Productizable vs research-only: the privilege hierarchy concept and boundary tagging are productizable at proxy level; the SFT/RLHF training pipeline itself is model-provider-side (not applicable to LLMTrace directly), but the behavioral taxonomy and evaluation benchmarks are directly reusable.
+- Productizable vs research-only: the privilege hierarchy concept and boundary tagging are productizable at proxy level; the SFT/RLHF training pipeline itself is model-provider-side (not applicable to LLMTrace directly), but the behavioural taxonomy and evaluation benchmarks are directly reusable.
 
 
 ## Paper Summary
@@ -138,18 +138,18 @@ The model (GPT-3.5 Turbo) is fine-tuned using SFT + RLHF on this data combined w
 | Privilege hierarchy (system > user > tool) | No explicit privilege-level tracking per message type | Need message-type classification and privilege assignment in request analysis | Extends SA-003 (taint tracking) |
 | Context ignorance for tool outputs | AS-002 (tool-output sanitizer) strips malicious content at proxy level | AS-002 sanitizes content but does not teach the underlying LLM to ignore it; both approaches are complementary | AS-002 (partial) |
 | Instruction-data boundary enforcement | `<data>`/`</data>` boundary tags injected by proxy (BIPIA research) | Boundary tags are the proxy-side implementation of what this paper achieves via training; tags should be systematically applied to all tool outputs and user-supplied data | Extends AS-001/AS-002 |
-| Aligned vs misaligned instruction classification | IS-004 (NotInject over-defense benchmark) tests benign vs malicious classification | No runtime aligned/misaligned classification for incoming instructions; IS-004 is evaluation-only | New feature needed |
+| Aligned vs misaligned instruction classification | IS-004 (NotInject over-defence benchmark) tests benign vs malicious classification | No runtime aligned/misaligned classification for incoming instructions; IS-004 is evaluation-only | New feature needed |
 | Closed-domain "data not instructions" policy | No closed-domain task detection | Proxy could detect closed-domain system prompts (summarize, translate, classify) and enforce stricter tool-output handling | New feature needed |
-| System message extraction defense | SA-002 (canary tokens) detects leakage after the fact | No proactive blocking of extraction attempts in user messages; canary tokens are reactive, not preventive | Extend SA-002 |
+| System message extraction defence | SA-002 (canary tokens) detects leakage after the fact | No proactive blocking of extraction attempts in user messages; canary tokens are reactive, not preventive | Extend SA-002 |
 | Red-teamer LLM for training data | Not applicable (LLMTrace does not train the target LLM) | No gap -- LLMTrace operates at proxy level | N/A |
-| Jailbreak generalization via hierarchy | IS-014 (automated jailbreak defense), IS-020-IS-031 (evasion defenses) | These are pattern-based; the paper shows training-based hierarchy generalizes to unseen jailbreaks without explicit patterns | Complementary approach |
+| Jailbreak generalization via hierarchy | IS-014 (automated jailbreak defence), IS-020-IS-031 (evasion defences) | These are pattern-based; the paper shows training-based hierarchy generalizes to unseen jailbreaks without explicit patterns | Complementary approach |
 | Over-refusal evaluation | IS-004, IS-005 (three-dimensional evaluation) | IS-004 covers benign sample testing; the paper's over-refusal taxonomy (probing questions, borderline prompts) extends this | Extend IS-004/IS-005 |
 
 ### Connection to Key LLMTrace Features
 
-**IS-004 (NotInject-style over-defense benchmark):** This paper's over-refusal evaluation methodology directly extends IS-004. The paper demonstrates four over-refusal categories: (1) user non-conflicting instructions, (2) system message probing questions, (3) jailbreak-patterned but benign prompts, (4) borderline allowed prompts. IS-004 currently covers category 1 and 4; categories 2 and 3 should be added.
+**IS-004 (NotInject-style over-defence benchmark):** This paper's over-refusal evaluation methodology directly extends IS-004. The paper demonstrates four over-refusal categories: (1) user non-conflicting instructions, (2) system message probing questions, (3) jailbreak-patterned but benign prompts, (4) borderline allowed prompts. IS-004 currently covers category 1 and 4; categories 2 and 3 should be added.
 
-**IS-050/IS-051 (perplexity-based anomaly detection, adaptive monitoring scope):** The instruction hierarchy is complementary to perplexity-based detection. The hierarchy addresses the model-level defense (training LLMs to ignore adversarial tool outputs), while IS-050 addresses the proxy-level detection (flagging anomalous strings before they reach the model). Together they form a defense-in-depth approach.
+**IS-050/IS-051 (perplexity-based anomaly detection, adaptive monitoring scope):** The instruction hierarchy is complementary to perplexity-based detection. The hierarchy addresses the model-level defence (training LLMs to ignore adversarial tool outputs), while IS-050 addresses the proxy-level detection (flagging anomalous strings before they reach the model). Together they form a defence-in-depth approach.
 
 **AS-001/AS-002 (tool-boundary firewalls):** The paper's approach of treating all tool output instructions as misaligned validates the design of AS-002. The proxy should sanitize tool outputs (AS-002) AND inject boundary tags to reinforce the instruction hierarchy for models that support it.
 
@@ -176,22 +176,22 @@ Expand IS-004 and IS-005 to include the paper's over-refusal taxonomy: (a) syste
 
 ### Combine hierarchy-aware system prompt with proxy-level enforcement (Low Priority)
 
-The paper's Appendix A shows that combining the trained instruction hierarchy with an explicit system message prompt provides marginal additional gains (e.g., 96.2% vs 95.9% on system message extraction). LLMTrace could offer an optional feature to prepend hierarchy instructions (Table 3 from the paper) to system prompts when the downstream model is known to not have hierarchy training. This is a lightweight prompting-based defense that adds no latency.
+The paper's Appendix A shows that combining the trained instruction hierarchy with an explicit system message prompt provides marginal additional gains (e.g., 96.2% vs 95.9% on system message extraction). LLMTrace could offer an optional feature to prepend hierarchy instructions (Table 3 from the paper) to system prompts when the downstream model is known to not have hierarchy training. This is a lightweight prompting-based defence that adds no latency.
 
 
 ## Key Takeaways
 
-**Privilege separation is the fundamental defense.**: The paper demonstrates that unifying prompt injections, jailbreaks, and system prompt extraction under a single root cause -- lack of instruction privileges -- enables a single defense mechanism (the hierarchy) that generalizes across all attack types, including ones not seen during training.
+**Privilege separation is the fundamental defence.**: The paper demonstrates that unifying prompt injections, jailbreaks, and system prompt extraction under a single root cause -- lack of instruction privileges -- enables a single defence mechanism (the hierarchy) that generalizes across all attack types, including ones not seen during training.
 
 
-**Training-based hierarchy vastly outperforms prompting-based hierarchy.**: Simply telling the model to follow a privilege hierarchy via system message is ineffective (comparable to baseline on most metrics). The gains require fine-tuning with context synthesis and context ignorance data. This means proxy-level defenses (boundary tags, sanitization) remain essential for models that lack hierarchy training.
+**Training-based hierarchy vastly outperforms prompting-based hierarchy.**: Simply telling the model to follow a privilege hierarchy via system message is ineffective (comparable to baseline on most metrics). The gains require fine-tuning with context synthesis and context ignorance data. This means proxy-level defences (boundary tags, sanitization) remain essential for models that lack hierarchy training.
 
 
-**Generalization is the strongest signal.**: The instruction hierarchy generalizes to attack types deliberately excluded from training: jailbreak robustness increased 33.8 pp and password extraction defense improved 30.4 pp without any jailbreak or password-extraction training data. This suggests the model internalized the privilege concept rather than memorizing specific attacks.
+**Generalization is the strongest signal.**: The instruction hierarchy generalizes to attack types deliberately excluded from training: jailbreak robustness increased 33.8 pp and password extraction defence improved 30.4 pp without any jailbreak or password-extraction training data. This suggests the model internalized the privilege concept rather than memorizing specific attacks.
 
 
-**Over-refusal is the primary trade-off.**: The -22.7 pp regression on jailbreak-patterned benign prompts is the most concerning result. Any defense system (including LLMTrace's proxy-level detection) must budget for and measure over-refusal rates. The paper's taxonomy of over-refusal categories is directly applicable to LLMTrace's IS-004/IS-005 evaluation framework.
+**Over-refusal is the primary trade-off.**: The -22.7 pp regression on jailbreak-patterned benign prompts is the most concerning result. Any defence system (including LLMTrace's proxy-level detection) must budget for and measure over-refusal rates. The paper's taxonomy of over-refusal categories is directly applicable to LLMTrace's IS-004/IS-005 evaluation framework.
 
 
-**Proxy-level and model-level defenses are complementary, not redundant.**: The instruction hierarchy hardens the model itself, but the paper acknowledges it is not adversarially robust against powerful attacks. Proxy-level defenses (AS-001/AS-002 sanitization, IS-050 perplexity detection, boundary tagging) provide defense-in-depth that catches what the hierarchy misses.
+**Proxy-level and model-level defences are complementary, not redundant.**: The instruction hierarchy hardens the model itself, but the paper acknowledges it is not adversarially robust against powerful attacks. Proxy-level defences (AS-001/AS-002 sanitization, IS-050 perplexity detection, boundary tagging) provide defence-in-depth that catches what the hierarchy misses.
 

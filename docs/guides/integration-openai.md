@@ -410,7 +410,7 @@ const client = await createResilientClient();
 
 ### Tenant, Agent, and Provider Headers
 
-LLMTrace recognizes the following optional headers:
+LLMTrace recognises the following optional headers:
 
 - `X-LLMTrace-Tenant-ID` (UUID)
 - `X-LLMTrace-Agent-ID` (string, used for cost caps)

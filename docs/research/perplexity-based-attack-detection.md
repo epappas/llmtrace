@@ -18,7 +18,7 @@
 **Integration surface (proxy):**: Compute perplexity on each inbound prompt before forwarding to the target LLM. Attach perplexity + token-length as metadata fields. Run the LightGBM classifier on these two features and apply a configurable threshold. Block or flag requests exceeding the threshold. Can also run on tool outputs in agent pipelines to detect adversarial string propagation (IS-052).
 
 
-**Productizable vs research-only:**: The two-feature LightGBM classifier (perplexity + token length) is fully productizable as a lightweight pre-filter. The perplexity computation via GPT-2 is straightforward to deploy. The limitation around human-crafted jailbreaks is a known research gap -- this approach must be layered with other defenses, not used standalone.
+**Productizable vs research-only:**: The two-feature LightGBM classifier (perplexity + token length) is fully productizable as a lightweight pre-filter. The perplexity computation via GPT-2 is straightforward to deploy. The limitation around human-crafted jailbreaks is a known research gap -- this approach must be layered with other defences, not used standalone.
 
 
 ## Paper Summary
@@ -130,7 +130,7 @@ The classifier achieves 96.2% true positive rate on machine-generated GCG attack
 | LightGBM two-feature classifier (PPL + seq-len) | No lightweight ML classifier for anomaly gating | Need a fast binary classifier on (perplexity, token_length) | IS-050 / ML-001 (can be a sub-classifier in the fusion pipeline) |
 | F2 score optimisation (recall-biased) | No configurable beta for detection threshold | Configurable F-beta threshold per deployment policy | IS-050 (threshold policy configuration) |
 | Perplexity scoring on tool outputs (agent pipeline) | Monitors tool outputs but no perplexity scoring | Apply perplexity gate to tool-output text to catch propagated GCG strings | IS-052 (adversarial string propagation blocking) |
-| Detection of human-crafted jailbreaks | DeBERTa-based semantic classifier (ML-001) handles these | Perplexity alone cannot detect human-crafted attacks; layered defense needed | ML-001 (binary classifier covers this gap) |
+| Detection of human-crafted jailbreaks | DeBERTa-based semantic classifier (ML-001) handles these | Perplexity alone cannot detect human-crafted attacks; layered defence needed | ML-001 (binary classifier covers this gap) |
 | Interaction of perplexity and token entropy | Token-wise bias detection exists (IS-001) | IS-001 targets vocabulary-level bias, not per-prompt entropy gating | IS-001 could be extended with per-prompt entropy as a complementary signal |
 
 ### Relationship to Tracked Features
@@ -146,7 +146,7 @@ The classifier achieves 96.2% true positive rate on machine-generated GCG attack
 
 ## Actionable Recommendations
 
-**[P0] Implement GPT-2 perplexity scoring as a pre-request gate (IS-050).**: Deploy GPT-2 (or a distilled variant) as a sidecar model. Compute perplexity on every inbound prompt. Store both `ppl_score` and `token_length` as trace metadata. This is the lowest-latency defense against GCG-style attacks (~10ms overhead). The paper demonstrates 99.1% F2 when human-crafted attacks are excluded, which is the correct scope for this specific defense layer.
+**[P0] Implement GPT-2 perplexity scoring as a pre-request gate (IS-050).**: Deploy GPT-2 (or a distilled variant) as a sidecar model. Compute perplexity on every inbound prompt. Store both `ppl_score` and `token_length` as trace metadata. This is the lowest-latency defence against GCG-style attacks (~10ms overhead). The paper demonstrates 99.1% F2 when human-crafted attacks are excluded, which is the correct scope for this specific defence layer.
 
 
 **[P0] Apply perplexity scoring to tool outputs in agent pipelines (IS-052).**: GCG-optimised strings propagate through agent tool outputs. Run the same perplexity gate on tool-output text before the agent incorporates it into subsequent traces. This directly addresses the Agent-as-a-Proxy attack vector.
@@ -165,6 +165,6 @@ The classifier achieves 96.2% true positive rate on machine-generated GCG attack
 
 - GCG-generated adversarial suffixes have dramatically high perplexity (mean 3525 vs. ~30-45 for natural English text), making perplexity a strong signal for detecting machine-generated suffix attacks.
 - A simple perplexity threshold is insufficient in production because benign prompts containing code, non-English text, math, or short phrases can exceed the perplexity of adversarial prompts by an order of magnitude. The two-feature classifier (perplexity + token length) resolves this by exploiting the fact that adversarial suffixes are long while high-perplexity benign prompts are typically short.
-- Perplexity-based detection is fundamentally blind to human-crafted jailbreaks, which have perplexity distributions indistinguishable from benign text. This defense must be layered with semantic classifiers (ML-001) and structural defenses (AS-001/AS-002), never deployed as a sole defense.
-- The LightGBM classifier achieves 99.1% F2 on machine-generated GCG attacks with only 1 false positive out of 26,189 benign prompts -- suitable as a high-precision, low-overhead first gate in a multi-layer defense pipeline.
-- Adaptive attackers who add perplexity minimization to the GCG objective can partially evade this defense, but Jain et al. (2023) found windowed perplexity still blocks 80% of such adaptive attacks at same computational budget. The defense raises the attacker's cost.
+- Perplexity-based detection is fundamentally blind to human-crafted jailbreaks, which have perplexity distributions indistinguishable from benign text. This defence must be layered with semantic classifiers (ML-001) and structural defences (AS-001/AS-002), never deployed as a sole defence.
+- The LightGBM classifier achieves 99.1% F2 on machine-generated GCG attacks with only 1 false positive out of 26,189 benign prompts -- suitable as a high-precision, low-overhead first gate in a multi-layer defence pipeline.
+- Adaptive attackers who add perplexity minimization to the GCG objective can partially evade this defence, but Jain et al. (2023) found windowed perplexity still blocks 80% of such adaptive attacks at same computational budget. The defence raises the attacker's cost.

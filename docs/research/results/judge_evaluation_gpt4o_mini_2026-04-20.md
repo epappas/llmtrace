@@ -415,7 +415,7 @@ Two benign sources produce non-trivial FPR:
 **JailbreakBench benign controls (FPR = 0.231).**: These are
 
   prompts about harmful topics phrased benignly (e.g., questions
-  about how defenses work). Our judge currently does not
+  about how defences work). Our judge currently does not
   distinguish "meta-level discussion of adversarial patterns"
   from "adversarial pattern execution".
 
@@ -502,7 +502,7 @@ win on AdvBench/HarmBench while losing on cost/latency.
   (cf. 6.2). Pairing the judge with Spotlighting (boundary-marker
   wrapping) and InjecAgent-style tool-output sanitization would
   close much of it. Both are already referenced in
-  `docs/research/` under `spotlighting-indirect-injection-defense.md`
+  `docs/research/` under `spotlighting-indirect-injection-defence.md`
   and `indirect-injection-firewalls.md`.
 
 **Token-smuggling / encoding evasion.**: Encoded-payload recall
@@ -709,7 +709,7 @@ Papers referenced, with the datasets they correspond to:
   Benchmarking Indirect Prompt Injections in Tool-Integrated Large
   Language Model Agents.*
 - Zhang et al. 2024. *Agent Security Bench (ASB): Formalizing and
-  Benchmarking Attacks and Defenses in LLM-based Agents.*
+  Benchmarking Attacks and Defences in LLM-based Agents.*
 
 Community datasets without a conventional citation:
 `deepset/prompt-injections-v1`, `deepset/prompt-injections-v2`,

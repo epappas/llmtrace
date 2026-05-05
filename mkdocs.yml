@@ -1,6 +1,6 @@
 site_name: LLMTrace
 site_url: https://docs.llmtrace.io
-site_description: Zero-code LLM observability and security for production. Transparent proxy that captures, analyzes, and secures LLM interactions in real-time.
+site_description: Zero-code LLM observability and security for production. Transparent proxy that captures, analyses, and secures LLM interactions in real-time.
 site_author: LLMTrace contributors
 repo_url: https://github.com/epappas/llmtrace
 repo_name: epappas/llmtrace
@@ -168,7 +168,7 @@ nav:
       - Benchmark Methodology: ml/benchmarks.md
       - OWASP LLM Top 10: security/OWASP_LLM_TOP10.md
       - OWASP GenAI Architecture: security/OWASP_GENAI_TOP10_2025_ARCHITECTURE.md
-      - Analyzers Breakdown: security/ANALYZERS_TECHNICAL_BREAKDOWN.md
+      - Analysers Breakdown: security/ANALYSERS_TECHNICAL_BREAKDOWN.md
   - Deployment:
       - Docker Compose: deployment/docker-compose.md
       - Kubernetes: deployment/kubernetes.md
@@ -182,9 +182,9 @@ nav:
       - Transparent Proxy: architecture/TRANSPARENT_PROXY.md
       - LLM Judge: architecture/LLM_JUDGE.md
       - Judge Cascade (ADR): architecture/JUDGE_CASCADE.md
-      - Boundary Token Defense: architecture/BOUNDARY_TOKEN_DEFENSE.md
+      - Boundary Token Defence: architecture/BOUNDARY_TOKEN_DEFENCE.md
       - Spotlighting Indirect Injection (Investigation): architecture/SPOTLIGHTING_INDIRECT_INJECTION.md
-      - ML Long-Input Defense: architecture/ML_LONG_INPUT_DEFENSE.md
+      - ML Long-Input Defence: architecture/ML_LONG_INPUT_DEFENCE.md
       - DMPI Average Pooling: architecture/DMPI_001_AVERAGE_POOLING.md
       - DMPI Two FC Layers: architecture/DMPI_002_TWO_FC_LAYERS.md
       - DMPI Ten Binary Features: architecture/DMPI_003_TEN_BINARY_FEATURES.md
@@ -196,7 +196,7 @@ nav:
           - Benchmarks & Tools Landscape: research/benchmarks-and-tools-landscape.md
           - OWASP GenAI Top 10 2025 References: research/owasp-genai-top10-2025-references.md
           - LLMTrace OWASP GenAI Architecture Report: research/llmtrace-owasp-genai-architecture-report.md
-          - LLMTrace Defense Pipeline Design: research/llmtrace-defense-pipeline-design.md
+          - LLMTrace Defence Pipeline Design: research/llmtrace-defence-pipeline-design.md
       - Attacks & Benchmarks:
           - BIPIA Indirect Prompt Injection: research/bipia-indirect-prompt-injection-benchmark.md
           - CyberSecEval2: research/cyberseceval2-llm-security-benchmark.md
@@ -205,14 +205,14 @@ nav:
           - Bypassing LLM Guardrails (Evasion): research/bypassing-llm-guardrails-evasion.md
           - Agent-as-a-Proxy Attacks: research/agent-as-a-proxy-attacks.md
           - LLM Jailbreaks Prompt Collection: research/llm-jailbreaks-prompt-collection.md
-      - Defense Techniques:
-          - Spotlighting Indirect Injection: research/spotlighting-indirect-injection-defense.md
-          - Instruction Hierarchy: research/instruction-hierarchy-defense.md
-          - Task Shield Alignment: research/task-shield-alignment-defense.md
-          - Tool Result Parsing: research/defense-tool-result-parsing.md
+      - Defence Techniques:
+          - Spotlighting Indirect Injection: research/spotlighting-indirect-injection-defence.md
+          - Instruction Hierarchy: research/instruction-hierarchy-defence.md
+          - Task Shield Alignment: research/task-shield-alignment-defence.md
+          - Tool Result Parsing: research/defence-tool-result-parsing.md
           - Indirect Injection Firewalls: research/indirect-injection-firewalls.md
-          - Multi-Agent Defense Pipeline: research/multi-agent-defense-pipeline.md
-          - InjecGuard Over-Defense Mitigation: research/injecguard-over-defense-mitigation.md
+          - Multi-Agent Defence Pipeline: research/multi-agent-defence-pipeline.md
+          - InjecGuard Over-Defence Mitigation: research/injecguard-over-defence-mitigation.md
           - Design Patterns for Securing Agents: research/design-patterns-securing-agents.md
       - Detection Methods:
           - DMPI + PMHFE Detection: research/dmpi-pmhfe-prompt-injection-detection.md

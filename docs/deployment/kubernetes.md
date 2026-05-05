@@ -141,7 +141,7 @@ curl http://localhost:8080/health
 | `proxy.enforcement.*` | Pre-request enforcement policy | see `values.yaml` |
 | `proxy.streamingAnalysis.*` | Incremental streaming analysis | see `values.yaml` |
 | `proxy.outputSafety.*` | Output toxicity and hallucination controls | see `values.yaml` |
-| `proxy.boundaryDefense.*` | Boundary token defense controls | see `values.yaml` |
+| `proxy.boundaryDefense.*` | Boundary token defence controls | see `values.yaml` |
 | `proxy.shutdown.timeoutSeconds` | Graceful shutdown budget | `30` |
 | `proxy.modelCache.*` | Persistent model cache PVC + init container | see `values.yaml` |
 | `proxy.extraConfig` | Raw YAML appended to `config.yaml` | `""` |

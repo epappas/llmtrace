@@ -2,7 +2,7 @@
 
 **Research Context**: Comprehensive analysis of LLM security benchmarks and defensive tools
 **Date**: February 2026
-**Scope**: Agent security benchmarks, prompt injection defenses, multimodal attacks, evaluation frameworks
+**Scope**: Agent security benchmarks, prompt injection defences, multimodal attacks, evaluation frameworks
 **Purpose**: LLMTrace competitive positioning and evaluation roadmap
 
 
@@ -12,7 +12,7 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 
 **Key Findings:**
 - Agent-specific benchmarks (AgentDojo, InjecAgent, WASP) are becoming the gold standard for evaluation
-- Over-defense mitigation (NotInject, InjecGuard) is a critical emerging concern
+- Over-defence mitigation (NotInject, InjecGuard) is a critical emerging concern
 - LLMTrace covers foundational capabilities but lacks evaluation against modern agent benchmarks
 - Integration opportunities exist with multiple defensive tools for layered security
 
@@ -23,10 +23,10 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 |-----------|-------|--------|------|-------------------|----------|
 | **AgentDojo** | Tool-augmented agent security | NeurIPS 2024 | 2024 | ❌ Not evaluated | **High** |
 | **InjecAgent** | Indirect prompt injection in agents | Zhan et al. | 2025 | ⚠️ Partial detection | **High** |
-| **Agent Security Bench (ASB)** | Comprehensive agent attacks/defenses | Zhang et al. | 2024 | ❌ Not evaluated | **Medium** |
-| **NotInject** | Over-defense evaluation | InjecGuard | 2024 | ❌ Not evaluated | **High** |
+| **Agent Security Bench (ASB)** | Comprehensive agent attacks/defences | Zhang et al. | 2024 | ❌ Not evaluated | **Medium** |
+| **NotInject** | Over-defence evaluation | InjecGuard | 2024 | ❌ Not evaluated | **High** |
 | **WASP** | Web agent security | arXiv:2504.18575 | 2024 | ❌ Not evaluated | **Medium** |
-| **CyberSecEval 2** | Defense effectiveness | Meta | 2024 | ⚠️ Limited coverage | **Low** |
+| **CyberSecEval 2** | Defence effectiveness | Meta | 2024 | ⚠️ Limited coverage | **Low** |
 | **BIPIA** | Indirect prompt injection benchmark | USTC/HKUST/Microsoft (KDD 2025) | 2023 | ⚠️ Partial detection | **High** |
 | **Agent-as-a-Proxy** | Monitor bypass via agent repetition | Isbarov & Kantarcioglu (arXiv 2602.05066) | 2026 | ⚠️ Monitoring-based (vulnerable) | **Critical** |
 
@@ -59,7 +59,7 @@ evaluation:
 ### InjecAgent — **Priority: High**
 
 **Focus**: Indirect prompt injection attacks specifically targeting LLM agents
-**Scope**: 8 defense mechanisms, adaptive attacks, >50% bypass rate demonstrated
+**Scope**: 8 defence mechanisms, adaptive attacks, >50% bypass rate demonstrated
 **Attack Types**: Context manipulation, tool result poisoning, multi-step injection chains
 
 **LLMTrace Coverage**: ⚠️ **Partial Detection**
@@ -74,7 +74,7 @@ evaluation:
 
 ### Agent Security Bench (ASB) — **Priority: Medium**
 
-**Focus**: Comprehensive benchmark for LLM agent vulnerabilities and defenses
+**Focus**: Comprehensive benchmark for LLM agent vulnerabilities and defences
 **Scope**: Multi-domain security assessment including privacy, safety, robustness
 **Attack Types**: Cross-domain attacks, privacy leakage, safety boundary violations
 
@@ -85,14 +85,14 @@ evaluation:
 
 ### NotInject (InjecGuard) — **Priority: High**
 
-**Focus**: Over-defense evaluation — measuring false positives in prompt injection detection
+**Focus**: Over-defence evaluation — measuring false positives in prompt injection detection
 **Scope**: Evaluating production-scale precision vs. recall tradeoffs
 **Key Insight**: High false positive rates make defenders unusable in production
 
 **LLMTrace Coverage**: ❌ **Critical Gap**
 - Current ensemble approach not optimised for false positive reduction
 - No precision-focused threshold tuning
-- Missing over-defense mitigation strategies
+- Missing over-defence mitigation strategies
 
 **Production Impact**:
 ```
@@ -130,12 +130,12 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 **Paper:** arXiv 2312.14197 (December 2023, v4 January 2025)
 **Breakdown:** `docs/research/bipia-indirect-prompt-injection-benchmark.md`
 **Focus**: First systematic indirect prompt injection benchmark: 86,250 test prompts across 5 application scenarios, 50 attack types (30 text + 20 code), 25-model vulnerability baseline
-**Scope**: GPT-4 highest ASR at 31%, average 11.8%. More capable models are more vulnerable (r=0.6423). Proposes boundary token (`<data>`/`</data>`) and explicit reminder defenses achievable at proxy level.
+**Scope**: GPT-4 highest ASR at 31%, average 11.8%. More capable models are more vulnerable (r=0.6423). Proposes boundary token (`<data>`/`</data>`) and explicit reminder defences achievable at proxy level.
 **Attack Types**: Indirect injection via email QA, web QA, table QA, summarization, code QA; task-irrelevant, task-relevant, and targeted text attacks; passive and active code attacks
 
 **LLMTrace Coverage**: ⚠️ **Partial Detection**
 - Basic indirect injection detection via DeBERTa model
-- Missing boundary token injection defense (proxy-level, highest-impact intervention per ablation: 1064% ASR increase without it)
+- Missing boundary token injection defence (proxy-level, highest-impact intervention per ablation: 1064% ASR increase without it)
 - No explicit reminder injection or multi-turn dialogue restructuring
 - No position-aware detection weighting (end-of-content injections most effective)
 
@@ -143,14 +143,14 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 **Paper:** arXiv 2602.05066 (February 2026)
 **Breakdown:** `docs/research/agent-as-a-proxy-attacks.md`
-**Focus**: Demonstrates monitoring-based defenses are fundamentally fragile. Agent-as-a-Proxy attack uses GCG-optimised adversarial strings that agents repeat in their traces, bypassing hybrid monitors at 90%+ ASR. Tested against AlignmentCheck, LlamaFirewall (PromptGuard 2 + AlignmentCheck), and Extract-and-Evaluate on AgentDojo.
-**Scope**: 99% ASR against multi-layer defenses (Mistral-7B). Hybrid monitoring paradox: more observation = more attack surface. No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability.
+**Focus**: Demonstrates monitoring-based defences are fundamentally fragile. Agent-as-a-Proxy attack uses GCG-optimised adversarial strings that agents repeat in their traces, bypassing hybrid monitors at 90%+ ASR. Tested against AlignmentCheck, LlamaFirewall (PromptGuard 2 + AlignmentCheck), and Extract-and-Evaluate on AgentDojo.
+**Scope**: 99% ASR against multi-layer defences (Mistral-7B). Hybrid monitoring paradox: more observation = more attack surface. No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability.
 
 **LLMTrace Coverage**: ⚠️ **Directly Vulnerable**
-- LLMTrace is a monitoring-based defense -- the exact category this paper attacks
+- LLMTrace is a monitoring-based defence -- the exact category this paper attacks
 - No perplexity-based anomaly detection for GCG-optimised strings (tracked as IS-050, IS-052)
 - Hybrid monitoring paradox: output monitoring increases attack surface for adaptive attacks; no configurable monitoring scope (tracked as IS-051)
-- Structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) are validated as more robust
+- Structural defences (AS-001/AS-002 sanitization, BIPIA boundary tokens) are validated as more robust
 - No adversarial robustness testing against multi-objective GCG (tracked as EV-016, EV-017, EV-018, ML-016)
 
 ## Benchmark Evaluation Recommendations
@@ -202,7 +202,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### Tier 1: High Integration Value
 
-#### **InjecGuard** (Mitigating Over-defense for Free)
+#### **InjecGuard** (Mitigating Over-defence for Free)
 **Type**: Prompt injection classifier
 **Key Innovation**: MOF training strategy reduces bias on trigger words
 **Performance**: 30.8% improvement over existing best model on NotInject
@@ -215,7 +215,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 **Integration**: Direct model replacement opportunity
 
 
-**Impact**: Addresses critical over-defense problem
+**Impact**: Addresses critical over-defence problem
 
 
 **Integration Plan**:
@@ -337,9 +337,9 @@ class LLMGuardPlugin(SecurityPlugin):
 **Analysis**: Feature comparison target for competitive positioning
 
 
-## tldrsec/prompt-injection-defenses Analysis
+## tldrsec/prompt-injection-defences Analysis
 
-The [tldrsec repository](https://github.com/tldrsec/prompt-injection-defenses) provides a comprehensive taxonomy of defense techniques. Key categories relevant to LLMTrace:
+The [tldrsec repository](https://github.com/tldrsec/prompt-injection-defences) provides a comprehensive taxonomy of defence techniques. Key categories relevant to LLMTrace:
 
 ### Currently Implemented in LLMTrace
 
@@ -358,7 +358,7 @@ The [tldrsec repository](https://github.com/tldrsec/prompt-injection-defenses) p
 **Input Pre-processing**: ⚠️
 
    - Basic sanitization but missing paraphrasing/retokenization
-   - No SmoothLLM-style perturbation defense
+   - No SmoothLLM-style perturbation defence
 
 **Ensemble Decisions**: ⚠️
 
@@ -444,7 +444,7 @@ canary_tokens:
 **Benchmark Evaluation**: — Missing standardised security assessments
 
 
-**Over-defense Problem**: — High false positive rates vs. production needs
+**Over-defence Problem**: — High false positive rates vs. production needs
 
 
 **Multimodal Gaps**: — No image/audio injection detection
@@ -479,7 +479,7 @@ canary_tokens:
 
 ### Strategic Initiatives (Q2-Q3 2026)
 - Develop comprehensive benchmark evaluation framework
-- Implement over-defense mitigation strategies
+- Implement over-defence mitigation strategies
 - Expand tool integration ecosystem
 
 ### Research Directions (Q4 2026+)
@@ -488,4 +488,4 @@ canary_tokens:
 - Create industry-standard agent security benchmarks
 
 ## Conclusion
-LLMTrace has solid foundational security capabilities but faces evaluation and precision gaps compared to emerging benchmarks and specialized tools. Priority should focus on benchmark evaluation (AgentDojo, NotInject) and precision improvements (InjecGuard, over-defense mitigation) to achieve production-grade reliability while maintaining comprehensive threat detection.
+LLMTrace has solid foundational security capabilities but faces evaluation and precision gaps compared to emerging benchmarks and specialized tools. Priority should focus on benchmark evaluation (AgentDojo, NotInject) and precision improvements (InjecGuard, over-defence mitigation) to achieve production-grade reliability while maintaining comprehensive threat detection.

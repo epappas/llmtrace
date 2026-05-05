@@ -10,17 +10,17 @@
 ## LLMTrace Application Notes
 
 - Required signals/features: agent reasoning traces (CoT), tool call parameters, tool outputs, monitor verdicts, adversarial string patterns (high-perplexity tokens).
-- Runtime characteristics: attack is offline (GCG optimisation); defense evasion happens at inference time with no extra latency. Detection of high-perplexity strings could add minimal overhead.
-- Integration surface (proxy): LLMTrace operates as a monitoring proxy -- this paper directly attacks monitoring-based defenses. Key implication: LLMTrace's detection must go beyond observation-based monitoring to include structural defenses (input sanitization, boundary tokens, tool-output filtering). High-perplexity token detection in tool outputs and CoT traces is a viable countermeasure.
+- Runtime characteristics: attack is offline (GCG optimisation); defence evasion happens at inference time with no extra latency. Detection of high-perplexity strings could add minimal overhead.
+- Integration surface (proxy): LLMTrace operates as a monitoring proxy -- this paper directly attacks monitoring-based defences. Key implication: LLMTrace's detection must go beyond observation-based monitoring to include structural defences (input sanitization, boundary tokens, tool-output filtering). High-perplexity token detection in tool outputs and CoT traces is a viable countermeasure.
 - Productizable vs research-only: high-perplexity string detection and tool-output sanitization are productizable; GCG-based adversarial testing is research/red-teaming only.
 
 ## Paper Summary
 
 ### Problem Statement and Motivation
 
-Monitoring-based defenses for AI agents (hybrid monitors that observe Chain-of-Thought reasoning, tool calls, and outputs) are considered a promising safety approach. This paper demonstrates that these defenses are fundamentally fragile: an attacker can embed adversarial strings in external content that the agent repeats in its traces, causing monitors to classify malicious trajectories as safe.
+Monitoring-based defences for AI agents (hybrid monitors that observe Chain-of-Thought reasoning, tool calls, and outputs) are considered a promising safety approach. This paper demonstrates that these defences are fundamentally fragile: an attacker can embed adversarial strings in external content that the agent repeats in its traces, causing monitors to classify malicious trajectories as safe.
 
-> "current monitoring-based agentic defenses are fundamentally fragile regardless of model scale"
+> "current monitoring-based agentic defences are fundamentally fragile regardless of model scale"
 
 The key insight is that the agent itself becomes the delivery mechanism -- it repeats adversarial strings within its visible execution traces, manipulating monitors from the inside.
 
@@ -66,7 +66,7 @@ Core innovation: optimises adversarial strings across K insertion sites simultan
 | Protocol | Components | Description |
 |----------|-----------|-------------|
 | AlignmentCheck | Hybrid monitor | Monitors reasoning, output, tool calls, and call outputs |
-| LlamaFirewall | PromptGuard 2 + AlignmentCheck | Layered defense: classifier + monitor |
+| LlamaFirewall | PromptGuard 2 + AlignmentCheck | Layered defence: classifier + monitor |
 | Extract-and-Evaluate | Quote extractor + judge | Two-stage: extract suspicious content, then judge scores it |
 
 ### Experimental Setup
@@ -140,9 +140,9 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 | Feature | Agent-as-a-Proxy | LLMTrace | Gap Analysis |
 |---------|-----------------|----------|--------------|
-| **Monitor bypass via agent repetition** | Core attack: agent repeats adversarial strings in traces | LLMTrace monitors request/response traffic | **Critical**: LLMTrace is a monitoring-based defense -- directly vulnerable to this attack class |
+| **Monitor bypass via agent repetition** | Core attack: agent repeats adversarial strings in traces | LLMTrace monitors request/response traffic | **Critical**: LLMTrace is a monitoring-based defence -- directly vulnerable to this attack class |
 | **High-perplexity string detection** | Identified as potential countermeasure | No perplexity-based detection | **Major**: Could detect GCG-optimised strings in tool outputs. **Tracked as IS-050.** |
-| **Structural defenses (not monitoring)** | Paper recommends architectural guarantees | Partial (sanitization, boundary tokens) | **Significant**: Validates AS-001/AS-002 sanitization approach over pure monitoring. **Propagation blocking tracked as IS-052.** |
+| **Structural defences (not monitoring)** | Paper recommends architectural guarantees | Partial (sanitization, boundary tokens) | **Significant**: Validates AS-001/AS-002 sanitization approach over pure monitoring. **Propagation blocking tracked as IS-052.** |
 | **Hybrid monitoring paradox** | More observation = more attack surface | Monitors both input and output | **Significant**: Output monitoring may increase attack surface against adaptive attacks. **Tracked as IS-051.** |
 | **Multi-objective adversarial optimisation** | GCG simultaneously bypasses classifier + monitor | No adversarial robustness testing | **Major**: Ensemble detection may be vulnerable to multi-objective attacks. **Tracked as EV-017, ML-016.** |
 | **Transferability across models** | 88-90% ASR across model families | No cross-model attack testing | **Moderate**: Detection model may be bypassable via transfer attacks. **Tracked as EV-018.** |
@@ -152,10 +152,10 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### What This Paper Reveals About LLMTrace
 
-**LLMTrace's monitoring architecture is directly targeted**: As a proxy that observes traffic, LLMTrace falls into the "monitoring-based defense" category this paper attacks.
+**LLMTrace's monitoring architecture is directly targeted**: As a proxy that observes traffic, LLMTrace falls into the "monitoring-based defence" category this paper attacks.
 
 
-**Pure observation is insufficient**: The paper validates that structural defenses (sanitization, boundary tokens, tool-output filtering) are more robust than observation-based monitoring.
+**Pure observation is insufficient**: The paper validates that structural defences (sanitization, boundary tokens, tool-output filtering) are more robust than observation-based monitoring.
 
 
 **Ensemble detection is not immune**: Multi-objective GCG can simultaneously optimise against multiple detection layers.
@@ -190,10 +190,10 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
    - GCG-optimised strings have characteristically high perplexity. Add perplexity scoring to tool-output analysis pipeline.
    - Flag tool outputs containing token sequences with perplexity above threshold.
 
-**Code Impact:**: New detection module in security analyzer, configurable threshold.
+**Code Impact:**: New detection module in security analyser, configurable threshold.
 
 
-**Validate Structural Defenses Against GCG Attacks**: (AS-001, AS-002, IS-052)
+**Validate Structural Defences Against GCG Attacks**: (AS-001, AS-002, IS-052)
 
 
 **Effort:**: 1 week
@@ -263,23 +263,23 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ## Key Takeaways
 
-**Monitoring-based defenses are fundamentally fragile**: 90%+ ASR against all tested monitor-model pairs. LLMTrace, as a monitoring proxy, must complement observation with structural defenses.
+**Monitoring-based defences are fundamentally fragile**: 90%+ ASR against all tested monitor-model pairs. LLMTrace, as a monitoring proxy, must complement observation with structural defences.
 
 
 **Hybrid monitoring paradox**: observing more agent traces (tool calls, outputs) improves static attack detection but *increases* attack surface for adaptive attacks. More monitoring is not always better.
 
 
-**Multi-layer defenses offer false security**: PromptGuard 2 + AlignmentCheck bypassed at 99.0% ASR via multi-objective GCG. Stacking classifiers does not prevent coordinated optimisation.
+**Multi-layer defences offer false security**: PromptGuard 2 + AlignmentCheck bypassed at 99.0% ASR via multi-objective GCG. Stacking classifiers does not prevent coordinated optimisation.
 
 
-**No capability gap needed**: similarly-scaled agents (GPT-4o mini, Llama-3.1-70B) bypass frontier monitors (Qwen2.5-72B). Model scaling is not a defense.
+**No capability gap needed**: similarly-scaled agents (GPT-4o mini, Llama-3.1-70B) bypass frontier monitors (Qwen2.5-72B). Model scaling is not a defence.
 
 
 **Transferability is high**: 88-90% ASR transfers across model families (8B -> 405B). Adversarial strings exploit fundamental vulnerabilities, not model-specific weaknesses.
 
 
-**Structural defenses are the answer**: the paper explicitly recommends "architectures with structural security guarantees" -- validating LLMTrace's sanitization and boundary token approaches (AS-001/AS-002, BIPIA defenses) over pure monitoring.
+**Structural defences are the answer**: the paper explicitly recommends "architectures with structural security guarantees" -- validating LLMTrace's sanitization and boundary token approaches (AS-001/AS-002, BIPIA defences) over pure monitoring.
 
 
-**High-perplexity detection is a countermeasure**: GCG-optimised strings are high-perplexity by nature. Perplexity-based anomaly detection in tool outputs is a viable defense not explored in this paper.
+**High-perplexity detection is a countermeasure**: GCG-optimised strings are high-perplexity by nature. Perplexity-based anomaly detection in tool outputs is a viable defence not explored in this paper.
 

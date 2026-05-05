@@ -4,13 +4,13 @@ Last updated: 2026-03-07
 
 This landscape highlights tools, models, and resources relevant to LLMTrace's mission: security-aware observability for LLM systems.
 
-## Curated Defense Resources
+## Curated Defence Resources
 
-Prompt Injection Defenses (tldrsec) is a curated repository that centralizes practical and proposed defenses against prompt injection. This is useful for keeping LLMTrace's taxonomy aligned with current mitigation patterns. Source: https://github.com/tldrsec/prompt-injection-defenses
+Prompt Injection Defences (tldrsec) is a curated repository that centralizes practical and proposed defences against prompt injection. This is useful for keeping LLMTrace's taxonomy aligned with current mitigation patterns. Source: https://github.com/tldrsec/prompt-injection-defences
 
 ## Commercial Guardrail Platforms
 
-Lakera Guard documents prompt defenses and additional guardrails such as content moderation, data leakage prevention, and malicious link detection. LLMTrace can normalize these policy signals as external guardrail telemetry. Source: https://docs.lakera.ai/docs/defenses
+Lakera Guard documents prompt defences and additional guardrails such as content moderation, data leakage prevention, and malicious link detection. LLMTrace can normalize these policy signals as external guardrail telemetry. Source: https://docs.lakera.ai/docs/defences
 
 ## Open-Source Guardrail Toolkits
 
@@ -28,7 +28,7 @@ Meta Llama-Guard-3-8B is a Llama-3.1-8B model fine-tuned for content safety clas
 
 ## Research Implementations
 
-InjecGuard provides official code, data, and model weights for the InjecGuard prompt guard model and documents its benchmark focus on benign, malicious, and over-defense accuracy. LLMTrace can use it as a reference model for false-positive calibration. Source: https://github.com/InjecGuard/InjecGuard
+InjecGuard provides official code, data, and model weights for the InjecGuard prompt guard model and documents its benchmark focus on benign, malicious, and over-defence accuracy. LLMTrace can use it as a reference model for false-positive calibration. Source: https://github.com/InjecGuard/InjecGuard
 
 ## OWASP GenAI Top 10 (2025) Research
 

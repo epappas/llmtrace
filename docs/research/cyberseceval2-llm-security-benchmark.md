@@ -175,7 +175,7 @@ Tests model compliance with cyberattack assistance requests across 10 MITRE ATT&
 |---------|---------------|----------|--------------|
 | **Prompt Injection Coverage** | 15 attack categories, logic + security violating | ML + regex hybrid detection | **Moderate**: LLMTrace detects but doesn't benchmark against all 15 categories |
 | **Attack Success Rate Measurement** | Judge LLM-based ASR metric | No automated ASR benchmarking | **Major**: LLMTrace lacks systematic ASR measurement |
-| **False Refusal Rate** | Dedicated FRR benchmark with borderline prompts | No explicit FRR tracking | **Major**: No over-defense measurement (aligns with InjecGuard gap) |
+| **False Refusal Rate** | Dedicated FRR benchmark with borderline prompts | No explicit FRR tracking | **Major**: No over-defence measurement (aligns with InjecGuard gap) |
 | **Code Interpreter Abuse** | 5 abuse categories, 500 test prompts | No code interpreter analysis | **Significant**: Out of current scope |
 | **Exploit Generation** | 4 CTF-style test categories | Not applicable | N/A (different purpose) |
 | **Multi-turn Attacks** | Excluded from scope | No multi-turn tracking | Equal gap |
@@ -236,7 +236,7 @@ Tests model compliance with cyberattack assistance requests across 10 MITRE ATT&
 
    - Create or adapt borderline prompt dataset for LLMTrace evaluation
    - Track false positive rate on benign cybersecurity-related prompts
-   - Aligns with InjecGuard over-defense gap identified earlier
+   - Aligns with InjecGuard over-defence gap identified earlier
 
 **Code Impact:**: New benchmark dataset, metrics in evaluation pipeline
 
@@ -279,19 +279,19 @@ Tests model compliance with cyberattack assistance requests across 10 MITRE ATT&
 
 ## Key Takeaways
 
-**Prompt injection remains unsolved**: 26-41% success rate across all tested models, including SOTA. This validates LLMTrace's security layer as a necessary defense.
+**Prompt injection remains unsolved**: 26-41% success rate across all tested models, including SOTA. This validates LLMTrace's security layer as a necessary defence.
 
 
-**Larger models resist better but are not immune**: GPT-4 at 17% is the best but still vulnerable. Defense cannot rely solely on model conditioning.
+**Larger models resist better but are not immune**: GPT-4 at 17% is the best but still vulnerable. Defence cannot rely solely on model conditioning.
 
 
-**Safety-utility tradeoff is real but manageable**: Most models achieve <15% FRR while maintaining safety. CodeLlama-70B at 70% FRR is an outlier showing over-defense.
+**Safety-utility tradeoff is real but manageable**: Most models achieve <15% FRR while maintaining safety. CodeLlama-70B at 70% FRR is an outlier showing over-defence.
 
 
 **CyberSecEval 2 as validation benchmark**: The test suite and methodology are directly usable for benchmarking LLMTrace detection accuracy. The MIT-licensed codebase enables immediate adoption.
 
 
-**Cyberattack helpfulness improving**: Average compliance dropped from 52% (v1) to 28% (v2), showing model safety is improving but external defense layers remain essential.
+**Cyberattack helpfulness improving**: Average compliance dropped from 52% (v1) to 28% (v2), showing model safety is improving but external defence layers remain essential.
 
 
 **Exploit generation is nascent**: LLMs cannot yet autonomously generate working exploits. This is relevant for risk assessment but not an immediate LLMTrace concern.

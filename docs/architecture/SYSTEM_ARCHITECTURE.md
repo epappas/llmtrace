@@ -84,7 +84,7 @@ Key routes are defined in `crates/llmtrace-proxy/src/main.rs`.
 
 Security analysis library used by the proxy.
 
-- Default analyzer is regex-based (`RegexSecurityAnalyzer`).
+- Default analyser is regex-based (`RegexSecurityAnalyzer`).
 - When the `ml` feature is enabled (default for the proxy), the proxy can preload an `EnsembleSecurityAnalyzer` that combines regex and ML detectors with optional NER.
 - Output safety analysis uses `OutputAnalyzer` with response-only checks in the proxy. Toxicity detection can be enabled; hallucination detection requires the original prompt and is not invoked by the current proxy flow. Regex-based PII and leakage scanning always runs when output safety is enabled.
 
@@ -143,14 +143,14 @@ Outputs:
 ## Alerts
 
 - Channels supported: webhook, Slack, PagerDuty.
-- Email channel is recognized in config but not implemented and will be skipped.
+- Email channel is recognised in config but not implemented and will be skipped.
 - Cooldown-based deduplication is enforced per finding type.
 - Escalation config exists in config schema but is not currently used by the alert engine.
 
 ## Configuration and Feature Flags
 
 - Configuration is loaded from YAML, then overridden by environment variables and CLI flags.
-- `llmtrace-proxy` enables the `ml` feature by default, which activates the ML security components and output safety analyzers.
+- `llmtrace-proxy` enables the `ml` feature by default, which activates the ML security components and output safety analysers.
 - Storage backends for ClickHouse, Postgres, and Redis require their respective feature flags in `llmtrace-storage`.
 
 ## Current Limitations and Non-Goals

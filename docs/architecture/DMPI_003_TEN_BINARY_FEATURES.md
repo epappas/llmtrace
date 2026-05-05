@@ -154,7 +154,7 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 
 | Risk | Mitigation |
 |------|-----------|
-| Breaking trained weights | No trained weights exist (random initialization only) |
+| Breaking trained weights | No trained weights exist (random initialisation only) |
 | Numeric feature information loss | Paper does not use these features; they are not part of the trained architecture |
 | Keyword false positives | Exact whole-word match only; no partial/stemmed matching |
 | is_immoral naming | Finding type renamed from excuse_attack to is_immoral per DMPI-006. |
