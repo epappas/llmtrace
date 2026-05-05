@@ -5,13 +5,11 @@
 **Status**: Living
 **Related Documents**: `docs/architecture/SYSTEM_ARCHITECTURE.md`
 
----
 
 ## Purpose
 
-This document explains, at a technical level, how the LLMTrace transparent proxy works today in this repository. It focuses on the runtime behavior, request/response flow, streaming handling, security analysis, and failure modes as implemented in `llmtrace-proxy`.
+This document explains, at a technical level, how the LLMTrace transparent proxy works today in this repository. It focuses on the runtime behaviour, request/response flow, streaming handling, security analysis, and failure modes as implemented in `llmtrace-proxy`.
 
----
 
 ## What “Transparent Proxy” Means Here
 
@@ -19,66 +17,70 @@ LLMTrace is an HTTP proxy that forwards OpenAI-compatible requests to an upstrea
 
 Key properties implemented today:
 
-- **Protocol compatibility**: OpenAI-style `/v1/chat/completions` and `/v1/completions` payloads are parsed for metadata and forwarded unchanged. All other paths are proxied as-is without LLM-specific parsing.
-- **SSE passthrough**: Streaming responses are relayed to the client while being parsed incrementally.
-- **Async analysis**: Trace capture and security analysis are performed in background tasks and do not block the response path.
-- **Fail-open**: If analysis fails or circuit breakers open, the proxy still forwards upstream responses.
+**Protocol compatibility**: OpenAI-style `/v1/chat/completions` and `/v1/completions` payloads are parsed for metadata and forwarded unchanged. All other paths are proxied as-is without LLM-specific parsing.
 
----
+
+**SSE passthrough**: Streaming responses are relayed to the client while being parsed incrementally.
+
+
+**Async analysis**: Trace capture and security analysis are performed in background tasks and do not block the response path.
+
+
+**Fail-open**: If analysis fails or circuit breakers open, the proxy still forwards upstream responses.
+
+
 
 ## Request Lifecycle (Non-Streaming)
 
-1. **Receive request**
-   - The proxy accepts the HTTP request and reads the full body.
+**Receive request**: The proxy accepts the HTTP request and reads the full body.
+
    - It extracts metadata: tenant ID, agent ID, provider, and model info.
 
-2. **Resolve tenant**
-   - If `X-LLMTrace-Tenant-ID` is present and valid UUID, it is used.
+**Resolve tenant**: If `X-LLMTrace-Tenant-ID` is present and valid UUID, it is used.
+
    - When auth is disabled, a deterministic UUID v5 is derived from the API key if present.
    - When auth is enabled, tenant identity is derived from the API key record (or from the admin key + header).
 
-3. **Forward upstream**
-   - The request is forwarded to the configured `upstream_url`.
+**Forward upstream**: The request is forwarded to the configured `upstream_url`.
+
    - Response headers and status code are mirrored to the client.
 
-4. **Capture + analyze in background**
-   - The proxy spawns a background task that:
+**Capture + analyse in background**: The proxy spawns a background task that:
+
      - Aggregates the response body.
      - Runs security analysis (`SecurityAnalyzer::analyze_interaction`).
      - Runs output safety analysis when enabled.
      - Stores the trace + findings.
      - Emits alerts if thresholds are exceeded.
 
----
 
 ## Request Lifecycle (Streaming SSE)
 
-1. **Receive request**
-   - The proxy detects `stream: true` in the body.
+**Receive request**: The proxy detects `stream: true` in the body.
 
-2. **Stream passthrough**
-   - The upstream response stream is read chunk-by-chunk.
+
+**Stream passthrough**: The upstream response stream is read chunk-by-chunk.
+
    - Each chunk is forwarded to the client immediately.
 
-3. **Incremental parsing**
-   - SSE chunks are parsed to accumulate content and token counts.
+**Incremental parsing**: SSE chunks are parsed to accumulate content and token counts.
+
    - Time-to-first-token (TTFT) is recorded on the first token.
 
-4. **Incremental security checks**
-   - `StreamingSecurityMonitor` runs regex-based checks on new content every N tokens.
+**Incremental security checks**: `StreamingSecurityMonitor` runs regex-based checks on new content every N tokens.
+
    - `StreamingOutputMonitor` performs output-safety checks (PII/leakage, optional toxicity) on the delta.
 
-5. **Early stop (optional)**
-   - If `streaming_analysis.early_stop_on_critical` is enabled and a critical output issue is detected, the proxy injects a warning event and terminates the stream.
+**Early stop (optional)**: If `streaming_analysis.early_stop_on_critical` is enabled and a critical output issue is detected, the proxy injects a warning event and terminates the stream.
 
-6. **Post-stream analysis**
-   - After the stream finishes, the full captured prompt/response is analyzed in the background (same as non-streaming).
 
----
+**Post-stream analysis**: After the stream finishes, the full captured prompt/response is analysed in the background (same as non-streaming).
+
+
 
 ## Architecture Components
 
-### 1. HTTP Proxy Handler
+### HTTP Proxy Handler
 
 Implemented in `crates/llmtrace-proxy/src/proxy.rs`:
 
@@ -88,7 +90,7 @@ Implemented in `crates/llmtrace-proxy/src/proxy.rs`:
 - Forwards to upstream with original headers
 - Spawns background tasks for analysis and storage
 
-### 2. Security Analysis Pipeline
+### Security Analysis Pipeline
 
 Implemented by `llmtrace-security`:
 
@@ -96,7 +98,7 @@ Implemented by `llmtrace-security`:
 - Optional ML ensemble when `ml` feature and `ml_preload` are enabled
 - Output safety analysis uses `OutputAnalyzer` with response-only checks
 
-### 3. Storage
+### Storage
 
 Implemented by `llmtrace-storage`:
 
@@ -104,14 +106,14 @@ Implemented by `llmtrace-storage`:
 - `lite`: SQLite (traces + metadata), in-memory cache
 - `production`: ClickHouse + PostgreSQL + Redis (feature gated)
 
-### 4. Auth & RBAC
+### Auth & RBAC
 
 Implemented in `crates/llmtrace-proxy/src/auth.rs`:
 
 - `auth.enabled = true`: API key required; roles enforced
 - `auth.enabled = false`: permissive admin context; tenant resolved from header or API key
 
-### 5. Alerts
+### Alerts
 
 Implemented in `crates/llmtrace-proxy/src/alerts.rs`:
 
@@ -119,18 +121,23 @@ Implemented in `crates/llmtrace-proxy/src/alerts.rs`:
 - Email channel is recognized in config but not implemented
 - Cooldown-based deduplication per finding type
 
----
 
-## Error Handling and Fail-Open Behavior
+## Error Handling and Fail-Open Behaviour
 
-- **Upstream errors**: return `502 Bad Gateway` with error response body.
-- **Security analysis failures**: logged; request still succeeds.
-- **Storage failures**: logged; proxy response still succeeds.
-- **Circuit breakers**: if open, skip storage/analysis to protect latency.
+**Upstream errors**: return `502 Bad Gateway` with error response body.
 
----
 
-## Configuration Surface (Relevant to Proxy Behavior)
+**Security analysis failures**: logged; request still succeeds.
+
+
+**Storage failures**: logged; proxy response still succeeds.
+
+
+**Circuit breakers**: if open, skip storage/analysis to protect latency.
+
+
+
+## Configuration Surface (Relevant to Proxy Behaviour)
 
 Key proxy controls (see `ProxyConfig` in `llmtrace-core`):
 
@@ -139,11 +146,10 @@ Key proxy controls (see `ProxyConfig` in `llmtrace-core`):
 - `enable_trace_storage`: enable/disable trace persistence
 - `enable_streaming`: enable streaming passthrough
 - `streaming_analysis.*`: token interval, early stop, output analysis
-- `security_analysis.*`: ML model config, thresholds, preload behavior
+- `security_analysis.*`: ML model config, thresholds, preload behaviour
 - `auth.*`: API key enforcement
 - `storage.*`: profile and backing services
 
----
 
 ## Current Limitations
 
@@ -152,7 +158,6 @@ Key proxy controls (see `ProxyConfig` in `llmtrace-core`):
 - No external IdP integration; auth is API-key based.
 - ML models load only when `ml` feature is enabled and `ml_preload` is true; otherwise regex-only analysis is used.
 
----
 
 ## References in Code
 

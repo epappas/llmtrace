@@ -1,6 +1,6 @@
 ---
 title: LLMTrace
-description: Zero-code LLM observability and security for production. A transparent proxy that captures, analyzes, and secures LLM interactions in real time.
+description: Zero-code LLM observability and security for production. A transparent proxy that captures, analyses, and secures LLM interactions in real time.
 hide:
   - navigation
 ---
@@ -15,19 +15,22 @@ LLMTrace is a transparent proxy that sits between your application and any OpenA
 [Quickstart :material-rocket-launch:](getting-started/quickstart.md){ .md-button }
 [View on GitHub :material-github:](https://github.com/epappas/llmtrace){ .md-button }
 
----
 
 ## Why LLMTrace
 
 Production LLM applications have three blind spots that existing APM tools don't cover:
 
-- **Security** — prompt injection, jailbreaks, PII leakage, data exfiltration via tool calls.
-- **Cost** — per-agent budgets, rate limits, anomaly detection on token spend.
-- **Performance** — latency, streaming TTFT, error rates, provider flakiness.
+**Security**: — prompt injection, jailbreaks, PII leakage, data exfiltration via tool calls.
+
+
+**Cost**: — per-agent budgets, rate limits, anomaly detection on token spend.
+
+
+**Performance**: — latency, streaming TTFT, error rates, provider flakiness.
+
 
 LLMTrace solves these transparently. Nothing about your application code changes.
 
----
 
 ## Use cases
 
@@ -66,7 +69,6 @@ LLMTrace solves these transparently. Nothing about your application code changes
 
     See: [Benchmark methodology](ml/benchmarks.md), [Threshold tuning](ml/tuning.md).
 
----
 
 ## How it works
 
@@ -83,7 +85,6 @@ flowchart LR
 
 Deep-dive: [System architecture](architecture/SYSTEM_ARCHITECTURE.md) · [Transparent proxy mechanics](architecture/TRANSPARENT_PROXY.md) · [LLM-as-judge](architecture/LLM_JUDGE.md).
 
----
 
 ## Security performance
 
@@ -98,7 +99,6 @@ Tested on a 153-sample adversarial corpus across 12 attack categories (CyberSecE
 
 Methodology and reproduction: [Benchmark methodology](ml/benchmarks.md).
 
----
 
 ## Install
 
@@ -137,11 +137,17 @@ Methodology and reproduction: [Benchmark methodology](ml/benchmarks.md).
 
 Full details: [Installation guide](getting-started/installation.md).
 
----
 
 ## Where to next
 
-- **Operators** — [Installation](getting-started/installation.md) → [Configuration](getting-started/configuration.md) → [Kubernetes](deployment/kubernetes.md) → [Monitoring](guides/monitoring.md).
-- **Integrators** — [Quickstart](getting-started/quickstart.md) → [OpenAI SDK](guides/integration-openai.md) → [REST API](guides/API.md).
-- **Security engineers** — [Ensemble detection](ml/ensemble.md) → [OWASP LLM Top 10 coverage](security/OWASP_LLM_TOP10.md) → [Custom policies](guides/custom-policies.md).
-- **Researchers / contributors** — [Architecture](architecture/SYSTEM_ARCHITECTURE.md) → [Research library](research/index.md) → [Contributing](contributing.md).
+**Operators**: — [Installation](getting-started/installation.md) → [Configuration](getting-started/configuration.md) → [Kubernetes](deployment/kubernetes.md) → [Monitoring](guides/monitoring.md).
+
+
+**Integrators**: — [Quickstart](getting-started/quickstart.md) → [OpenAI SDK](guides/integration-openai.md) → [REST API](guides/API.md).
+
+
+**Security engineers**: — [Ensemble detection](ml/ensemble.md) → [OWASP LLM Top 10 coverage](security/OWASP_LLM_TOP10.md) → [Custom policies](guides/custom-policies.md).
+
+
+**Researchers / contributors**: — [Architecture](architecture/SYSTEM_ARCHITECTURE.md) → [Research library](research/index.md) → [Contributing](contributing.md).
+

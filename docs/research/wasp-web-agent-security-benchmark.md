@@ -14,8 +14,7 @@
 - Productizable vs research-only: telemetry capture and attack-success metrics are productizable; benchmark replication and data labeling are research-heavy.
 
 ## Summary
-
-WASP introduces a benchmark for web-agent prompt-injection security, targeting realistic browsing workflows where malicious content can manipulate an agent's behavior. The benchmark defines tasks and adversarial webpages to evaluate model robustness, and reports that even strong LLM-based agents remain vulnerable to practical prompt-injection attacks.
+WASP introduces a benchmark for web-agent prompt-injection security, targeting realistic browsing workflows where malicious content can manipulate an agent's behaviour. The benchmark defines tasks and adversarial webpages to evaluate model robustness, and reports that even strong LLM-based agents remain vulnerable to practical prompt-injection attacks.
 
 ## Relevance to LLMTrace
 

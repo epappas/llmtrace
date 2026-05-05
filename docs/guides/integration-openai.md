@@ -477,7 +477,7 @@ curl http://localhost:8080/api/v1/traces/7aa2c9b2-1fb1-4d64-9a4f-0c19c7f0a2b1 | 
 curl http://localhost:8080/api/v1/security/findings | jq '.data[0]'
 ```
 
-If auth is enabled, include `Authorization: Bearer llmt_...`.
+If auth is enabled, include `Authorisation: Bearer llmt_...`.
 
 ### API Integration
 
@@ -537,8 +537,13 @@ client = openai.OpenAI(
 
 ## Next Steps
 
-- **[LangChain Integration](integration-langchain.md)** — Use with LangChain framework
-- **[API Guide](API.md)** — REST queries + proxy paths
-- **[Custom Policies](custom-policies.md)** — Configure security and budgets
+**[LangChain Integration](integration-langchain.md)**: — Use with LangChain framework
+
+
+**[API Guide](API.md)**: — REST queries + proxy paths
+
+
+**[Custom Policies](custom-policies.md)**: — Configure security and budgets
+
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [troubleshooting guide](troubleshooting.md).

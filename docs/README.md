@@ -1,6 +1,6 @@
 # LLMTrace Documentation
 
-Welcome to the LLMTrace documentation. LLMTrace is a transparent proxy that captures, analyzes, and secures LLM interactions in real-time.
+Welcome to the LLMTrace documentation. LLMTrace is a transparent proxy that captures, analyses, and secures LLM interactions in real-time.
 
 ## Getting Started
 
@@ -42,7 +42,9 @@ Welcome to the LLMTrace documentation. LLMTrace is a transparent proxy that capt
 ## API Reference
 
 - [REST API](guides/API.md) -- endpoint reference
-- **Swagger UI** -- available at `/swagger-ui` when the proxy is running
+
+**Swagger UI**: -- available at `/swagger-ui` when the proxy is running
+
 
 ## Examples
 

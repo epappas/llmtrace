@@ -22,16 +22,34 @@
 ```
 
 ## Interpretation
-- **Strict operating point (0.1% FPR):** TPR is 8.18%, which is too low for production-grade detection. This matches the literature’s warning that detectors can collapse at deployment-realistic FPR thresholds.
-- **Moderate/Permissive points:** TPR improves to 43.64%, but still trails literature baselines like PromptShield and InjecGuard.
-- **Over-defense control:** od_fpr remains very low, confirming regex is conservative but at the cost of missing real attacks.
+
+**Strict operating point (0.1% FPR):**: TPR is 8.18%, which is too low for production-grade detection. This matches the literature’s warning that detectors can collapse at deployment-realistic FPR thresholds.
+
+
+**Moderate/Permissive points:**: TPR improves to 43.64%, but still trails literature baselines like PromptShield and InjecGuard.
+
+
+**Over-defense control:**: od_fpr remains very low, confirming regex is conservative but at the cost of missing real attacks.
+
 
 ## Literature Alignment
-- **PromptShield (CODASPY 2025):** demonstrates the need to evaluate at 0.1% FPR and shows Meta PromptGuard at 9.4% TPR; our regex baseline is comparable at 8.18% but far below PromptShield’s 65.3% TPR.
-- **InjecGuard:** requires MOF training and over-defense mitigation to maintain high TPR while controlling FPR.
+
+**PromptShield (CODASPY 2025):**: demonstrates the need to evaluate at 0.1% FPR and shows Meta PromptGuard at 9.4% TPR; our regex baseline is comparable at 8.18% but far below PromptShield’s 65.3% TPR.
+
+
+**InjecGuard:**: requires MOF training and over-defense mitigation to maintain high TPR while controlling FPR.
+
 
 ## Improvement Path (per literature)
-1. **Replace regex-only baseline with ML detectors** (PromptGuard/InjecGuard) as primary signal.
-2. **MOF training** (IS-001–IS-003, ML-010) to reduce trigger-word bias while preserving TPR.
-3. **Ensemble diversification** (ML-006) to improve robustness and reduce transferability gaps.
-4. **Apply FPR calibration** to ML/ensemble scores (not regex-only) at 0.1/0.5/1% FPR.
+
+**Replace regex-only baseline with ML detectors**: (PromptGuard/InjecGuard) as primary signal.
+
+
+**MOF training**: (IS-001–IS-003, ML-010) to reduce trigger-word bias while preserving TPR.
+
+
+**Ensemble diversification**: (ML-006) to improve robustness and reduce transferability gaps.
+
+
+**Apply FPR calibration**: to ML/ensemble scores (not regex-only) at 0.1/0.5/1% FPR.
+

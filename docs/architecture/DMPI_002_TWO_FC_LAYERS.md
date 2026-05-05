@@ -4,9 +4,8 @@
 **Deviation:** DMPI-002 (see TODO.md, FEATURE_ROADMAP.md section 3.4.1a)
 **Paper:** DMPI-PMHFE (arXiv 2506.06384), Section III
 
----
 
-## 1. Problem Statement
+## Problem Statement
 
 The DMPI-PMHFE paper specifies exactly **2 FC layers** in the fusion classifier:
 
@@ -22,9 +21,8 @@ Input(778) -> FC(256) -> ReLU -> FC(64) -> ReLU -> FC(2) -> Softmax
 
 The extra hidden layer (64-dim) with its ReLU activation was not present in the paper architecture. Training on this 3-layer architecture would not reproduce paper results.
 
----
 
-## 2. Scope
+## Scope
 
 ### In Scope
 
@@ -41,9 +39,8 @@ The extra hidden layer (64-dim) with its ReLU activation was not present in the 
 - Feature naming changes (that is DMPI-006)
 - Training or fine-tuning weights
 
----
 
-## 3. Architecture
+## Architecture
 
 ### Before (3 FC layers)
 
@@ -83,9 +80,8 @@ predict(embedding: [768], heuristic_features: [10])
   +-- (safe_score, injection_score)
 ```
 
----
 
-## 4. File Changes
+## File Changes
 
 | File | Change |
 |------|--------|
@@ -98,9 +94,8 @@ predict(embedding: [768], heuristic_features: [10])
 - `FusionClassifier::predict(embedding, heuristic_features)` -- same signature and return type
 - `ensemble.rs` callers require no changes
 
----
 
-## 5. Testing
+## Testing
 
 All existing tests pass without modification:
 
@@ -112,9 +107,8 @@ All existing tests pass without modification:
 | `test_predict_with_nonzero_features` | Non-zero inputs produce valid probabilities |
 | `test_load_nonexistent_path_fails` | Error handling unchanged |
 
----
 
-## 6. Risk Assessment
+## Risk Assessment
 
 | Risk | Mitigation |
 |------|-----------|
@@ -123,9 +117,8 @@ All existing tests pass without modification:
 | Caller impact | Public API unchanged; `ensemble.rs` uses same `new_random`/`load`/`predict` |
 | Input dimension change | Input dim is 778 (768 + 10) after DMPI-003 |
 
----
 
-## 7. Paper Reference
+## Paper Reference
 
 DMPI-PMHFE (arXiv 2506.06384), Section III:
 

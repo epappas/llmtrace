@@ -10,7 +10,7 @@
 ## LLMTrace Application Notes
 
 - Required signals/features: agent reasoning traces (CoT), tool call parameters, tool outputs, monitor verdicts, adversarial string patterns (high-perplexity tokens).
-- Runtime characteristics: attack is offline (GCG optimization); defense evasion happens at inference time with no extra latency. Detection of high-perplexity strings could add minimal overhead.
+- Runtime characteristics: attack is offline (GCG optimisation); defense evasion happens at inference time with no extra latency. Detection of high-perplexity strings could add minimal overhead.
 - Integration surface (proxy): LLMTrace operates as a monitoring proxy -- this paper directly attacks monitoring-based defenses. Key implication: LLMTrace's detection must go beyond observation-based monitoring to include structural defenses (input sanitization, boundary tokens, tool-output filtering). High-perplexity token detection in tool outputs and CoT traces is a viable countermeasure.
 - Productizable vs research-only: high-perplexity string detection and tool-output sanitization are productizable; GCG-based adversarial testing is research/red-teaming only.
 
@@ -26,10 +26,17 @@ The key insight is that the agent itself becomes the delivery mechanism -- it re
 
 ### Threat Model
 
-- **Agent**: processes untrusted external inputs (emails, websites, RAG contexts)
-- **Monitor**: observes agent reasoning (CoT), tool calls, and tool outputs
-- **Attacker**: can embed instructions in external content that the agent processes; has white-box access to monitor (gradient computation); can optimize adversarial strings offline
-- **Attack goal**: force monitor to classify malicious trajectory as safe despite successful indirect prompt injection
+**Agent**: processes untrusted external inputs (emails, websites, RAG contexts)
+
+
+**Monitor**: observes agent reasoning (CoT), tool calls, and tool outputs
+
+
+**Attacker**: can embed instructions in external content that the agent processes; has white-box access to monitor (gradient computation); can optimise adversarial strings offline
+
+
+**Attack goal**: force monitor to classify malicious trajectory as safe despite successful indirect prompt injection
+
 
 ### Attack Methodology: Agent-as-a-Proxy
 
@@ -37,17 +44,22 @@ The key insight is that the agent itself becomes the delivery mechanism -- it re
 
 **Step 2: Agent Exploitation** -- Agent processes injection and repeats the adversarial string (OPTIM_STR) in its internal reasoning traces, tool call parameters, and intermediate outputs.
 
-**Step 3: Monitor Manipulation** -- The adversarial string, optimized via GCG/Parallel-GCG, appears benign within surrounding context, causing the monitor to accept the malicious trajectory.
+**Step 3: Monitor Manipulation** -- The adversarial string, optimised via GCG/Parallel-GCG, appears benign within surrounding context, causing the monitor to accept the malicious trajectory.
 
-**Key distinction from prior work**: Previous attacks (Terekhov et al. 2025) required superior agent capabilities and knowledge of monitoring systems. This approach relies solely on the agent's repetition behavior.
+**Key distinction from prior work**: Previous attacks (Terekhov et al. 2025) required superior agent capabilities and knowledge of monitoring systems. This approach relies solely on the agent's repetition behaviour.
 
-### Parallel-GCG Optimization
+### Parallel-GCG Optimisation
 
-Core innovation: optimizes adversarial strings across K insertion sites simultaneously rather than a single static input.
+Core innovation: optimises adversarial strings across K insertion sites simultaneously rather than a single static input.
 
-- **Trace construction**: S(a) = c_0 + a + c_1 + a + ... + c_k (concatenation with adversarial string at K sites)
-- **Optimization**: aggregate gradients across all K insertion positions
-- **Parameters**: initial string of 20 tokens, 500 GCG steps, 512 candidates per iteration, top-k=256
+**Trace construction**: S(a) = c_0 + a + c_1 + a + ... + c_k (concatenation with adversarial string at K sites)
+
+
+**Optimisation**: aggregate gradients across all K insertion positions
+
+
+**Parameters**: initial string of 20 tokens, 500 GCG steps, 512 candidates per iteration, top-k=256
+
 
 ### Monitoring Protocols Attacked
 
@@ -115,19 +127,24 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### Limitations
 
-1. **High perplexity**: adversarial strings may be detectable by perplexity classifiers or human review
-2. **White-box assumption**: paper attacks white-box monitors; black-box attacks possible but unexplored
-3. **Trajectory approximation**: Parallel-GCG assumes fixed trajectories; real agent execution introduces variance (5-8 percentage point ASR drops in live execution)
+**High perplexity**: adversarial strings may be detectable by perplexity classifiers or human review
+
+
+**White-box assumption**: paper attacks white-box monitors; black-box attacks possible but unexplored
+
+
+**Trajectory approximation**: Parallel-GCG assumes fixed trajectories; real agent execution introduces variance (5-8 percentage point ASR drops in live execution)
+
 
 ## Feature Delta with LLMTrace
 
 | Feature | Agent-as-a-Proxy | LLMTrace | Gap Analysis |
 |---------|-----------------|----------|--------------|
 | **Monitor bypass via agent repetition** | Core attack: agent repeats adversarial strings in traces | LLMTrace monitors request/response traffic | **Critical**: LLMTrace is a monitoring-based defense -- directly vulnerable to this attack class |
-| **High-perplexity string detection** | Identified as potential countermeasure | No perplexity-based detection | **Major**: Could detect GCG-optimized strings in tool outputs. **Tracked as IS-050.** |
+| **High-perplexity string detection** | Identified as potential countermeasure | No perplexity-based detection | **Major**: Could detect GCG-optimised strings in tool outputs. **Tracked as IS-050.** |
 | **Structural defenses (not monitoring)** | Paper recommends architectural guarantees | Partial (sanitization, boundary tokens) | **Significant**: Validates AS-001/AS-002 sanitization approach over pure monitoring. **Propagation blocking tracked as IS-052.** |
 | **Hybrid monitoring paradox** | More observation = more attack surface | Monitors both input and output | **Significant**: Output monitoring may increase attack surface against adaptive attacks. **Tracked as IS-051.** |
-| **Multi-objective adversarial optimization** | GCG simultaneously bypasses classifier + monitor | No adversarial robustness testing | **Major**: Ensemble detection may be vulnerable to multi-objective attacks. **Tracked as EV-017, ML-016.** |
+| **Multi-objective adversarial optimisation** | GCG simultaneously bypasses classifier + monitor | No adversarial robustness testing | **Major**: Ensemble detection may be vulnerable to multi-objective attacks. **Tracked as EV-017, ML-016.** |
 | **Transferability across models** | 88-90% ASR across model families | No cross-model attack testing | **Moderate**: Detection model may be bypassable via transfer attacks. **Tracked as EV-018.** |
 | **AgentDojo benchmark** | Used for evaluation | Not evaluated against AgentDojo | **Moderate**: Shared evaluation gap with benchmarks landscape. **Tracked as EV-016.** |
 | **Tool-output sanitization** | Not explored (attack-focused paper) | Partial (PII, secrets) | **LLMTrace strength**: Sanitization prevents adversarial strings from reaching monitors |
@@ -135,78 +152,134 @@ Cross-model effectiveness suggests fundamental monitor vulnerabilities rather th
 
 ### What This Paper Reveals About LLMTrace
 
-1. **LLMTrace's monitoring architecture is directly targeted**: As a proxy that observes traffic, LLMTrace falls into the "monitoring-based defense" category this paper attacks.
-2. **Pure observation is insufficient**: The paper validates that structural defenses (sanitization, boundary tokens, tool-output filtering) are more robust than observation-based monitoring.
-3. **Ensemble detection is not immune**: Multi-objective GCG can simultaneously optimize against multiple detection layers.
-4. **High-perplexity detection is a viable countermeasure**: GCG-optimized strings have characteristically high perplexity that could be detected.
+**LLMTrace's monitoring architecture is directly targeted**: As a proxy that observes traffic, LLMTrace falls into the "monitoring-based defense" category this paper attacks.
+
+
+**Pure observation is insufficient**: The paper validates that structural defenses (sanitization, boundary tokens, tool-output filtering) are more robust than observation-based monitoring.
+
+
+**Ensemble detection is not immune**: Multi-objective GCG can simultaneously optimise against multiple detection layers.
+
+
+**High-perplexity detection is a viable countermeasure**: GCG-optimised strings have characteristically high perplexity that could be detected.
+
 
 ### What LLMTrace Provides That Mitigates This Attack
 
-1. **Tool-output sanitization**: Stripping/transforming tool outputs before they reach the agent prevents adversarial string propagation (AS-001/AS-002).
-2. **Input-side detection**: Detecting injections *before* they enter the agent prevents the agent from ever repeating adversarial strings.
-3. **Boundary token injection**: BIPIA-style `<data>`/`</data>` tokens create structural separation that GCG cannot optimize across.
-4. **Content normalization**: Unicode/encoding normalization may disrupt adversarial string optimization that relies on specific token sequences.
+**Tool-output sanitization**: Stripping/transforming tool outputs before they reach the agent prevents adversarial string propagation (AS-001/AS-002).
+
+
+**Input-side detection**: Detecting injections *before* they enter the agent prevents the agent from ever repeating adversarial strings.
+
+
+**Boundary token injection**: BIPIA-style `<data>`/`</data>` tokens create structural separation that GCG cannot optimise across.
+
+
+**Content normalization**: Unicode/encoding normalization may disrupt adversarial string optimisation that relies on specific token sequences.
+
 
 ## Actionable Recommendations
 
 ### P0 (Critical - Immediate)
 
-1. **Implement Perplexity-Based Anomaly Detection in Tool Outputs** (IS-050, IS-052)
-   - **Effort:** 2 weeks
-   - GCG-optimized strings have characteristically high perplexity. Add perplexity scoring to tool-output analysis pipeline.
-   - Flag tool outputs containing token sequences with perplexity above threshold.
-   - **Code Impact:** New detection module in security analyzer, configurable threshold.
+**Implement Perplexity-Based Anomaly Detection in Tool Outputs**: (IS-050, IS-052)
 
-2. **Validate Structural Defenses Against GCG Attacks** (AS-001, AS-002, IS-052)
-   - **Effort:** 1 week
+
+**Effort:**: 2 weeks
+
+   - GCG-optimised strings have characteristically high perplexity. Add perplexity scoring to tool-output analysis pipeline.
+   - Flag tool outputs containing token sequences with perplexity above threshold.
+
+**Code Impact:**: New detection module in security analyzer, configurable threshold.
+
+
+**Validate Structural Defenses Against GCG Attacks**: (AS-001, AS-002, IS-052)
+
+
+**Effort:**: 1 week
+
    - Confirm that AS-001/AS-002 sanitization and BIPIA boundary tokens are resilient to adversarial string propagation.
    - The paper's attack relies on string repetition through the agent -- sanitization that strips or transforms tool outputs breaks this chain.
-   - **Code Impact:** Red-team testing, no code changes if sanitization is effective.
 
-3. **AgentDojo Slack Suite Adaptive Attack Evaluation** (EV-016)
-   - **Effort:** 2-3 weeks
+**Code Impact:**: Red-team testing, no code changes if sanitization is effective.
+
+
+**AgentDojo Slack Suite Adaptive Attack Evaluation**: (EV-016)
+
+
+**Effort:**: 2-3 weeks
+
    - Evaluate LLMTrace detection against AgentDojo Slack suite attacks (same benchmark used in this paper).
-   - Measure detection rates for both static and adaptive (GCG-optimized) attacks.
-   - **Code Impact:** Test harness in `tests/benchmarks/`.
+   - Measure detection rates for both static and adaptive (GCG-optimised) attacks.
+
+**Code Impact:**: Test harness in `tests/benchmarks/`.
+
 
 ### P1 (High Priority - Next Quarter)
 
-4. **Add GCG-Based Adversarial Testing to Evaluation Pipeline** (EV-017, ML-016)
-   - **Effort:** 3-4 weeks
-   - Use GCG/Parallel-GCG to generate adversarial strings optimized against LLMTrace's detection models.
-   - Test whether multi-objective GCG can simultaneously bypass regex + ML ensemble.
-   - **Code Impact:** Red-team evaluation harness, adversarial sample generation.
+**Add GCG-Based Adversarial Testing to Evaluation Pipeline**: (EV-017, ML-016)
 
-5. **Evaluate Hybrid Monitoring Paradox for LLMTrace** (IS-051)
-   - **Effort:** 2 weeks
+
+**Effort:**: 3-4 weeks
+
+   - Use GCG/Parallel-GCG to generate adversarial strings optimised against LLMTrace's detection models.
+   - Test whether multi-objective GCG can simultaneously bypass regex + ML ensemble.
+
+**Code Impact:**: Red-team evaluation harness, adversarial sample generation.
+
+
+**Evaluate Hybrid Monitoring Paradox for LLMTrace**: (IS-051)
+
+
+**Effort:**: 2 weeks
+
    - Assess whether LLMTrace's output-side monitoring increases attack surface for adaptive attackers.
    - Consider configurable monitoring scope (input-only vs full hybrid) based on threat model.
-   - **Code Impact:** Configuration options, evaluation framework.
 
-6. **Adversarial Robustness Training Against GCG** (ML-016)
-   - **Effort:** 4-6 weeks
+**Code Impact:**: Configuration options, evaluation framework.
+
+
+**Adversarial Robustness Training Against GCG**: (ML-016)
+
+
+**Effort:**: 4-6 weeks
+
    - Generate GCG adversarial samples and include in classifier training data.
    - Test whether adversarial training improves resilience without increasing FPR.
-   - **Code Impact:** Training pipeline extension, evaluation.
 
-7. **Cross-Model Transfer Attack Testing** (EV-018)
-   - **Effort:** 2 weeks
-   - Test whether adversarial strings optimized against one detection model transfer to LLMTrace's ensemble.
+**Code Impact:**: Training pipeline extension, evaluation.
+
+
+**Cross-Model Transfer Attack Testing**: (EV-018)
+
+
+**Effort:**: 2 weeks
+
+   - Test whether adversarial strings optimised against one detection model transfer to LLMTrace's ensemble.
    - Evaluate whether model diversity in the ensemble provides transfer resistance.
-   - **Code Impact:** Evaluation only.
+
+**Code Impact:**: Evaluation only.
+
 
 ## Key Takeaways
 
-1. **Monitoring-based defenses are fundamentally fragile**: 90%+ ASR against all tested monitor-model pairs. LLMTrace, as a monitoring proxy, must complement observation with structural defenses.
+**Monitoring-based defenses are fundamentally fragile**: 90%+ ASR against all tested monitor-model pairs. LLMTrace, as a monitoring proxy, must complement observation with structural defenses.
 
-2. **Hybrid monitoring paradox**: observing more agent traces (tool calls, outputs) improves static attack detection but *increases* attack surface for adaptive attacks. More monitoring is not always better.
 
-3. **Multi-layer defenses offer false security**: PromptGuard 2 + AlignmentCheck bypassed at 99.0% ASR via multi-objective GCG. Stacking classifiers does not prevent coordinated optimization.
+**Hybrid monitoring paradox**: observing more agent traces (tool calls, outputs) improves static attack detection but *increases* attack surface for adaptive attacks. More monitoring is not always better.
 
-4. **No capability gap needed**: similarly-scaled agents (GPT-4o mini, Llama-3.1-70B) bypass frontier monitors (Qwen2.5-72B). Model scaling is not a defense.
 
-5. **Transferability is high**: 88-90% ASR transfers across model families (8B -> 405B). Adversarial strings exploit fundamental vulnerabilities, not model-specific weaknesses.
+**Multi-layer defenses offer false security**: PromptGuard 2 + AlignmentCheck bypassed at 99.0% ASR via multi-objective GCG. Stacking classifiers does not prevent coordinated optimisation.
 
-6. **Structural defenses are the answer**: the paper explicitly recommends "architectures with structural security guarantees" -- validating LLMTrace's sanitization and boundary token approaches (AS-001/AS-002, BIPIA defenses) over pure monitoring.
 
-7. **High-perplexity detection is a countermeasure**: GCG-optimized strings are high-perplexity by nature. Perplexity-based anomaly detection in tool outputs is a viable defense not explored in this paper.
+**No capability gap needed**: similarly-scaled agents (GPT-4o mini, Llama-3.1-70B) bypass frontier monitors (Qwen2.5-72B). Model scaling is not a defense.
+
+
+**Transferability is high**: 88-90% ASR transfers across model families (8B -> 405B). Adversarial strings exploit fundamental vulnerabilities, not model-specific weaknesses.
+
+
+**Structural defenses are the answer**: the paper explicitly recommends "architectures with structural security guarantees" -- validating LLMTrace's sanitization and boundary token approaches (AS-001/AS-002, BIPIA defenses) over pure monitoring.
+
+
+**High-perplexity detection is a countermeasure**: GCG-optimised strings are high-perplexity by nature. Perplexity-based anomaly detection in tool outputs is a viable defense not explored in this paper.
+

@@ -6,7 +6,6 @@
 **Author:** Evangelos Pappas
 **Status:** Baseline. Not a calibration run (see §9).
 
----
 
 ## Abstract
 
@@ -32,9 +31,8 @@ product SLO, not a calibrated production threshold, and not a
 literature-defeating claim. All raw data and the reproducer binary
 are committed alongside this report.
 
----
 
-## 1. Introduction
+## Introduction
 
 The LLMTrace proxy runs a three-detector security ensemble: a regex
 tier, a DeBERTa classifier (behind the `ml` feature), and an
@@ -62,18 +60,17 @@ We deliberately do **not**:
 - Apply any Platt scaling / isotonic calibration (this is out of
   scope for a baseline; see [issue #66](https://github.com/epappas/llmtrace/issues/66)).
 - Run the full ensemble — the judge is scored in isolation so its
-  standalone behavior is legible.
+  standalone behaviour is legible.
 - Score only the attacker side — every dataset with benign samples
   contributes false-positive rate information.
 - Claim these numbers generalize to other judge models. A separate
   run would be required for Anthropic Claude, a self-hosted vLLM
   model, or `gpt-4o` proper.
 
----
 
-## 2. System under test
+## System under test
 
-### 2.1 Judge pipeline
+### 1 Judge pipeline
 
 The judge is invoked through `OpenAIJudgeBackend` (crate
 `llmtrace-security`, feature `judge`). It sends a
@@ -105,7 +102,7 @@ mode, prior_findings}}`. The candidate text is always embedded as a
 JSON string, never as a bare message — this prevents candidate
 content from rewriting the envelope shape.
 
-### 2.2 Strict JSON schema enforcement
+### 2 Strict JSON schema enforcement
 
 Commit `8c76171` (finding H-A, issue #81) enables OpenAI
 `json_schema` + `strict: true` mode with the full verdict contract.
@@ -114,20 +111,19 @@ provider, so the malformed-JSON failure class is removed entirely.
 All 1,274 calls in this run returned verdicts that parsed; failures
 = 0.
 
-### 2.3 Gating is bypassed for the baseline
+### 3 Gating is bypassed for the baseline
 
 `verdict_to_outcome()` applies the promotion gate
 (`min_confidence >= 0.7`, `min_security_score >= 60`,
 `require_ensemble_support`, `shadow`). This gate is **not exercised
 in this report** — we report the judge's raw `is_threat` verdict so
-the binary classifier behavior is visible. Gating changes what the
+the binary classifier behaviour is visible. Gating changes what the
 proxy *enforces*, not what the judge *says*.
 
----
 
-## 3. Methodology
+## Methodology
 
-### 3.1 Reproducer
+### 1 Reproducer
 
 The evaluation harness is
 `crates/llmtrace-security/examples/judge_benchmark.rs`. It loads
@@ -149,7 +145,7 @@ BENCH_SEED=42 \
 
 No API key is committed or persisted.
 
-### 3.2 Sampling
+### 2 Sampling
 
 Each dataset is loaded in full, filtered to samples with `label ∈
 {malicious, benign}`, then uniformly subsampled down to at most 50
@@ -164,27 +160,44 @@ Rerunning at `BENCH_MAX_PER_SET=0` (full-set, ~23,000 calls, ~$2.70)
 would tighten confidence intervals by ~√ samples but is not required
 for baseline numbers.
 
-### 3.3 Binary classification
+### 3 Binary classification
 
 Ground truth is the `label` column on each sample. The judge's
 output field `is_threat` (boolean, from its JSON verdict) is the
 prediction. We compute:
 
-- **TP** — malicious sample, `is_threat = true`
-- **FP** — benign sample, `is_threat = true`
-- **TN** — benign sample, `is_threat = false`
-- **FN** — malicious sample, `is_threat = false`
-- **Precision** = TP / (TP + FP)
-- **Recall** = TP / (TP + FN)
-- **F1** = 2·Precision·Recall / (Precision + Recall)
-- **FPR** = FP / (FP + TN)
-- **Accuracy** = (TP + TN) / (TP + FP + TN + FN)
+**TP**: — malicious sample, `is_threat = true`
+
+
+**FP**: — benign sample, `is_threat = true`
+
+
+**TN**: — benign sample, `is_threat = false`
+
+
+**FN**: — malicious sample, `is_threat = false`
+
+
+**Precision**: = TP / (TP + FP)
+
+
+**Recall**: = TP / (TP + FN)
+
+
+**F1**: = 2·Precision·Recall / (Precision + Recall)
+
+
+**FPR**: = FP / (FP + TN)
+
+
+**Accuracy**: = (TP + TN) / (TP + FP + TN + FN)
+
 
 We do not score category match (e.g. did the judge say
 `prompt_injection` vs. `jailbreak`) in this baseline. Category-level
 confusion is deferred to follow-up work.
 
-### 3.4 Latency measurement
+### 4 Latency measurement
 
 Per-call latency is measured as wall-clock time from
 `backend.judge()` invocation to verdict-returned, including HTTP
@@ -193,23 +206,22 @@ own dispatch to the upstream provider (OpenAI), inference time, and
 response parsing. We deliberately cannot isolate these components;
 the reported number is what operators feel.
 
-### 3.5 Cost estimate
+### 5 Cost estimate
 
 Per-call cost uses OpenAI's published GPT-4o-mini pricing as of
 2026-04-20: $0.15 / 1M input tokens, $0.60 / 1M output tokens.
 OpenRouter adds a small routing markup, so the actual invoice may
 differ slightly; the reported figure is a lower bound.
 
----
 
-## 4. Datasets
+## Datasets
 
 All 27 datasets ship with the repository under
 `benchmarks/datasets/`. Each row has the schema
 `{id, text, label, category, source, [subcategory]}`. Below is the
 provenance and sample count *after* seed-42 subsampling at 50/set.
 
-### 4.1 Local curated sets (n=4)
+### 1 Local curated sets (n=4)
 
 | File | n | Malicious | Benign | Purpose |
 |---|---|---|---|---|
@@ -218,7 +230,7 @@ provenance and sample count *after* seed-42 subsampling at 50/set.
 | `benign_samples.json` | 50 | 0 | 50 | Ordinary user questions across 39 categories |
 | `notinject_samples.json` | 50 | 0 | 50 | Prompts that *look* injection-y but are benign (from `InjecGuard-NotInject`) |
 
-### 4.2 External academic / community corpora (n=23)
+### 2 External academic / community corpora (n=23)
 
 | File | n | Mal. | Ben. | Source / citation |
 |---|---|---|---|---|
@@ -248,11 +260,10 @@ provenance and sample count *after* seed-42 subsampling at 50/set.
 Totals after subsampling: **1,274 samples** (863 malicious, 411
 benign).
 
----
 
-## 5. Results
+## Results
 
-### 5.1 Overall
+### 1 Overall
 
 | Metric | Value |
 |---|---|
@@ -274,7 +285,7 @@ benign).
 | Estimated cost | $0.1512 USD |
 | Cost per call | ≈ $0.00012 |
 
-### 5.2 Per-dataset (all 27)
+### 2 Per-dataset (all 27)
 
 Sorted by recall for malicious-bearing sets; benign-only at the
 bottom.
@@ -308,7 +319,7 @@ bottom.
 | `notinject_samples` (local) | 50 | 0 | 0 | 1 | 0 | 0.980 | — | — | 0.020 |
 | `xstest` | 50 | 0 | 0 | 10 | 0 | 0.800 | — | — | 0.200 |
 
-### 5.3 Latency distribution
+### 3 Latency distribution
 
 End-to-end, measured from the harness around `backend.judge()`,
 includes network to OpenRouter + OpenRouter routing + OpenAI
@@ -328,7 +339,7 @@ in `JudgeWorkerConfig`, meaning that at this provider + model, an
 inline judge verdict is not usable without raising that budget to
 ≥4,000 ms or keeping the judge in async mode.
 
-### 5.4 Cost
+### 4 Cost
 
 | Metric | Value |
 |---|---|
@@ -337,13 +348,13 @@ inline judge verdict is not usable without raising that budget to
 | At 1,000 calls/day | $0.12 / day |
 | At 100k calls/day | $12 / day |
 
----
 
-## 6. Strengths and weaknesses
+## Strengths and weaknesses
 
-### 6.1 Where the judge does well (recall ≥ 0.90)
+### 1 Where the judge does well (recall ≥ 0.90)
 
-- **Direct-override / classic jailbreaks.** `advbench_harmful`,
+**Direct-override / classic jailbreaks.**: `advbench_harmful`,
+
   `rubend18_jailbreak`, `in_the_wild_jailbreak`,
   `jackhhao_jailbreak`, `harmbench_behaviors`, and the curated
   local `injection_samples`: recall 0.94–1.00. These share a
@@ -351,16 +362,20 @@ inline judge verdict is not usable without raising that budget to
   "DAN", roleplay scaffolds. The judge's system prompt
   enumerates this pattern and the model (trained in part on
   public jailbreak discourse) has strong priors here.
-- **Prompt-extraction attacks.** `tensor_trust_attacks`
+
+**Prompt-extraction attacks.**: `tensor_trust_attacks`
+
   (extraction + hijacking game submissions): recall 0.90.
-- **Novel-form injection prompts.** `hpi_attack_approx`: recall
+
+**Novel-form injection prompts.**: `hpi_attack_approx`: recall
+
   0.90.
 
-### 6.2 Where the judge struggles
+### 2 Where the judge struggles
 
 Three clusters of weakness, in descending severity:
 
-1. **Agent-targeted attacks (`asb_attacks`, recall 0.34;
+- **Agent-targeted attacks (`asb_attacks`, recall 0.34;
    `injecagent_attacks`, recall 0.86).** Agent Security Bench
    attacks are payloads *placed in tool outputs and document content*
    designed to hijack an LLM agent that will act on them. A
@@ -370,35 +385,42 @@ Three clusters of weakness, in descending severity:
    assistant or to the end user. This is a fundamental modeling
    limit, not a prompt-tuning issue. Mitigations require ensemble
    context (tool-output wrapping, Spotlighting, Task-Shield).
-2. **Indirect injection (`bipia_indirect`, recall 0.53).** BIPIA
+
+**Indirect injection (`bipia_indirect`, recall 0.53).**: BIPIA
+
    embeds the injection payload inside an apparently benign
    document/email/table. The judge sees the combined "candidate
    text" and often classifies the benign wrapper as benign rather
    than spotting the embedded subversion.
-3. **Structured-payload / token-smuggling (`cyberseceval2_pi`,
+- **Structured-payload / token-smuggling (`cyberseceval2_pi`,
    recall 0.46; `ailuminate_demo`, recall 0.56).** CyberSecEval 2
    specifically measures detection of adversarial patterns like
    token smuggling, overload-with-information, virtualization, and
    output-formatting manipulation. A model judging raw text
    without access to the tokenization layer misses many.
 
-### 6.3 False-positive pressure
+### 3 False-positive pressure
 
 Two benign sources produce non-trivial FPR:
 
-- **XSTest (FPR = 0.200).** By construction, XSTest prompts are
+**XSTest (FPR = 0.200).**: By construction, XSTest prompts are
+
   *safe* questions whose surface topics (violence, self-harm, drugs,
   sexuality, etc.) are the same as genuinely unsafe prompts. A
   literal reading flags 10/50 as threats. This is the
   over-refusal tax; literature reports XSTest unsafe-flagging in
   a wide range across models, and 20% is within that distribution
   but on the higher end.
-- **JailbreakBench benign controls (FPR = 0.231).** These are
+
+**JailbreakBench benign controls (FPR = 0.231).**: These are
+
   prompts about harmful topics phrased benignly (e.g., questions
   about how defenses work). Our judge currently does not
   distinguish "meta-level discussion of adversarial patterns"
   from "adversarial pattern execution".
-- **BIPIA benign (FPR = 0.171).** Documents with innocuous content
+
+**BIPIA benign (FPR = 0.171).**: Documents with innocuous content
+
   in the same envelope format as adversarial ones; the envelope
   shape appears to be a weak signal.
 
@@ -414,9 +436,8 @@ Meaning: on real benign traffic the judge does not over-block.
 It over-blocks specifically on datasets *built* to surface
 over-refusal.
 
----
 
-## 7. Comparison to the open literature
+## Comparison to the open literature
 
 We **do not** claim these numbers beat or match published defenders
 — no honest comparison is possible without re-running each paper's
@@ -448,58 +469,65 @@ to close the gap on CyberSecEval 2 and BIPIA; pure-safety
 specialists (Llama-Guard-3-8B, PromptGuard-86M) are expected to
 win on AdvBench/HarmBench while losing on cost/latency.
 
----
 
-## 8. Discussion
+## Discussion
 
-### 8.1 What the baseline tells us
+### 1 What the baseline tells us
 
-- **Deployable-as-ensemble-member, not as standalone gate.**
-  Recall 0.77 at FPR 0.071 is good enough to be the third vote in a
+**Deployable-as-ensemble-member, not as standalone gate.**: Recall 0.77 at FPR 0.071 is good enough to be the third vote in a
+
   three-detector ensemble (regex + DeBERTa + judge) that requires
   majority to block. Alone, it's a liability.
-- **Shadow mode is the right rollout default.** PR #65 ships
+
+**Shadow mode is the right rollout default.**: PR #65 ships
+
   `JudgePromotionConfig.shadow=false` with a `true` path that
   suppresses Block while recording metrics (issue #84). Given
   the XSTest and JailbreakBench benign FPRs above, shipping
   shadow-first for at least 1,000 verdicts before flipping
   enforcement on is the responsible pattern.
-- **Promotion gate already compensates.** The default
+
+**Promotion gate already compensates.**: The default
+
   `min_confidence=0.7`, `min_security_score=60`, and
   `require_ensemble_support=true` all push decisively against
   judge-only blocks. On this corpus, the judge's average
   confidence on true positives is materially higher than on
   false positives (quantitative analysis deferred).
 
-### 8.2 Where to strengthen the pipeline
+### 2 Where to strengthen the pipeline
 
-- **Indirect / agent injection** is the single biggest gap
+**Indirect / agent injection**: is the single biggest gap
+
   (cf. 6.2). Pairing the judge with Spotlighting (boundary-marker
   wrapping) and InjecAgent-style tool-output sanitization would
   close much of it. Both are already referenced in
   `docs/research/` under `spotlighting-indirect-injection-defense.md`
   and `indirect-injection-firewalls.md`.
-- **Token-smuggling / encoding evasion.** Encoded-payload recall
+
+**Token-smuggling / encoding evasion.**: Encoded-payload recall
+
   (0.80 on our set, 0.46 on CyberSecEval 2) will improve with a
   dedicated decoder pre-pass (many are already drafted in
   `crates/llmtrace-security/src/encoding.rs` behind currently
   `dead_code` warnings).
-- **Calibration.** The 0.7 default `min_confidence` is a placeholder
+
+**Calibration.**: The 0.7 default `min_confidence` is a placeholder
+
   (see PR #65 M-B); the data collected here supports a reliability
   diagram fit but we have not performed it in this report.
 
-### 8.3 Cost discipline
+### 3 Cost discipline
 
 At $0.00012/call, the judge is economically viable at sustained
 firing rates up to ~1M calls/day ($120/day). The proxy fires the
 judge only above `min_score_threshold=30`, so real production cost
 is a small fraction of call volume × $0.00012.
 
----
 
-## 9. Threats to validity
+## Threats to validity
 
-### 9.1 Single model, single provider, single run
+### 1 Single model, single provider, single run
 
 Every number in this report is `openai/gpt-4o-mini` through
 OpenRouter on 2026-04-20. Re-running against Anthropic Claude (via
@@ -508,7 +536,7 @@ our `anthropic` backend) or a self-hosted Llama variant (via our
 metric-label work (issue #83) makes cross-model comparison
 production-observable; this report measures one axis of that matrix.
 
-### 9.2 Seed sensitivity
+### 2 Seed sensitivity
 
 A single seed (42) was used for subsampling. Repeating the sweep
 with 3–5 different seeds would produce a confidence interval on
@@ -516,7 +544,7 @@ each per-dataset number. For the overall F1 of 0.856, a
 ~±0.02 variation across seeds is a reasonable expectation but is
 not measured here.
 
-### 9.3 Label noise
+### 3 Label noise
 
 Labels in the external corpora are authoritative for those
 datasets, but the *definition* of malicious varies. HarmBench
@@ -527,7 +555,7 @@ definitions diverge from "prompt injection targeting the assistant",
 the judge's disagreement is partly dataset-task mismatch, not judge
 error.
 
-### 9.4 Self-evaluation bias
+### 4 Self-evaluation bias
 
 The judge is an OpenAI model; several of the attack corpora
 (notably in-the-wild jailbreaks) were collected from attacks on
@@ -536,7 +564,7 @@ have stronger priors on patterns they have seen before. Runs with
 a non-OpenAI judge (Claude, local Llama) are needed to quantify
 this.
 
-### 9.5 No ensemble signal
+### 5 No ensemble signal
 
 The judge is run standalone, with `prior_findings=[]` on every
 candidate. In production, `prior_findings` is populated with regex
@@ -544,61 +572,76 @@ and DeBERTa verdicts; the judge receives more signal than it
 received here. These numbers are therefore a **lower bound** on
 ensemble performance.
 
----
 
-## 10. Limitations
+## Limitations
 
-- **No calibration.** `min_confidence=0.7` is a placeholder, not a
+**No calibration.**: `min_confidence=0.7` is a placeholder, not a
+
   fitted threshold. Reliability-diagram calibration is tracked in
   issue #66 and PR #65 M-B.
-- **No category-level confusion.** Category correctness
+
+**No category-level confusion.**: Category correctness
+
   (prompt_injection vs. jailbreak vs. data_exfiltration) is not
   scored; only the binary `is_threat` flag is.
-- **No adversarial-resilience evaluation.** We do not attempt to
+
+**No adversarial-resilience evaluation.**: We do not attempt to
+
   attack the judge itself (compound injection where the payload
   targets the judge prompt). This is future work.
-- **Small per-set n.** 50 samples/set gives ~±0.1 confidence on
+
+**Small per-set n.**: 50 samples/set gives ~±0.1 confidence on
+
   recall at 0.90; smaller differences between models would require
   larger runs.
 
----
 
-## 11. Future work
+## Future work
 
-1. **Cross-family run.** Rerun with `anthropic/claude-3-5-haiku`
+**Cross-family run.**: Rerun with `anthropic/claude-3-5-haiku`
+
    (our Anthropic backend is already production-ready and
    exercised in unit tests; #82 adds prompt caching so cost stays
    tractable). Then a local `meta-llama/Llama-3.1-8B-Instruct` via
    the vLLM backend. Report a 3-column comparison table.
-2. **Ensemble run.** Invoke the full ensemble
+
+**Ensemble run.**: Invoke the full ensemble
+
    (regex + DeBERTa + judge) and score at the final `ActionOutcome`
    level, with majority voting and the promotion gate applied.
    Compares a production decision path, not a detector baseline.
-3. **Calibration.** Collect confidence scores from this run (which
+
+**Calibration.**: Collect confidence scores from this run (which
+
    are persisted as `JudgeVerdict.confidence`), fit a reliability
    diagram, and publish the calibrated `min_confidence`.
-4. **Full-set, multi-seed.** Remove `BENCH_MAX_PER_SET=50`, run
+
+**Full-set, multi-seed.**: Remove `BENCH_MAX_PER_SET=50`, run
+
    with 3 seeds, and report confidence intervals.
-5. **Literature re-run.** Run Llama-Guard-3-8B (via vLLM backend)
+
+**Literature re-run.**: Run Llama-Guard-3-8B (via vLLM backend)
+
    against this identical corpus to produce a true apples-to-apples
    column.
-6. **Agent-context evaluation.** Modify the `model_name` and
+
+**Agent-context evaluation.**: Modify the `model_name` and
+
    `prior_findings` envelope fields to include a simulated tool-
    output trace; re-score InjecAgent and ASB to see whether context
    plumbing closes those gaps without changing the judge model.
 
----
 
-## 12. Reproduction
+## Reproduction
 
-### 12.1 Prerequisites
+### 1 Prerequisites
 
 - Rust toolchain (workspace-pinned; `rustup show` in repo root).
 - OpenRouter / OpenAI / Azure / LiteLLM-compatible API key with
   access to `openai/gpt-4o-mini`.
 - Budget ≈ $0.15 at the sampling size used here.
 
-### 12.2 Exact commands
+### 2 Exact commands
 
 ```bash
 # Build
@@ -614,7 +657,7 @@ BENCH_SEED=42 \
 ./target/release/examples/judge_benchmark
 ```
 
-### 12.3 Environment pin
+### 3 Environment pin
 
 | Field | Value |
 |---|---|
@@ -629,15 +672,14 @@ BENCH_SEED=42 \
 | Retries | 1 |
 | Total deadline | 90 000 ms |
 
-### 12.4 Raw output
+### 4 Raw output
 
 Not committed (contains point-in-time measurements, not source).
 Regenerate via §12.2. The harness prints the full table to stdout
 and exits non-zero on any failure.
 
----
 
-## 13. Citations
+## Citations
 
 Papers referenced, with the datasets they correspond to:
 
@@ -650,7 +692,7 @@ Papers referenced, with the datasets they correspond to:
   Flammarion, Pappas, Tramèr, Hassani, Wong. 2024. *JailbreakBench:
   An Open Robustness Benchmark for Jailbreaking Large Language Models.*
 - Mazeika, Phan, Yin, Zou, Wang, Mu, Sakhaee, Li, Basart, Li,
-  Forsyth, Hendrycks. 2024. *HarmBench: A Standardized Evaluation
+  Forsyth, Hendrycks. 2024. *HarmBench: A Standardised Evaluation
   Framework for Automated Red Teaming and Robust Refusal.*
 - Röttger, Kirk, Vidgen, Attanasio, Bianchi, Hovy. 2024. *XSTest: A
   Test Suite for Identifying Exaggerated Safety Behaviours in Large
@@ -677,4 +719,3 @@ SaTML 2024 LLM CTF submissions, Ivan Leo Mk curated corpora,
 HuggingFace HPI attack approximation, MLCommons AILuminate v0.5
 demo, SPML Chatbot corpus, curated transferable attack samples.
 
----

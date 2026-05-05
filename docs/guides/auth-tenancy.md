@@ -14,7 +14,7 @@ When `auth.enabled` is `true`:
 
 - Every request (except `/health` and `/swagger-ui`) must carry a valid API key
 - The `admin_key` is a bootstrap key for initial setup -- use it to create tenants and generate API keys
-- Keys are validated via `Authorization: Bearer <key>` header
+- Keys are validated via `Authorisation: Bearer <key>` header
 
 When `auth.enabled` is `false` (default):
 
@@ -36,7 +36,7 @@ Roles are hierarchical: `admin` inherits `operator` permissions, `operator` inhe
 
 ## Tenant Setup Walkthrough
 
-### 1. Create a tenant
+### Create a tenant
 
 Using the bootstrap admin key:
 
@@ -49,7 +49,7 @@ curl -X POST http://localhost:8080/api/v1/tenants \
 
 Response includes the tenant ID (UUID).
 
-### 2. Create API keys for the tenant
+### Create API keys for the tenant
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/keys \
@@ -77,7 +77,7 @@ Response:
 
 The plaintext key (`llmt_abc123...`) is shown **only once**. Store it securely.
 
-### 3. Use the API key for proxy traffic
+### Use the API key for proxy traffic
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -88,7 +88,7 @@ curl http://localhost:8080/v1/chat/completions \
 
 The proxy resolves the tenant from the API key automatically. All traces, findings, and costs are scoped to that tenant.
 
-### 4. List and revoke keys
+### List and revoke keys
 
 ```bash
 # List keys for a tenant

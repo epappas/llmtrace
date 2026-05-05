@@ -7,9 +7,8 @@ of this branch is this design doc, not code.
 **Date:** 2026-04-29
 **Author:** Investigation pass before lead-engineer review.
 
----
 
-## 0. One-page summary
+## One-page summary
 
 ### Mission
 
@@ -28,21 +27,26 @@ lines 79–94, 105–113).
 Sequence **A → B → C** in three additive PRs, gated by the existing
 shadow-mode infrastructure that boundary defense already established:
 
-1. **Zone-only scanning (no transform).** Cheapest. Tags spans rather than
+**Zone-only scanning (no transform).**: Cheapest. Tags spans rather than
+
    rewriting bytes. Reuses `EnsembleSecurityAnalyzer` per-span, fixes
    regex/ML attention dilution on long tool outputs, and unblocks
    "in-the-data-zone" finding metadata that the action router can weight.
    Estimated 3–5 days. Targets the long-context dilution failure mode
    directly. Does not subvertable-by-itself; relies on accurate zone
    detection.
-2. **Datamarking transform.** Apply `\s → U+E000` substitution to the
+
+**Datamarking transform.**: Apply `\s → U+E000` substitution to the
+
    detected data zones, with a randomised marker token per request, and
    extend the existing system reminder (already injected by
    `boundary.rs:147`) to describe the marker. Implementable as a fail-open
    transform stage in the same `boundary.rs` pipeline. The paper's headline
    defense; closes the residual ASR that boundary tokens leave on the
    table. Estimated 1–2 weeks.
-3. **Operator-declared zones via headers + scenario YAML.** Lets the
+
+**Operator-declared zones via headers + scenario YAML.**: Lets the
+
    application explicitly mark RAG content in `role: "user"` messages
    that the proxy cannot heuristically split. Complements (not replaces)
    the heuristics. Estimated 3–5 days.
@@ -55,17 +59,20 @@ follow-up after datamarking is calibrated.
 
 ### Top-3 open questions for the lead engineer
 
-1. **What is the latency budget for zone detection?** The current ensemble
+**What is the latency budget for zone detection?**: The current ensemble
+
    p99 budget is ~10 ms (anchor implied by Loop 23 review notes). Splitting
    into N zones and running the ensemble on each is ~N×. Do we accept that
    linear blow-up, cap N, run zones in parallel, or accept zone scanning
    only on the data-zone subset and skip instruction zones?
-2. **Is datamarking allowed to alter request bytes by default, or must it
+- **Is datamarking allowed to alter request bytes by default, or must it
    ship behind shadow mode for at least one nightly cycle?** The
    `BoundaryTokenConfig::shadow_mode` precedent says "yes shadow first."
    Confirming the same default for datamarking shapes the rollout
    sequence and the metrics we need before flipping the bit.
-3. **How do we settle the BIPIA corpus before declaring success?** The
+
+**How do we settle the BIPIA corpus before declaring success?**: The
+
    brief cites "4 BIPIA FNs" but only 2 scenarios are committed in
    `benchmarks/attacks/indirect_injection/`, and the latest nightly
    (2026-04-28) shows zero `upstream_fell_for_it` on either. The real
@@ -86,11 +93,10 @@ follow-up after datamarking is calibrated.
 Encoding (base64) and BIPIA white-box adversarial fine-tuning are explicitly
 out of scope.
 
----
 
-## 1. State of the art
+## State of the art
 
-### 1.1 Microsoft Spotlighting (Hines et al., arXiv 2403.14720)
+### 1 Microsoft Spotlighting (Hines et al., arXiv 2403.14720)
 
 `docs/research/spotlighting-indirect-injection-defense.md` is the primary
 reference. Three variants:
@@ -123,7 +129,7 @@ Threat-model divergences from LLMTrace:
   hardening, not a substitute for perplexity detection (IS-050) or other
   detection layers.
 
-### 1.2 BIPIA (Yi et al., arXiv 2312.14197, KDD 2025)
+### 2 BIPIA (Yi et al., arXiv 2312.14197, KDD 2025)
 
 `docs/research/bipia-indirect-prompt-injection-benchmark.md` is the
 secondary reference and the source of the 1064%-ASR-without-boundary-tokens
@@ -153,7 +159,7 @@ system-prompt reminder. The 0.53% ASR figure assumes a fine-tuned model;
 the proxy-side number will be worse, but the *direction* of the effect is
 what we are buying.
 
-### 1.3 Instruction Hierarchy (Wallace et al., arXiv 2404.13208)
+### 3 Instruction Hierarchy (Wallace et al., arXiv 2404.13208)
 
 `docs/research/instruction-hierarchy-defense.md`. Privilege levels: system
 > user > model output > tool output (lines 35–41). The paper's white-box
@@ -174,7 +180,7 @@ jailbreak-styled benign prompts (line 87). Datamarking should be measured
 on the over-defense scenarios in `benchmarks/attacks/over_defense/` to
 catch the same failure mode if it materialises.
 
-### 1.4 Indirect-injection firewalls (Bhagwatkar et al., arXiv 2510.05244)
+### 4 Indirect-injection firewalls (Bhagwatkar et al., arXiv 2510.05244)
 
 `docs/research/indirect-injection-firewalls.md`. The "minimize & sanitize"
 approach lives at the agent–tool boundary, not the proxy–LLM boundary.
@@ -185,7 +191,7 @@ IS-060 is **complementary**: the firewall sanitises content; spotlighting
 hardens the substrate the LLM sees regardless. They compose; spotlighting
 runs after the firewall on whatever content survives sanitisation.
 
-### 1.5 Agent-as-a-Proxy (Isbarov & Kantarcioglu, arXiv 2602.05066)
+### 5 Agent-as-a-Proxy (Isbarov & Kantarcioglu, arXiv 2602.05066)
 
 `docs/research/agent-as-a-proxy-attacks.md`. Validates the structural
 direction: "monitoring-based defenses are fundamentally fragile…
@@ -196,13 +202,12 @@ high-perplexity GCG strings will defeat any monitor; spotlighting reduces
 *natural-language* indirect injection but does not address GCG. That's
 what IS-050 (perplexity detection) is for; the two layer.
 
----
 
-## 2. Codebase audit
+## Codebase audit
 
-### 2.1 What's already shipped
+### 1 What's already shipped
 
-#### 2.1.1 Boundary token defense — shipped, matches doc
+#### 1 Boundary token defense — shipped, matches doc
 
 `docs/architecture/BOUNDARY_TOKEN_DEFENSE.md` describes Phase 1 of the
 boundary token defense. The implementation is in
@@ -241,7 +246,7 @@ IS-060's scope to fix, but IS-060's PRs should add the missing integration
 coverage at the same time it adds zone-aware tests, since both touch the
 same proxy-handler integration path.
 
-#### 2.1.2 Tool firewall — shipped, complementary
+#### 2 Tool firewall — shipped, complementary
 
 `crates/llmtrace-security/src/tool_firewall.rs` already implements:
 
@@ -258,19 +263,19 @@ preserves content but marks it as data. IS-060 should run **after** the
 firewall in the request path, on whatever content remains. The two
 defenses do not overlap.
 
-#### 2.1.3 Ensemble — shipped; IS-060 hooks into here
+#### 3 Ensemble — shipped; IS-060 hooks into here
 
 `crates/llmtrace-security/src/ensemble.rs:875` `analyze_request` is the
 primary call site:
 
-1. Regex (`:886`).
-2. Optional fusion classifier path (`:892`).
-3. Else, parallel-spawn ML / InjecGuard / PIGuard ballots (`:897-915`).
-4. `collect_and_vote` (`:914`).
-5. NER pass (`:921-929`).
-6. `try_decoded_ml_reanalysis` for evasion encodings (`:932`).
-7. `filter_by_thresholds` (`:935`, definition `:536`).
-8. `apply_over_defence` (`:936`, definition `:569`).
+- Regex (`:886`).
+- Optional fusion classifier path (`:892`).
+- Else, parallel-spawn ML / InjecGuard / PIGuard ballots (`:897-915`).
+- `collect_and_vote` (`:914`).
+- NER pass (`:921-929`).
+- `try_decoded_ml_reanalysis` for evasion encodings (`:932`).
+- `filter_by_thresholds` (`:935`, definition `:536`).
+- `apply_over_defence` (`:936`, definition `:569`).
 
 `filter_by_thresholds` drops findings whose `confidence_score` is below
 the per-category threshold from `ResolvedThresholds`. `apply_over_defence`
@@ -285,7 +290,7 @@ needs no change. `apply_over_defence` needs a small addition to treat
 "in-data-zone" injection findings as carrying a higher prior than
 "in-instruction-zone" ones — see §6.
 
-#### 2.1.4 OperatingPoint — shipped
+#### 4 OperatingPoint — shipped
 
 `crates/llmtrace-security/src/thresholds.rs:29` `OperatingPoint` enum
 (HighRecall / Balanced / HighPrecision / Custom). Wired through
@@ -300,7 +305,7 @@ findings that *do* go through `filter_by_thresholds`. The thresholds
 should remain shared with the global ones, with zone metadata attached
 for downstream weighting in the action router. See §6.2.
 
-#### 2.1.5 Canary tokens — shipped
+#### 5 Canary tokens — shipped
 
 `crates/llmtrace-security/src/canary.rs` (1008 lines).
 - `CanaryToken::generate` (`:120`) — random alphanumeric token.
@@ -311,7 +316,7 @@ for downstream weighting in the action router. See §6.2.
 
 This is SA-002. Zone composition is discussed in §5.3.
 
-### 2.2 What's missing (the IS-060 surface)
+### 2 What's missing (the IS-060 surface)
 
 | Capability | Today | What IS-060 adds |
 |---|---|---|
@@ -323,7 +328,7 @@ This is SA-002. Zone composition is discussed in §5.3.
 | Encoding-mode (base64) | None. | Out of scope for IS-060. |
 | Position-aware weighting (BIPIA finding: end-of-content has highest ASR) | None. | Optional: zone metadata can carry `position_in_message` for downstream weighting. |
 
-### 2.3 Files I read and what each said
+### 3 Files I read and what each said
 
 (See §10 for the full audit-trail list. The summary is: the architecture
 docs are accurate to the code on the boundary-defense surface, with the
@@ -332,11 +337,10 @@ single gap that integration tests claimed in BOUNDARY_TOKEN_DEFENSE.md
 defense plumbing IS-060 needs without further refactoring; the BIPIA
 corpus on disk has 2 scenarios, not the 4 the brief assumes.)
 
----
 
-## 3. Three options compared
+## Three options compared
 
-### 3.1 Option A — Zone-only scanning (no transform)
+### 1 Option A — Zone-only scanning (no transform)
 
 **Mechanism.** The proxy detects zones inside each message. Zones tagged
 `Data` are scanned; zones tagged `Instruction` are not (or are scanned
@@ -348,10 +352,10 @@ configuration change.
 **Expected ASR reduction.** None directly; this is a detection precision
 improvement, not a model-side defense. But it removes two failure modes
 that contribute to the FN tail today:
-1. Long tool outputs dilute ML attention. Splitting into zones and
+- Long tool outputs dilute ML attention. Splitting into zones and
    running the ensemble per-zone restores the regex/ML model's effective
    field of view.
-2. Benign instruction text in the user's question that triggers
+- Benign instruction text in the user's question that triggers
    prompt-injection patterns (over-defense) is no longer scanned, since
    it is in an Instruction zone.
 
@@ -379,7 +383,7 @@ table, the heuristic may declare the table a Data zone and skip injection
 scanning on the user's actual question. Mitigations: union of zones
 (scan both), conservative defaults, operator override.
 
-### 3.2 Option B — Boundary tokens (already shipped)
+### 2 Option B — Boundary tokens (already shipped)
 
 **Mechanism.** Wrap `role: "tool"` content in `<llmtrace-boundary>`…
 `</llmtrace-boundary>` and inject a system reminder describing the tags.
@@ -408,7 +412,7 @@ the only switch most operators flip.
 **Known gap.** Anthropic provider not yet supported (`boundary.rs:94`);
 RAG content embedded in `role: "user"` not detected (covered in §5).
 
-### 3.3 Option C — Datamarking (the IS-060 headline)
+### 3 Option C — Datamarking (the IS-060 headline)
 
 **Mechanism.** Replace whitespace inside Data zones with a marker token
 (default `U+E000`, randomised per request). Augment the system reminder
@@ -448,7 +452,7 @@ fixed|randomized, marker: <char>}`.
 - Some upstream APIs may mishandle non-ASCII bytes in an unfamiliar
   position. Shadow mode catches this.
 
-### 3.4 Comparison table & sequencing
+### 4 Comparison table & sequencing
 
 | Dimension | A (zone-only) | B (boundary, shipped) | C (datamarking) |
 |---|---|---|---|
@@ -464,14 +468,14 @@ fixed|randomized, marker: <char>}`.
 **Sequencing recommendation.** A → C → operator-declared zones
 (combined into A's PR or split as PR 3, both fine). Reasons:
 
-1. A is the cheapest and the prerequisite for C (datamarking needs the
+- A is the cheapest and the prerequisite for C (datamarking needs the
    zone definition). Shipping A as a no-op transform first means
    operators get the metadata + per-zone scanning without any
    modification of upstream bytes.
-2. C is the headline gain. It depends on A and is materially riskier
+- C is the headline gain. It depends on A and is materially riskier
    (changes bytes upstream); it gets its own PR with its own shadow
    period.
-3. Operator-declared zones (the header / `<llmtrace-data>` markers)
+- Operator-declared zones (the header / `<llmtrace-data>` markers)
    are bundled into A. They are essential for RAG content embedded in
    user messages, which heuristics cannot disambiguate.
 
@@ -480,19 +484,27 @@ that requires per-model validation and is gated on having a per-tenant
 "high-capacity model" flag, which we do not currently track in
 `SecurityAnalysisConfig`.
 
-### 3.5 Latency budget proposal
+### 5 Latency budget proposal
 
 Subject to lead-engineer sanction (open question §8.1):
 
 - **Hard cap, p99, full request including zone detection + per-zone
   ensemble:** 25 ms with ML enabled, 15 ms regex-only. Today's effective
   cap is 10 ms ensemble.
-- **Per-zone ensemble call:** identical to today's 10 ms cap (we are not
+
+**Per-zone ensemble call:**: identical to today's 10 ms cap (we are not
+
   changing the ensemble itself).
-- **Zone detection:** ≤ 2 ms p99 (regex-driven, no I/O).
-- **Datamarking transform:** ≤ 1 ms p99 (single-pass string
+
+**Zone detection:**: ≤ 2 ms p99 (regex-driven, no I/O).
+
+
+**Datamarking transform:**: ≤ 1 ms p99 (single-pass string
+
   substitution).
-- **Parallelism:** zones can be fanned out via the same `tokio` blocking
+
+**Parallelism:**: zones can be fanned out via the same `tokio` blocking
+
   pool that hosts InjecGuard / PIGuard today (`ensemble.rs:637-677`).
   Two zones in parallel ≈ one zone serial; this is how we hit a 25 ms
   cap with two zones rather than 20 ms serial.
@@ -502,11 +514,10 @@ to skip ensemble fan-out and only run regex per-zone, with ML running
 once on the data-zone *concatenation*. This is cheaper but loses some of
 the dilution benefit. Worth measuring before deciding.
 
----
 
-## 4. Zone boundary detection — design
+## Zone boundary detection — design
 
-### 4.1 The hard part
+### 1 The hard part
 
 A "zone" is a contiguous span of bytes inside one or more chat messages
 that is either Instruction (trusted) or Data (untrusted). The mapping
@@ -526,7 +537,7 @@ This document focuses on the **first three** rows since that is where
 heuristics are needed; tool outputs are already classified as Data by
 the boundary defense (and the wrap_roles config makes that explicit).
 
-### 4.2 Heuristics — a small state machine, not per-format extractors
+### 2 Heuristics — a small state machine, not per-format extractors
 
 Recommendation: **one pass with format detection then extraction,
 backed by a small finite-state-machine (FSM) over the message text.**
@@ -545,7 +556,7 @@ Rationale:
   zone-aware optimisation, in which case we degrade to today's
   behaviour.
 
-#### 4.2.1 The five framings
+#### 1 The five framings
 
 | Framing | Entry pattern | Exit pattern | Note |
 |---|---|---|---|
@@ -596,7 +607,7 @@ fn detect_in_text(text: &str) -> Vec<Zone> {
 `splice()` returns the input as `[Instruction prefix?, Data span,
 Instruction suffix?]`.
 
-#### 4.2.2 Failure mode
+#### 2 Failure mode
 
 If any heuristic mismatches (e.g. an HTML `<table>` is opened but never
 closed in the message), `splice` should return the *entire message
@@ -607,11 +618,11 @@ data. This is the opposite of "fail open" in the boundary-defense
 sense (which preserves availability) — for detection precision, we
 "fail Data," which preserves recall.
 
-### 4.3 Operator-declared zones
+### 3 Operator-declared zones
 
 Two channels:
 
-#### 4.3.1 Inline markers in chat content
+#### 1 Inline markers in chat content
 
 Application code wraps the untrusted region:
 
@@ -636,7 +647,7 @@ If `randomize_nonce` is also enabled on the boundary defense, the
 boundary tag becomes `<llmtrace-boundary-XXXX>` and there is no
 collision. Document the default explicitly.
 
-#### 4.3.2 Request-header schema
+#### 2 Request-header schema
 
 For applications that cannot edit the message body (e.g. SDK-mediated
 RAG pipelines), expose a per-request header:
@@ -664,7 +675,7 @@ Failure mode: if the header parses but points at a non-existent path,
 log `boundary_header_invalid_total` and fall back to heuristics (do not
 reject the request).
 
-### 4.4 Composition with canary tokens (SA-002)
+### 4 Composition with canary tokens (SA-002)
 
 Three options for where canaries live in the new zone model. The
 recommendation is option (i):
@@ -687,7 +698,7 @@ This composition aligns with the instruction hierarchy paper
 system-message-level signals; treating them as Instruction zone makes
 their detection robust to the data-zone hardening that IS-060 adds.
 
-### 4.5 Composition with `tool_firewall.rs`
+### 5 Composition with `tool_firewall.rs`
 
 The pipeline should be:
 
@@ -704,11 +715,10 @@ The pipeline should be:
 not conflict, but (1) must run first so that (5) does not transform
 content that will be removed.
 
----
 
-## 5. Ensemble integration
+## Ensemble integration
 
-### 5.1 Where the new code goes
+### 1 Where the new code goes
 
 `crates/llmtrace-security/src/` gains a new module `zone_detector.rs`
 (~400 LoC). The ensemble's `analyze_request` (`ensemble.rs:880`) gains
@@ -749,7 +759,7 @@ async fn analyze_request_with_zones(
 The non-zone-aware `analyze_request` path stays available; the proxy
 calls one or the other based on `cfg.zone_detection.enabled`.
 
-### 5.2 Finding type — new vs modified
+### 2 Finding type — new vs modified
 
 **Recommendation: do not introduce a new `finding_type` for zone-aware
 findings.** Rationale: the cascade, action router, alert engine, and
@@ -773,7 +783,7 @@ zone byte ranges affected, and the byte delta. Severity: `Info`. This
 is purely observability; the action router ignores it. Storage already
 handles arbitrary `finding_type`s via the existing migration schema.
 
-### 5.3 Interaction with `apply_over_defence`
+### 3 Interaction with `apply_over_defence`
 
 `ensemble.rs:569` `apply_over_defence` suppresses ML-only single-detector
 injection findings unless regex corroborates. With zone metadata, the
@@ -791,7 +801,7 @@ detections in that zone is exactly the failure mode IS-060 is trying
 to fix. Symmetrically, Instruction zone (system / user-question) is
 where over-defense FPs come from, so the existing suppressor stays.
 
-### 5.4 Interaction with `OperatingPoint`
+### 4 Interaction with `OperatingPoint`
 
 No structural change. Per-zone scanning produces findings that are
 filtered by the same `ResolvedThresholds` (`thresholds.rs:79`). If a
@@ -800,7 +810,7 @@ that becomes a per-category override on `ResolvedThresholds.overrides`
 keyed by a synthetic finding type like `prompt_injection_in_data` —
 but that is a follow-up, not part of IS-060.
 
-### 5.5 Interaction with the cascade (`JUDGE_CASCADE.md`)
+### 5 Interaction with the cascade (`JUDGE_CASCADE.md`)
 
 The judge cascade is downstream of the ensemble. It consumes
 `prior_findings` to decide ambiguity. Zone metadata flowing through to
@@ -812,15 +822,15 @@ templates; not on the IS-060 critical path, but worth noting as a
 follow-up because it lets the slow tier exploit the same structural
 signal.
 
----
 
-## 6. BIPIA validation plan
+## BIPIA validation plan
 
-### 6.1 What success looks like
+### 1 What success looks like
 
 Two complementary signals:
 
-1. **`upstream_fell_for_it` rate per family in `e2e_<date>.md`.** This
+**`upstream_fell_for_it` rate per family in `e2e_<date>.md`.**: This
+
    is the production signal once a real upstream is configured.
    Currently the nightly mocks the upstream
    (`upstream_judge_production_evidence_2026-04-28.md` line 60: "the
@@ -829,7 +839,9 @@ Two complementary signals:
    structurally 0 across all families and this metric *cannot move*
    under the current harness. Either wire a real upstream or the metric
    is a stub. (Open question §8.3.)
-2. **Calibration corpus.** The `kimi-k2-6` calibration corpus already
+
+**Calibration corpus.**: The `kimi-k2-6` calibration corpus already
+
    includes one indirect-injection case (`subtle-compliance-no-marker`,
    `upstream_judge_calibration_kimi-k2-6_2026-04-28.md` line 30). The
    regex judge missed it; the LLM judge caught it. We can extend that
@@ -839,11 +851,12 @@ Two complementary signals:
    That is what the calibration corpus is for; it is a per-PR
    regression check on attacker-model interaction.
 
-### 6.2 What evidence I will accept in the PR
+### 2 What evidence I will accept in the PR
 
 Per-PR, the IS-060 author should produce:
 
-- **PR 1 (zone-only).** No `upstream_fell_for_it` change expected.
+**PR 1 (zone-only).**: No `upstream_fell_for_it` change expected.
+
   Required:
   - Unit tests for each heuristic in `zone_detector.rs`.
   - Integration test demonstrating that `analyze_request_with_zones`
@@ -852,7 +865,9 @@ Per-PR, the IS-060 author should produce:
   - Nightly regression run: same totals (50/50) as
     `e2e_2026-04-28.json`; no new FPs (no new failures in the
     `over_defense` family).
-- **PR 2 (datamarking).** Required:
+
+**PR 2 (datamarking).**: Required:
+
   - Unit tests for the transform: marker insertion, randomisation,
     fidelity (round-trip parse), reminder text update.
   - **Shadow mode for ≥1 nightly cycle**, with metrics: number of
@@ -865,7 +880,9 @@ Per-PR, the IS-060 author should produce:
     `scripts/e2e/calibrate_upstream_judge.py` after datamarking is in
     shadow vs active mode and verify fewer `compliance_*` rules fire on
     the indirect-injection scenarios.
-- **PR 3 (BIPIA corpus expansion).** Required:
+
+**PR 3 (BIPIA corpus expansion).**: Required:
+
   - 25–50 BIPIA scenarios imported into
     `benchmarks/attacks/indirect_injection/` covering at least 3 of the
     5 BIPIA tasks (Email QA, Summarisation, Web QA in addition to the
@@ -876,7 +893,7 @@ Per-PR, the IS-060 author should produce:
     decision, not upstream behaviour. The upstream-fell-for-it column
     is independent.)
 
-### 6.3 The "4 BIPIA FNs" claim — reality check
+### 3 The "4 BIPIA FNs" claim — reality check
 
 The brief states "The 4 BIPIA FNs are in
 `benchmarks/attacks/indirect_injection/`." Reality:
@@ -904,9 +921,8 @@ recommendation in §6.2 is to expand the YAML corpus (which is the
 production gate today) **and** keep the stress-test corpus as a
 historical baseline.
 
----
 
-## 7. Open questions for the lead engineer
+## Open questions for the lead engineer
 
 Ranked by how much they shape the design.
 
@@ -998,11 +1014,10 @@ their bytes modified), or global with a per-tenant override added later?
 The boundary defense shipped global (`BoundaryTokenConfig` lives on
 `ProxyConfig`, not `TenantConfig`). Same default seems consistent.
 
----
 
-## 8. Sequencing & rollout
+## Sequencing & rollout
 
-### 8.1 Dependencies
+### 1 Dependencies
 
 | Predecessor | What | Why |
 |---|---|---|
@@ -1011,29 +1026,34 @@ The boundary defense shipped global (`BoundaryTokenConfig` lives on
 | `apply_over_defence` (Loop 22) | Already shipped | Needs the rule update in §5.3 |
 | `tool_firewall.rs` | Already shipped | Composes upstream of IS-060 |
 
-### 8.2 Out-of-scope dependencies (flag-only)
+### 2 Out-of-scope dependencies (flag-only)
 
 Per the brief:
 
-- **IS-052 (adversarial-string propagation blocking).** Depends on
+**IS-052 (adversarial-string propagation blocking).**: Depends on
+
   IS-050 (perplexity detection). IS-052's pipeline placement is
   *before* AS-002 in tool-output sanitisation
   (`docs/TODO.md` line 756). IS-060 runs in parallel with IS-052; they
   do not interfere because IS-052 mutates content (strip / replace
   high-perplexity spans) and IS-060 marks zones over whatever content
   remains.
-- **IS-041 (multi-language zone detection).** P2. IS-060's heuristics
+
+**IS-041 (multi-language zone detection).**: P2. IS-060's heuristics
+
   are ASCII-centric (HTML table tags, RFC822 headers, `[A-Z][a-z]+:`).
   Multi-language requires a separate language-detection pass, which is
   ML-031 (Loop 23 line 563). Out of scope for this investigation.
-- **IS-050 (perplexity-based anomaly detection).** Orthogonal. Catches
+
+**IS-050 (perplexity-based anomaly detection).**: Orthogonal. Catches
+
   GCG-optimised strings; IS-060 catches natural-language XPIA. They
   layer cleanly because perplexity scoring runs on Data zones (which
   IS-060 has now identified as Data) — there is a small synergy where
   IS-050 can short-circuit per-zone instead of per-message after
   IS-060 ships, but that is a follow-up.
 
-### 8.3 Order
+### 3 Order
 
 ```
 PR 1 — zone detection + per-zone ensemble + operator markers
@@ -1050,7 +1070,7 @@ PR 2 — datamarking transform (config flag default off; shadow first)
    IS-052 pipeline; IS-050 zone-scoping; cascade-prompt zone metadata.
 ```
 
-### 8.4 Shadow rollout per PR
+### 4 Shadow rollout per PR
 
 PR 1: `cfg.zone_detection.enabled = false` default; toggling to
 `shadow_mode: true` would mean "compute zones and findings but do not
@@ -1061,32 +1081,39 @@ influences enforcement.
 PR 2: same `shadow_mode` semantics already proven by
 `BoundaryTokenConfig.shadow_mode`. Re-use it verbatim.
 
----
 
-## 9. What this design intentionally does not do
+## What this design intentionally does not do
 
-- **Does not modify response content.** Datamarking is request-side
+**Does not modify response content.**: Datamarking is request-side
+
   only. Response-side hardening is RL30's surface and a separate
   conversation.
-- **Does not change the existing `tool_firewall.rs` interface.** The
+
+**Does not change the existing `tool_firewall.rs` interface.**: The
+
   firewall stays where it is; spotlighting runs after.
-- **Does not rewrite the ensemble.** `analyze_request` gains a
+
+**Does not rewrite the ensemble.**: `analyze_request` gains a
+
   zone-aware sibling; the original entry point stays for
   config-disabled paths and for callers that don't have `ChatMessage`
   context (e.g. response analysis).
-- **Does not introduce a new per-tenant config namespace.** All new
+
+**Does not introduce a new per-tenant config namespace.**: All new
+
   fields land on `BoundaryTokenConfig` (datamarking) and a new
   top-level `SecurityAnalysisConfig.zone_detection` (zone-only). Both
   global, matching the boundary-defense precedent.
-- **Does not address adaptive adversarial strings.** That is IS-050's
+
+**Does not address adaptive adversarial strings.**: That is IS-050's
+
   job. Spotlighting is for natural-language XPIA. The two are layered.
 - **Does not promise the paper's ASR numbers will hold on Llama /
   Mistral / Kimi.** The paper tested GPT-only. The nightly /
   calibration loop is the empirical answer for our model mix.
 
----
 
-## 10. Audit trail (files I read)
+## Audit trail (files I read)
 
 This is the list of every file I opened during the investigation, with
 one-line take-aways. Per the brief, this is the audit trail and lives in
@@ -1233,22 +1260,20 @@ for the lead engineer's review.
   document executes (a), (b), (c) at the design level. The "4 BIPIA
   FNs" claim is reconciled in §6.3.
 
----
 
-## 11. Conclusion
-
+## Conclusion
 IS-060 is a structural-defense follow-on to the boundary-token defense
 that already shipped. The shape is small and incremental:
 
-1. Zone detection — heuristic + operator-declared — turns a
+- Zone detection — heuristic + operator-declared — turns a
    single-blob proxy analysis into a zone-aware analysis. The ensemble
    needs a per-zone fan-out; the over-defense suppressor needs one
    conditional update; nothing else moves.
-2. Datamarking turns the boundary-token defense (already shipped) into
+- Datamarking turns the boundary-token defense (already shipped) into
    the spotlighting paper's most evidence-backed variant. It is a
    transform stage in the existing `boundary.rs` pipeline, with the
    same fail-open + shadow-mode shape that boundary tokens use today.
-3. Operator-declared markers + an `X-LLMTrace-Data-Boundary` header
+- Operator-declared markers + an `X-LLMTrace-Data-Boundary` header
    close the gap that heuristics cannot — RAG content embedded in
    `role: "user"` messages.
 

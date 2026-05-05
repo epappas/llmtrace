@@ -54,17 +54,17 @@ flowchart TD
 
 ### Transparent Proxy Request Flow
 
-1. Client sends an OpenAI-compatible request to the proxy endpoint (for example `/v1/chat/completions`).
-2. The proxy resolves tenant identity from `X-LLMTrace-Tenant-ID` or derives a deterministic UUID from the API key when auth is disabled.
-3. The proxy forwards the request to the configured upstream provider and streams the response back to the client.
-4. A background task captures prompt/response data, performs security analysis, computes cost estimates, and stores trace data.
+- Client sends an OpenAI-compatible request to the proxy endpoint (for example `/v1/chat/completions`).
+- The proxy resolves tenant identity from `X-LLMTrace-Tenant-ID` or derives a deterministic UUID from the API key when auth is disabled.
+- The proxy forwards the request to the configured upstream provider and streams the response back to the client.
+- A background task captures prompt/response data, performs security analysis, computes cost estimates, and stores trace data.
 
 ### Streaming Analysis Flow
 
-1. For SSE streams, the proxy incrementally parses tokens and runs regex-based checks on a token interval.
-2. Streaming output safety checks (PII, leakage, and optional toxicity) run in parallel.
-3. If `streaming_analysis.early_stop_on_critical` is enabled, the proxy injects a warning event and terminates the stream on critical output findings.
-4. Full security analysis still runs after the stream ends.
+- For SSE streams, the proxy incrementally parses tokens and runs regex-based checks on a token interval.
+- Streaming output safety checks (PII, leakage, and optional toxicity) run in parallel.
+- If `streaming_analysis.early_stop_on_critical` is enabled, the proxy injects a warning event and terminates the stream on critical output findings.
+- Full security analysis still runs after the stream ends.
 
 ## Core Components
 
@@ -130,7 +130,7 @@ Outputs:
 
 ## Auth and Tenancy
 
-- When `auth.enabled` is true, all routes except `/health` require `Authorization: Bearer <key>`.
+- When `auth.enabled` is true, all routes except `/health` require `Authorisation: Bearer <key>`.
 - API keys are stored as SHA-256 hashes in metadata storage; roles are `admin`, `operator`, or `viewer`.
 - When auth is disabled, a permissive context is injected and tenant identity is resolved from `X-LLMTrace-Tenant-ID` or derived from the API key.
 
@@ -138,7 +138,7 @@ Outputs:
 
 - `/health` returns proxy health and storage connectivity status.
 - `/metrics` exposes Prometheus metrics, including circuit breaker state and request counters.
-- OTLP/HTTP ingestion allows external traces to be stored and analyzed by the same pipeline.
+- OTLP/HTTP ingestion allows external traces to be stored and analysed by the same pipeline.
 
 ## Alerts
 

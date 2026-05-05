@@ -5,9 +5,8 @@ Status: Proposed
 Authors: Engineering (AI-Engineer + Rust-Engineer + MLOps-Engineer reviewed)
 Tracks: GitHub Issue #23
 
----
 
-## 1. Executive Summary
+## Executive Summary
 
 This document specifies the implementation architecture for fixing three resource
 exhaustion vulnerabilities in LLMTrace (GitHub issue #23):
@@ -25,40 +24,39 @@ full String copies per invocation, causing 4-5x memory spikes on large inputs. F
 truncate analysis text to a configurable limit before entering the normalization
 pipeline.
 
----
 
-## 2. Problem Statement
+## Problem Statement
 
-### 2.1 ML Detector Crash (Critical)
+### 1 ML Detector Crash (Critical)
 
 The ML inference pipeline has a hard 512-token positional embedding limit that is
 not enforced at the tokenization layer:
 
-1. `HfTokenizer::new()` (ml_detector.rs) configures **padding** via `with_padding()`
+- `HfTokenizer::new()` (ml_detector.rs) configures **padding** via `with_padding()`
    but never calls `with_truncation()`. The `tokenizer.json` file has
    `truncation: null`.
 
-2. `LoadedModel::classify()` calls `tokenizer.encode(text, true)` which produces an
+- `LoadedModel::classify()` calls `tokenizer.encode(text, true)` which produces an
    unbounded token sequence.
 
-3. The token IDs flow into `Tensor::new(ids, &device)?.unsqueeze(0)?` with no length
+- The token IDs flow into `Tensor::new(ids, &device)?.unsqueeze(0)?` with no length
    check.
 
-4. In `DebertaV2Model::forward()` (via candle-transformers), position IDs are
+- In `DebertaV2Model::forward()` (via candle-transformers), position IDs are
    generated as `0..seq_len`. When `seq_len > max_position_embeddings (512)`, the
    position embedding lookup at `Embedding::forward(&position_ids)` triggers an
    index-out-of-bounds panic.
 
-5. The `LoadedModel` struct already has access to the model's
+- The `LoadedModel` struct already has access to the model's
    `max_position_embeddings` via the `DebertaConfig` deserialized from `config.json`,
    but this value is **never used to guard tokenization length**.
 
-**Current behavior:** Long inputs cause `Model inference failed` errors, silently
+**Current behaviour:** Long inputs cause `Model inference failed` errors, silently
 degrading to regex-only analysis. This is a security gap -- long inputs are exactly
 where prompt injection is most likely to be embedded (hidden among legitimate
 multi-turn conversation context).
 
-### 2.2 Unbounded Response Buffering (High)
+### 2 Unbounded Response Buffering (High)
 
 In `proxy.rs`, the background response collection task:
 
@@ -72,7 +70,7 @@ The request side is protected by `max_request_size_bytes` (default 50MB) enforce
 `axum::body::to_bytes()`, but no equivalent exists for responses. A malfunctioning
 or malicious upstream returning a multi-gigabyte response will OOM-kill the proxy.
 
-### 2.3 Regex Normalization Memory (Medium)
+### 3 Regex Normalization Memory (Medium)
 
 `normalise_text()` in `normalise.rs` creates 5 sequential `String` allocations:
 
@@ -88,11 +86,10 @@ With `max_request_size_bytes` at 50MB, peak memory during normalization can reac
 200-250MB per request. Additionally, `stem_text()` creates further copies. Response
 analysis has no size limit at all (see 2.2), compounding the problem.
 
----
 
-## 3. System Context
+## System Context
 
-### 3.1 Current ML Inference Flow
+### 1 Current ML Inference Flow
 
 ```
 proxy_handler() --> messages_to_analysis_text()
@@ -122,7 +119,7 @@ proxy_handler() --> messages_to_analysis_text()
                                    PANIC if seq_len > 512
 ```
 
-### 3.2 Proposed ML Inference Flow
+### 2 Proposed ML Inference Flow
 
 ```
 proxy_handler() --> messages_to_analysis_text()
@@ -164,7 +161,7 @@ proxy_handler() --> messages_to_analysis_text()
                                              return max(chunk_scores)
 ```
 
-### 3.3 Response Collection Flow (Proposed)
+### 3 Response Collection Flow (Proposed)
 
 ```
 upstream response stream
@@ -183,7 +180,7 @@ upstream response stream
                            (client still gets full response)
 ```
 
-### 3.4 Affected Components
+### 4 Affected Components
 
 | Component | File | Change |
 |-----------|------|--------|
@@ -198,7 +195,7 @@ upstream response stream
 | Metrics | `llmtrace-proxy/src/metrics.rs` | Add chunking + truncation metrics |
 | `config.example.yaml` | `config.example.yaml` | Document new fields |
 
-### 3.5 Unchanged Components
+### 5 Unchanged Components
 
 - DeBERTa model implementation (`candle-transformers` DebertaV2) -- no changes.
 - `normalise_text()` internals -- the function is correct; we bound its input.
@@ -206,11 +203,10 @@ upstream response stream
 - Boundary defense, enforcement, storage -- unaffected.
 - `RegexSecurityAnalyzer` pattern matching -- unaffected.
 
----
 
-## 4. Component Design
+## Component Design
 
-### 4.1 Sliding Window Classification
+### 1 Sliding Window Classification
 
 **Location:** `LoadedModel::classify()` in `ml_detector.rs`
 
@@ -257,50 +253,58 @@ fn classify(text) -> (score, label, token_count):
 
 **Key design decisions:**
 
-1. **Tokenize once without special tokens**, then prepend CLS and append SEP token
+- **Tokenize once without special tokens**, then prepend CLS and append SEP token
    IDs to each chunk. This avoids re-tokenizing each chunk (which would be wasteful
    and could produce different tokenizations at chunk boundaries). The token IDs
    are split at token boundaries (not text boundaries), so subword integrity is
    preserved -- no mid-subword splits occur.
 
-2. **CLS/SEP token IDs resolved at load time, never hardcoded.** DeBERTa-v3 uses a
+**CLS/SEP token IDs resolved at load time, never hardcoded.**: DeBERTa-v3 uses a
+
    SentencePiece tokenizer where special token IDs vary by model. During
    `load_model()`, extract the IDs via `tokenizer.token_to_id("[CLS]")` and
    `tokenizer.token_to_id("[SEP]")` and store them in `LoadedModel`. Do NOT hardcode
    magic constants like `1` or `2`.
 
-3. **`LoadedModel` stores `max_seq_length`.** Add a `max_seq_length: usize` field to
+**`LoadedModel` stores `max_seq_length`.**: Add a `max_seq_length: usize` field to
+
    `LoadedModel`, populated from `DebertaConfig::max_position_embeddings` (or
    `BertConfig::max_position_embeddings`) at load time. This value drives the
    chunking window size and the tokenizer truncation limit.
 
-4. **Per-chunk tensor construction.** For each chunk, build:
+**Per-chunk tensor construction.**: For each chunk, build:
+
    - `input_ids`: `[CLS_ID] + chunk_token_ids + [SEP_ID]` as `Tensor<u32>` shape `[1, chunk_len]`
    - `token_type_ids`: zeros of shape `[1, chunk_len]` (single-segment classification)
    - `attention_mask`: ones of shape `[1, chunk_len]` (all tokens are real)
 
-5. **Stride = max_content / 2** (255 tokens). 50% overlap ensures that any
+**Stride = max_content / 2**: (255 tokens). 50% overlap ensures that any
+
    contiguous injection payload up to 255 tokens is fully contained in at least one
    chunk. Injections longer than 255 tokens span multiple chunks, increasing
    detection probability.
 
-6. **Max chunks = 10** (covers ~5100 content tokens / ~20K characters). Beyond this,
-   remaining tokens are not analyzed by ML. The regex analyzer still scans the full
+**Max chunks = 10**: (covers ~5100 content tokens / ~20K characters). Beyond this,
+
+   remaining tokens are not analysed by ML. The regex analyzer still scans the full
    text. This cap prevents DoS via artificially enormous inputs.
 
-7. **Short-circuit on detection**. If any chunk's injection score exceeds the
+- **Short-circuit on detection**. If any chunk's injection score exceeds the
    `MLSecurityAnalyzer::threshold` (the same threshold used for single-pass
    classification), return immediately without processing remaining chunks.
 
-8. **Max-pooling aggregation** (`max(chunk_scores)`). If ANY chunk is classified as
+**Max-pooling aggregation**: (`max(chunk_scores)`). If ANY chunk is classified as
+
    malicious, the overall classification is malicious. This is the correct semantic
    for security analysis -- a single injection anywhere in the text should trigger.
 
-9. **Chunk failure handling.** If a single chunk's forward pass fails, log a warning
+**Chunk failure handling.**: If a single chunk's forward pass fails, log a warning
+
    and continue with remaining chunks. Return the best partial result. Only fail the
    entire call if ALL chunks fail or the initial tokenization fails.
 
-10. **Positional reset per chunk.** Each chunk starts from position 0 in the model's
+**Positional reset per chunk.**: Each chunk starts from position 0 in the model's
+
     positional embedding space. Since DeBERTa-v3 uses relative position embeddings
     (disentangled attention), this has minimal impact on detection accuracy. The
     model attends to relative distances between tokens, not absolute positions.
@@ -328,7 +332,7 @@ the same vulnerability. The tokenizer-level truncation fix protects both code pa
 For embeddings, simple truncation is acceptable because embeddings are used for
 feature-level fusion (similarity scoring), not binary classification.
 
-### 4.2 Response Size Limit
+### 2 Response Size Limit
 
 **Location:** `proxy.rs` response collection loop, `streaming.rs`
 
@@ -371,7 +375,7 @@ Before appending to `content`, check accumulated length against the same limit.
 When exceeded, stop accumulating content but continue processing chunks for SSE
 forwarding.
 
-### 4.3 Analysis Text Truncation
+### 3 Analysis Text Truncation
 
 **Location:** `proxy.rs` before `run_security_analysis()`, `lib.rs` config
 
@@ -410,9 +414,8 @@ let analysis_text = if analysis_text.len() > config.security_analysis.max_analys
 - The ML sliding window covers up to ~20K characters regardless (via max chunks cap)
 - Regex patterns are designed to match short injection fragments, not 50MB payloads
 
----
 
-## 5. Functional Requirements
+## Functional Requirements
 
 ### FR-01: Sliding Window Chunking
 
@@ -464,7 +467,7 @@ pipeline.
 
 ### FR-05: Metrics
 
-**Description:** Observability for the new behaviors.
+**Description:** Observability for the new behaviours.
 
 **Acceptance Criteria:**
 - AC-20: `llmtrace_ml_chunks_total` histogram -- number of chunks per classify call
@@ -484,9 +487,8 @@ pipeline.
 - AC-26: Validation: `max_response_size_bytes` must be > 0 when set
 - AC-27: Validation: `max_analysis_text_bytes` must be > 0 when set
 
----
 
-## 6. Why Sliding Window Over Simple Truncation
+## Why Sliding Window Over Simple Truncation
 
 Simple truncation (keeping only first 510 tokens) creates a trivially exploitable
 bypass vector for a security tool:
@@ -528,11 +530,10 @@ coverage without blind spots. The performance cost is acceptable:
 For context, upstream LLM API calls take 1-30 seconds. The additional ML inference
 latency is negligible relative to the end-to-end request time.
 
----
 
-## 7. Metrics and Observability
+## Metrics and Observability
 
-### 7.1 New Prometheus Metrics
+### 1 New Prometheus Metrics
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
@@ -541,7 +542,7 @@ latency is negligible relative to the end-to-end request time.
 | `llmtrace_response_truncated_total` | Counter | -- | Response collections capped at size limit |
 | `llmtrace_analysis_text_truncated_total` | Counter | -- | Analysis text truncations |
 
-### 7.2 Structured Log Events
+### 2 Structured Log Events
 
 | Event | Level | Fields | Trigger |
 |-------|-------|--------|---------|
@@ -551,11 +552,10 @@ latency is negligible relative to the end-to-end request time.
 | `response_size_exceeded` | `warn` | `trace_id`, `collected`, `limit` | Response truncation |
 | `analysis_text_truncated` | `warn` | `original_len`, `limit` | Text truncation |
 
----
 
-## 8. Validation Plan
+## Validation Plan
 
-### 8.1 Unit Tests
+### 1 Unit Tests
 
 | Test | What It Validates | Location |
 |------|-------------------|----------|
@@ -572,7 +572,7 @@ latency is negligible relative to the end-to-end request time.
 | `analysis_text_truncation` | Text truncated at char boundary | `proxy.rs` |
 | `analysis_text_no_truncation` | Small text passes through unchanged | `proxy.rs` |
 
-### 8.2 Integration Tests
+### 2 Integration Tests
 
 | Test | What It Validates |
 |------|-------------------|
@@ -580,16 +580,15 @@ latency is negligible relative to the end-to-end request time.
 | Response > 50MB | Trace truncated, client gets full response |
 | 10K-char prompt with injection at char 5000 | ML detects injection via sliding window |
 
-### 8.3 Benchmark Regression
+### 3 Benchmark Regression
 
 - Run existing benchmark suite (`benchmarks/scripts/proxy_stress_test_v2.py`) with
   ML enabled
 - Verify: no accuracy regression on the 153-sample test set (all samples < 512 tokens)
 - Verify: P99 latency not regressed for typical-length inputs
 
----
 
-## 9. Implementation Sequence
+## Implementation Sequence
 
 | Phase | Scope | Files Changed | Dependencies |
 |-------|-------|--------------|-------------|
@@ -604,11 +603,10 @@ latency is negligible relative to the end-to-end request time.
 Phases 1-2 (ML fix) and Phases 3-4 (resource limits) are independent and can be
 developed in parallel.
 
----
 
-## 10. Configuration Schema
+## Configuration Schema
 
-### 10.1 New Fields in `ProxyConfig`
+### 1 New Fields in `ProxyConfig`
 
 ```yaml
 # Maximum response body size to collect for trace storage (bytes).
@@ -617,7 +615,7 @@ developed in parallel.
 max_response_size_bytes: 52428800
 ```
 
-### 10.2 New Fields in `SecurityAnalysisConfig`
+### 2 New Fields in `SecurityAnalysisConfig`
 
 ```yaml
 security_analysis:
@@ -628,83 +626,90 @@ security_analysis:
   max_analysis_text_bytes: 1048576
 ```
 
-### 10.3 Backward Compatibility
+### 3 Backward Compatibility
 
 All new fields use `#[serde(default)]` with the defaults listed above. Existing
 config files continue to work without modification.
 
----
 
-## 11. Known Limitations
+## Known Limitations
 
-1. **ML coverage cap at ~5100 tokens (~20K chars).** The 10-chunk maximum means
-   tokens beyond position ~5100 are not analyzed by ML. Regex still covers the full
+**ML coverage cap at ~5100 tokens (~20K chars).**: The 10-chunk maximum means
+
+   tokens beyond position ~5100 are not analysed by ML. Regex still covers the full
    text. This cap exists to prevent DoS; it can be raised via config if needed.
 
-2. **Chunk boundary semantic context.** Token IDs are split at token boundaries (no
+**Chunk boundary semantic context.**: Token IDs are split at token boundaries (no
+
    mid-subword splits), but semantic context at chunk boundaries is incomplete. The
    50% overlap ensures any contiguous injection payload up to 255 tokens is fully
    contained in at least one chunk. Known injection payloads are typically under 100
    tokens, well within this coverage guarantee.
 
-3. **Linear latency scaling.** ML inference time scales linearly with chunk count.
+**Linear latency scaling.**: ML inference time scales linearly with chunk count.
+
    For 10 chunks: ~500-1500ms on CPU. This is acceptable for the proxy use case
    (upstream LLM calls take 1-30s) but should be monitored via the
    `llmtrace_ml_chunks_total` histogram.
 
-4. **No GPU acceleration in chunking.** Each chunk is a separate forward pass. GPU
-   batching (running all chunks in a single batched forward pass) would be more
-   efficient but requires tensor padding and is deferred as a future optimization.
+**No GPU acceleration in chunking.**: Each chunk is a separate forward pass. GPU
 
-5. **Embedding extraction uses simple truncation.** The `extract_embedding()` method
+   batching (running all chunks in a single batched forward pass) would be more
+   efficient but requires tensor padding and is deferred as a future optimisation.
+
+**Embedding extraction uses simple truncation.**: The `extract_embedding()` method
+
    (for feature-level fusion) uses the tokenizer's built-in truncation rather than
    sliding window. For embeddings (similarity scoring), this is acceptable because
    the first 510 tokens typically capture the semantic signature. Sliding window
    embeddings would require a separate aggregation strategy.
 
-6. **Response truncation is per-response, not per-stream.** For streaming responses,
-   the limit applies to total accumulated bytes, not per-SSE-event. This is the
-   correct behavior.
+**Response truncation is per-response, not per-stream.**: For streaming responses,
 
-7. **Positional reset per chunk.** Each chunk starts from position 0 in the model's
+   the limit applies to total accumulated bytes, not per-SSE-event. This is the
+   correct behaviour.
+
+**Positional reset per chunk.**: Each chunk starts from position 0 in the model's
+
    embedding space. DeBERTa-v3 uses relative position embeddings (disentangled
    attention), so this has minimal accuracy impact. Models with absolute position
    embeddings would be more affected.
 
-8. **False positive rate scales with chunk count.** Max-pooling means more chunks =
+**False positive rate scales with chunk count.**: Max-pooling means more chunks =
+
    more opportunities for a false positive. With 10 chunks, the effective FP rate is
    approximately `1 - (1 - base_FP)^10`. At a base FP rate of 1%, this becomes
-   ~9.6%. The short-circuit optimization does not mitigate this for benign inputs
+   ~9.6%. The short-circuit optimisation does not mitigate this for benign inputs
    (all chunks are processed). Monitor via metrics and consider threshold adjustment
    if FP rate increases unacceptably for long inputs.
 
-9. **InjecGuard and PromptGuard have the same vulnerability.** This fix addresses
+**InjecGuard and PromptGuard have the same vulnerability.**: This fix addresses
+
    the DeBERTa and BERT model paths in `ClassificationModel`. The InjecGuard and
    PromptGuard detectors (separate modules in `llmtrace-security`) likely have
    similar 512-token limits. Track as a follow-up issue.
 
-10. **Supervised pipeline interaction.** The fine-tuning pipeline (#44) uses Judge
+**Supervised pipeline interaction.**: The fine-tuning pipeline (#44) uses Judge
+
     decisions as labels for full inputs. When chunking is active, each training
     sample should still be the full text (the fine-tuning pipeline uses its own
     tokenization with truncation). The chunking strategy is an inference-time
     concern, not a training-time concern.
 
----
 
-## 12. Risk Assessment
+## Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | Chunking logic bug produces wrong chunk boundaries | Low | High | Tokenizer truncation safety net catches any overflow; unit tests verify boundaries |
-| Sliding window increases latency beyond acceptable | Low | Medium | Short-circuit optimization; 99%+ of real traffic is < 512 tokens (no overhead); histogram metric to monitor |
+| Sliding window increases latency beyond acceptable | Low | Medium | Short-circuit optimisation; 99%+ of real traffic is < 512 tokens (no overhead); histogram metric to monitor |
 | Max chunks cap creates blind spot for very long inputs | Medium | Low | Regex analyzer still scans full text; cap is configurable; 5100 tokens covers most adversarial inputs |
 | `max_response_size_bytes` too low truncates legitimate traces | Low | Low | Default 50MB matches request limit; configurable; client always gets full response |
 | `max_analysis_text_bytes` truncation misses tail-end patterns | Low | Low | 1MB = ~250K words, far beyond realistic injection payloads; ML sliding window is independent |
 | Backward compatibility: old configs missing new fields | None | None | All fields use `#[serde(default)]` |
 
----
 
-## 13. Decision Log
+## Decision Log
 
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|

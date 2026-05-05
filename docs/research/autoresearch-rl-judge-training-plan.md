@@ -18,9 +18,8 @@
 [109]: https://github.com/epappas/llmtrace/issues/109
 [110]: https://github.com/epappas/llmtrace/issues/110
 
----
 
-## 1. Why this plan exists
+## Why this plan exists
 
 The `gpt-4o-mini` evaluation published 2026-04-20 proved the judge architecture works end-to-end but at **$0.00012/call and ~2.5 s p95**. For production we want a local alternative that:
 
@@ -31,7 +30,7 @@ The `gpt-4o-mini` evaluation published 2026-04-20 proved the judge architecture 
 
 Qwen2.5-0.5B-Instruct + a task-specific LoRA is the most parameter-efficient path. The user already has `autoresearch-rl` as a working autonomous training harness — it proposes hyperparameters, trains, evaluates, keeps or discards, iterates. The plan below is about **adapting that harness from 2-field to 6-field output** and executing it to convergence.
 
-## 2. Prerequisites (before any issue starts)
+## Prerequisites (before any issue starts)
 
 | Item | Status | Owner |
 |---|---|---|
@@ -43,20 +42,20 @@ Qwen2.5-0.5B-Instruct + a task-specific LoRA is the most parameter-efficient pat
 
 Two items to confirm before kicking off. Everything else is already in place.
 
-## 3. Phases
+## Phases
 
 ### Phase 1 — Data preparation (#102, #103)
 
 **Duration:** 1–2 days.
 **Parallel:** yes (both sub-issues can run concurrently).
 
-#### 3.1 Corpus expansion (#102)
+#### 1 Corpus expansion (#102)
 
 The existing 19,186-sample 2-class corpus needs four new columns: `category`, `recommended_action`, `security_score`, `confidence`. See #102 for the full mapping table — the important part is that this is deterministic data engineering, not ML, so one engineer can knock it out in a day.
 
 Output: `autoresearch-rl/examples/security-judge/data/corpus_6field.jsonl`.
 
-#### 3.2 Reasoning distillation (#103)
+#### 2 Reasoning distillation (#103)
 
 Run every row through `gpt-4o-mini` with LLMTrace's production system prompt; capture the `reasoning` field as the training target. ~19,000 calls with deduplication at ~$1.50 total cost.
 
@@ -71,13 +70,13 @@ This is the only phase where the teacher quality matters. Choosing `gpt-4o-mini`
 **Duration:** 2–3 days.
 **Parallel:** #104 blocks #105 and #106 (schema is the contract).
 
-#### 3.3 prepare.py rewrite (#104)
+#### 3 prepare.py rewrite (#104)
 
 This is the **frozen** file in autoresearch-rl — the LLM policy cannot modify it. It owns: data loading, prompt formatting (copy of `DEFAULT_SYSTEM_PROMPT` from the LLMTrace security crate), verdict parsing, and the evaluation protocol.
 
 Key design decision: the evaluation protocol emits a single composite `eval_score` that autoresearch-rl optimises against, plus component metrics (`json_compliance`, `is_threat_acc`, `category_acc`, etc.) for debugging.
 
-#### 3.4 train.py rewrite (#105)
+#### 4 train.py rewrite (#105)
 
 Seven-component reward replacing the two-component one. The component weights are stored in `eval_protocol.json` (produced by prepare.py) so tweaking them doesn't require code changes during autoresearch-rl's hybrid loop.
 
@@ -91,7 +90,7 @@ Seven-component reward replacing the two-component one. The component weights ar
 | `confidence` calibrated against correctness | 0.10 |
 | `reasoning` length + signal word | 0.05 |
 
-#### 3.5 program.md + config.yaml (#106)
+#### 5 program.md + config.yaml (#106)
 
 `program.md` guides the LLM policy during autoresearch-rl's `llm_diff` mode — when param search stalls, the policy reads this doc plus the full experiment history and proposes code diffs to `train.py`. Updating it to reference the 7 reward components is what lets the LLM propose *useful* diffs instead of random ones.
 
@@ -104,14 +103,17 @@ Policy search grid tightens too: `lora_rank ∈ {8, 16, 32}` (was `{4, 8, 16}` �
 
 autoresearch-rl's hybrid policy:
 
-1. Iter 0–5: random param seeds.
-2. Iter 5–20: LLM-guided param tuning.
-3. Iter 20+: code diffs to train.py (reward tweaks, length penalties, format penalties).
+- Iter 0–5: random param seeds.
+- Iter 5–20: LLM-guided param tuning.
+- Iter 20+: code diffs to train.py (reward tweaks, length penalties, format penalties).
 
 Stop conditions:
 
-- **Success**: every acceptance gate green on val (see §6).
-- **Rescope**: three 12-hour runs without improvement, or $200 cost cap, or reward hacking detected.
+**Success**: every acceptance gate green on val (see §6).
+
+
+**Rescope**: three 12-hour runs without improvement, or $200 cost cap, or reward hacking detected.
+
 
 Rescope options, each becoming a new sub-issue when taken:
 
@@ -174,18 +176,25 @@ Collect ≥ 1,000 verdicts under shadow. Fit reliability diagrams on the observe
 
 Produce a production eval report and archive both the calibration data and the final config.
 
-## 4. What LLMTrace does **not** need to change
+## What LLMTrace does **not** need to change
 
 This is worth emphasising because it's the architectural payoff of building the cascade and the 6-field schema first:
 
-- **No parser changes.** The verdict JSON parser already accepts the 6-field format (`parse_verdict_json` in `crates/llmtrace-security/src/judge/parser.rs`).
-- **No backend changes.** The existing `vllm` backend in `crates/llmtrace-security/src/judge/vllm.rs` serves any HF-format model behind a vLLM HTTP endpoint.
-- **No config-schema changes.** `JudgeBackendKind::Cascade` and `JudgeCascadeConfig.slow_backend: Option<JudgeBackendKind>` already exist (issue #88).
-- **No worker changes.** `JudgeWorker` holds an `Arc<dyn JudgeBackend>`; the cascade is just another backend.
+**No parser changes.**: The verdict JSON parser already accepts the 6-field format (`parse_verdict_json` in `crates/llmtrace-security/src/judge/parser.rs`).
+
+
+**No backend changes.**: The existing `vllm` backend in `crates/llmtrace-security/src/judge/vllm.rs` serves any HF-format model behind a vLLM HTTP endpoint.
+
+
+**No config-schema changes.**: `JudgeBackendKind::Cascade` and `JudgeCascadeConfig.slow_backend: Option<JudgeBackendKind>` already exist (issue #88).
+
+
+**No worker changes.**: `JudgeWorker` holds an `Arc<dyn JudgeBackend>`; the cascade is just another backend.
+
 
 Flipping to Qwen is one config push. Everything else is the fine-tuning work itself.
 
-## 5. Budget
+## Budget
 
 | Phase | Cost |
 |---|---|
@@ -196,7 +205,7 @@ Flipping to Qwen is one config push. Everything else is the fine-tuning work its
 
 Compare to gpt-4o-mini at $0.00012/call × ~100k elevated calls/day ≈ $12/day = **$4,380/year**. Break-even in ~18 days on volume alone, independent of any latency/privacy argument.
 
-## 6. Acceptance gates (global)
+## Acceptance gates (global)
 
 Ship the model when **all** of:
 
@@ -214,7 +223,7 @@ Ship the model when **all** of:
 
 **Don't ship**: anything below the fallback.
 
-## 7. Risks and mitigations
+## Risks and mitigations
 
 | Risk | Probability | Mitigation |
 |---|---|---|
@@ -226,7 +235,7 @@ Ship the model when **all** of:
 | LoRA merge degrades model quality | Low | #108 evaluates the **merged** model, not the adapter — any degradation caught before production |
 | Teacher distillation cost runs higher than $1.50 | Low | Budget cap in #103 exits cleanly |
 
-## 8. Timeline
+## Timeline
 
 Assuming no rescopes and a full-time data person + a full-time ML engineer:
 
@@ -240,11 +249,17 @@ Assuming no rescopes and a full-time data person + a full-time ML engineer:
 
 **End-to-end: 5–6 weeks**, rescope adds 1–2 weeks per occurrence.
 
-## 9. Out of scope (deliberately)
+## Out of scope (deliberately)
 
-- **Replacing gpt-4o-mini** as the slow tier in every deployment. Some operators will prefer it; the cascade already supports it. Qwen-v1 is *an option*, not a mandate.
-- **Training a fast tier** (DeBERTa replacement). That's issue #89; separate track, different model family, different dataset split.
-- **Multi-category classifier head for DeBERTa.** Would eliminate the synthesised `category` in the DeBERTa backend but needs its own labelled-dataset work; not on the critical path.
-- **Continuous/online learning.** Everything here is offline one-shot training. Continual learning is a separate research track (see `docs/research/self-distillation-continual-learning.md`).
+**Replacing gpt-4o-mini**: as the slow tier in every deployment. Some operators will prefer it; the cascade already supports it. Qwen-v1 is *an option*, not a mandate.
 
----
+
+**Training a fast tier**: (DeBERTa replacement). That's issue #89; separate track, different model family, different dataset split.
+
+
+**Multi-category classifier head for DeBERTa.**: Would eliminate the synthesised `category` in the DeBERTa backend but needs its own labelled-dataset work; not on the critical path.
+
+
+**Continuous/online learning.**: Everything here is offline one-shot training. Continual learning is a separate research track (see `docs/research/self-distillation-continual-learning.md`).
+
+

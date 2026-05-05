@@ -16,7 +16,6 @@
 [100]: https://github.com/epappas/llmtrace/issues/100
 [101]: https://github.com/epappas/llmtrace/issues/101
 
----
 
 ## Status Legend
 - ⬜ Not started
@@ -24,23 +23,21 @@
 - ✅ Done
 - ❌ Blocked
 
----
 
 ## Acceptance Criteria (Framework-wide)
 
 The framework's umbrella acceptance is ratified in `#91`:
 
-1. `pytest tests/e2e/ -v` passes locally and in CI on the curated PR-gate subset.
-2. The full nightly run produces a deterministic markdown report at `docs/research/results/e2e_<date>.md` that diffs cleanly against the previous run.
-3. At least one regression has been caught and filed by the framework before #91 closes (proof it works).
-4. `docs/guides/e2e-testing.md` describes how to add a scenario and how to run the harness locally.
+- `pytest tests/e2e/ -v` passes locally and in CI on the curated PR-gate subset.
+- The full nightly run produces a deterministic markdown report at `docs/research/results/e2e_<date>.md` that diffs cleanly against the previous run.
+- At least one regression has been caught and filed by the framework before #91 closes (proof it works).
+- `docs/guides/e2e-testing.md` describes how to add a scenario and how to run the harness locally.
 
 Per-loop acceptance is the **AND** of the criteria below the loop table. A loop is ✅ only when:
 - The acceptance criteria are met with evidence (commands run + outputs).
 - The deliverables table is fully checked off.
 - Tests pass on `main` after merge.
 
----
 
 ## Dependency Graph
 
@@ -58,7 +55,6 @@ E2E-L11 (Rust subcommand, stretch) ──► picked up only after E2E-L2..L10 st
 
 **L1a inserted between L1 and L2** — surfaced by the L1 audit (trace-id gap). It blocks L4 and L5 specifically, but starting it before L2 keeps the Rust changes batched with the schema work for review.
 
----
 
 ## Phase E2E-Foundation
 
@@ -80,11 +76,14 @@ E2E-L11 (Rust subcommand, stretch) ──► picked up only after E2E-L2..L10 st
 - `crates/llmtrace-proxy/src/proxy.rs:376` always generates `let trace_id = Uuid::new_v4();` at request entry. There is **no inbound trace-id header honored** (no `x-trace-id`, `x-request-id`, `traceparent`, or `x-llmtrace-trace-id`).
 - The trace_id is **not echoed** in response headers. `proxy.rs:1147–1167` only injects `x-llmtrace-flagged` / `x-llmtrace-findings` for blocked/flagged requests; the trace-id is logged + stored but not returned.
 - Existing `X-LLMTrace-*` headers in use: `x-llmtrace-token`, `x-llmtrace-tenant-id`, `x-llmtrace-agent-id`, `x-llmtrace-provider`, `x-llmtrace-flagged`, `x-llmtrace-findings`. No conflict with adding `x-llmtrace-trace-id`.
-- **Required upstream fix (file as a Rust prerequisite under Loop E2E-L5 or as its own micro-loop):**
-  - `crates/llmtrace-proxy/src/proxy.rs:376` — accept inbound `X-LLMTrace-Trace-Id: <uuid>` header; if present and parseable, use it instead of generating; otherwise fall back to `Uuid::new_v4()` (current behaviour).
+
+**Required upstream fix (file as a Rust prerequisite under Loop E2E-L5 or as its own micro-loop):**: `crates/llmtrace-proxy/src/proxy.rs:376` — accept inbound `X-LLMTrace-Trace-Id: <uuid>` header; if present and parseable, use it instead of generating; otherwise fall back to `Uuid::new_v4()` (current behaviour).
+
   - `crates/llmtrace-proxy/src/proxy.rs:1147–1167` — always echo `X-LLMTrace-Trace-Id: <uuid>` on every response (success or error), so harness can correlate even when it didn't supply one.
   - Add a config field (or hard-code the header name) — recommendation: hard-code `x-llmtrace-trace-id` to keep config minimal.
-- **Blocks:** Loop E2E-L4 (E2E-035), Loop E2E-L5 (E2E-045).
+
+**Blocks:**: Loop E2E-L4 (E2E-035), Loop E2E-L5 (E2E-045).
+
 
 **E2E-002 — `/metrics` shape: GREEN with one label nuance.**
 Verified in `crates/llmtrace-proxy/src/metrics.rs`:
@@ -101,13 +100,19 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 | `llmtrace_judge_verdict_agreement` | `agreement` | ✅ |
 | `llmtrace_judge_queue_depth` | (gauge, no labels) | ✅ |
 - Also confirmed: metrics endpoint is **unauthenticated** (`metrics.rs:7–8`) — harness can scrape directly with no auth.
-- **Action for L4 (E2E-052):** include `mode` in any series query against `action_executions_total` (or use `series(name)` without label match if we want sum-across-modes).
+
+**Action for L4 (E2E-052):**: include `mode` in any series query against `action_executions_total` (or use `series(name)` without label match if we want sum-across-modes).
+
 
 **E2E-003 — `JudgeVerdictStore` access: PARTIAL — no Rust trait change needed; HTTP endpoint still required.**
 - `crates/llmtrace-core/src/lib.rs:3219–3251` — `JudgeVerdictQuery` already has `pub trace_id: Option<Uuid>` and `query_verdicts(&self, query: &JudgeVerdictQuery) -> Result<Vec<JudgeVerdict>>` is on the trait.
 - All three implementors already filter by `trace_id` via the existing query path: `InMemoryJudgeVerdictStore`, `ClickHouseJudgeVerdictStore`, `PostgresJudgeVerdictStore` (`crates/llmtrace-storage/src/judge_verdict.rs`).
-- **No new trait method needed** — Loop E2E-L5 items E2E-040 and E2E-041 are obsolete and should be **deleted from the plan**.
-- **Still required:** the debug HTTP endpoint (E2E-042–E2E-044). Confirmed there is no existing `/debug/*` route in `crates/llmtrace-proxy/src/main.rs:917–990`. The endpoint will call `state.storage.judge_verdicts.query_verdicts(JudgeVerdictQuery { trace_id: Some(uuid), .. })` and return the first row (or 404).
+
+**No new trait method needed**: — Loop E2E-L5 items E2E-040 and E2E-041 are obsolete and should be **deleted from the plan**.
+
+
+**Still required:**: the debug HTTP endpoint (E2E-042–E2E-044). Confirmed there is no existing `/debug/*` route in `crates/llmtrace-proxy/src/main.rs:917–990`. The endpoint will call `state.storage.judge_verdicts.query_verdicts(JudgeVerdictQuery { trace_id: Some(uuid), .. })` and return the first row (or 404).
+
 
 **E2E-004 — `/health`: GREEN.**
 - Route registered at `crates/llmtrace-proxy/src/main.rs:917`.
@@ -124,13 +129,26 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 
 #### Plan corrections (apply before starting Loop E2E-L2)
 
-1. **Delete E2E-040 and E2E-041** from Loop E2E-L5 — `find_by_trace_id` already exists via `query_verdicts(JudgeVerdictQuery { trace_id, .. })`. Keep the rest of the Rust prerequisite block (E2E-042–E2E-044) intact.
-2. **Add new Rust micro-loop E2E-L1a** — "Honor + echo `X-LLMTrace-Trace-Id`" — must land before Loop E2E-L4 (it gates E2E-035 + E2E-045). Two-file change in `proxy.rs`. ~½ day. New IDs:
-   - **E2E-007** — Accept inbound `X-LLMTrace-Trace-Id: <uuid>` header in `proxy.rs:376`; fall back to `Uuid::new_v4()` if missing or unparseable.
-   - **E2E-008** — Echo `X-LLMTrace-Trace-Id: <uuid>` on **every** response (success + error paths) in `proxy.rs:1147–1167` and `error_response()`.
-   - **E2E-009** — Rust unit test: round-trip an inbound header and assert the echoed value matches.
-3. **Pin label nuance** in Loop E2E-L6 (E2E-052) docs: `action_executions_total` queries must accommodate `mode` as a third label.
-4. **Add to L3 (E2E-023)**: the rendered e2e config sets `shutdown.timeout_seconds: 5`.
+**Delete E2E-040 and E2E-041**: from Loop E2E-L5 — `find_by_trace_id` already exists via `query_verdicts(JudgeVerdictQuery { trace_id, .. })`. Keep the rest of the Rust prerequisite block (E2E-042–E2E-044) intact.
+
+
+**Add new Rust micro-loop E2E-L1a**: — "Honor + echo `X-LLMTrace-Trace-Id`" — must land before Loop E2E-L4 (it gates E2E-035 + E2E-045). Two-file change in `proxy.rs`. ~½ day. New IDs:
+
+
+**E2E-007**: — Accept inbound `X-LLMTrace-Trace-Id: <uuid>` header in `proxy.rs:376`; fall back to `Uuid::new_v4()` if missing or unparseable.
+
+
+**E2E-008**: — Echo `X-LLMTrace-Trace-Id: <uuid>` on **every** response (success + error paths) in `proxy.rs:1147–1167` and `error_response()`.
+
+
+**E2E-009**: — Rust unit test: round-trip an inbound header and assert the echoed value matches.
+
+
+**Pin label nuance**: in Loop E2E-L6 (E2E-052) docs: `action_executions_total` queries must accommodate `mode` as a third label.
+
+
+**Add to L3 (E2E-023)**: the rendered e2e config sets `shutdown.timeout_seconds: 5`.
+
 
 **Acceptance (this loop):**
 - ✅ All 6 audit items have a recorded outcome above.
@@ -138,7 +156,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - ✅ One simplification (E2E-003) prunes the L5 plan (E2E-040, E2E-041 deleted).
 - ✅ Two fixture defaults (action_executions `mode` label; `shutdown.timeout_seconds: 5`) recorded for L3/L6.
 
----
 
 ### Loop E2E-L1a — Honor + Echo `X-LLMTrace-Trace-Id` Header (NEW — surfaced by L1)
 > Add the harness-controlled correlation id without which Loops E2E-L4 and E2E-L5 can't deterministically attribute observations to scenarios.
@@ -157,7 +174,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 
 **Blocks:** Loop E2E-L4 (E2E-035), Loop E2E-L5 (E2E-045). Both can now proceed.
 
----
 
 ## Phase E2E-Schema
 
@@ -178,7 +194,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - `family` is a closed enum (rejects unknown values).
 - Pre-commit hook fires on any change under `benchmarks/attacks/`.
 
----
 
 ## Phase E2E-Harness
 
@@ -202,7 +217,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - `tests/e2e/.logs/<session>.log` contains the proxy stdout/stderr for the last run.
 - `requirements-e2e.txt` deps install cleanly into a fresh venv.
 
----
 
 ## Phase E2E-Observation
 
@@ -223,7 +237,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - Failure pretty-print includes the full non-zero delta.
 - Running `pytest -n auto` errors loudly with a message about counter-diff requiring serial execution.
 
----
 
 ### Loop E2E-L5 — Judge Verdict Collector (issue [#95][95])
 > Stitch async judge verdicts back to per-scenario assertions. Includes Rust changes.
@@ -255,7 +268,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - Degraded-mode handling verified by pointing cascade slow at `http://127.0.0.1:1` (refused) and observing the scenario fall to `degraded` rather than fail.
 - Debug endpoint returns 404 when `server.debug_endpoints: false`.
 
----
 
 ### Loop E2E-L6 — Expectation DSL + Assertion Helpers (issue [#96][96])
 > Formalise how `expected:` translates to pytest assertions. Highest-ROI investment for harness debuggability.
@@ -274,7 +286,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - All comparators implemented and unit-tested.
 - Manually breaking one expectation in a scenario produces a failure message that names the scenario `id` and shows observed vs expected (verified by reading the message).
 
----
 
 ## Phase E2E-Corpus
 
@@ -302,7 +313,6 @@ Verified in `crates/llmtrace-proxy/src/metrics.rs`:
 - ≥10 scenarios have non-default `expected:` (evidence of triage).
 - `INDEX.md` matches the filesystem (regen + diff produces no change).
 
----
 
 ### Loop E2E-L8 — Upstream-Fell-For-It Detector (issue [#98][98])
 > Did the upstream LLM actually fall for the attack? Independent ground-truth signal alongside LLMTrace's own decision.
@@ -334,7 +344,6 @@ The reserved `llm` seam is now an Anthropic-backed implementation:
 
 See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the operator-facing reference.
 
----
 
 ## Phase E2E-CI
 
@@ -354,7 +363,6 @@ See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the
 - Wall time on representative PR < 5 min; hard fail at 10 min.
 - pytest-junit XML accessible from the Actions run UI.
 
----
 
 ### Loop E2E-L10 — Nightly Full-Corpus + Committed Report (issue [#100][100])
 > Once-per-night real-LLM run; markdown report committed via auto-PR; diff vs previous run is the primary value.
@@ -377,7 +385,6 @@ See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the
 - Second run's regression section shows zero changes.
 - Deliberately break one scenario, rerun, verify diff section flags the new regression.
 
----
 
 ## Phase E2E-Stretch
 
@@ -396,7 +403,6 @@ See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the
 - Subcommand shipped in release binary.
 - One quarter of #91 usage data shows operator demand (otherwise close as `wontfix`).
 
----
 
 ## Sequencing & Estimates
 
@@ -417,14 +423,26 @@ See [`docs/guides/e2e-testing.md`](guides/e2e-testing.md#upstream-judge) for the
 - D: L6 → L8
 - E: L10 (after L3–L8 stable)
 
----
 
 ## Cross-Loop Risks
 
-1. **Rust-side coupling** — L5's debug endpoint + `find_by_trace_id` is the only sub-issue requiring Rust changes. Schedule it early so review batches with cascade work.
-2. **Counter-diff serialisation** — `pytest -n auto` would silently produce nonsense. L4's hard guard (E2E-034) is non-negotiable.
-3. **Trace-id discipline** — L1's E2E-001 is load-bearing. If trace ids aren't already first-class, file an upstream Rust loop **before** starting L4.
-4. **Mock upstream scope creep** — keep it canned. Real-LLM responses belong in nightly only.
-5. **Over-tuning L8 regex** — observational > assertional by default; over-tuning to the seed corpus produces a false sense of coverage.
-6. **Report drift in L10** — non-deterministic markdown means every nightly auto-PR shows noise. E2E-108 is load-bearing for the diff workflow's value.
-7. **CI cost ceiling** — nightly with cascade slow-tier could 10× the cost on retry storms. E2E-106 cap enforced in code, not docs.
+**Rust-side coupling**: — L5's debug endpoint + `find_by_trace_id` is the only sub-issue requiring Rust changes. Schedule it early so review batches with cascade work.
+
+
+**Counter-diff serialisation**: — `pytest -n auto` would silently produce nonsense. L4's hard guard (E2E-034) is non-negotiable.
+
+
+**Trace-id discipline**: — L1's E2E-001 is load-bearing. If trace ids aren't already first-class, file an upstream Rust loop **before** starting L4.
+
+
+**Mock upstream scope creep**: — keep it canned. Real-LLM responses belong in nightly only.
+
+
+**Over-tuning L8 regex**: — observational > assertional by default; over-tuning to the seed corpus produces a false sense of coverage.
+
+
+**Report drift in L10**: — non-deterministic markdown means every nightly auto-PR shows noise. E2E-108 is load-bearing for the diff workflow's value.
+
+
+**CI cost ceiling**: — nightly with cascade slow-tier could 10× the cost on retry storms. E2E-106 cap enforced in code, not docs.
+

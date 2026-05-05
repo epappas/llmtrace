@@ -5,7 +5,6 @@
 **Scope**: Agent security benchmarks, prompt injection defenses, multimodal attacks, evaluation frameworks
 **Purpose**: LLMTrace competitive positioning and evaluation roadmap
 
----
 
 ## Executive Summary
 
@@ -17,7 +16,6 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 - LLMTrace covers foundational capabilities but lacks evaluation against modern agent benchmarks
 - Integration opportunities exist with multiple defensive tools for layered security
 
----
 
 ## Agent Security Benchmarks Analysis
 
@@ -32,7 +30,7 @@ The LLM security landscape has rapidly evolved with specialized benchmarks for a
 | **BIPIA** | Indirect prompt injection benchmark | USTC/HKUST/Microsoft (KDD 2025) | 2023 | ⚠️ Partial detection | **High** |
 | **Agent-as-a-Proxy** | Monitor bypass via agent repetition | Isbarov & Kantarcioglu (arXiv 2602.05066) | 2026 | ⚠️ Monitoring-based (vulnerable) | **Critical** |
 
-### 1. AgentDojo (NeurIPS 2024) — **Priority: High**
+### AgentDojo (NeurIPS 2024) — **Priority: High**
 
 **Focus**: Security evaluation framework for tool-augmented LLM agents
 **Scope**: 97 environments testing tool misuse, prompt injection resilience, safety violations
@@ -58,7 +56,7 @@ evaluation:
     - false_positive_rate: "<10%"
 ```
 
-### 2. InjecAgent — **Priority: High**
+### InjecAgent — **Priority: High**
 
 **Focus**: Indirect prompt injection attacks specifically targeting LLM agents
 **Scope**: 8 defense mechanisms, adaptive attacks, >50% bypass rate demonstrated
@@ -74,25 +72,25 @@ evaluation:
 - Need ensemble or adversarial training approaches
 - Requires tool output sanitization beyond current PII detection
 
-### 3. Agent Security Bench (ASB) — **Priority: Medium**
+### Agent Security Bench (ASB) — **Priority: Medium**
 
 **Focus**: Comprehensive benchmark for LLM agent vulnerabilities and defenses
 **Scope**: Multi-domain security assessment including privacy, safety, robustness
 **Attack Types**: Cross-domain attacks, privacy leakage, safety boundary violations
 
 **LLMTrace Coverage**: ❌ **Not Evaluated**
-- No standardized agent security metrics
+- No standardised agent security metrics
 - Missing privacy-preserving evaluation frameworks
 - Limited cross-domain attack detection
 
-### 4. NotInject (InjecGuard) — **Priority: High**
+### NotInject (InjecGuard) — **Priority: High**
 
 **Focus**: Over-defense evaluation — measuring false positives in prompt injection detection
 **Scope**: Evaluating production-scale precision vs. recall tradeoffs
 **Key Insight**: High false positive rates make defenders unusable in production
 
 **LLMTrace Coverage**: ❌ **Critical Gap**
-- Current ensemble approach not optimized for false positive reduction
+- Current ensemble approach not optimised for false positive reduction
 - No precision-focused threshold tuning
 - Missing over-defense mitigation strategies
 
@@ -103,7 +101,7 @@ NotInject Standards: <1% FPR required for production viability
 Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) training
 ```
 
-### 5. WASP (Web Agent Security) — **Priority: Medium**
+### WASP (Web Agent Security) — **Priority: Medium**
 
 **Focus**: Security evaluation for web-interacting agents
 **Scope**: Browser-based attacks, DOM manipulation, cross-site injection
@@ -114,7 +112,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 - Missing browser security context analysis
 - Limited to API-level monitoring
 
-### 6. CyberSecEval 2 (Meta) — **Priority: Low**
+### CyberSecEval 2 (Meta) — **Priority: Low**
 
 **Paper:** arXiv 2404.13161 (April 2024)
 **Breakdown:** `docs/research/cyberseceval2-llm-security-benchmark.md`
@@ -127,7 +125,7 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 - Missing code interpreter abuse detection
 - FRR methodology relevant to IS-006/IS-007 (implemented)
 
-### 7. BIPIA (USTC/HKUST/Microsoft, KDD 2025) — **Priority: High**
+### BIPIA (USTC/HKUST/Microsoft, KDD 2025) — **Priority: High**
 
 **Paper:** arXiv 2312.14197 (December 2023, v4 January 2025)
 **Breakdown:** `docs/research/bipia-indirect-prompt-injection-benchmark.md`
@@ -141,16 +139,16 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 - No explicit reminder injection or multi-turn dialogue restructuring
 - No position-aware detection weighting (end-of-content injections most effective)
 
-### 8. Agent-as-a-Proxy (Isbarov & Kantarcioglu, 2026) — **Priority: Critical**
+### Agent-as-a-Proxy (Isbarov & Kantarcioglu, 2026) — **Priority: Critical**
 
 **Paper:** arXiv 2602.05066 (February 2026)
 **Breakdown:** `docs/research/agent-as-a-proxy-attacks.md`
-**Focus**: Demonstrates monitoring-based defenses are fundamentally fragile. Agent-as-a-Proxy attack uses GCG-optimized adversarial strings that agents repeat in their traces, bypassing hybrid monitors at 90%+ ASR. Tested against AlignmentCheck, LlamaFirewall (PromptGuard 2 + AlignmentCheck), and Extract-and-Evaluate on AgentDojo.
+**Focus**: Demonstrates monitoring-based defenses are fundamentally fragile. Agent-as-a-Proxy attack uses GCG-optimised adversarial strings that agents repeat in their traces, bypassing hybrid monitors at 90%+ ASR. Tested against AlignmentCheck, LlamaFirewall (PromptGuard 2 + AlignmentCheck), and Extract-and-Evaluate on AgentDojo.
 **Scope**: 99% ASR against multi-layer defenses (Mistral-7B). Hybrid monitoring paradox: more observation = more attack surface. No capability gap needed (GPT-4o mini bypasses Qwen2.5-72B). 88-90% cross-model transferability.
 
 **LLMTrace Coverage**: ⚠️ **Directly Vulnerable**
 - LLMTrace is a monitoring-based defense -- the exact category this paper attacks
-- No perplexity-based anomaly detection for GCG-optimized strings (tracked as IS-050, IS-052)
+- No perplexity-based anomaly detection for GCG-optimised strings (tracked as IS-050, IS-052)
 - Hybrid monitoring paradox: output monitoring increases attack surface for adaptive attacks; no configurable monitoring scope (tracked as IS-051)
 - Structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) are validated as more robust
 - No adversarial robustness testing against multi-objective GCG (tracked as EV-016, EV-017, EV-018, ML-016)
@@ -159,36 +157,35 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### Phase 1: Immediate Evaluation (Q2 2026)
 
-1. **AgentDojo Integration**
-   - Set up automated evaluation pipeline
+**AgentDojo Integration**: Set up automated evaluation pipeline
+
    - Target: >70% attack success reduction, <10% FPR
    - Focus on tool misuse scenarios
 
-2. **NotInject Assessment**
-   - Measure current false positive rates
-   - Implement precision-optimized thresholding
+**NotInject Assessment**: Measure current false positive rates
+
+   - Implement precision-optimised thresholding
    - Target: <1% FPR for production deployment
 
 ### Phase 2: Comprehensive Evaluation (Q3 2026)
 
-1. **InjecAgent Adaptive Testing**
-   - Evaluate against adaptive attack scenarios
+**InjecAgent Adaptive Testing**: Evaluate against adaptive attack scenarios
+
    - Implement adversarial training improvements
    - Test ensemble resilience
 
-2. **WASP Web Security**
-   - Add web-specific attack detection
+**WASP Web Security**: Add web-specific attack detection
+
    - Implement DOM content analysis
    - Browser security context integration
 
 ### Phase 3: Advanced Evaluation (Q4 2026)
 
-1. **Agent Security Bench**
-   - Full multi-domain security assessment
+**Agent Security Bench**: Full multi-domain security assessment
+
    - Privacy-preserving evaluation frameworks
    - Cross-domain attack resilience
 
----
 
 ## Defensive Tools Landscape
 
@@ -205,15 +202,21 @@ Recommendation: Implement InjecGuard MOF (Mitigating Over-defense for Free) trai
 
 ### Tier 1: High Integration Value
 
-#### 1. **InjecGuard** (Mitigating Over-defense for Free)
+#### **InjecGuard** (Mitigating Over-defense for Free)
 **Type**: Prompt injection classifier
 **Key Innovation**: MOF training strategy reduces bias on trigger words
 **Performance**: 30.8% improvement over existing best model on NotInject
 
 **vs LLMTrace**:
-- **Superior**: Better precision/recall balance than current DeBERTa approach
-- **Integration**: Direct model replacement opportunity
-- **Impact**: Addresses critical over-defense problem
+
+**Superior**: Better precision/recall balance than current DeBERTa approach
+
+
+**Integration**: Direct model replacement opportunity
+
+
+**Impact**: Addresses critical over-defense problem
+
 
 **Integration Plan**:
 ```yaml
@@ -223,15 +226,21 @@ security_analysis:
   ensemble_weight: 0.7  # Primary classifier
 ```
 
-#### 2. **LLM Guard** (Protect AI)
+#### **LLM Guard** (Protect AI)
 **Type**: Python library with comprehensive scanners
 **Key Features**: Input/output sanitization, PII detection, toxic content filtering
 **Architecture**: Modular scanner framework
 
 **vs LLMTrace**:
-- **Complementary**: Additional scanner types we don't implement
-- **Integration**: Plugin architecture for additional scanners
-- **Value**: Expanded detection capabilities without core changes
+
+**Complementary**: Additional scanner types we don't implement
+
+
+**Integration**: Plugin architecture for additional scanners
+
+
+**Value**: Expanded detection capabilities without core changes
+
 
 **Integration Plan**:
 ```python
@@ -244,59 +253,89 @@ class LLMGuardPlugin(SecurityPlugin):
         return scan_prompt(prompt, scanners=[...])
 ```
 
-#### 3. **Meta Prompt Guard**
+#### **Meta Prompt Guard**
 **Type**: 86M parameter prompt injection classifier
 **Key Features**: Fast inference, good baseline performance
 **Use Case**: Ensemble member for improved robustness
 
 **vs LLMTrace**:
-- **Alternative**: Different model architecture for ensemble diversity
-- **Integration**: Secondary classifier in ensemble voting
-- **Value**: Improved robustness against adaptive attacks
 
-#### 4. **Llama Guard 3**
+**Alternative**: Different model architecture for ensemble diversity
+
+
+**Integration**: Secondary classifier in ensemble voting
+
+
+**Value**: Improved robustness against adaptive attacks
+
+
+#### **Llama Guard 3**
 **Type**: LLM-based safety classifier
 **Key Features**: Broad safety taxonomy, conversational context awareness
 **Use Case**: Output safety classification
 
 **vs LLMTrace**:
-- **Complementary**: Focus on output safety vs. input injection
-- **Integration**: Output safety pipeline enhancement
-- **Value**: Better contextual safety analysis
+
+**Complementary**: Focus on output safety vs. input injection
+
+
+**Integration**: Output safety pipeline enhancement
+
+
+**Value**: Better contextual safety analysis
+
 
 ### Tier 2: Moderate Integration Value
 
-#### 5. **IBM Granite Guardian**
+#### **IBM Granite Guardian**
 **Type**: Comprehensive guardrails framework
 **Key Features**: Risk detection across RAG and agentic workflows
 **Architecture**: Input/output guards with risk taxonomy
 
 **vs LLMTrace**:
-- **Complementary**: Broader risk detection beyond prompt injection
-- **Integration**: Risk assessment framework addition
-- **Value**: Enterprise-grade risk taxonomy
 
-#### 6. **NeMo Guardrails** (NVIDIA)
+**Complementary**: Broader risk detection beyond prompt injection
+
+
+**Integration**: Risk assessment framework addition
+
+
+**Value**: Enterprise-grade risk taxonomy
+
+
+#### **NeMo Guardrails** (NVIDIA)
 **Type**: Programmable guardrails using Colang DSL
 **Key Features**: Dialogue management, custom rail programming
 **Architecture**: Runtime dialogue state machine
 
 **vs LLMTrace**:
-- **Orthogonal**: Different approach (programmable vs. ML-based)
-- **Integration**: Complex due to different paradigms
-- **Value**: Custom guardrail programming for specific use cases
+
+**Orthogonal**: Different approach (programmable vs. ML-based)
+
+
+**Integration**: Complex due to different paradigms
+
+
+**Value**: Custom guardrail programming for specific use cases
+
 
 ### Tier 3: Competitive/Limited Value
 
-#### 7. **Lakera Guard**
+#### **Lakera Guard**
 **Type**: Commercial real-time firewall
 **Key Features**: Production-scale, low latency, commercial support
 **Business Model**: SaaS competitor
 
 **vs LLMTrace**:
-- **Competitive**: Direct competitor in proxy market
-- **Integration**: ❌ Commercial conflict
-- **Analysis**: Feature comparison target for competitive positioning
+
+**Competitive**: Direct competitor in proxy market
+
+
+**Integration**: ❌ Commercial conflict
+
+
+**Analysis**: Feature comparison target for competitive positioning
+
 
 ## tldrsec/prompt-injection-defenses Analysis
 
@@ -304,41 +343,48 @@ The [tldrsec repository](https://github.com/tldrsec/prompt-injection-defenses) p
 
 ### Currently Implemented in LLMTrace
 
-1. **Guardrails & Overseers** ✅
+**Guardrails & Overseers**: ✅
+
    - Input/output monitoring via security analysis pipeline
    - Real-time scanning during SSE streaming
 
-2. **Prompt Engineering** ✅
+**Prompt Engineering**: ✅
+
    - API-level segmentation (system/user role separation)
    - Input sanitization and validation
 
 ### Partially Implemented
 
-3. **Input Pre-processing** ⚠️
+**Input Pre-processing**: ⚠️
+
    - Basic sanitization but missing paraphrasing/retokenization
    - No SmoothLLM-style perturbation defense
 
-4. **Ensemble Decisions** ⚠️
+**Ensemble Decisions**: ⚠️
+
    - Basic ensemble of regex + ML but limited model diversity
    - Missing cross-checking mechanisms
 
 ### Missing Techniques
 
-5. **Blast Radius Reduction** ❌
+**Blast Radius Reduction**: ❌
+
    - No systematic access control for LLM tool access
    - Missing least-privilege enforcement
 
-6. **Taint Tracking** ❌
+**Taint Tracking**: ❌
+
    - No untrusted data flow monitoring
    - Missing dynamic capability adjustment
 
-7. **Secure Threads/Dual LLM** ❌
+**Secure Threads/Dual LLM**: ❌
+
    - No privileged/quarantined LLM separation
    - Missing structured data passing between trust domains
 
 ## Key Techniques to Adopt
 
-### 1. **GradSafe** (Safety-Critical Gradient Analysis)
+### **GradSafe** (Safety-Critical Gradient Analysis)
 ```python
 # Proposed integration
 from gradients import analyze_safety_gradients
@@ -349,7 +395,7 @@ def enhanced_security_check(prompt):
     return weighted_ensemble([grad_score, ml_score])
 ```
 
-### 2. **GuardReasoner** (Reasoning-based Safeguards)
+### **GuardReasoner** (Reasoning-based Safeguards)
 ```yaml
 # Advanced reasoning-based detection
 reasoning_guards:
@@ -359,7 +405,7 @@ reasoning_guards:
   confidence_threshold: 0.9
 ```
 
-### 3. **Action Guards** (Dynamic Permission Checks)
+### **Action Guards** (Dynamic Permission Checks)
 ```python
 # Context-aware action validation
 class ActionGuard:
@@ -368,7 +414,7 @@ class ActionGuard:
             return ActionResult.BLOCKED
 ```
 
-### 4. **Canary Tokens** (Output Leakage Detection)
+### **Canary Tokens** (Output Leakage Detection)
 ```yaml
 # Prompt leakage detection
 canary_tokens:
@@ -381,24 +427,38 @@ canary_tokens:
 
 ### LLMTrace Strengths
 
-1. **Transparent Proxy Architecture** — Unique zero-code integration approach
-2. **Real-time Streaming Analysis** — Advanced SSE security monitoring
-3. **Cost Control Integration** — Security + cost management in single solution
-4. **Multi-tenant Ready** — Enterprise-scale isolation and monitoring
+**Transparent Proxy Architecture**: — Unique zero-code integration approach
+
+
+**Real-time Streaming Analysis**: — Advanced SSE security monitoring
+
+
+**Cost Control Integration**: — Security + cost management in single solution
+
+
+**Multi-tenant Ready**: — Enterprise-scale isolation and monitoring
+
 
 ### Competitive Gaps
 
-1. **Benchmark Evaluation** — Missing standardized security assessments
-2. **Over-defense Problem** — High false positive rates vs. production needs
-3. **Multimodal Gaps** — No image/audio injection detection
-4. **Protocol Security** — Missing MCP/A2A communication protection
+**Benchmark Evaluation**: — Missing standardised security assessments
+
+
+**Over-defense Problem**: — High false positive rates vs. production needs
+
+
+**Multimodal Gaps**: — No image/audio injection detection
+
+
+**Protocol Security**: — Missing MCP/A2A communication protection
+
 
 ### Integration Opportunities
 
 **Short-term (Q2 2026)**:
 - InjecGuard model replacement for better precision/recall
 - LLM Guard scanner integration for expanded detection
-- NotInject benchmark evaluation for FPR optimization
+- NotInject benchmark evaluation for FPR optimisation
 
 **Medium-term (Q3 2026)**:
 - Meta Prompt Guard ensemble integration
@@ -412,21 +472,20 @@ canary_tokens:
 
 ## Recommendations
 
-### 1. Immediate Actions (Next 30 Days)
+### Immediate Actions (Next 30 Days)
 - Set up AgentDojo evaluation pipeline
 - Implement NotInject FPR assessment
 - Begin InjecGuard integration planning
 
-### 2. Strategic Initiatives (Q2-Q3 2026)
+### Strategic Initiatives (Q2-Q3 2026)
 - Develop comprehensive benchmark evaluation framework
 - Implement over-defense mitigation strategies
 - Expand tool integration ecosystem
 
-### 3. Research Directions (Q4 2026+)
+### Research Directions (Q4 2026+)
 - Pioneer agent-specific security architectures
 - Develop novel taint tracking approaches
 - Create industry-standard agent security benchmarks
 
 ## Conclusion
-
 LLMTrace has solid foundational security capabilities but faces evaluation and precision gaps compared to emerging benchmarks and specialized tools. Priority should focus on benchmark evaluation (AgentDojo, NotInject) and precision improvements (InjecGuard, over-defense mitigation) to achieve production-grade reliability while maintaining comprehensive threat detection.

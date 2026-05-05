@@ -6,23 +6,21 @@
 **Perspectives**: AI Engineering, MLOps, Security Engineering
 **Context**: LLMTrace is a Rust-based transparent LLM proxy with integrated security analysis
 
----
 
 ## Table of Contents
 
-1. [Executive Summary](#1-executive-summary)
-2. [LLMTrace Architecture Overview](#2-llmtrace-architecture-overview)
-3. [OWASP GenAI Top 10 Coverage Analysis](#3-owasp-genai-top-10-coverage-analysis)
-4. [AI Engineering Perspective](#4-ai-engineering-perspective)
-5. [MLOps Engineering Perspective](#5-mlops-engineering-perspective)
-6. [Security Engineering Perspective](#6-security-engineering-perspective)
-7. [Cross-Cutting Concerns](#7-cross-cutting-concerns)
-8. [Gap Analysis and Roadmap](#8-gap-analysis-and-roadmap)
-9. [References](#9-references)
+- [Executive Summary](#1-executive-summary)
+- [LLMTrace Architecture Overview](#2-llmtrace-architecture-overview)
+- [OWASP GenAI Top 10 Coverage Analysis](#3-owasp-genai-top-10-coverage-analysis)
+- [AI Engineering Perspective](#4-ai-engineering-perspective)
+- [MLOps Engineering Perspective](#5-mlops-engineering-perspective)
+- [Security Engineering Perspective](#6-security-engineering-perspective)
+- [Cross-Cutting Concerns](#7-cross-cutting-concerns)
+- [Gap Analysis and Roadmap](#8-gap-analysis-and-roadmap)
+- [References](#9-references)
 
----
 
-## 1. Executive Summary
+## Executive Summary
 
 LLMTrace occupies a unique architectural position in the GenAI security landscape: a transparent proxy that mediates all traffic between LLM clients and providers. This position enables inspection and enforcement at every trust boundary -- request ingress, tool-call gates, response egress, and streaming channels.
 
@@ -47,11 +45,10 @@ LLMTrace occupies a unique architectural position in the GenAI security landscap
 - MCP protocol monitoring
 - Multi-agent defense pipeline with trust levels
 
----
 
-## 2. LLMTrace Architecture Overview
+## LLMTrace Architecture Overview
 
-### 2.1 Crate Structure
+### 1 Crate Structure
 
 ```
 llmtrace/
@@ -68,7 +65,7 @@ llmtrace/
   dashboard/              # Next.js monitoring UI
 ```
 
-### 2.2 Security Crate Components
+### 2 Security Crate Components
 
 The `llmtrace-security` crate is the core defense engine, containing:
 
@@ -100,14 +97,14 @@ The `llmtrace-security` crate is the core defense engine, containing:
 - `code_security.rs` -- LLM-generated code security analysis
 
 **Calibration and Monitoring**:
-- `fpr_calibration.rs` -- False positive rate threshold optimization
+- `fpr_calibration.rs` -- False positive rate threshold optimisation
 - `fpr_monitor.rs` -- Runtime FPR drift detection and alerting
 - `inference_stats.rs` -- Model inference latency and throughput tracking
 - `thresholds.rs` -- Per-category confidence thresholds
 - `pii_validation.rs` -- PII checksum validation (Luhn, IBAN)
 - `result_parser.rs` -- Multi-detector result aggregation
 
-### 2.3 Proxy Pipeline
+### 3 Proxy Pipeline
 
 ```
 Client Request
@@ -144,28 +141,27 @@ Client Request
 Client Response
 ```
 
-### 2.4 Ensemble Architecture
+### 4 Ensemble Architecture
 
 The detection pipeline uses a layered ensemble:
 
 **Primary Pair** (majority voting):
-1. Regex heuristics -- 13+ pattern categories
-2. DeBERTa-v3-base -- ProtectAI prompt injection classifier
+- Regex heuristics -- 13+ pattern categories
+- DeBERTa-v3-base -- ProtectAI prompt injection classifier
 
 **Auxiliary Detectors** (additive-only, no voting participation):
-3. InjecGuard -- Over-defense-aware, capped at confidence 0.60 unless corroborated
-4. PIGuard -- MOF-trained, same capping strategy
+- InjecGuard -- Over-defense-aware, capped at confidence 0.60 unless corroborated
+- PIGuard -- MOF-trained, same capping strategy
 
 **Fusion Path** (when enabled):
 - DeBERTa embeddings (768-dim) + heuristic features (16-dim) concatenated
 - Trained FC classifier on the 784-dim combined representation
 - Provides ~6% F1 improvement over score-level ensemble on hard datasets
 
----
 
-## 3. OWASP GenAI Top 10 Coverage Analysis
+## OWASP GenAI Top 10 Coverage Analysis
 
-### 3.1 LLM01: Prompt Injection -- Coverage: 8/10
+### 1 LLM01: Prompt Injection -- Coverage: 8/10
 
 **Current Implementation**:
 
@@ -182,7 +178,7 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 | Ensemble voting | Majority voting with confidence boosting | `ensemble.rs` |
 | Unicode normalization | NFKC + zero-width stripping | `normalise.rs` |
 | Adversarial defense | Multi-pass normalization, perturbation detection | `adversarial_defense.rs` |
-| FPR calibration | Threshold optimization at target FPR rates | `fpr_calibration.rs` |
+| FPR calibration | Threshold optimisation at target FPR rates | `fpr_calibration.rs` |
 | Streaming analysis | Real-time injection detection during SSE | `streaming.rs` |
 | Jailbreak detection | Dedicated jailbreak classifier | `jailbreak_detector.rs` |
 
@@ -190,7 +186,7 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 
 **Gaps**:
 - No multi-turn injection sequence detection across conversation turns
-- Limited adversarial robustness testing against GCG-optimized attacks (per Agent-as-a-Proxy research)
+- Limited adversarial robustness testing against GCG-optimised attacks (per Agent-as-a-Proxy research)
 - No boundary token injection defense (highest-impact per BIPIA ablation)
 
 **Key References**:
@@ -199,7 +195,7 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 - Inject My PDF (Greshake, 2023): invisible text in documents exploits RAG pipelines
 - ChatGPT plugin vulnerabilities (Embrace The Red, 2023): confused deputy via OAuth plugins
 
-### 3.2 LLM02: Sensitive Information Disclosure -- Coverage: 8/10
+### 2 LLM02: Sensitive Information Disclosure -- Coverage: 8/10
 
 **Current Implementation**:
 
@@ -223,7 +219,7 @@ LLMTrace provides the most comprehensive coverage for this category, which align
 - Samsung ChatGPT leak (2023): employees leaked proprietary code, meeting notes, hardware specs
 - AVID-2023-v009: cataloged ChatGPT training data extraction vulnerability
 
-### 3.3 LLM03: Supply Chain Vulnerabilities -- Coverage: 3/10
+### 3 LLM03: Supply Chain Vulnerabilities -- Coverage: 3/10
 
 **Current Implementation**:
 
@@ -246,9 +242,9 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 - Silent Sabotage (HiddenLayer): Hugging Face Safetensors conversion service weaponized
 - PoisonGPT (Mithril Security): ROME-edited GPT-J-6B with only 0.1% accuracy difference on benchmarks
 - JFrog research: ~100 confirmed malicious models on Hugging Face using pickle deserialization
-- Anthropic Sleeper Agents: deceptive behaviors persist through standard safety training
+- Anthropic Sleeper Agents: deceptive behaviours persist through standard safety training
 
-### 3.4 LLM04: Data and Model Poisoning -- Coverage: 2/10
+### 4 LLM04: Data and Model Poisoning -- Coverage: 2/10
 
 **Current Implementation**:
 
@@ -261,15 +257,15 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 
 **Gaps**:
 - No trigger pattern detection in upstream model responses
-- No statistical baseline for normal model behavior
+- No statistical baseline for normal model behaviour
 - No training data validation (out of proxy scope)
 
 **Key References**:
 - Wan et al. (ICML 2023): 100 poisoned examples suffice to manipulate models; larger models more vulnerable
-- Sleeper Agents (Anthropic, 2024): backdoor behaviors survive SFT, RLHF, adversarial training
+- Sleeper Agents (Anthropic, 2024): backdoor behaviours survive SFT, RLHF, adversarial training
 - Cobalt: clean label attacks insert backdoors without obvious data tampering
 
-### 3.5 LLM05: Improper Output Handling -- Coverage: 6/10
+### 5 LLM05: Improper Output Handling -- Coverage: 6/10
 
 **Current Implementation**:
 
@@ -293,7 +289,7 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 - OWASP ASVS V5: validation, sanitization, and encoding requirements at trust boundaries
 - Embrace The Red: output impact varies by deployment context (XSS, SQLi, OS commands)
 
-### 3.6 LLM06: Excessive Agency -- Coverage: 7/10
+### 6 LLM06: Excessive Agency -- Coverage: 7/10
 
 **Current Implementation**:
 
@@ -318,7 +314,7 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 - Dual LLM pattern (Willison, 2023): privileged/quarantined model separation with controller
 - NeMo Guardrails: programmable action restrictions via Colang DSL
 
-### 3.7 LLM07: System Prompt Leakage -- Coverage: 5/10
+### 7 LLM07: System Prompt Leakage -- Coverage: 5/10
 
 **Current Implementation**:
 
@@ -334,7 +330,7 @@ LLM03 is primarily outside the proxy runtime scope, but LLMTrace has some releva
 - No system prompt fingerprinting for cross-request leakage correlation
 - No adversarial extraction pattern library (base64 encode, summarize, repeat verbatim)
 
-### 3.8 LLM08: Vector and Embedding Weaknesses -- Coverage: 1/10
+### 8 LLM08: Vector and Embedding Weaknesses -- Coverage: 1/10
 
 **Current Implementation**:
 
@@ -355,7 +351,7 @@ Minimal direct coverage. This is the newest OWASP category and represents a sign
 - Astute RAG (Wang et al., 2024): imperfect retrieval is inevitable; knowledge conflicts require adaptive reconciliation
 - RAG Triad (TruEra/TruLens): three-component evaluation (context relevance, groundedness, answer relevance)
 
-### 3.9 LLM09: Misinformation -- Coverage: 2/10
+### 9 LLM09: Misinformation -- Coverage: 2/10
 
 **Current Implementation**:
 
@@ -376,7 +372,7 @@ Minimal direct coverage. This is the newest OWASP category and represents a sign
 - Code security (Khoury et al., 2023): ChatGPT generates vulnerable code despite security awareness
 - ThreatGPT (Gupta et al., 2023): dual-use concerns for GenAI in cybersecurity
 
-### 3.10 LLM10: Unbounded Consumption -- Coverage: 7/10
+### 10 LLM10: Unbounded Consumption -- Coverage: 7/10
 
 **Current Implementation**:
 
@@ -401,11 +397,10 @@ Minimal direct coverage. This is the newest OWASP category and represents a sign
 - Model extraction (Carlini et al., 2024): complete projection matrices extracted from OpenAI models for under $20
 - Sponge Examples (Shumailov et al., 2021): 10-200x energy consumption increase via crafted inputs
 
----
 
-## 4. AI Engineering Perspective
+## AI Engineering Perspective
 
-### 4.1 Detection Pipeline Architecture
+### 1 Detection Pipeline Architecture
 
 LLMTrace's multi-model ensemble is architecturally sound but can be strengthened:
 
@@ -457,21 +452,25 @@ Request Text
 
 This tiered approach reduces average latency (most requests resolved at Tier 0/1) while maintaining high accuracy for ambiguous cases.
 
-### 4.2 Model Serving Optimization
+### 2 Model Serving Optimisation
 
 **Current State**: Models are loaded via Candle framework with configurable device selection (CPU/CUDA) and model caching via `LLMTRACE_ML_CACHE_DIR`.
 
 **Recommendations**:
 
-1. **Batched inference**: Group concurrent requests for batch processing on GPU. Current implementation processes requests individually.
+**Batched inference**: Group concurrent requests for batch processing on GPU. Current implementation processes requests individually.
 
-2. **Model quantization**: INT8 quantization for DeBERTa reduces memory by ~4x with <1% accuracy loss. Candle supports GGUF/GGML quantized formats.
 
-3. **Model warmup**: Pre-run inference on startup to populate CPU caches and JIT-compile CUDA kernels. The `ml_preload` config flag handles model loading but not inference warmup.
+**Model quantization**: INT8 quantization for DeBERTa reduces memory by ~4x with <1% accuracy loss. Candle supports GGUF/GGML quantized formats.
 
-4. **Async model loading**: Load auxiliary models (InjecGuard, PIGuard) asynchronously after primary model is ready, allowing the proxy to start serving with partial detection capability.
 
-### 4.3 Feature-Level Fusion Strategy
+**Model warmup**: Pre-run inference on startup to populate CPU caches and JIT-compile CUDA kernels. The `ml_preload` config flag handles model loading but not inference warmup.
+
+
+**Async model loading**: Load auxiliary models (InjecGuard, PIGuard) asynchronously after primary model is ready, allowing the proxy to start serving with partial detection capability.
+
+
+### 3 Feature-Level Fusion Strategy
 
 The `fusion_classifier.rs` implements the DMPI-PMHFE approach (feature-level fusion vs. score-level ensemble). Key considerations:
 
@@ -481,20 +480,26 @@ The `fusion_classifier.rs` implements the DMPI-PMHFE approach (feature-level fus
 - Training pipeline exists in `benchmarks/src/training/`
 - Models are shipped as static weights alongside the DeBERTa checkpoint
 
-### 4.4 Streaming Analysis Enhancement
+### 4 Streaming Analysis Enhancement
 
 The proxy already performs incremental security analysis during SSE streaming. Enhancements:
 
-1. **Output-side streaming**: Extend streaming analysis to monitor response tokens (not just request content)
-2. **Progressive confidence**: Accumulate confidence across token batches; trigger action when threshold crossed
-3. **Early termination**: Ability to halt upstream generation when critical finding detected mid-stream
-4. **Token-level annotations**: Mark specific tokens/spans as flagged rather than entire responses
+**Output-side streaming**: Extend streaming analysis to monitor response tokens (not just request content)
 
----
 
-## 5. MLOps Engineering Perspective
+**Progressive confidence**: Accumulate confidence across token batches; trigger action when threshold crossed
 
-### 5.1 Model Lifecycle Management
+
+**Early termination**: Ability to halt upstream generation when critical finding detected mid-stream
+
+
+**Token-level annotations**: Mark specific tokens/spans as flagged rather than entire responses
+
+
+
+## MLOps Engineering Perspective
+
+### 1 Model Lifecycle Management
 
 **Current State**: Models are downloaded from Hugging Face on first use and cached locally. No version pinning, no rollback capability, no A/B testing.
 
@@ -517,14 +522,22 @@ The proxy already performs incremental security analysis during SSE streaming. E
                                           |
                                           +-- Stable --> [Promote]
 ```
+**Version pinning**: Lock model versions by SHA256 hash, not just name. Prevent silent upstream changes.
 
-1. **Version pinning**: Lock model versions by SHA256 hash, not just name. Prevent silent upstream changes.
-2. **Benchmark gates**: Automated evaluation on CyberSecEval2 and NotInject before promotion.
-3. **FPR calibration**: Run `ThresholdCalibrator` on representative production traffic samples before deployment.
-4. **Canary deployment**: Route subset of traffic through new model version; compare FPR/FNR against baseline.
-5. **Rollback**: Instant model swap to previous version on drift detection.
 
-### 5.2 Model Supply Chain Security
+**Benchmark gates**: Automated evaluation on CyberSecEval2 and NotInject before promotion.
+
+
+**FPR calibration**: Run `ThresholdCalibrator` on representative production traffic samples before deployment.
+
+
+**Canary deployment**: Route subset of traffic through new model version; compare FPR/FNR against baseline.
+
+
+**Rollback**: Instant model swap to previous version on drift detection.
+
+
+### 2 Model Supply Chain Security
 
 Directly relevant to LLM03 (Supply Chain Vulnerabilities).
 
@@ -532,25 +545,47 @@ Directly relevant to LLM03 (Supply Chain Vulnerabilities).
 
 Recommendations:
 
-1. **Hash verification**: Verify SHA256 of all model files on load. Store expected hashes in a `model-manifest.json`. Reject tampered models.
-2. **Pin Candle dependencies**: Change `Cargo.toml` from `git = "..."` to `git = "...", rev = "<specific-sha>"`. Current unpinned git HEAD resolution means any compromised commit would inject malicious code.
-3. **Pre-bake models in Docker**: Download and verify model weights at image build time, embedding them in the container. Eliminate runtime downloads for both security and latency.
-4. **SBOM generation**: Produce Software Bill of Materials during build. Run `cargo audit` in CI to flag known CVEs.
-5. **Signed models**: Use GPG/Sigstore signatures for model provenance.
-6. **Sandboxed inference**: Run model inference in restricted process with no network access.
-7. **Architecture validation**: Verify model structure (layer count, hidden size, label count) matches expectations after loading to detect backdoor insertion.
+**Hash verification**: Verify SHA256 of all model files on load. Store expected hashes in a `model-manifest.json`. Reject tampered models.
 
-### 5.3 Model Monitoring and Drift Detection
+
+**Pin Candle dependencies**: Change `Cargo.toml` from `git = "..."` to `git = "...", rev = "<specific-sha>"`. Current unpinned git HEAD resolution means any compromised commit would inject malicious code.
+
+
+**Pre-bake models in Docker**: Download and verify model weights at image build time, embedding them in the container. Eliminate runtime downloads for both security and latency.
+
+
+**SBOM generation**: Produce Software Bill of Materials during build. Run `cargo audit` in CI to flag known CVEs.
+
+
+**Signed models**: Use GPG/Sigstore signatures for model provenance.
+
+
+**Sandboxed inference**: Run model inference in restricted process with no network access.
+
+
+**Architecture validation**: Verify model structure (layer count, hidden size, label count) matches expectations after loading to detect backdoor insertion.
+
+
+### 3 Model Monitoring and Drift Detection
 
 The `fpr_monitor.rs` provides runtime FPR drift detection. Extend to:
 
-1. **Prediction distribution monitoring**: Track score distributions over time. Alert on shifts that indicate model degradation or data drift.
-2. **Latency monitoring**: `inference_stats.rs` tracks per-model latency. Set SLOs (e.g., p99 < 200ms) with alerting.
-3. **Throughput tracking**: Monitor inference queue depth and batch utilization.
-4. **Calibration drift**: Periodically re-evaluate FPR calibration against fresh traffic samples.
-5. **Feature drift**: Track heuristic feature distributions; flag when input characteristics change significantly.
+**Prediction distribution monitoring**: Track score distributions over time. Alert on shifts that indicate model degradation or data drift.
 
-### 5.4 Continuous Improvement Data Pipeline
+
+**Latency monitoring**: `inference_stats.rs` tracks per-model latency. Set SLOs (e.g., p99 < 200ms) with alerting.
+
+
+**Throughput tracking**: Monitor inference queue depth and batch utilization.
+
+
+**Calibration drift**: Periodically re-evaluate FPR calibration against fresh traffic samples.
+
+
+**Feature drift**: Track heuristic feature distributions; flag when input characteristics change significantly.
+
+
+### 4 Continuous Improvement Data Pipeline
 
 ```
 [Production Traffic] --> [Sampling] --> [Labeling Queue]
@@ -574,20 +609,26 @@ Key design decisions:
 - Feedback loops from false positive/negative reports
 - Automated retraining triggered by drift alerts
 
-### 5.5 Resource Management
+### 5 Resource Management
 
 For LLM10 (Unbounded Consumption) from the MLOps perspective:
 
-1. **Model memory budgets**: Set per-model memory limits. Monitor RSS growth.
-2. **Inference timeout**: Hard timeout on ML inference to prevent sponge-example attacks on LLMTrace's own models.
-3. **Queue management**: Bounded inference queue with backpressure. Reject requests when overloaded.
-4. **GPU memory management**: Share GPU across models with explicit allocation. Candle supports device selection.
+**Model memory budgets**: Set per-model memory limits. Monitor RSS growth.
 
----
 
-## 6. Security Engineering Perspective
+**Inference timeout**: Hard timeout on ML inference to prevent sponge-example attacks on LLMTrace's own models.
 
-### 6.1 Threat Model: LLMTrace as a Security Control
+
+**Queue management**: Bounded inference queue with backpressure. Reject requests when overloaded.
+
+
+**GPU memory management**: Share GPU across models with explicit allocation. Candle supports device selection.
+
+
+
+## Security Engineering Perspective
+
+### 1 Threat Model: LLMTrace as a Security Control
 
 LLMTrace functions as a **network-layer security control** analogous to a Web Application Firewall (WAF) but specialized for LLM API traffic. Its threat model:
 
@@ -598,8 +639,8 @@ LLMTrace functions as a **network-layer security control** analogous to a Web Ap
 - Resource consumption and cost
 
 **What LLMTrace Does Not Control**:
-- LLM provider behavior (model weights, safety mechanisms)
-- Client-side behavior (application logic, UI rendering)
+- LLM provider behaviour (model weights, safety mechanisms)
+- Client-side behaviour (application logic, UI rendering)
 - Training data and model provenance (upstream supply chain)
 - Vector database content and retrieval logic
 
@@ -611,7 +652,7 @@ Client/User  --->  LLMTrace Proxy  --->  LLM Provider
                        +--->  Tool/RAG Services [Untrusted]
 ```
 
-### 6.2 Defense-in-Depth Architecture
+### 2 Defense-in-Depth Architecture
 
 LLMTrace implements defense-in-depth through layered controls at each pipeline stage:
 
@@ -652,11 +693,11 @@ LLMTrace implements defense-in-depth through layered controls at each pipeline s
 - Audit logging with evidence capture
 - Metrics and alerting via dashboard
 
-### 6.3 Per-Category Security Recommendations
+### 3 Per-Category Security Recommendations
 
 **LLM01 (Prompt Injection) -- Strengthen**:
 - Implement boundary token injection (`<data>`/`</data>`) as a proxy-level defense. BIPIA research shows 1064% ASR increase without boundary tokens.
-- Add adversarial robustness testing against GCG-optimized attacks. The Agent-as-a-Proxy paper demonstrates 90%+ ASR against monitoring-based defenses.
+- Add adversarial robustness testing against GCG-optimised attacks. The Agent-as-a-Proxy paper demonstrates 90%+ ASR against monitoring-based defenses.
 - Implement structural defenses (sanitization, boundary tokens) as primary controls; ML detection as secondary. Structural defenses are validated as more robust against adaptive attacks.
 
 **LLM02 (Sensitive Info) -- Enhance**:
@@ -699,7 +740,7 @@ LLMTrace implements defense-in-depth through layered controls at each pipeline s
 - Implement adaptive rate limiting: tighten limits for clients with high risk scores.
 - Add sponge-example detection: flag inputs with anomalous tokenization patterns or excessive repetition.
 
-### 6.4 Attack Surface of LLMTrace Itself
+### 4 Attack Surface of LLMTrace Itself
 
 LLMTrace, as a security control, is itself an attack target:
 
@@ -711,7 +752,7 @@ LLMTrace, as a security control, is itself an attack target:
 | Model poisoning | Compromise LLMTrace's own ML models | Hash verification, signed models, isolated download |
 | Configuration tampering | Modify config to disable detection | File integrity monitoring, RBAC on config files |
 | Log injection | Inject misleading data into audit logs | Input validation on stored evidence, structured logging |
-| Side-channel | Infer system prompt content from proxy timing/behavior | Constant-time operations for security-critical paths |
+| Side-channel | Infer system prompt content from proxy timing/behaviour | Constant-time operations for security-critical paths |
 
 **Security-Engineer Critical Findings**:
 - TLS is disabled by default in `config.yaml` -- must be mandatory in production deployments
@@ -719,7 +760,7 @@ LLMTrace, as a security control, is itself an attack target:
 - API keys have no expiration or automated rotation mechanism
 - Storage credentials are in plaintext config files rather than a secrets manager
 
-### 6.5 Compliance Mapping
+### 5 Compliance Mapping
 
 | Framework | Relevant Controls | LLMTrace Contribution |
 |-----------|------------------|----------------------|
@@ -729,21 +770,29 @@ LLMTrace, as a security control, is itself an attack target:
 | **NIST AI RMF** | MAP, MEASURE, MANAGE functions | Threat detection, metrics, policy enforcement |
 | **ISO 27001** | A.8 (Asset management), A.12 (Operations security) | Data classification, monitoring, incident detection |
 
-### 6.6 Red Team Testing Recommendations
+### 6 Red Team Testing Recommendations
 
 To validate LLMTrace's effectiveness, conduct red team exercises targeting:
 
-1. **Evasion testing**: Use GCG-generated adversarial suffixes, Unicode homoglyphs, encoding tricks, and multi-turn extraction to test detection bypass.
-2. **Throughput testing**: Generate high-volume benign traffic mixed with low-rate attacks to test detection under load.
-3. **Tool chain exploitation**: Craft multi-step tool-call sequences that individually appear benign but compose into data exfiltration.
-4. **Model extraction**: Attempt to extract LLMTrace's detection model behavior through systematic probing.
-5. **Configuration weakness**: Test default configurations for security gaps (disabled enforcement, permissive thresholds).
+**Evasion testing**: Use GCG-generated adversarial suffixes, Unicode homoglyphs, encoding tricks, and multi-turn extraction to test detection bypass.
 
----
 
-## 7. Cross-Cutting Concerns
+**Throughput testing**: Generate high-volume benign traffic mixed with low-rate attacks to test detection under load.
 
-### 7.1 Latency Budget
+
+**Tool chain exploitation**: Craft multi-step tool-call sequences that individually appear benign but compose into data exfiltration.
+
+
+**Model extraction**: Attempt to extract LLMTrace's detection model behaviour through systematic probing.
+
+
+**Configuration weakness**: Test default configurations for security gaps (disabled enforcement, permissive thresholds).
+
+
+
+## Cross-Cutting Concerns
+
+### 1 Latency Budget
 
 The proxy must operate within strict latency budgets to avoid degrading user experience:
 
@@ -763,31 +812,48 @@ Strategies to meet budgets:
 - Model quantization (INT8/INT4)
 - Result caching for repeated/similar inputs
 
-### 7.2 Observability
+### 2 Observability
 
 LLMTrace produces security observability through:
 
-1. **Security metrics**: Finding counts by category, severity distribution, FPR/FNR estimates
-2. **Model metrics**: Inference latency (p50/p95/p99), throughput, cache hit rates
-3. **Traffic metrics**: Request volume, token counts, cost per tenant
-4. **Audit trail**: Every security finding with evidence spans, detector attributions, policy decisions
-5. **Dashboard**: Next.js UI for real-time monitoring and historical analysis
+**Security metrics**: Finding counts by category, severity distribution, FPR/FNR estimates
 
-### 7.3 Privacy and Data Handling
+
+**Model metrics**: Inference latency (p50/p95/p99), throughput, cache hit rates
+
+
+**Traffic metrics**: Request volume, token counts, cost per tenant
+
+
+**Audit trail**: Every security finding with evidence spans, detector attributions, policy decisions
+
+
+**Dashboard**: Next.js UI for real-time monitoring and historical analysis
+
+
+### 3 Privacy and Data Handling
 
 LLMTrace handles sensitive data and must follow privacy-by-design:
 
-1. **Minimize storage**: Hash sensitive content before storage; store evidence spans, not full payloads
-2. **Configurable retention**: Per-tenant retention policies with automatic expiry
-3. **PII redaction**: Apply redaction before storage, not after
-4. **Access control**: RBAC on dashboard and API access to traces
-5. **Encryption**: TLS for all network communication; encryption at rest for stored data
+**Minimize storage**: Hash sensitive content before storage; store evidence spans, not full payloads
 
----
 
-## 8. Gap Analysis and Roadmap
+**Configurable retention**: Per-tenant retention policies with automatic expiry
 
-### 8.1 Priority Matrix
+
+**PII redaction**: Apply redaction before storage, not after
+
+
+**Access control**: RBAC on dashboard and API access to traces
+
+
+**Encryption**: TLS for all network communication; encryption at rest for stored data
+
+
+
+## Gap Analysis and Roadmap
+
+### 1 Priority Matrix
 
 | Priority | Gap | OWASP Category | Effort | Impact |
 |----------|-----|----------------|--------|--------|
@@ -802,7 +868,7 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 | P3 | Context-aware PII boosting | LLM02 | Small | Low |
 | P3 | Code output vulnerability scanning | LLM05 | Medium | Medium |
 
-### 8.2 Implementation Phases
+### 2 Implementation Phases
 
 **Phase 1: Immediate (Q1 2026)** -- Strengthen existing coverage
 - Implement boundary token injection as proxy-level rewrite
@@ -823,12 +889,12 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 - A/B testing framework for detection model evaluation
 
 **Phase 4: Long-term (Q4 2026)** -- Research-driven
-- Adversarial training against GCG-optimized attacks
+- Adversarial training against GCG-optimised attacks
 - Multi-turn attack sequence detection
 - Cross-session threat correlation
 - Policy language for custom security rules
 
-### 8.3 Coverage Target
+### 3 Coverage Target
 
 | OWASP Category | Current | Phase 1 | Phase 2 | Phase 3 |
 |---------------|---------|---------|---------|---------|
@@ -844,9 +910,8 @@ LLMTrace handles sensitive data and must follow privacy-by-design:
 | LLM10 Consumption | 7/10 | 7/10 | 8/10 | 8/10 |
 | **Overall** | **4.9/10** | **5.2/10** | **6.6/10** | **7.6/10** |
 
----
 
-## 9. References
+## References
 
 ### OWASP GenAI Project
 - OWASP Top 10 for LLM Applications (2025): https://genai.owasp.org/llm-top-10/

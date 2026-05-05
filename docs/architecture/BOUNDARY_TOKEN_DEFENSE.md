@@ -4,9 +4,8 @@ Date: 2026-03-08
 Status: Approved for implementation
 Authors: Engineering (AI-Engineer + MLOps-Engineer reviewed)
 
----
 
-## 1. Executive Summary
+## Executive Summary
 
 This document specifies the implementation architecture for adding a boundary token
 injection defense to the LLMTrace proxy. The defense wraps untrusted content (tool
@@ -18,9 +17,8 @@ The proxy already detects injections (regex + DeBERTa ensemble). This feature ad
 structural prevention -- a complementary layer that makes injections harder to
 execute even if they evade detection.
 
----
 
-## 2. Problem Statement
+## Problem Statement
 
 Indirect prompt injection embeds malicious instructions inside external data that
 LLMs process as part of their context window. The fundamental vulnerability: LLMs
@@ -38,11 +36,10 @@ robust because they change what the model sees.
 - With boundary tokens + explicit reminder: 0.53% ASR
 - Removing boundary awareness increases ASR by 1064%
 
----
 
-## 3. System Context
+## System Context
 
-### 3.1 Current Request Flow
+### 1 Current Request Flow
 
 ```
 Client --> proxy_handler() --> body_bytes read (proxy.rs:315)
@@ -57,7 +54,7 @@ Key observation: the proxy currently forwards `body_bytes` **verbatim** to
 upstream. The defense changes this by re-serializing a modified request body
 when boundary tokens are enabled and tool messages are present.
 
-### 3.2 Affected Components
+### 2 Affected Components
 
 | Component | File | Change |
 |-----------|------|--------|
@@ -69,7 +66,7 @@ when boundary tokens are enabled and tool messages are present.
 | config.yaml | `config.yaml` | Add `boundary_defense` section |
 | New module | `llmtrace-proxy/src/boundary.rs` | Core defense logic |
 
-### 3.3 Unchanged Components
+### 3 Unchanged Components
 
 - Security analysis pipeline (`messages_to_analysis_text`, ensemble, DeBERTa) -- runs
   on original content before boundary wrapping, no changes needed.
@@ -77,11 +74,10 @@ when boundary tokens are enabled and tool messages are present.
 - Provider detection (`provider.rs`) -- already exists, reused as-is.
 - Storage, alerts, cost tracking -- unaffected.
 
----
 
-## 4. Component Design
+## Component Design
 
-### 4.1 New Module: `boundary.rs`
+### 1 New Module: `boundary.rs`
 
 Location: `crates/llmtrace-proxy/src/boundary.rs`
 
@@ -115,15 +111,15 @@ pub fn apply_boundary_defense(
 ```
 
 **Internal responsibilities:**
-1. Deserialize `body_bytes` into a provider-appropriate request structure
-2. Identify messages to wrap based on `config.wrap_roles` and provider format
-3. Wrap identified message content with boundary delimiters
-4. Optionally inject system prompt reminder
-5. Re-serialize to JSON bytes
-6. Return `BoundaryResult` with metadata for observability
-7. On any failure: return original `body_bytes` unchanged (fail-open)
+- Deserialize `body_bytes` into a provider-appropriate request structure
+- Identify messages to wrap based on `config.wrap_roles` and provider format
+- Wrap identified message content with boundary delimiters
+- Optionally inject system prompt reminder
+- Re-serialize to JSON bytes
+- Return `BoundaryResult` with metadata for observability
+- On any failure: return original `body_bytes` unchanged (fail-open)
 
-### 4.2 Config Structure: `BoundaryTokenConfig`
+### 2 Config Structure: `BoundaryTokenConfig`
 
 Location: `crates/llmtrace-core/src/lib.rs` (alongside `SecurityAnalysisConfig`)
 
@@ -181,7 +177,7 @@ boundary_defense:
   inject_system_reminder: true
 ```
 
-### 4.3 ChatMessage Content Type Change
+### 3 ChatMessage Content Type Change
 
 **Current** (`proxy.rs:127`):
 ```rust
@@ -229,7 +225,7 @@ fn extract_content_text(content: &serde_json::Value) -> String {
 }
 ```
 
-### 4.4 LLMRequestBody Extension
+### 4 LLMRequestBody Extension
 
 **Current** (`proxy.rs:114`):
 ```rust
@@ -266,7 +262,7 @@ top-level parameter rather than a message in the `messages` array. The `extra`
 field preserves `temperature`, `max_tokens`, `tools`, `tool_choice`, and any
 other fields the client sends.
 
-### 4.5 Provider-Aware Wrapping Strategy
+### 5 Provider-Aware Wrapping Strategy
 
 The `boundary.rs` module uses the already-detected `LLMProvider` (from
 `provider.rs:27`) to determine the correct wrapping strategy.
@@ -290,7 +286,7 @@ The `boundary.rs` module uses the already-detected `LLMProvider` (from
 **Decision:** Ship Phase 1 with OpenAI-compatible wrapping only. Anthropic gap
 is documented, not hidden.
 
-### 4.6 Pipeline Placement
+### 6 Pipeline Placement
 
 Modified request flow in `proxy_handler()`:
 
@@ -323,7 +319,7 @@ upstream response → client
 Critical invariant: **security analysis always runs on original unmodified
 content.** Boundary tokens are a forwarding concern only.
 
-### 4.7 Fail-Open Semantics
+### 7 Fail-Open Semantics
 
 The boundary defense must NEVER cause a request to fail. If any step in the
 boundary pipeline errors (deserialization, re-serialization, content mutation),
@@ -354,7 +350,7 @@ pub fn apply_boundary_defense(...) -> BoundaryResult {
 }
 ```
 
-### 4.8 Content-Length Handling
+### 8 Content-Length Handling
 
 After re-serialization, the body size changes. The proxy currently forwards
 headers as-is (`proxy.rs:461-471`). When boundary tokens modify the body,
@@ -365,9 +361,8 @@ Approach: remove `content-length` from forwarded headers alongside `host`
 and `accept-encoding` when boundary defense is active. The reqwest client
 will set the correct Content-Length from the body it sends.
 
----
 
-## 5. Functional Requirements
+## Functional Requirements
 
 ### FR-01: Boundary Wrapping of Tool Messages
 
@@ -487,9 +482,9 @@ forwarded to upstream must match the actual body size.
   `content-length` header is removed from forwarded headers before
   setting the body on the upstream request (reqwest recalculates it).
 - AC-06b: When boundary defense is disabled or in shadow mode, headers
-  are forwarded unchanged (existing behavior preserved).
+  are forwarded unchanged (existing behaviour preserved).
 
-### FR-07: Provider-Aware Behavior
+### FR-07: Provider-Aware Behaviour
 
 **Description:** The defense applies provider-appropriate wrapping based
 on the detected `LLMProvider`.
@@ -533,11 +528,10 @@ original, unmodified message content.
 - AC-09c: The security score for a given request is identical whether
   boundary defense is enabled or disabled.
 
----
 
-## 6. Metrics and Observability
+## Metrics and Observability
 
-### 6.1 Prometheus Metrics
+### 1 Prometheus Metrics
 
 All metrics are registered in `Metrics::new()` (`metrics.rs`) alongside
 existing metrics, following the same pattern.
@@ -552,7 +546,7 @@ existing metrics, following the same pattern.
 | `llmtrace_boundary_defense_skipped_total` | IntCounterVec | `reason` | Requests skipped. Labels: `disabled`, `no_tool_messages`, `unsupported_provider`, `parse_failed`. |
 | `llmtrace_boundary_defense_shadow_mode` | IntGauge | (none) | 1 when shadow mode is active, 0 otherwise. |
 
-### 6.2 Structured Log Events
+### 2 Structured Log Events
 
 | Level | Event | Fields |
 |-------|-------|--------|
@@ -561,20 +555,26 @@ existing metrics, following the same pattern.
 | `debug` | "Boundary defense skipped" | `trace_id`, `reason` |
 | `info` | "Boundary defense enabled" | `shadow_mode`, `delimiter`, `wrap_roles`, `randomize_nonce` | (startup only) |
 
-### 6.3 Dashboard Indicators
+### 3 Dashboard Indicators
 
 For the Next.js dashboard on port 3000:
 
-- **Boundary Defense Status**: enabled/disabled/shadow badge
-- **Messages Wrapped / hour**: time-series chart from `_applied_total`
-- **Overhead Bytes / request**: histogram from `_overhead_bytes`
-- **Error Rate**: `_errors_total` / `_applied_total` ratio alert (threshold > 1%)
+**Boundary Defense Status**: enabled/disabled/shadow badge
 
----
 
-## 7. Validation Plan
+**Messages Wrapped / hour**: time-series chart from `_applied_total`
 
-### 7.1 Unit Tests (`boundary.rs`)
+
+**Overhead Bytes / request**: histogram from `_overhead_bytes`
+
+
+**Error Rate**: `_errors_total` / `_applied_total` ratio alert (threshold > 1%)
+
+
+
+## Validation Plan
+
+### 1 Unit Tests (`boundary.rs`)
 
 Each test validates a specific functional requirement.
 
@@ -599,7 +599,7 @@ Each test validates a specific functional requirement.
 | `test_content_as_array_preserved` | FR-08, AC-08c | Multimodal content survives round-trip |
 | `test_anthropic_skipped` | FR-07, AC-07b | Anthropic provider returns 0 messages wrapped |
 
-### 7.2 Unit Tests (`proxy.rs`)
+### 2 Unit Tests (`proxy.rs`)
 
 | Test | Validates | Pass Criteria |
 |------|-----------|---------------|
@@ -608,7 +608,7 @@ Each test validates a specific functional requirement.
 | `test_extract_content_text_null` | ChatMessage change | Null returns empty string |
 | `test_messages_to_analysis_text_value_content` | FR-09 | Analysis text extracted from Value content |
 
-### 7.3 Integration Tests (`tests/integration_test.rs`)
+### 3 Integration Tests (`tests/integration_test.rs`)
 
 > **Status: pending — tracked in [#149](https://github.com/epappas/llmtrace/issues/149).**
 > Will land bundled with IS-060 PR 1, which exercises the same proxy-handler path.
@@ -623,7 +623,7 @@ Each test validates a specific functional requirement.
 | `test_boundary_defense_preserves_non_tool_fields` | FR-08 | All request fields survive through proxy |
 | `test_security_analysis_unaffected_by_boundary` | FR-09 | Security findings identical with/without defense |
 
-### 7.4 E2E Benchmark Validation
+### 4 E2E Benchmark Validation
 
 Using the existing stress test (`benchmarks/scripts/proxy_stress_test_v2.py`,
 153 samples):
@@ -636,7 +636,7 @@ Using the existing stress test (`benchmarks/scripts/proxy_stress_test_v2.py`,
 | Requests with serialization errors | 0 |
 | Upstream 4xx rate delta | 0 new errors |
 
-### 7.5 Contract Tests (Manual, Pre-Production)
+### 5 Contract Tests (Manual, Pre-Production)
 
 These validate that real LLM providers accept re-serialized payloads.
 
@@ -644,25 +644,24 @@ These validate that real LLM providers accept re-serialized payloads.
 |----------|------|---------------|
 | OpenAI | Send tool-call request with wrapped content through proxy | 200 response, valid completion |
 | OpenAI | Send multimodal (text + image_url) request through proxy | 200 response, content preserved |
-| OpenAI | Send request with no tool messages through proxy | 200 response, byte-equivalent behavior |
+| OpenAI | Send request with no tool messages through proxy | 200 response, byte-equivalent behaviour |
 
-### 7.6 Delivered Success Criteria
+### 6 Delivered Success Criteria
 
 The feature is considered delivered when ALL of the following are true:
 
-1. All unit tests in `boundary.rs` pass (Section 7.1)
-2. All modified unit tests in `proxy.rs` pass (Section 7.2)
-3. All integration tests pass (Section 7.3) — *pending, tracked in [#149](https://github.com/epappas/llmtrace/issues/149); will land bundled with IS-060 PR 1*
-4. E2E benchmark shows no accuracy regression (Section 7.4)
-5. Shadow mode validated for minimum 24 hours with zero serialization errors
-6. At least one contract test against a live OpenAI endpoint passes (Section 7.5)
-7. All Prometheus metrics emit correctly and are scrapeable at `/metrics`
-8. Config validation rejects invalid boundary defense configurations
-9. `cargo clippy` and `cargo test` pass with no new warnings
+- All unit tests in `boundary.rs` pass (Section 7.1)
+- All modified unit tests in `proxy.rs` pass (Section 7.2)
+- All integration tests pass (Section 7.3) — *pending, tracked in [#149](https://github.com/epappas/llmtrace/issues/149); will land bundled with IS-060 PR 1*
+- E2E benchmark shows no accuracy regression (Section 7.4)
+- Shadow mode validated for minimum 24 hours with zero serialization errors
+- At least one contract test against a live OpenAI endpoint passes (Section 7.5)
+- All Prometheus metrics emit correctly and are scrapeable at `/metrics`
+- Config validation rejects invalid boundary defense configurations
+- `cargo clippy` and `cargo test` pass with no new warnings
 
----
 
-## 8. Implementation Sequence
+## Implementation Sequence
 
 ### Phase 1: Foundation (OpenAI-compatible providers)
 
@@ -718,18 +717,17 @@ The feature is considered delivered when ALL of the following are true:
 - Add Anthropic-specific unit and integration tests
 - Contract test against Anthropic API
 
----
 
-## 9. Known Limitations and Gaps
+## Known Limitations and Gaps
 
-### 9.1 Anthropic Tool Results (Phase 2)
+### 1 Anthropic Tool Results (Phase 2)
 
 Anthropic uses `role: "user"` messages with `content: [{type: "tool_result", ...}]`
 for tool outputs. The Phase 1 `wrap_roles: ["tool"]` configuration will not match
 these. This is a documented gap, not a bug. Phase 2 adds content-block-level
 inspection.
 
-### 9.2 RAG Content in User Messages
+### 2 RAG Content in User Messages
 
 RAG retrieval results are typically embedded in `role: "user"` messages by the
 application. The proxy cannot distinguish user-authored text from RAG-retrieved
@@ -737,7 +735,7 @@ text without application cooperation. A future extension could support an
 `X-LLMTrace-RAG-Content: true` header or a structured content convention to
 mark RAG content for wrapping.
 
-### 9.3 Delimiter Escape Attacks
+### 3 Delimiter Escape Attacks
 
 If an attacker knows the exact delimiter tag (e.g., `</llmtrace-boundary>`),
 they could inject it into tool output to close the boundary prematurely. The
@@ -746,7 +744,7 @@ nonce). The system prompt reminder provides a second layer: even if the
 delimiter is broken, the model is instructed not to follow instructions in
 data regions.
 
-### 9.4 Model Compliance
+### 4 Model Compliance
 
 LLMs are not guaranteed to respect boundary tokens or system prompt instructions.
 Sophisticated prompt injection can convince models to ignore instructions. This
@@ -754,9 +752,8 @@ defense is probabilistic, not absolute. It reduces ASR by ~10x (BIPIA evidence)
 but does not eliminate it. This is why it complements detection (regex + DeBERTa)
 rather than replacing it.
 
----
 
-## 10. Risk Assessment
+## Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
@@ -767,9 +764,8 @@ rather than replacing it.
 | Delimiter collision with content | Low | Low | Synthetic delimiter unlikely in data; nonce mode available |
 | Performance regression | Very Low | Low | Re-serialization is sub-microsecond; no model inference added |
 
----
 
-## 11. Decision Log
+## Decision Log
 
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|

@@ -20,7 +20,6 @@ Both approaches inject the following environment variables into the proxy pod:
 | `LLMTRACE_POSTGRES_URL` | `postgres://llmtrace:s3cret@llmtrace-postgresql:5432/llmtrace` |
 | `LLMTRACE_REDIS_URL` | `redis://:s3cret@llmtrace-redis-master:6379` |
 
----
 
 ## Option 1: Inline `--set` (Simplest)
 
@@ -39,7 +38,6 @@ helm install llmtrace ./deployments/helm/llmtrace \
 
 > **Tip:** Wrap this in a shell script or CI step so secrets never appear in checked-in files.
 
----
 
 ## Option 2: External Secrets Operator (Recommended for Production)
 
@@ -54,7 +52,7 @@ helm install external-secrets external-secrets/external-secrets \
   --namespace external-secrets --create-namespace
 ```
 
-### 1. Create a `SecretStore` (or `ClusterSecretStore`)
+### Create a `SecretStore` (or `ClusterSecretStore`)
 
 ```yaml
 # secret-store.yaml
@@ -78,7 +76,7 @@ spec:
             key: secret-access-key
 ```
 
-### 2. Create an `ExternalSecret`
+### Create an `ExternalSecret`
 
 ```yaml
 # external-secret.yaml
@@ -119,7 +117,7 @@ kubectl apply -f secret-store.yaml
 kubectl apply -f external-secret.yaml
 ```
 
-### 3. Install LLMTrace referencing the external secret
+### Install LLMTrace referencing the external secret
 
 ```bash
 helm install llmtrace ./deployments/helm/llmtrace \
@@ -129,7 +127,6 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set secrets.existingSecret=llmtrace
 ```
 
----
 
 ## Option 3: Sealed Secrets
 
@@ -147,7 +144,7 @@ helm install sealed-secrets sealed-secrets/sealed-secrets \
 brew install kubeseal   # or download from GitHub releases
 ```
 
-### 1. Create a regular Secret manifest (do NOT apply it)
+### Create a regular Secret manifest (do NOT apply it)
 
 ```bash
 kubectl create secret generic llmtrace \
@@ -159,14 +156,14 @@ kubectl create secret generic llmtrace \
   --dry-run=client -o yaml > /tmp/llmtrace-secret.yaml
 ```
 
-### 2. Seal it
+### Seal it
 
 ```bash
 kubeseal --format yaml < /tmp/llmtrace-secret.yaml > sealed-secret.yaml
 rm /tmp/llmtrace-secret.yaml   # delete the plaintext!
 ```
 
-### 3. Apply and install
+### Apply and install
 
 ```bash
 kubectl apply -f sealed-secret.yaml
@@ -180,7 +177,6 @@ helm install llmtrace ./deployments/helm/llmtrace \
 
 The sealed secret YAML is safe to commit to Git — only the cluster's controller can decrypt it.
 
----
 
 ## Option 4: Manual Kubernetes Secret
 
@@ -203,7 +199,6 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set secrets.existingSecret=llmtrace-manual
 ```
 
----
 
 ## Using `existingSecret` in the Helm Chart
 
@@ -233,14 +228,16 @@ Your external secret must contain at minimum:
 - `LLMTRACE_POSTGRES_URL`
 - `LLMTRACE_REDIS_URL`
 
----
 
 ## Sub-chart Credentials
 
 The ClickHouse, PostgreSQL, and Redis Bitnami sub-charts manage their own secrets independently. When using external secrets, you'll typically either:
 
-1. **Disable the sub-charts** (`clickhouse.enabled: false`, etc.) and point to externally managed databases, or
-2. **Pass sub-chart passwords** via `--set` so the sub-charts create their own secrets:
+**Disable the sub-charts**: (`clickhouse.enabled: false`, etc.) and point to externally managed databases, or
+
+
+**Pass sub-chart passwords**: via `--set` so the sub-charts create their own secrets:
+
 
 ```bash
 helm install llmtrace ./deployments/helm/llmtrace \
@@ -252,7 +249,6 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set clickhouse.auth.password="$CH_PASSWORD"
 ```
 
----
 
 ## Security Checklist
 

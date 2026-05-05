@@ -804,8 +804,13 @@ def check_llmtrace_health():
 
 ## Next Steps
 
-- **[OpenAI SDK Integration](integration-openai.md)** — Direct SDK usage patterns
-- **[API Guide](API.md)** — REST queries + proxy paths
-- **[Custom Policies](custom-policies.md)** — Configure security for your use cases
+**[OpenAI SDK Integration](integration-openai.md)**: — Direct SDK usage patterns
+
+
+**[API Guide](API.md)**: — REST queries + proxy paths
+
+
+**[Custom Policies](custom-policies.md)**: — Configure security for your use cases
+
 
 **Need help?** Check the [LangChain documentation](https://python.langchain.com/docs/get_started/introduction) and [LLMTrace troubleshooting](troubleshooting.md).

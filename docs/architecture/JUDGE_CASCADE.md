@@ -18,19 +18,21 @@ ships in a follow-up (issue #90).
 [89]: https://github.com/epappas/llmtrace/issues/89
 [90]: https://github.com/epappas/llmtrace/issues/90
 
----
 
-## 1. Problem
+## Problem
 
 The `gpt-4o-mini` evaluation published on 2026-04-20 gave us honest numbers
 for the single-tier LLM judge: overall F1 = 0.856, p95 latency = 2.6 s, cost
 ≈ $0.00012/call. Two of those numbers are operational blockers for inline
 enforcement:
 
-- **Latency.** A p95 of 2.6 s overshoots the default `inline_timeout_ms` of
+**Latency.**: A p95 of 2.6 s overshoots the default `inline_timeout_ms` of
+
   2 s. At that latency budget, ~35–40 % of inline calls drop the verdict and
   fall through — the judge becomes effectively async-only.
-- **Cost at scale.** $0.00012/call is cheap per request, but at 100 k
+
+**Cost at scale.**: $0.00012/call is cheap per request, but at 100 k
+
   elevated requests per day that's $12/day per tenant. Acceptable on one
   tenant; uncomfortable on dozens.
 
@@ -43,17 +45,17 @@ live on the `JudgeBackend` side of the pipeline.
 
 Two observations, one conclusion:
 
-1. Most elevated candidates are unambiguous. A classifier gives a strongly
+- Most elevated candidates are unambiguous. A classifier gives a strongly
    tilted probability (e.g. 0.02 or 0.97) and is right far more often than it
    is wrong.
-2. A small slice of elevated candidates *are* ambiguous (probability ≈ 0.5),
+- A small slice of elevated candidates *are* ambiguous (probability ≈ 0.5),
    and that's exactly where an expensive, reasoned, text-generative verdict
    pays for itself.
 
 That shape — cheap-confident handled locally, expensive-uncertain escalated —
 is a cascade.
 
-## 2. Decision
+## Decision
 
 Ship a three-tier judge cascade:
 
@@ -91,23 +93,23 @@ The new code is two `JudgeBackend` implementations and a config type — no
 changes to the worker, the action router's cascade call site, the storage
 schema, or the metrics.
 
-## 3. Why this shape
+## Why this shape
 
-### 3.1 Why a cascade instead of two independent judges
+### 1 Why a cascade instead of two independent judges
 
 Running both tiers on every elevated candidate is wasteful: the fast tier is
 already high-precision, so escalating blindly doubles the slow-tier cost and
 gives one new verdict per two calls' worth of work. Escalating on an
 ambiguous band keeps the slow tier firing only where it adds signal.
 
-### 3.2 Why `CascadeJudgeBackend` implements `JudgeBackend`
+### 2 Why `CascadeJudgeBackend` implements `JudgeBackend`
 
 Because every existing judge capability — worker dispatch, shadow mode,
 promotion gate, metrics, verdict persistence — is keyed on the
 `JudgeBackend` trait. If the cascade is itself a `JudgeBackend`, all of that
 composes for free. We add one new backend kind; nothing downstream knows.
 
-### 3.3 Why `slow` is `Option`
+### 3 Why `slow` is `Option`
 
 Today we can ship tiers 0–2 without a local fine-tuned slow-judge. Setting
 `slow_backend: null` (or omitting the field) makes the cascade degrade
@@ -115,7 +117,7 @@ cleanly to "fast-judge alone". When the Qwen retrain (issue #90) lands,
 operators flip one config field and gain the slow tier. No code change on
 the LLMTrace side is required for that switch.
 
-### 3.4 Why the default ambiguous band is `[0.3, 0.7]`
+### 4 Why the default ambiguous band is `[0.3, 0.7]`
 
 Rough calibration from prior literature and from the DeBERTa reliability
 curve we've seen in `deberta-prompt-injection` training runs:
@@ -131,13 +133,16 @@ curve we've seen in `deberta-prompt-injection` training runs:
 These are initial defaults. The benchmark harness (extended under #86 /
 #88) produces the reliability curve we'll use to tune them per-model.
 
-### 3.5 Why DeBERTa synthesises `category` / `reasoning`
+### 5 Why DeBERTa synthesises `category` / `reasoning`
 
 Classifiers produce `P(class)`; they do not produce taxonomy or natural
 language. Two options:
 
-- **Fabricate invisibly** — forbidden by our "never lie" rule.
-- **Document a deterministic mapping** — audit logs, 403 bodies, and stored
+**Fabricate invisibly**: — forbidden by our "never lie" rule.
+
+
+**Document a deterministic mapping**: — audit logs, 403 bodies, and stored
+
   verdicts make it obvious the reasoning came from a template, not an LLM
   explanation. That's the path we take.
 
@@ -151,7 +156,7 @@ Category is fixed at `prompt_injection` until/unless a multi-class head
 lands. Issue #89 covers the retraining track where a multi-class DeBERTa
 could replace this fixed mapping.
 
-## 4. Telemetry
+## Telemetry
 
 No new metrics are introduced by the cascade itself. Both inner backends
 already emit:
@@ -177,7 +182,7 @@ sum(rate(llmtrace_judge_verdicts_total{model=~"qwen.*|gpt-.*|claude-.*"}[5m]))
 A purpose-built escalation counter is tracked as a follow-up in #88 for
 operators who want the rate as a first-class metric instead of a ratio query.
 
-## 5. Configuration shape
+## Configuration shape
 
 ```yaml
 judge:
@@ -209,14 +214,14 @@ Today's rollout (the commit shipping alongside this ADR) supports
 `slow_backend: null`, which runs fast-judge only. When Qwen lands, this
 becomes `slow_backend: vllm`.
 
-## 6. Verdict persistence
+## Verdict persistence
 
 Only the final stage's verdict is written to `judge_verdicts`. Two reasons:
 
-1. The promotion gate and the enforcement path already consume a single
+- The promotion gate and the enforcement path already consume a single
    `JudgeVerdict`. Keeping the cascade signature `fn judge(...) ->
    JudgeVerdict` avoids a ripple through the worker and the action router.
-2. Dual-stage persistence is only valuable for Pipeline Learning (#44), and
+- Dual-stage persistence is only valuable for Pipeline Learning (#44), and
    that work hasn't landed. Adding a `stage` column now would be speculative
    schema churn.
 
@@ -224,7 +229,7 @@ When #44 surfaces the need, a follow-up issue adds a nullable `parent_verdict_id
 and `stage: fast|slow|single` to `judge_verdicts`, and the cascade writes
 both. Today this is out of scope.
 
-## 7. Failure semantics
+## Failure semantics
 
 Fail-open is preserved end-to-end:
 
@@ -236,44 +241,61 @@ Fail-open is preserved end-to-end:
 | Both tiers error | Judge returns `Err(_)`, enforcement decision is unchanged (the no-judge baseline). |
 | Slow tier not configured and fast is ambiguous | Fast-tier verdict is returned as-is. No escalation attempted. Not a failure. |
 
-## 8. Rollout sequence
+## Rollout sequence
 
-1. **Ship fast-judge + cascade primitive with `slow_backend: null`.** Fast
+**Ship fast-judge + cascade primitive with `slow_backend: null`.**: Fast
+
    tier is DeBERTa-protectai (the same model we already trust in the
    ensemble). Cascade escalation path is a no-op today. Verdicts persist;
    metrics emit with the `deberta` model label; shadow mode works. This is
    the commit that accompanies this ADR.
-2. **Re-fine-tune Qwen on the 6-field schema** (issue #90, in the
+
+**Re-fine-tune Qwen on the 6-field schema**: (issue #90, in the
+
    `autoresearch-rl` repo). Publish to HF Hub. Stand up vLLM locally.
-3. **Flip `slow_backend: vllm`** in production config with `promotion.shadow:
+
+**Flip `slow_backend: vllm`**: in production config with `promotion.shadow:
+
    true`. Watch `judge_shadow_would_block_total` and the ambiguous-band
    escalation rate for ~1 000 verdicts.
-4. **Calibrate** `ambiguous_low`, `ambiguous_high`, and (per #66)
+
+**Calibrate**: `ambiguous_low`, `ambiguous_high`, and (per #66)
+
    `min_confidence` against the observed reliability curves.
-5. **Flip shadow off.** Both tiers now enforce. The fast tier handles the
+
+**Flip shadow off.**: Both tiers now enforce. The fast tier handles the
+
    bulk; the slow tier handles the interesting cases.
-6. **Separately, retrain the user's DeBERTa** (issue #89). If it wins
+
+**Separately, retrain the user's DeBERTa**: (issue #89). If it wins
+
    head-to-head against protectai on our 27-corpus eval at equal or lower
    FPR, swap the default `deberta.model_id`. No other code changes.
 
 Each step is individually shippable. Nothing else is waiting on step 5 to
 begin.
 
-## 9. What this ADR does not decide
+## What this ADR does not decide
 
-- **Per-tenant cascade.** Today the cascade is a single global config.
+**Per-tenant cascade.**: Today the cascade is a single global config.
+
   Per-tenant cascade (different tiers for free vs paid) is a follow-up once
   tenant-scoped judge config lands.
-- **Dynamic band tuning.** Bands are static config. Auto-tuning them from
+
+**Dynamic band tuning.**: Bands are static config. Auto-tuning them from
+
   the observed reliability curve is tempting but premature without a golden
   set (#66).
-- **Dual persistence.** See §6. Until Pipeline Learning (#44) needs it, we
+
+**Dual persistence.**: See §6. Until Pipeline Learning (#44) needs it, we
+
   keep the storage contract simple.
-- **Replacing the ensemble DeBERTa.** The ensemble's DeBERTa (general
+
+**Replacing the ensemble DeBERTa.**: The ensemble's DeBERTa (general
+
   purpose, protectai) and the fast-judge DeBERTa (cascade gate, whatever
   operators point it at) remain two logical slots. The duplicated inference
   cost is a real inefficiency but not a correctness problem; forwarding the
   ensemble's score into the judge's `prior_findings` is tracked as a
   follow-up under #86.
 
----

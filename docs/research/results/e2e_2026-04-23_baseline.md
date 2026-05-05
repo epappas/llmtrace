@@ -6,7 +6,6 @@ It accompanies — but is distinct from — the auto-generated nightly report (`
 
 [91]: https://github.com/epappas/llmtrace/issues/91
 
----
 
 ## Headline
 
@@ -25,7 +24,6 @@ It accompanies — but is distinct from — the auto-generated nightly report (`
 [pr125]: https://github.com/epappas/llmtrace/pull/125
 [pr126]: https://github.com/epappas/llmtrace/pull/126
 
----
 
 ## Methodology
 
@@ -46,18 +44,36 @@ Same Python harness, same Rust release binary, same scenario corpus, same report
 
 Every scenario went through the **full L1–L10 pipeline**:
 
-1. **L1**: scenario YAML loaded from `benchmarks/attacks/`
-2. **L2**: scenario validated against `benchmarks/attacks/schema.json` (Draft 2020-12)
-3. **L3**: real `llmtrace-proxy` release binary spawned per session, real `/health` poll until ready
-4. **L4**: per-scenario `/metrics` snapshot taken before + polled after, with delta analysis
-5. **L5**: judge verdict polled from `/debug/judge/verdicts?trace_id=…` for scenarios that assert on the judge tier
-6. **L6**: expectation DSL evaluated each declared comparator (`proxy_outcome.at_least`, `findings_include`, `findings_min_severity`, `judge_verdict.*`)
-7. **L7**: 50-scenario corpus exercised end-to-end (8 families, 50 prompts; 20 tagged `pr-gate`)
-8. **L8**: regex upstream judge ran on every scenario, classifying upstream output against six rule classes
-9. **L9** (CI workflow): tested by virtue of the L9 PR's own `E2E PR Gate` job passing on PR #125
-10. **L10**: per-scenario JSON sidecar collected via the conftest hook; report generated; cost-cap fixture armed (no-op without `--cost-cap-usd`)
+**L1**: scenario YAML loaded from `benchmarks/attacks/`
 
----
+
+**L2**: scenario validated against `benchmarks/attacks/schema.json` (Draft 2020-12)
+
+
+**L3**: real `llmtrace-proxy` release binary spawned per session, real `/health` poll until ready
+
+
+**L4**: per-scenario `/metrics` snapshot taken before + polled after, with delta analysis
+
+
+**L5**: judge verdict polled from `/debug/judge/verdicts?trace_id=…` for scenarios that assert on the judge tier
+
+
+**L6**: expectation DSL evaluated each declared comparator (`proxy_outcome.at_least`, `findings_include`, `findings_min_severity`, `judge_verdict.*`)
+
+
+**L7**: 50-scenario corpus exercised end-to-end (8 families, 50 prompts; 20 tagged `pr-gate`)
+
+
+**L8**: regex upstream judge ran on every scenario, classifying upstream output against six rule classes
+
+
+**L9**: (CI workflow): tested by virtue of the L9 PR's own `E2E PR Gate` job passing on PR #125
+
+
+**L10**: per-scenario JSON sidecar collected via the conftest hook; report generated; cost-cap fixture armed (no-op without `--cost-cap-usd`)
+
+
 
 ## Attached proofs
 
@@ -70,7 +86,6 @@ Four files in this directory document the run:
 | `e2e_2026-04-23_junit.xml` | Pytest JUnit XML output. The Actions UI renders these natively when uploaded as a workflow artifact; here it serves as a vendor-neutral test-result archive. |
 | `e2e_2026-04-23_pytest_output.txt` | Raw pytest stdout for the run (tee'd from the live session). Includes per-scenario PASSED/FAILED lines and the full traceback for the flaky failure. |
 
----
 
 ## Triage: the single non-passing scenario
 
@@ -94,7 +109,6 @@ The same flake was observed in the L7 verification run; in both cases it has bee
 
 **Treatment**: documented as a known-flaky test condition; the appropriate fix lives in a follow-up that either raises the harness HTTP read timeout (currently 30 s in `ProxyHandle.post_chat`) or adds a per-scenario retry budget in the harness. Neither change is in scope for L10.
 
----
 
 ## What this run validates
 
@@ -109,7 +123,6 @@ Every scenario reaching `passed` (or `failed` with the trace flushed to junit) i
 
 The 0/49 upstream-fell-for-it rate reflects the mock upstream's behaviour (it returns deterministic refusals to every prompt) and is the correct baseline for a mock-only run. When the nightly workflow runs against a real upstream, this number is the metric to watch — non-zero means the upstream complied with at least one attack and the corresponding LLMTrace decision is the second column of the comparison.
 
----
 
 ## Reproducing this run
 

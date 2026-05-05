@@ -91,7 +91,9 @@ Generate and view compliance reports:
 Dashboard configuration:
 
 - Proxy URL setting
-- **Swagger UI** access -- the Settings page provides a link to the interactive API documentation served by the proxy at `/swagger-ui`
+
+**Swagger UI**: access -- the Settings page provides a link to the interactive API documentation served by the proxy at `/swagger-ui`
+
 
 ## Multi-Tenant Filtering
 

@@ -8,7 +8,6 @@
 **Source PDF:** `docs/research/papers/2506.06384.pdf`
 
 ## Summary
-
 DMPI-PMHFE is a dual-channel feature fusion framework for detecting direct prompt injection attacks. It combines DeBERTa-v3-base semantic feature extraction with heuristic feature engineering (synonym matching + pattern matching) to capture both implicit semantic and explicit structural attack signals. Features from both channels are concatenated and classified via fully connected layers. The paper reports state-of-the-art accuracy, recall, and F1 across three benchmark datasets, and significant attack success rate reductions when deployed as an active defense across five mainstream LLMs.
 
 ## Architecture
@@ -31,28 +30,31 @@ Input Text
 
 ### DeBERTa Feature Extraction (Channel 1)
 
-- **Model:** DeBERTa-v3-base
+**Model:**: DeBERTa-v3-base
+
 - Input tokenized into `{Tok_1, ..., Tok_n}` via DeBERTa tokenizer
 - Word embedding + position embedding layers
 - Transformer encoder produces contextualized representations `{O_1, ..., O_n}`
-- **Average pooling** aggregates into fixed-dimensional feature vector `{F_1, ..., F_d}`
+
+**Average pooling**: aggregates into fixed-dimensional feature vector `{F_1, ..., F_d}`
+
 
 ### Heuristic Feature Engineering (Channel 2)
 
 Input tokenized and lemmatized via spaCy `en_core_web_sm`. Two sub-modules:
 
 **Synonym Matching (Algorithm 1):**
-1. For each attack type, extract high-frequency keywords from training data
-2. Expand keywords using WordNet synonyms
-3. Tokenize, lemmatize, lowercase input text
-4. For each attack category, check if any token matches synonym list
-5. Output: binary vector `V = [V_1, ..., V_n]` where `V_i in {0, 1}`
+- For each attack type, extract high-frequency keywords from training data
+- Expand keywords using WordNet synonyms
+- Tokenize, lemmatize, lowercase input text
+- For each attack category, check if any token matches synonym list
+- Output: binary vector `V = [V_1, ..., V_n]` where `V_i in {0, 1}`
 
 **Pattern Matching (Algorithm 2):**
-1. For each structure-based attack, construct a dedicated regex matching function
-2. Tokenize, lemmatize, lowercase input text
-3. Apply each matching function; set `V_i = 1` if pattern detected
-4. Output: binary vector `V = [V_{n+1}, ..., V_{n+m}]`
+- For each structure-based attack, construct a dedicated regex matching function
+- Tokenize, lemmatize, lowercase input text
+- Apply each matching function; set `V_i = 1` if pattern detected
+- Output: binary vector `V = [V_{n+1}, ..., V_{n+m}]`
 
 Features from both sub-modules are concatenated into the final heuristic feature vector.
 
@@ -71,7 +73,7 @@ Features from both sub-modules are concatenated into the final heuristic feature
 | is_ignore | Asks LLM to ignore system prompts | ignore, reveal, disregard, forget, overlook, regardless |
 | is_urgent | Creates urgent scenarios to pressure LLM | urgent, immediate, asap, emergency, critical, time |
 | is_incentive | Uses praise/incentives to stimulate malicious actions | excellent, fantastic, nice, awesome, brilliant, great |
-| is_covert | Employs covert behaviors for info leakage | secret, hidden, covert, quiet, silent, discreetly, stealth, sneak, confidential, personal |
+| is_covert | Employs covert behaviours for info leakage | secret, hidden, covert, quiet, silent, discreetly, stealth, sneak, confidential, personal |
 | is_format_manipulation | Asks LLM to encode/disguise sensitive info | encode, disguising, morse, binary, hexadecimal |
 | is_hypothetical | Fictional scenarios/role-playing to rationalize sensitive output | assume, imagine, act, role, play, hypothetical, fictional, scenario |
 | is_systemic | Impersonates system admin/developer | developer, boss, manager, administrator, creator |
@@ -102,7 +104,7 @@ Threshold of 3 selected via systematic sensitivity analysis balancing precision 
 - Base: xTRam1/safeguard-prompt-injections (7,000 benign + 3,000 malicious)
 - Incorporated 15 mainstream attack patterns
 - Generated 3,000 additional samples using GPT-4o with paired positive/negative examples per attack
-- Quality assurance: 3-stage process (manual label verification, dedup + format standardization, balanced distribution via random sampling)
+- Quality assurance: 3-stage process (manual label verification, dedup + format standardisation, balanced distribution via random sampling)
 - Split: 10,400 training (80%), 1,300 validation (10%), 1,300 test (10%)
 
 ### Defense Evaluation
@@ -234,10 +236,17 @@ Numbers in parentheses = count of successful attacks out of 251 total.
 
 ## LLMTrace Application Notes
 
-- **Required signals:** raw prompt text, conversation history (optional), prompt metadata (user vs tool), regex features, classifier logits, model score calibration data.
-- **Runtime:** low-latency classification if DeBERTa is cached; streaming compatible only for chunk-level heuristics unless full prompt is buffered.
-- **Integration surface (proxy):** run a pre-request detector on normalized prompt text, attach risk score to request metadata, enforce policy thresholds before forwarding.
-- **Productizable vs research-only:** hybrid ML + heuristic detector is productizable; training-time feature fusion and dataset curation are research-heavy.
+**Required signals:**: raw prompt text, conversation history (optional), prompt metadata (user vs tool), regex features, classifier logits, model score calibration data.
+
+
+**Runtime:**: low-latency classification if DeBERTa is cached; streaming compatible only for chunk-level heuristics unless full prompt is buffered.
+
+
+**Integration surface (proxy):**: run a pre-request detector on normalized prompt text, attach risk score to request metadata, enforce policy thresholds before forwarding.
+
+
+**Productizable vs research-only:**: hybrid ML + heuristic detector is productizable; training-time feature fusion and dataset curation are research-heavy.
+
 
 ## Relevance to LLMTrace
 

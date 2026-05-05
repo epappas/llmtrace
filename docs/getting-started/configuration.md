@@ -4,12 +4,13 @@ This document describes the actual configuration surface for `llmtrace-proxy` as
 
 ## Configuration Sources and Precedence
 
-1. **CLI flags**
-   - `--config` (path to config file; can also be set via `LLMTRACE_CONFIG`)
+**CLI flags**: `--config` (path to config file; can also be set via `LLMTRACE_CONFIG`)
+
    - `--log-level` (overrides `logging.level`)
    - `--log-format` (overrides `logging.format`)
-2. **Environment variables**
-   - `LLMTRACE_LISTEN_ADDR`
+
+**Environment variables**: `LLMTRACE_LISTEN_ADDR`
+
    - `LLMTRACE_UPSTREAM_URL`
    - `LLMTRACE_STORAGE_PROFILE`
    - `LLMTRACE_STORAGE_DATABASE_PATH`
@@ -19,8 +20,9 @@ This document describes the actual configuration surface for `llmtrace-proxy` as
    - `LLMTRACE_REDIS_URL`
    - `LLMTRACE_LOG_LEVEL`
    - `LLMTRACE_LOG_FORMAT`
-3. **Config file values**
-4. **Built-in defaults** (only for fields with `#[serde(default)]` or `Default` in the schema)
+
+**Config file values**: **Built-in defaults** (only for fields with `#[serde(default)]` or `Default` in the schema)
+
 
 ## Minimal Config (Valid)
 

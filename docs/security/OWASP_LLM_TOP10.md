@@ -17,7 +17,6 @@ This document maps the [OWASP Top 10 for Large Language Model Applications](http
 | LLM09 | Overreliance | ⬜ N/A | — | Out of scope (UX concern) |
 | LLM10 | Model Theft | ⬜ N/A | — | Out of scope (infrastructure concern) |
 
----
 
 ## LLM01: Prompt Injection
 
@@ -41,7 +40,6 @@ This document maps the [OWASP Top 10 for Large Language Model Applications](http
 
 **Total LLM01 tests**: 20
 
----
 
 ## LLM02: Insecure Output Handling
 
@@ -61,7 +59,6 @@ This document maps the [OWASP Top 10 for Large Language Model Applications](http
 
 **Total LLM02 tests**: 7
 
----
 
 ## LLM06: Sensitive Information Disclosure
 
@@ -89,7 +86,6 @@ This document maps the [OWASP Top 10 for Large Language Model Applications](http
 
 **Total LLM06 tests**: 15
 
----
 
 ## LLM07: Insecure Plugin Design
 
@@ -113,7 +109,6 @@ This document maps the [OWASP Top 10 for Large Language Model Applications](http
 
 **Total LLM07 tests**: 22
 
----
 
 ## Running the Tests
 

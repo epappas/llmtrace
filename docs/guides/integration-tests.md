@@ -7,8 +7,11 @@ LLMTrace integration tests run against real infrastructure services
 
 ## Prerequisites
 
-- **Docker** and **Docker Compose** (v2) installed and running
-- **Rust toolchain** (`rustup`, `cargo`)
+**Docker**: and **Docker Compose** (v2) installed and running
+
+
+**Rust toolchain**: (`rustup`, `cargo`)
+
 - Ports 8123, 9000, 5432, and 6379 available on localhost
 
 ## Quick Start
@@ -71,11 +74,11 @@ cargo test -p llmtrace-storage --features "clickhouse,postgres,redis_backend" --
 The GitHub Actions CI pipeline (`.github/workflows/ci.yml`) has a dedicated
 `integration` job that:
 
-1. Waits for unit tests to pass (`needs: test`)
-2. Starts Docker Compose services with `docker compose up -d`
-3. Verifies service health (ClickHouse ping, `pg_isready`, Redis `PING`)
-4. Runs `cargo test --workspace --features "clickhouse,postgres,redis_backend" -- --ignored`
-5. Tears down services (`docker compose down -v`) regardless of test outcome
+- Waits for unit tests to pass (`needs: test`)
+- Starts Docker Compose services with `docker compose up -d`
+- Verifies service health (ClickHouse ping, `pg_isready`, Redis `PING`)
+- Runs `cargo test --workspace --features "clickhouse,postgres,redis_backend" -- --ignored`
+- Tears down services (`docker compose down -v`) regardless of test outcome
 
 ## Troubleshooting
 
@@ -111,8 +114,11 @@ timeouts; look for `connect_timeout` or `timeout` in test output.
 The release pipeline (`.github/workflows/release.yml`) scans the Docker image
 with [Trivy](https://github.com/aquasecurity/trivy) before pushing to GHCR:
 
-- **Release builds**: Trivy scans fail the pipeline on CRITICAL/HIGH CVEs
-- **PR/CI builds**: Trivy runs as an advisory scan (does not block merge)
+**Release builds**: Trivy scans fail the pipeline on CRITICAL/HIGH CVEs
+
+
+**PR/CI builds**: Trivy runs as an advisory scan (does not block merge)
+
 - SARIF results are uploaded to the GitHub Security tab
 
 To scan locally:

@@ -4,9 +4,8 @@
 
 LLMTrace runs **6 analyzers** (3 active by default, 3 optional) through an ensemble pipeline producing a unified security verdict per request. Total: **185 regex patterns + 4 ML models + 1 fusion classifier**.
 
----
 
-## 1. Regex Security Analyzer
+## Regex Security Analyzer
 
 **File:** `crates/llmtrace-security/src/lib.rs`
 **Type:** Deterministic pattern matching
@@ -66,9 +65,8 @@ RegexSecurityAnalyzer {
 - `analyze_request()` -- injection patterns + PII + context flooding + jailbreak detection
 - `analyze_response()` -- PII + data/secret leakage only
 
----
 
-## 2. Jailbreak Detector
+## Jailbreak Detector
 
 **File:** `crates/llmtrace-security/src/jailbreak_detector.rs` (1,029 lines)
 **Type:** Heuristic + regex + encoding evasion detection
@@ -96,9 +94,8 @@ RegexSecurityAnalyzer {
 
 Suspicious phrases checked in decoded content: "ignore", "override", "system prompt", "instructions", "you are now", "forget", "disregard", "act as", "new role", "jailbreak".
 
----
 
-## 3. DeBERTa ML Analyzer
+## DeBERTa ML Analyzer
 
 **File:** `crates/llmtrace-security/src/ml_detector.rs` (1,229 lines)
 **Type:** Transformer neural network (Candle)
@@ -108,10 +105,10 @@ Suspicious phrases checked in decoded content: "ignore", "override", "system pro
 
 ### How It Works
 
-1. Tokenize input via HuggingFace tokenizer
-2. Forward pass through DeBERTa-v3-base
-3. Softmax over 2 classes (safe / injection)
-4. If `injection_score >= threshold` --> produce finding
+- Tokenize input via HuggingFace tokenizer
+- Forward pass through DeBERTa-v3-base
+- Softmax over 2 classes (safe / injection)
+- If `injection_score >= threshold` --> produce finding
 
 ### Short-Input Confidence Scaling (ML-032)
 
@@ -134,9 +131,8 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 
 **Fallback:** If model fails to load, falls back to `RegexSecurityAnalyzer`.
 
----
 
-## 4. InjecGuard Analyzer (Auxiliary)
+## InjecGuard Analyzer (Auxiliary)
 
 **File:** `crates/llmtrace-security/src/injecguard.rs`
 **Model:** `leolee99/InjecGuard`
@@ -148,9 +144,8 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Confidence cap:** 0.60 unless corroborated by primary detectors
 **Execution:** `tokio::task::spawn_blocking` (concurrent with async ML)
 
----
 
-## 5. PIGuard Analyzer (Auxiliary)
+## PIGuard Analyzer (Auxiliary)
 
 **File:** `crates/llmtrace-security/src/piguard.rs` (362 lines)
 **Model:** `leolee99/PIGuard`
@@ -163,9 +158,8 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Finding type:** `piguard_injection`
 **Implementation:** Delegates to InjecGuardAnalyzer internally, transforms finding types.
 
----
 
-## 6. NER Detector (PII)
+## NER Detector (PII)
 
 **File:** `crates/llmtrace-security/src/ner_detector.rs`
 **Model:** `dslim/bert-base-NER` (BERT token classification)
@@ -176,7 +170,7 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 | NER Label | PII Type | Confidence | Severity |
 |---|---|---|---|
 | PER | person_name | 0.85 | Medium |
-| ORG | organization | 0.75 | Low |
+| ORG | organisation | 0.75 | Low |
 | LOC | location | 0.70 | Low |
 | MISC | (ignored) | -- | -- |
 
@@ -184,9 +178,8 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 **Finding type:** `pii_detected` (with `detection_method: "ner"`)
 **Merge logic:** Deduplicated against regex PII; corroborated findings get +0.05 boost.
 
----
 
-## 7. Fusion Classifier (Alternative to Voting)
+## Fusion Classifier (Alternative to Voting)
 
 **File:** `crates/llmtrace-security/src/fusion_classifier.rs` (365 lines)
 **Config:** `fusion_enabled: false` (default)
@@ -201,7 +194,6 @@ When fusion enabled, extracts 768-dim embeddings via masked average pooling (DMP
 
 Replaces score-level ensemble voting with learned feature-level fusion (ADR-013). When active, bypasses the ballot voting system entirely.
 
----
 
 ## Ensemble Orchestration
 
@@ -246,10 +238,17 @@ EnsembleSecurityAnalyzer {
 
 ### Voting Rules
 
-- **2 ballots (regex + ML):** Union merge -- any detector sufficient
-- **3+ ballots:** True majority (`n/2 + 1`) required
-- **High-precision categories** (`shell_injection`, `data_exfiltration`, `p2sql_injection`): Bypass voting, single detector sufficient
-- **Non-injection findings** (PII, toxicity, leakage): Never voted on, always pass through
+**2 ballots (regex + ML):**: Union merge -- any detector sufficient
+
+
+**3+ ballots:**: True majority (`n/2 + 1`) required
+
+
+**High-precision categories**: (`shell_injection`, `data_exfiltration`, `p2sql_injection`): Bypass voting, single detector sufficient
+
+
+**Non-injection findings**: (PII, toxicity, leakage): Never voted on, always pass through
+
 
 ### Scoring Adjustments
 
@@ -260,7 +259,6 @@ EnsembleSecurityAnalyzer {
 | Auxiliary-only finding | Confidence capped at 0.60 |
 | Auxiliary corroboration of primary | +0.10 boost |
 
----
 
 ## Threshold Gates (Per Operating Point)
 
@@ -274,7 +272,6 @@ EnsembleSecurityAnalyzer {
 
 Classification: `security_score >= 50` = flagged.
 
----
 
 ## Over-Defence Suppression
 
@@ -285,7 +282,6 @@ Only active when `over_defence: true` AND no IG/PG detectors active. Suppresses 
 
 Non-injection findings always pass through.
 
----
 
 ## Production Config
 
@@ -302,13 +298,11 @@ Non-injection findings always pass through.
 
 **Best measured performance:** 83.7% accuracy, 84.7% F1 (Balanced + over-defence=true, regex + DeBERTa only)
 
----
 
 ## False Positive Tracker
 
 Sliding-window monitor (5-minute window) tracking flagging rates for drift detection. Not used for suppression -- purely observational.
 
----
 
 ## Multi-Model Ensemble (Alternative)
 
@@ -322,7 +316,6 @@ For diverse model architectures (not just DeBERTa), supports configurable voting
 | WeightedAverage | Per-model weights, threshold-based decision |
 | MaxSeverity | Most severe finding wins (most conservative) |
 
----
 
 ## Key File Locations
 

@@ -10,11 +10,20 @@ curl http://localhost:8080/health | jq
 
 The `/health` endpoint returns:
 
-- **status**: `healthy` or `degraded`
-- **storage**: storage backend connectivity status
-- **circuit_breaker**: current circuit breaker state (`closed`, `open`, `half_open`)
-- **ml_models**: ML model loading status
-- **uptime**: proxy uptime in seconds
+**status**: `healthy` or `degraded`
+
+
+**storage**: storage backend connectivity status
+
+
+**circuit_breaker**: current circuit breaker state (`closed`, `open`, `half_open`)
+
+
+**ml_models**: ML model loading status
+
+
+**uptime**: proxy uptime in seconds
+
 
 Use this for Kubernetes liveness/readiness probes:
 
@@ -149,12 +158,20 @@ logging:
   level: "info"    # error | warn | info | debug | trace
   format: "text"   # text | json
 ```
+**error**: only critical failures
 
-- **error**: only critical failures
-- **warn**: degraded operations (circuit breaker trips, timeouts)
-- **info**: request summaries, security findings, startup/shutdown
-- **debug**: detailed request/response logging, threshold filtering decisions
-- **trace**: full request bodies, ML inference details (high volume)
+
+**warn**: degraded operations (circuit breaker trips, timeouts)
+
+
+**info**: request summaries, security findings, startup/shutdown
+
+
+**debug**: detailed request/response logging, threshold filtering decisions
+
+
+**trace**: full request bodies, ML inference details (high volume)
+
 
 ### Structured JSON Logs
 
@@ -209,8 +226,14 @@ circuit_breaker:
 ```
 
 States:
-- **Closed**: normal operation, all features active
-- **Open**: storage/security failures exceeded threshold; proxy passes traffic through without analysis
-- **Half-Open**: testing recovery with limited calls
+
+**Closed**: normal operation, all features active
+
+
+**Open**: storage/security failures exceeded threshold; proxy passes traffic through without analysis
+
+
+**Half-Open**: testing recovery with limited calls
+
 
 Monitor via the `/health` endpoint or the `llmtrace_circuit_breaker_state` Prometheus metric.

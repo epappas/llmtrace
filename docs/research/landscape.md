@@ -24,7 +24,7 @@ ProtectAI DeBERTa Prompt-Injection v2 is a fine-tuned DeBERTa-v3-base model for 
 
 Meta Prompt-Guard-86M is a Prompt Guard text-classification model hosted on Hugging Face with a detailed model card describing its use as a classifier for prompt attacks. It can be evaluated as a compact guard model for low-latency scenarios. Source: https://huggingface.co/meta-llama/Prompt-Guard-86M
 
-Meta Llama-Guard-3-8B is a Llama-3.1-8B model fine-tuned for content safety classification, with a model card describing prompt and response classification behavior. It can serve as a high-accuracy guard baseline to compare against smaller detectors in LLMTrace telemetry. Source: https://huggingface.co/meta-llama/Llama-Guard-3-8B
+Meta Llama-Guard-3-8B is a Llama-3.1-8B model fine-tuned for content safety classification, with a model card describing prompt and response classification behaviour. It can serve as a high-accuracy guard baseline to compare against smaller detectors in LLMTrace telemetry. Source: https://huggingface.co/meta-llama/Llama-Guard-3-8B
 
 ## Research Implementations
 
@@ -34,7 +34,7 @@ InjecGuard provides official code, data, and model weights for the InjecGuard pr
 
 Comprehensive reference catalog covering all 10 OWASP GenAI vulnerability categories with academic papers, industry research, and incident reports mapped to LLMTrace's detection capabilities. See: `docs/research/owasp-genai-top10-2025-references.md`
 
-System architecture report analyzing LLMTrace's role in the OWASP GenAI threat model with AI-engineer, MLOps-engineer, and Security-engineer perspectives. See: `docs/research/llmtrace-owasp-genai-architecture-report.md`
+System architecture report analysing LLMTrace's role in the OWASP GenAI threat model with AI-engineer, MLOps-engineer, and Security-engineer perspectives. See: `docs/research/llmtrace-owasp-genai-architecture-report.md`
 
 Detailed code-level security architecture analysis with 40+ specific function references mapping OWASP categories to llmtrace-security crate components. See: `docs/security/OWASP_GENAI_TOP10_2025_ARCHITECTURE.md`
 

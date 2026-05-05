@@ -13,7 +13,6 @@ rationale, see [`architecture/LLM_JUDGE.md`](../architecture/LLM_JUDGE.md).
 For real performance numbers against published corpora, see the
 [evaluation report](../research/results/judge_evaluation_gpt4o_mini_2026-04-20.md).
 
----
 
 ## The three-tier cascade (what this looks like in production)
 
@@ -84,7 +83,7 @@ means you can turn it on without risking request flow. But it still
 has real cost and real latency, so some decisions are worth making
 up front.
 
-### 1. Pick a backend
+### Pick a backend
 
 | Backend | When to use | Typical p95 | Approx $/call (April 2026) |
 |---|---|---|---|
@@ -96,7 +95,7 @@ You can run a different judge family than the upstream LLM you're
 protecting — that's the point. If the upstream is GPT-4o, judge with
 Claude. If upstream is Claude, judge with a local Llama via vLLM.
 
-### 2. Choose inline vs async
+### Choose inline vs async
 
 The judge defaults to **async**. Verdicts arrive after the request
 completes, are persisted to `judge_verdicts`, and feed the ensemble
@@ -111,7 +110,7 @@ aware of the latency profile in the evaluation report —
 Either raise `inline_timeout_ms` to ≥ 4000 on slower providers, or
 keep inline off.
 
-### 3. Plan the rollout
+### Plan the rollout
 
 **We strongly recommend shadow mode for the first 1 000 verdicts.**
 `promotion.shadow=true` runs the judge end-to-end (persists verdicts,
@@ -120,7 +119,6 @@ without affecting enforcement. Once you've reviewed the
 `judge_shadow_would_block_total` rate and fitted calibration, flip
 `shadow=false`.
 
----
 
 ## Minimal configs
 
@@ -210,17 +208,22 @@ judge:
 
 Tuning notes:
 
-- **Ambiguous band defaults to `[0.3, 0.7]`.** Tighten it (e.g.
+**Ambiguous band defaults to `[0.3, 0.7]`.**: Tighten it (e.g.
+
   `[0.4, 0.6]`) if you want the slow tier to fire less often; widen
   it if you're seeing too many unreviewed fast-tier blocks in
   production. The calibration workflow in
   [§ Shadow-mode rollout](#shadow-mode-rollout-recommended) produces
   the curve you need to pick good bounds.
-- **On fast-tier errors** the cascade automatically tries the slow
+
+**On fast-tier errors**: the cascade automatically tries the slow
+
   tier as a resilience fallback, if one is configured. On slow-tier
   errors mid-escalation it keeps the fast verdict. Either way the
   judge never *fails* — it just degrades.
-- **DeBERTa as the fast-judge is a classifier.** It cannot produce
+
+**DeBERTa as the fast-judge is a classifier.**: It cannot produce
+
   `category` or `reasoning`; the cascade synthesises those from a
   fixed template. See
   [`architecture/JUDGE_CASCADE.md §3.5`](../architecture/JUDGE_CASCADE.md).
@@ -268,7 +271,6 @@ loopback (`localhost`, `127.0.0.1`, `::1`), the proxy will refuse to
 start unless `allow_plaintext: true` is explicitly set. This is
 issue #77: it prevents silent interception of judge traffic.
 
----
 
 ## Production config (all fields)
 
@@ -317,7 +319,6 @@ judge:
 - `total_deadline_ms ≥ timeout_ms × (max_retries + 1) + backoff`.
   The default 45 000 ms covers `30 000 + 30 000 + jitter`.
 
----
 
 ## Turning it on at runtime
 
@@ -341,19 +342,21 @@ The `enabled` field in the config file and the `llm_judge_enabled`
 admin flag are the same value (one wire name, one source of truth).
 Toggling via the admin API takes effect on the next request.
 
----
 
 ## Shadow-mode rollout (recommended)
 
 This is the safest way to introduce the judge on live traffic.
 
-1. **Enable with `shadow: true`.** Verdicts are recorded and metrics
+**Enable with `shadow: true`.**: Verdicts are recorded and metrics
+
    fire, but the promotion gate never flips an outcome to Block.
-2. **Watch `llmtrace_judge_shadow_would_block_total{category,
+- **Watch `llmtrace_judge_shadow_would_block_total{category,
    recommended_action}`.** This counter increments every time the
    judge would have blocked under current thresholds. Compare it to
    your baseline block rate; if it's 10 × higher, do not flip yet.
-3. **Collect ≥ 1 000 verdicts** across your traffic profile. Export
+
+**Collect ≥ 1 000 verdicts**: across your traffic profile. Export
+
    them from the `judge_verdicts` table:
 
     ```sql
@@ -361,20 +364,21 @@ This is the safest way to introduce the judge on live traffic.
     FROM judge_verdicts
     WHERE created_at > now() - INTERVAL '7 days';
     ```
+**Calibrate**: `promotion.min_confidence`. Group verdicts by
 
-4. **Calibrate** `promotion.min_confidence`. Group verdicts by
    confidence bucket, compute observed precision per bucket, pick
    the threshold at your target false-positive rate. See the
    [calibration status section of the design doc][calibration-status].
    Golden-set work is tracked in [issue #66][issue-66].
-5. **Flip `shadow: false`.** Keep monitoring the
+
+**Flip `shadow: false`.**: Keep monitoring the
+
    `judge_promotion_rejected_total` counter — it tells you how many
    verdicts *tried* to promote but were held back by your gates.
 
 [calibration-status]: ../architecture/LLM_JUDGE.md#49-calibration-status
 [issue-66]: https://github.com/epappas/llmtrace/issues/66
 
----
 
 ## Metrics to watch
 
@@ -397,19 +401,27 @@ you can compare judges without grouping yourself.
 
 ### Dashboards
 
-- **Volume & cost:** `rate(llmtrace_judge_requests_total{status="success"}[5m])`
+**Volume & cost:**: `rate(llmtrace_judge_requests_total{status="success"}[5m])`
+
   and `sum(rate(llmtrace_judge_tokens_total[5m])) by (direction, model)`.
-- **Latency headroom:** `histogram_quantile(0.95,
+
+**Latency headroom:**: `histogram_quantile(0.95,
+
   rate(llmtrace_judge_latency_seconds_bucket[5m]))`.
-- **Failure triage:** `sum by (status)
+
+**Failure triage:**: `sum by (status)
+
   (rate(llmtrace_judge_requests_total[5m]))`.
-- **Shadow signal:** `rate(llmtrace_judge_shadow_would_block_total[1h])`
+
+**Shadow signal:**: `rate(llmtrace_judge_shadow_would_block_total[1h])`
+
   vs. your existing regex/ML block rate.
-- **Detector drift:** `llmtrace_judge_golden_set_alignment` and
+
+**Detector drift:**: `llmtrace_judge_golden_set_alignment` and
+
   `llmtrace_judge_golden_set_false_positive_rate` per category — see
   [calibration loop](#golden-set-calibration-loop-66) below.
 
----
 
 ## Golden-set calibration loop (#66)
 
@@ -476,7 +488,6 @@ One per file under `<category>/<id>.json` — never edit a monolithic file:
 
 Filename stem must equal `id`; parent dir must equal `category`. The integration test fails loudly on either mismatch. The per-id layout is intentional: it lets contributors add fixtures one prompt at a time without ever needing to touch a large concatenated corpus.
 
----
 
 ## Validating a new backend — the smoke binary
 
@@ -507,7 +518,6 @@ Budget ~$0.15 for the full sweep on `gpt-4o-mini`. See the
 [evaluation report](../research/results/judge_evaluation_gpt4o_mini_2026-04-20.md)
 for one reference run.
 
----
 
 ## Troubleshooting
 
@@ -548,9 +558,9 @@ verdict was truncated (look for truncated `reasoning` strings).
 
 The worker channel is saturated. Three knobs, in order of impact:
 
-1. Raise `worker.max_concurrency` if your provider's RPM allows.
-2. Raise `worker.channel_buffer` (costs memory).
-3. Raise `min_score_threshold` to fire the judge on fewer prompts.
+- Raise `worker.max_concurrency` if your provider's RPM allows.
+- Raise `worker.channel_buffer` (costs memory).
+- Raise `min_score_threshold` to fire the judge on fewer prompts.
 
 ### p95 latency exceeds `inline_timeout_ms`
 
@@ -565,13 +575,18 @@ First check `llmtrace_judge_verdicts_total` — is the judge actually
 saying `is_threat=true, recommended_action=block` on benign
 prompts? If so:
 
-1. **Are you in shadow mode?** If yes, you're only seeing metrics;
+**Are you in shadow mode?**: If yes, you're only seeing metrics;
+
    real traffic is untouched.
-2. **Is `require_ensemble_support: true`?** That's the default. It
+
+**Is `require_ensemble_support: true`?**: That's the default. It
+
    requires a Medium+ prior regex/ML finding before the judge can
    block on its own. If you set it `false`, the judge becomes a
    single detector with single-detector risk.
-3. **Is the over-refusal profile the cause?** Run the smoke or
+
+**Is the over-refusal profile the cause?**: Run the smoke or
+
    benchmark against the `xstest` set and check the FPR — if it's
    high, the model itself is over-refusing. Try a different model.
 
@@ -582,7 +597,6 @@ cause is a base URL without a scheme (`api.openai.com` instead of
 `https://api.openai.com`) or a model name the provider doesn't
 know. The error message is logged at WARN.
 
----
 
 ## Cost discipline
 
@@ -603,7 +617,6 @@ Practical tuning:
   and don't need long-term verdict history; the ensemble still
   sees the verdict in-memory.
 
----
 
 ## Related pages
 
@@ -613,4 +626,3 @@ Practical tuning:
 - [Configuration reference](../getting-started/configuration.md) — full config schema summary.
 - [Feature flags runbook](../runbooks/feature-flags.md) — admin API details.
 
----

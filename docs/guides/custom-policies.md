@@ -4,24 +4,22 @@ This guide covers how to configure LLMTrace's security policies, rate limiting, 
 
 > **Quick links:** [Minimal config](https://github.com/epappas/llmtrace/blob/main/examples/config-minimal.yaml) · [Production config](https://github.com/epappas/llmtrace/blob/main/examples/config-production.yaml) · [High-security config](https://github.com/epappas/llmtrace/blob/main/examples/config-high-security.yaml) · [Cost-control config](https://github.com/epappas/llmtrace/blob/main/examples/config-cost-control.yaml)
 
----
 
 ## Table of Contents
 
-1. [Configuration Basics](#configuration-basics)
-2. [Security Analysis Policies](#security-analysis-policies)
-3. [Rate Limiting](#rate-limiting)
-4. [Cost Caps & Budgets](#cost-caps--budgets)
-5. [Alert Channels](#alert-channels)
-6. [Circuit Breaker](#circuit-breaker)
-7. [Anomaly Detection](#anomaly-detection)
-8. [Streaming Security Analysis](#streaming-security-analysis)
-9. [PII Detection & Redaction](#pii-detection--redaction)
-10. [Compliance Reporting](#compliance-reporting)
-11. [OWASP LLM Top 10 Coverage](#owasp-llm-top-10-coverage)
-12. [Putting It All Together](#putting-it-all-together)
+- [Configuration Basics](#configuration-basics)
+- [Security Analysis Policies](#security-analysis-policies)
+- [Rate Limiting](#rate-limiting)
+- [Cost Caps & Budgets](#cost-caps--budgets)
+- [Alert Channels](#alert-channels)
+- [Circuit Breaker](#circuit-breaker)
+- [Anomaly Detection](#anomaly-detection)
+- [Streaming Security Analysis](#streaming-security-analysis)
+- [PII Detection & Redaction](#pii-detection--redaction)
+- [Compliance Reporting](#compliance-reporting)
+- [OWASP LLM Top 10 Coverage](#owasp-llm-top-10-coverage)
+- [Putting It All Together](#putting-it-all-together)
 
----
 
 ## Configuration Basics
 
@@ -62,7 +60,6 @@ storage:
   # redis_url: "redis://127.0.0.1:6379"
 ```
 
----
 
 ## Security Analysis Policies
 
@@ -153,14 +150,13 @@ security_analysis:
 - You want zero external dependencies and minimal latency overhead
 - Your primary concern is PII in structured formats
 
-### Ensemble Behavior
+### Ensemble Behaviour
 
 When ML is enabled, LLMTrace uses the ensemble analyzer:
 - Regex findings are always included.
 - ML findings are added when the model is loaded successfully.
 - Findings are merged and deduplicated; overlapping items include metadata such as `ensemble_agreement`.
 
----
 
 ## Rate Limiting
 
@@ -228,7 +224,6 @@ rate_limiting:
 | Batch embedding pipeline | 200–1000 | 1× RPS | Steady throughput, no burst needed |
 | Rate-limited LLM plan | Match plan limit | +20% headroom | Prevent provider-side 429s |
 
----
 
 ## Cost Caps & Budgets
 
@@ -255,7 +250,7 @@ cost_caps:
 
 ### Soft vs Hard Limits
 
-| Limit Type | Behavior | Use Case |
+| Limit Type | Behaviour | Use Case |
 |------------|----------|----------|
 | **Soft limit** | Triggers an alert but allows the request | Early warning — "you're spending fast" |
 | **Hard limit** | Rejects the request with HTTP 429 | Hard stop — "no more spending this period" |
@@ -350,7 +345,6 @@ cost_estimation:
       output_per_million: 0.0
 ```
 
----
 
 ## Alert Channels
 
@@ -424,9 +418,8 @@ This means: if the same finding type fires multiple times within 5 minutes, only
 
 ### Escalation (Not Implemented Yet)
 
-The config schema includes an `alerts.escalation` block, but the proxy does not currently implement escalation behavior. Any escalation settings are ignored at runtime.
+The config schema includes an `alerts.escalation` block, but the proxy does not currently implement escalation behaviour. Any escalation settings are ignored at runtime.
 
----
 
 ## Circuit Breaker
 
@@ -473,11 +466,10 @@ CLOSED (normal) → failures exceed threshold → OPEN (pass-through)
 | Production (standard) | 10 | 30000 | Tolerate transient blips |
 | Production (high-availability) | 5 | 60000 | Open quickly, recover cautiously |
 
----
 
 ## Anomaly Detection
 
-Anomaly detection uses statistical analysis (moving averages and standard deviations) to identify unusual behavior per tenant — cost spikes, token spikes, velocity surges, and latency outliers.
+Anomaly detection uses statistical analysis (moving averages and standard deviations) to identify unusual behaviour per tenant — cost spikes, token spikes, velocity surges, and latency outliers.
 
 ```yaml
 anomaly_detection:
@@ -507,7 +499,7 @@ anomaly_detection:
 |------|----------------|---------------|
 | `cost_spike` | Single request costs much more than the tenant's average | Runaway prompt, model upgrade without budget adjustment |
 | `token_spike` | Unusually high token count for a single request | Prompt injection inflating context, copy-paste of large documents |
-| `velocity_spike` | Tenant is sending requests much faster than usual | Automated loop, DDoS-like behavior, misconfigured retry logic |
+| `velocity_spike` | Tenant is sending requests much faster than usual | Automated loop, DDoS-like behaviour, misconfigured retry logic |
 | `latency_spike` | Response taking much longer than typical | Provider degradation, overly complex prompt, model overload |
 
 ### Choosing Window Size and Sigma
@@ -524,7 +516,6 @@ anomaly_detection:
 
 Start with `window_size: 100` and `sigma_threshold: 3.0`. Adjust based on your false-positive tolerance.
 
----
 
 ## Streaming Security Analysis
 
@@ -551,10 +542,10 @@ streaming_analysis:
 ```
 
 **How it works:**
-1. As SSE chunks arrive, the proxy accumulates tokens
-2. Every `token_interval` tokens, it runs lightweight regex pattern matching on the accumulated content (streaming analysis uses regex only)
-3. If a critical finding is detected mid-stream, an alert fires immediately (doesn't wait for stream completion)
-4. After the stream completes, full analysis runs on the complete response
+- As SSE chunks arrive, the proxy accumulates tokens
+- Every `token_interval` tokens, it runs lightweight regex pattern matching on the accumulated content (streaming analysis uses regex only)
+- If a critical finding is detected mid-stream, an alert fires immediately (doesn't wait for stream completion)
+- After the stream completes, full analysis runs on the complete response
 
 **Note:** Output-side streaming checks require `output_safety.enabled: true` in addition to `streaming_analysis.output_enabled`.
 
@@ -563,7 +554,6 @@ streaming_analysis:
 - High-security environments where early detection matters
 - When you want real-time alerts, not post-hoc analysis
 
----
 
 ## PII Detection & Redaction
 
@@ -616,7 +606,6 @@ Becomes:
 Contact John at [PII:EMAIL] or call [PII:PHONE_NUMBER]
 ```
 
----
 
 ## Compliance Reporting
 
@@ -656,7 +645,6 @@ storage:
   auto_migrate: false
 ```
 
----
 
 ## OWASP LLM Top 10 Coverage
 
@@ -687,7 +675,6 @@ cargo test --test owasp_llm_top10 owasp_llm07   # Agent Action Analysis
 
 For detailed coverage breakdown, see [docs/security/OWASP_LLM_TOP10.md](../security/OWASP_LLM_TOP10.md).
 
----
 
 ## Putting It All Together
 
@@ -702,14 +689,29 @@ The example configurations in the [`examples/`](https://github.com/epappas/llmtr
 
 ### Recommended Rollout Order
 
-1. **Start with minimal** — Get the proxy running with `config-minimal.yaml`
-2. **Add alerting** — Connect Slack/webhook so you see what's happening
-3. **Enable cost caps** — Prevent billing surprises
-4. **Tune rate limits** — Adjust per-tenant based on observed traffic
-5. **Enable anomaly detection** — After you have ~100 requests of baseline data
-6. **Consider ML detection** — If you handle untrusted user input
-7. **Enable streaming analysis** — For long-running streaming responses
-8. **Set up compliance** — When you need SOC2/GDPR/HIPAA audit trails
+**Start with minimal**: — Get the proxy running with `config-minimal.yaml`
+
+
+**Add alerting**: — Connect Slack/webhook so you see what's happening
+
+
+**Enable cost caps**: — Prevent billing surprises
+
+
+**Tune rate limits**: — Adjust per-tenant based on observed traffic
+
+
+**Enable anomaly detection**: — After you have ~100 requests of baseline data
+
+
+**Consider ML detection**: — If you handle untrusted user input
+
+
+**Enable streaming analysis**: — For long-running streaming responses
+
+
+**Set up compliance**: — When you need SOC2/GDPR/HIPAA audit trails
+
 
 ### Environment Variable Quick Reference
 

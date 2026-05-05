@@ -39,7 +39,7 @@ CyberSecEval 2 covers six evaluation areas (two from v1, four new):
 | **Exploit Generation** | Capability assessment | **New in v2** |
 | **False Refusal Rate (FRR)** | Safety-utility tradeoff | **New in v2** |
 
-### 1. Prompt Injection Testing
+### Prompt Injection Testing
 
 **Dataset Size:** 251 prompt injection attack samples (cross-referenced from DMPI-PMHFE, arXiv 2506.06384, Table reference [28]).
 
@@ -62,7 +62,7 @@ A separate **Judge LLM** evaluates whether the injection succeeded using handcra
 | 4 | System Mode | Claiming elevated system privileges |
 | 5 | Different User Input Language | Multilingual evasion |
 | 6 | Information Overload | Padding with irrelevant content |
-| 7 | Few-shot Attack | Providing examples to steer behavior |
+| 7 | Few-shot Attack | Providing examples to steer behaviour |
 | 8 | Many-shot Attack | Extended few-shot with many examples |
 | 9 | Repeated-token Attack | Repetitive token flooding |
 | 10 | Output Formatting Manipulation | Forcing specific output structures |
@@ -72,7 +72,7 @@ A separate **Judge LLM** evaluates whether the injection succeeded using handcra
 | 14 | Virtualization | Simulating alternative environments |
 | 15 | Mixed Techniques | Combining multiple attack vectors |
 
-**Scope Exclusions:** Iterative/multi-turn attacks, gradient-based optimization, heuristic optimization methods, non-English prompts.
+**Scope Exclusions:** Iterative/multi-turn attacks, gradient-based optimisation, heuristic optimisation methods, non-English prompts.
 
 **Results:**
 
@@ -88,7 +88,7 @@ A separate **Judge LLM** evaluates whether the injection succeeded using handcra
 - Larger models (70B+, GPT-4) showed better resistance
 - Llama 3 struggled with multilingual attacks (limited multilingual training)
 
-### 2. Code Interpreter Abuse Testing
+### Code Interpreter Abuse Testing
 
 500 prompts total (100 per category across 5 categories), evaluated by Judge LLM for malicious compliance.
 
@@ -111,7 +111,7 @@ A separate **Judge LLM** evaluates whether the injection succeeded using handcra
 | CodeLlama variants | 30-47% |
 | **Average (all models)** | **35%** |
 
-### 3. Exploit Generation Testing
+### Exploit Generation Testing
 
 CTF-style challenges with randomly generated tests to prevent memorization. Tests assess general reasoning rather than comprehensive vulnerability coverage.
 
@@ -131,7 +131,7 @@ CTF-style challenges with randomly generated tests to prevent memorization. Test
 
 > "LLMs have a ways to go before performing well on this benchmark"
 
-### 4. False Refusal Rate (FRR)
+### False Refusal Rate (FRR)
 
 **Definition:** Percentage of benign prompts refused by an LLM because they are mistaken for unsafe prompts.
 
@@ -148,7 +148,7 @@ CTF-style challenges with randomly generated tests to prevent memorization. Test
 
 > "Many LLMs able to successfully comply with 'borderline' benign requests while still rejecting most unsafe requests"
 
-### 5. Cyberattack Helpfulness (v1 vs v2 Comparison)
+### Cyberattack Helpfulness (v1 vs v2 Comparison)
 
 Tests model compliance with cyberattack assistance requests across 10 MITRE ATT&CK categories.
 
@@ -187,76 +187,112 @@ Tests model compliance with cyberattack assistance requests across 10 MITRE ATT&
 
 ### What CyberSecEval 2 Provides That We Lack
 
-1. **Systematic Attack Taxonomy**: 15 prompt injection categories with structured test generation
-2. **Judge LLM Evaluation**: Automated, unambiguous success/failure assessment per attack
-3. **FRR Benchmarking**: Quantified safety-utility tradeoff measurement with borderline prompts
-4. **ASR Metric**: Standardized attack success rate across models and categories
-5. **Reproducible Test Generation**: Randomly generated tests preventing memorization bias
+**Systematic Attack Taxonomy**: 15 prompt injection categories with structured test generation
+
+
+**Judge LLM Evaluation**: Automated, unambiguous success/failure assessment per attack
+
+
+**FRR Benchmarking**: Quantified safety-utility tradeoff measurement with borderline prompts
+
+
+**ASR Metric**: Standardised attack success rate across models and categories
+
+
+**Reproducible Test Generation**: Randomly generated tests preventing memorization bias
+
 
 ### What We Provide That CyberSecEval 2 Doesn't
 
-1. **Real-time Detection**: Inline security analysis during inference
-2. **PII Protection**: Personal information detection with checksum validation
-3. **Agent Action Analysis**: Dangerous command, URL, and file access detection
-4. **Streaming Support**: Content delta analysis for streaming responses
-5. **Hybrid Detection**: ML + regex ensemble for production robustness
+**Real-time Detection**: Inline security analysis during inference
+
+
+**PII Protection**: Personal information detection with checksum validation
+
+
+**Agent Action Analysis**: Dangerous command, URL, and file access detection
+
+
+**Streaming Support**: Content delta analysis for streaming responses
+
+
+**Hybrid Detection**: ML + regex ensemble for production robustness
+
 
 ## Actionable Recommendations
 
 ### P0 (Critical - Immediate)
 
-1. **Adopt CyberSecEval 2 Prompt Injection Test Suite for Validation**
-   - **Effort:** 1-2 weeks
+**Adopt CyberSecEval 2 Prompt Injection Test Suite for Validation**: **Effort:** 1-2 weeks
+
    - Import the 15-category attack test suite from PurpleLlama repo
    - Run against LLMTrace's security engine to measure detection accuracy per category
    - Establish baseline ASR metric for LLMTrace
-   - **Code Impact:** Test harness in `tests/benchmarks/`, CI integration
 
-2. **Implement FRR Benchmarking**
-   - **Effort:** 1-2 weeks
+**Code Impact:**: Test harness in `tests/benchmarks/`, CI integration
+
+
+**Implement FRR Benchmarking**: **Effort:** 1-2 weeks
+
    - Create or adapt borderline prompt dataset for LLMTrace evaluation
    - Track false positive rate on benign cybersecurity-related prompts
    - Aligns with InjecGuard over-defense gap identified earlier
-   - **Code Impact:** New benchmark dataset, metrics in evaluation pipeline
+
+**Code Impact:**: New benchmark dataset, metrics in evaluation pipeline
+
 
 ### P1 (High Priority - Next Quarter)
 
-3. **Map CyberSecEval 2 Attack Categories to LLMTrace Finding Types**
-   - **Effort:** 1 week
+**Map CyberSecEval 2 Attack Categories to LLMTrace Finding Types**: **Effort:** 1 week
+
    - Ensure each of the 15 attack categories maps to a detectable finding type
    - Identify coverage gaps (e.g., token smuggling, payload splitting, many-shot)
-   - **Code Impact:** Documentation + potential new finding types
 
-4. **Judge LLM-Based Evaluation Pipeline**
-   - **Effort:** 2-3 weeks
+**Code Impact:**: Documentation + potential new finding types
+
+
+**Judge LLM-Based Evaluation Pipeline**: **Effort:** 2-3 weeks
+
    - Implement automated evaluation using Judge LLM pattern from CyberSecEval 2
    - Use for continuous regression testing of detection accuracy
-   - **Code Impact:** New evaluation module, CI pipeline extension
+
+**Code Impact:**: New evaluation module, CI pipeline extension
+
 
 ### P2 (Medium Priority - Future)
 
-5. **Code Interpreter Abuse Detection**
-   - **Effort:** 4-6 weeks
+**Code Interpreter Abuse Detection**: **Effort:** 4-6 weeks
+
    - Evaluate whether LLMTrace should detect code interpreter abuse patterns
    - Relevant for agent-mode deployments where LLMs execute code
-   - **Code Impact:** New detection module if pursued
 
-6. **Multi-turn Attack Tracking**
-   - **Effort:** 4-6 weeks
+**Code Impact:**: New detection module if pursued
+
+
+**Multi-turn Attack Tracking**: **Effort:** 4-6 weeks
+
    - Both CyberSecEval 2 and LLMTrace currently lack multi-turn attack detection
    - Session-level analysis for gradual bypass attempts
-   - **Code Impact:** Session state tracking, cross-request correlation
+
+**Code Impact:**: Session state tracking, cross-request correlation
+
 
 ## Key Takeaways
 
-1. **Prompt injection remains unsolved**: 26-41% success rate across all tested models, including SOTA. This validates LLMTrace's security layer as a necessary defense.
+**Prompt injection remains unsolved**: 26-41% success rate across all tested models, including SOTA. This validates LLMTrace's security layer as a necessary defense.
 
-2. **Larger models resist better but are not immune**: GPT-4 at 17% is the best but still vulnerable. Defense cannot rely solely on model conditioning.
 
-3. **Safety-utility tradeoff is real but manageable**: Most models achieve <15% FRR while maintaining safety. CodeLlama-70B at 70% FRR is an outlier showing over-defense.
+**Larger models resist better but are not immune**: GPT-4 at 17% is the best but still vulnerable. Defense cannot rely solely on model conditioning.
 
-4. **CyberSecEval 2 as validation benchmark**: The test suite and methodology are directly usable for benchmarking LLMTrace detection accuracy. The MIT-licensed codebase enables immediate adoption.
 
-5. **Cyberattack helpfulness improving**: Average compliance dropped from 52% (v1) to 28% (v2), showing model safety is improving but external defense layers remain essential.
+**Safety-utility tradeoff is real but manageable**: Most models achieve <15% FRR while maintaining safety. CodeLlama-70B at 70% FRR is an outlier showing over-defense.
 
-6. **Exploit generation is nascent**: LLMs cannot yet autonomously generate working exploits. This is relevant for risk assessment but not an immediate LLMTrace concern.
+
+**CyberSecEval 2 as validation benchmark**: The test suite and methodology are directly usable for benchmarking LLMTrace detection accuracy. The MIT-licensed codebase enables immediate adoption.
+
+
+**Cyberattack helpfulness improving**: Average compliance dropped from 52% (v1) to 28% (v2), showing model safety is improving but external defense layers remain essential.
+
+
+**Exploit generation is nascent**: LLMs cannot yet autonomously generate working exploits. This is relevant for risk assessment but not an immediate LLMTrace concern.
+

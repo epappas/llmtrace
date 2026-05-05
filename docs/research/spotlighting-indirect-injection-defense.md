@@ -26,13 +26,13 @@ The paper frames this as a code-vs-data separation problem analogous to in-band 
 
 Spotlighting is a family of three prompt engineering techniques. Each has two components: (1) an optional transformation of the untrusted input text, and (2) system prompt instructions that inform the model about the transformation and how to treat the input.
 
-#### 1. Delimiting
+#### Delimiting
 
 The simplest form. Special tokens (e.g., `<<` and `>>`) are placed before and after the untrusted content. The system prompt instructs the model to never obey instructions between those symbols.
 
 **Limitation:** easily subverted if an adversary knows the delimiter tokens. The attacker can insert matching delimiters in their payload to break out of the data region.
 
-#### 2. Datamarking
+#### Datamarking
 
 A special token is interleaved throughout the entire input text by replacing all whitespace. For example, using `^` as the marker: `"In this manner Cosette traversed"` becomes `"In^this^manner^Cosette^traversed"`. The system prompt explains this transformation and instructs the model that marked text should not be treated as instructions.
 
@@ -42,7 +42,7 @@ A special token is interleaved throughout the entire input text by replacing all
 - Recommended starting token: Unicode U+E000 (Private Use Area, guaranteed absent from input)
 - Can be made dynamic/randomized per-invocation to prevent adversary subversion
 
-#### 3. Encoding
+#### Encoding
 
 The untrusted input is transformed using a well-known encoding algorithm (e.g., base64) before insertion into the prompt. The system prompt instructs the model to decode and process the content but not follow any instructions within it.
 
@@ -133,21 +133,43 @@ The authors caution against over-reliance on few-shot examples: they reflect cur
 
 ### Paper Recommendations
 
-1. **Minimum:** use datamarking -- large ASR improvement, zero NLP quality impact, works across models
-2. **Optimal (high-capacity models):** use encoding (base64) -- strongest ASR reduction, but validate task performance per use case
-3. **Do not rely on delimiting alone** -- easily subverted by adversary with system prompt knowledge
-4. **Use dynamic/randomized marking tokens** -- prevents adversary from crafting payloads that match the marking scheme
-5. **Use Unicode Private Use Area (U+E000)** as a starting point for marking tokens
+**Minimum:**: use datamarking -- large ASR improvement, zero NLP quality impact, works across models
+
+
+**Optimal (high-capacity models):**: use encoding (base64) -- strongest ASR reduction, but validate task performance per use case
+
+
+**Do not rely on delimiting alone**: -- easily subverted by adversary with system prompt knowledge
+
+
+**Use dynamic/randomized marking tokens**: -- prevents adversary from crafting payloads that match the marking scheme
+
+
+**Use Unicode Private Use Area (U+E000)**: as a starting point for marking tokens
+
 
 ### Limitations
 
-1. **Evaluated only on GPT-family models** -- no open-source model evaluation (Llama, Mistral, etc.)
-2. **Simple keyword-payload attacks only** -- does not test sophisticated multi-step, semantic, or tool-calling attacks
-3. **No adaptive adversary evaluation** -- does not test adversaries who know the defense is in place and craft attacks accordingly (except theoretical analysis)
-4. **Encoding is model-capacity-gated** -- GPT-3.5 and below cannot reliably decode base64 while performing tasks
-5. **No multi-turn or agent scenarios** -- all experiments are single-turn document processing tasks
-6. **No explanation of why spotlighting works** -- the authors acknowledge lacking a mechanistic understanding; the telecom analogy is suggestive but not rigorous
-7. **1000-document synthetic corpus** -- limited attack diversity compared to benchmarks like BIPIA (86,250 test prompts, 50 attack types)
+**Evaluated only on GPT-family models**: -- no open-source model evaluation (Llama, Mistral, etc.)
+
+
+**Simple keyword-payload attacks only**: -- does not test sophisticated multi-step, semantic, or tool-calling attacks
+
+
+**No adaptive adversary evaluation**: -- does not test adversaries who know the defense is in place and craft attacks accordingly (except theoretical analysis)
+
+
+**Encoding is model-capacity-gated**: -- GPT-3.5 and below cannot reliably decode base64 while performing tasks
+
+
+**No multi-turn or agent scenarios**: -- all experiments are single-turn document processing tasks
+
+
+**No explanation of why spotlighting works**: -- the authors acknowledge lacking a mechanistic understanding; the telecom analogy is suggestive but not rigorous
+
+
+**1000-document synthetic corpus**: -- limited attack diversity compared to benchmarks like BIPIA (86,250 test prompts, 50 attack types)
+
 
 ## Feature Delta with LLMTrace
 
@@ -164,13 +186,18 @@ The authors caution against over-reliance on few-shot examples: they reflect cur
 
 ### Primary Connections
 
-- **AS-001/AS-002 (tool-boundary firewalling):** Spotlighting transforms are a natural addition to the tool-output sanitizer pipeline. After sanitizing tool output content (AS-002), apply datamarking before reinserting into the agent prompt.
-- **IS-050 (perplexity-based anomaly detection):** Orthogonal defense. Spotlighting handles natural-language XPIA; IS-050 handles gradient-optimized adversarial strings. Both should be layered.
-- **IS-005 (three-dimensional evaluation):** Spotlighting's zero NLP quality impact validates that defensive transforms can be evaluated on the benign/malicious/over-defense axes without degrading benign performance.
+**AS-001/AS-002 (tool-boundary firewalling):**: Spotlighting transforms are a natural addition to the tool-output sanitizer pipeline. After sanitizing tool output content (AS-002), apply datamarking before reinserting into the agent prompt.
+
+
+**IS-050 (perplexity-based anomaly detection):**: Orthogonal defense. Spotlighting handles natural-language XPIA; IS-050 handles gradient-optimised adversarial strings. Both should be layered.
+
+
+**IS-005 (three-dimensional evaluation):**: Spotlighting's zero NLP quality impact validates that defensive transforms can be evaluated on the benign/malicious/over-defense axes without degrading benign performance.
+
 
 ## Actionable Recommendations
 
-### 1. Implement Datamarking at Proxy Level (P0)
+### Implement Datamarking at Proxy Level (P0)
 
 **Effort:** 1 week
 
@@ -178,7 +205,7 @@ Apply datamarking transformation to all untrusted content (tool outputs, retriev
 
 **Rationale:** Reduces ASR from >50% to <3% with zero NLP quality impact. Pure string transformation, no model access needed, streaming-compatible.
 
-### 2. Add Dynamic/Randomized Marking Tokens (P0)
+### Add Dynamic/Randomized Marking Tokens (P0)
 
 **Effort:** 3 days (as part of datamarking implementation)
 
@@ -186,7 +213,7 @@ Generate a random k-gram marking token (e.g., 5 characters from a suitable chara
 
 **Rationale:** Static tokens are subvertable. With a character set of size N and k-gram length k, adversary has 1/N^k chance of guessing correctly.
 
-### 3. Implement Optional Base64 Encoding Mode (P1)
+### Implement Optional Base64 Encoding Mode (P1)
 
 **Effort:** 1 week
 
@@ -194,13 +221,13 @@ Add a configurable encoding mode that base64-encodes untrusted content before in
 
 **Rationale:** Strongest ASR reduction (0.0% in summarization, 1.8% in Q&A) but model-capacity-gated. Only suitable for frontier models.
 
-### 4. Integrate Spotlighting Into Tool-Output Sanitizer Pipeline (P1)
+### Integrate Spotlighting Into Tool-Output Sanitizer Pipeline (P1)
 
 **Effort:** 2 weeks
 
 Position datamarking as a stage in the AS-002 tool-output firewall pipeline. Execution order: (1) IS-052 perplexity-based stripping, (2) AS-002 pattern-based sanitization, (3) spotlighting datamarking transformation. This provides defense-in-depth: sanitization removes known patterns, datamarking prevents the model from following anything that slips through.
 
-### 5. Benchmark Spotlighting Across Open-Source Models (P2)
+### Benchmark Spotlighting Across Open-Source Models (P2)
 
 **Effort:** 2 weeks
 
@@ -210,12 +237,17 @@ The paper only tested GPT-family models. Validate datamarking and encoding effec
 
 ## Key Takeaways
 
-1. **Datamarking is the best cost/benefit XPIA defense available today.** It reduces ASR from >50% to <3% across models with zero measurable impact on NLP task quality. It requires only a trivial string transformation and system prompt update -- fully implementable at the proxy layer.
+**Datamarking is the best cost/benefit XPIA defense available today.**: It reduces ASR from >50% to <3% across models with zero measurable impact on NLP task quality. It requires only a trivial string transformation and system prompt update -- fully implementable at the proxy layer.
 
-2. **Delimiting alone is insufficient.** While easy to implement, delimiter-based boundaries can be trivially subverted by an adversary who knows the system prompt. Datamarking and encoding provide continuous provenance signals throughout the input, not just at boundaries.
 
-3. **Encoding (base64) is the strongest defense but is model-capacity-gated.** It achieves 0.0% ASR on summarization tasks but causes severe quality degradation on GPT-3.5-class models. Reserve for GPT-4-class and above, with per-model validation.
+**Delimiting alone is insufficient.**: While easy to implement, delimiter-based boundaries can be trivially subverted by an adversary who knows the system prompt. Datamarking and encoding provide continuous provenance signals throughout the input, not just at boundaries.
 
-4. **Dynamic/randomized marking tokens are essential for production deployments.** The paper explicitly assumes the system prompt will leak. Static marking tokens become a known constant the adversary can exploit. Randomizing the token per-invocation makes the defense robust against system prompt leakage.
 
-5. **Spotlighting addresses the structural root cause of XPIA** -- the inability of LLMs to distinguish code from data in a shared token stream. This makes it more generalizable than few-shot or instruction-based defenses that depend on knowledge of specific attack tactics. It complements (not replaces) classification-based detection and tool-output sanitization.
+**Encoding (base64) is the strongest defense but is model-capacity-gated.**: It achieves 0.0% ASR on summarization tasks but causes severe quality degradation on GPT-3.5-class models. Reserve for GPT-4-class and above, with per-model validation.
+
+
+**Dynamic/randomized marking tokens are essential for production deployments.**: The paper explicitly assumes the system prompt will leak. Static marking tokens become a known constant the adversary can exploit. Randomizing the token per-invocation makes the defense robust against system prompt leakage.
+
+
+**Spotlighting addresses the structural root cause of XPIA**: -- the inability of LLMs to distinguish code from data in a shared token stream. This makes it more generalizable than few-shot or instruction-based defenses that depend on knowledge of specific attack tactics. It complements (not replaces) classification-based detection and tool-output sanitization.
+

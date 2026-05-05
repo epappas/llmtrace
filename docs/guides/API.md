@@ -12,7 +12,7 @@ REST endpoints are under `/api/v1`. Proxy traffic is forwarded to the upstream m
 
 ## Authentication
 
-If auth is enabled, pass an API key in the `Authorization` header:
+If auth is enabled, pass an API key in the `Authorisation` header:
 
 ```bash
 curl -H "Authorization: Bearer llmt_..." http://localhost:8080/api/v1/traces
@@ -245,5 +245,5 @@ Rate limiting and cost caps use specific `type` values:
 
 ## Next Steps
 
-- **[OpenAI SDK Integration](integration-openai.md)**
-- **[Custom Policies](custom-policies.md)**
+**[OpenAI SDK Integration](integration-openai.md)**: **[Custom Policies](custom-policies.md)**
+

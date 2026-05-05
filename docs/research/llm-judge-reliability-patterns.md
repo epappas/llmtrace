@@ -4,7 +4,6 @@ Date: 2026-04-19
 Status: Knowledge reference
 Scope: Applies to `crates/llmtrace-security/src/judge/` and the tracking issue #43
 
----
 
 ## Context
 
@@ -22,9 +21,8 @@ system**, not a separate concern. This document captures the reliability
 patterns established in the broader LLM-evaluator literature and
 industry practice, and how they apply to LLMTrace's security judge.
 
----
 
-## 1. Binary outputs beat ordinal scales
+## Binary outputs beat ordinal scales
 
 LLM judges are materially more consistent when asked for a binary
 classification (threat / not threat) than when asked for an ordinal
@@ -60,9 +58,8 @@ as operator-facing hints the judge can produce with best-effort accuracy.
 Reducing the cognitive load on the ordinal fields tends to improve
 self-consistency on the binary field as well.
 
----
 
-## 2. Cross-family judging reduces self-enhancement bias
+## Cross-family judging reduces self-enhancement bias
 
 A judge model evaluating outputs from its own model family exhibits
 measurable bias: it systematically scores its own family's outputs higher
@@ -92,18 +89,17 @@ family is the same as the detected upstream provider family. No
 behaviour change — the operator may be intentionally running a
 same-family judge — but the log surface makes the risk visible.
 
----
 
-## 3. Calibration against a human-labelled golden set
+## Calibration against a human-labelled golden set
 
 A judge that is never measured against ground truth is a judge that
 drifts. The standard calibration procedure for LLM-as-Judge systems is:
 
-1. Curate 20–50 labelled examples covering the target behaviours.
-2. Run the judge against the set.
-3. Measure alignment (agreement rate, F1, confusion matrix).
-4. Iterate on the system prompt based on systematic disagreements.
-5. Re-run the set on every prompt change or model change.
+- Curate 20–50 labelled examples covering the target behaviours.
+- Run the judge against the set.
+- Measure alignment (agreement rate, F1, confusion matrix).
+- Iterate on the system prompt based on systematic disagreements.
+- Re-run the set on every prompt change or model change.
 
 Industry practice reports 10–15 percentage-point alignment improvements
 from a single calibration pass, which is the difference between a judge
@@ -134,9 +130,8 @@ human labels, exercised in a CI benchmark, is a prerequisite before
 the judge is trusted for enforcement promotion at high volume, and a
 hard prerequisite before #44 consumes its output as training labels.
 
----
 
-## 4. Drift tracking
+## Drift tracking
 
 Even a calibrated judge drifts. Published studies of judge-alignment
 over multiple model revisions show 3–8 point alignment decay per quarter
@@ -159,15 +154,17 @@ an alert rule, catches this the first day drift starts.
 
 **Implication**: the golden-set check is run at two cadences:
 
-- **CI**: hard-fail the build when alignment falls below a threshold.
+**CI**: hard-fail the build when alignment falls below a threshold.
+
   This catches prompt regressions before merge.
-- **Runtime**: a scheduled job (cron or similar) that re-runs the set
+
+**Runtime**: a scheduled job (cron or similar) that re-runs the set
+
   against the configured backend and exports an alignment gauge. This
   catches model drift and upstream API changes.
 
----
 
-## 5. The correction-log feedback loop
+## The correction-log feedback loop
 
 When operators override a judge verdict (promoting a missed threat or
 demoting a false positive), that override is signal. Feeding a running
@@ -186,7 +183,6 @@ This pattern requires operator tooling we don't have, so it's
 **deferred** — captured here so we don't forget it, not on the
 immediate roadmap.
 
----
 
 ## Summary table: current state vs patterns
 
@@ -201,7 +197,6 @@ immediate roadmap.
 Gaps 1–4 are tracked in a single follow-up issue with a concrete
 implementation plan. Gap 5 is documented above and parked.
 
----
 
 ## References
 

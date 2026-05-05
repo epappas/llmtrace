@@ -12,7 +12,7 @@ How to cut a new release of LLMTrace. A single `v*` tag triggers the full pipeli
 
 ## Step-by-step
 
-### 1. Bump the version
+### Bump the version
 
 ```bash
 ./scripts/release.sh 0.2.0
@@ -24,7 +24,7 @@ This updates:
 
 The script runs `cargo check` to verify the workspace compiles.
 
-### 2. Commit and tag
+### Commit and tag
 
 ```bash
 git add Cargo.toml Cargo.lock
@@ -35,7 +35,7 @@ git push && git push --tags
 
 The tag push triggers `.github/workflows/release.yml`.
 
-### 3. Monitor the pipeline
+### Monitor the pipeline
 
 ```bash
 gh run list --limit 1
@@ -73,11 +73,11 @@ After a successful release, the following are published:
 
 ### Crates published to crates.io (in order)
 
-1. `llmtrace-core`
-2. `llmtrace-storage`
-3. `llmtrace-security`
-4. `llmtrace-sdk`
-5. `llmtrace` (the proxy)
+- `llmtrace-core`
+- `llmtrace-storage`
+- `llmtrace-security`
+- `llmtrace-sdk`
+- `llmtrace` (the proxy)
 
 ### Crates NOT published (publish = false)
 

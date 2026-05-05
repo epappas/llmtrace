@@ -14,7 +14,6 @@ This guide covers supported ways to run LLMTrace as implemented in this reposito
 | Docker Compose | Local infra/dev stack | Starts ClickHouse/Postgres/Redis and dashboard |
 | Helm chart | Kubernetes clusters | Chart under `deployments/helm/llmtrace` |
 
----
 
 ## Install Script (Recommended)
 
@@ -32,7 +31,6 @@ LLMTRACE_INSTALL=~/bin curl -sS .../install.sh | bash    # custom install dir
 LLMTRACE_NO_CONFIG=1 curl -sS .../install.sh | bash      # skip config download
 ```
 
----
 
 ## Cargo Install (Proxy)
 
@@ -46,7 +44,6 @@ cp config.example.yaml config.yaml
 llmtrace-proxy --config config.yaml
 ```
 
----
 
 ## Pip Install (Python SDK)
 
@@ -66,7 +63,6 @@ span.set_response("Hi there!")
 print(span.to_dict())
 ```
 
----
 
 ## From Source
 
@@ -85,7 +81,6 @@ cp config.example.yaml config.yaml
 ./target/release/llmtrace-proxy --config config.yaml
 ```
 
----
 
 ## Docker (GHCR)
 
@@ -96,7 +91,7 @@ docker pull ghcr.io/epappas/llmtrace-proxy:latest
 docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 ```
 
-To customize configuration, mount a config file:
+To customise configuration, mount a config file:
 
 ```bash
 docker run -p 8080:8080 \
@@ -111,7 +106,6 @@ docker build -t llmtrace-proxy .
 docker run -p 8080:8080 --env-file .env llmtrace-proxy
 ```
 
----
 
 ## Docker Compose (Infra + Dashboard)
 
@@ -133,7 +127,6 @@ Notes:
 - The dashboard expects the proxy at `http://localhost:8080`.
 - Use `storage.profile: production` with ClickHouse/Postgres/Redis from compose.
 
----
 
 ## Helm (Local Chart)
 
@@ -149,7 +142,6 @@ Notes:
 - The chart defaults to the GHCR image `ghcr.io/epappas/llmtrace-proxy`.
 - Override `proxy.image.repository` and `proxy.image.tag` in `values.yaml` if using a custom registry.
 
----
 
 ## Verify the Proxy
 
@@ -164,7 +156,6 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
----
 
 ## Next Steps
 

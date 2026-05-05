@@ -1,12 +1,12 @@
 # Pre-Request Enforcement Guide
 
-By default, LLMTrace analyzes requests **asynchronously after forwarding** them to the upstream provider. The enforcement feature adds **synchronous pre-request analysis** that can block or flag requests before they reach the LLM.
+By default, LLMTrace analyses requests **asynchronously after forwarding** them to the upstream provider. The enforcement feature adds **synchronous pre-request analysis** that can block or flag requests before they reach the LLM.
 
 ## Enforcement Modes
 
 ### `log` (default)
 
-No enforcement. Requests are forwarded immediately. Security analysis happens asynchronously. This is the default behavior when the `enforcement` section is omitted from config.
+No enforcement. Requests are forwarded immediately. Security analysis happens asynchronously. This is the default behaviour when the `enforcement` section is omitted from config.
 
 ### `block`
 
@@ -165,5 +165,5 @@ enforcement:
 Enforcement runs **before** the request is forwarded. The standard async analysis pipeline still runs **after** the response, regardless of enforcement settings. This means:
 
 - Enforcement findings may appear in the security findings API before async analysis findings
-- A request blocked by enforcement will still have its content analyzed asynchronously for audit/logging purposes
+- A request blocked by enforcement will still have its content analysed asynchronously for audit/logging purposes
 - The async pipeline uses the full ensemble regardless of the enforcement `analysis_depth` setting

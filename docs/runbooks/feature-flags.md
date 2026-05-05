@@ -1,7 +1,7 @@
 # Runtime Feature Flags (issue #42) — Operator Runbook
 
 The runtime feature-flag admin API at `/api/v1/config/features` lets an
-operator toggle analyzer behavior, enforcement mode, rate limiting,
+operator toggle analyzer behaviour, enforcement mode, rate limiting,
 cost caps, and ensemble tuning without restarting the proxy. This
 runbook covers the four operational failure modes flagged in the
 review of PR #64.
@@ -11,7 +11,7 @@ reapplied at startup. Base `config.yaml` is never modified. The full
 precedence order (highest wins) is **CLI flags > environment variables
 > sidecar overlay > base config file > built-in defaults**.
 
-## 1. "Runtime overlay didn't persist"
+## "Runtime overlay didn't persist"
 
 **Symptom**: a PUT to `/api/v1/config/features[/…]` returns `200 OK`
 but the response `warnings` array includes
@@ -45,22 +45,22 @@ curl -s http://llmtrace:8080/metrics | grep llmtrace_config_persist_errors_total
 
 **Remediation**:
 
-1. Mount a writable volume at the runtime overlay parent directory —
+- Mount a writable volume at the runtime overlay parent directory —
    `emptyDir` works for single-replica pods; a `PersistentVolumeClaim`
    is required for multi-replica stability.
-2. Point `--runtime-config` / `LLMTRACE_RUNTIME_CONFIG` at a location
+- Point `--runtime-config` / `LLMTRACE_RUNTIME_CONFIG` at a location
    inside that volume (for example `/var/lib/llmtrace/config.runtime.yaml`)
    so the derived path does not inherit the ConfigMap mount.
-3. Redeploy. Confirm `/health` now reports `"status": "writable"` and
+- Redeploy. Confirm `/health` now reports `"status": "writable"` and
    `llmtrace_config_persist_errors_total` stops incrementing on new
    PUTs.
 
-## 2. "`analyzer_ml_enabled` flip did nothing"
+## "`analyzer_ml_enabled` flip did nothing"
 
 **Symptom**: a PUT flipping `analyzer_ml_enabled`, `analyzer_injecguard_enabled`,
 `analyzer_piguard_enabled`, `operating_point`, or `over_defence` from
 their startup state to `true` returns `200 OK`, but live traffic shows
-no behavior change. The PUT response `warnings` array includes
+no behaviour change. The PUT response `warnings` array includes
 `"flag 'X' is inert: the backing subsystem was not loaded at startup"`.
 
 **Cause**: the ML-backed flags are gated at the ensemble voting site
@@ -90,16 +90,16 @@ curl -s http://llmtrace:8080/health | jq '.ml'
 
 **Remediation**:
 
-1. Edit the base `config.yaml` (or the Helm values) to enable the
+- Edit the base `config.yaml` (or the Helm values) to enable the
    model at startup:
    ```yaml
    security_analysis:
      ml_enabled: true
      ml_preload: true
    ```
-2. Trigger a rolling restart. On the next startup the model loads and
+- Trigger a rolling restart. On the next startup the model loads and
    the runtime flag becomes truly hot-swappable.
-3. Re-issue the PUT. The `warnings` array should now be empty and
+- Re-issue the PUT. The `warnings` array should now be empty and
    `effective.analyzer_ml_enabled` should report `true`.
 
 The same remediation applies to `analyzer_injecguard_enabled`,
@@ -111,7 +111,7 @@ The same remediation applies to `analyzer_injecguard_enabled`,
 `llm_judge_enabled` is intentionally always inert until issue #43
 lands the backend.
 
-## 3. "How do I reset all feature flags?"
+## "How do I reset all feature flags?"
 
 **Symptom**: you want to revert every runtime flag to what
 `config.yaml` says, discarding any PUTs made since startup.
@@ -140,7 +140,7 @@ curl -X PUT http://llmtrace:8080/api/v1/config/features \
 A dedicated `DELETE /api/v1/config/features` endpoint is tracked as a
 follow-up; for now deletion plus restart is the supported flow.
 
-## 4. "CLI/ENV override is shadowing my PUT"
+## "CLI/ENV override is shadowing my PUT"
 
 **Symptom**: a PUT succeeds and the sidecar file reflects the new
 value, but after a pod restart the flag reverts to whatever the
@@ -169,15 +169,15 @@ curl -s http://llmtrace:8080/api/v1/config/features \
 
 **Remediation**:
 
-1. Unset the shadowing env var or CLI arg in the Deployment /
+- Unset the shadowing env var or CLI arg in the Deployment /
    Helm values.
-2. Rolling restart. The next startup will honor the sidecar overlay.
-3. Confirm `overridden_by` is empty for the affected flag.
+- Rolling restart. The next startup will honor the sidecar overlay.
+- Confirm `overridden_by` is empty for the affected flag.
 
-## 5. "Flag flipped on one replica only" (multi-replica inconsistency)
+## "Flag flipped on one replica only" (multi-replica inconsistency)
 
 **Symptom**: an admin PUT returns `200 OK`, but live traffic shows
-intermittent behavior — e.g. `enforcement_mode=block` is observed on
+intermittent behaviour — e.g. `enforcement_mode=block` is observed on
 some requests and `log` on others, or a feature-flag state gauge in
 Grafana shows different values per pod.
 
@@ -214,7 +214,7 @@ If the values diverge across pods, the PUT only landed on one pod.
 
 **Remediation** — pick the pattern that matches your deployment:
 
-1. **Single-replica admin gate (recommended for dev/staging)**. Scale
+- **Single-replica admin gate (recommended for dev/staging)**. Scale
    the deployment to 1 replica before running admin operations:
 
    ```bash
@@ -228,7 +228,8 @@ If the values diverge across pods, the PUT only landed on one pod.
    writable PVC, not an emptyDir — emptyDir is per-pod and loses
    state).
 
-2. **Fan-out via `kubectl exec`** (works with default chart). Loop
+**Fan-out via `kubectl exec`**: (works with default chart). Loop
+
    over all pods and issue the PUT against each pod's localhost
    endpoint, using the authentication key mounted in-pod:
 
@@ -248,7 +249,8 @@ If the values diverge across pods, the PUT only landed on one pod.
    supported pattern as of PR #64; a control-plane broadcast is
    tracked as a follow-up.
 
-3. **Shared overlay via ReadWriteMany PVC** (single-writer required).
+**Shared overlay via ReadWriteMany PVC**: (single-writer required).
+
    Mount a shared PVC at the runtime overlay parent, with
    `accessMode: ReadWriteMany`. Every pod reads and writes the same
    `config.runtime.yaml`. Only one pod should PUT at a time — the

@@ -2,10 +2,17 @@
 
 Deploy LLMTrace on Kubernetes using the official Helm chart. The chart provisions:
 
-- **LLMTrace Proxy** — the transparent LLM observability proxy (Deployment + Service + HPA)
-- **ClickHouse** — analytical trace/span storage (Bitnami sub-chart)
-- **PostgreSQL** — metadata storage for tenants, configs, audit events (Bitnami sub-chart)
-- **Redis** — cache layer for hot queries, cost cap tracking, sessions (Bitnami sub-chart)
+**LLMTrace Proxy**: — the transparent LLM observability proxy (Deployment + Service + HPA)
+
+
+**ClickHouse**: — analytical trace/span storage (Bitnami sub-chart)
+
+
+**PostgreSQL**: — metadata storage for tenants, configs, audit events (Bitnami sub-chart)
+
+
+**Redis**: — cache layer for hot queries, cost cap tracking, sessions (Bitnami sub-chart)
+
 
 ## Prerequisites
 
@@ -18,7 +25,7 @@ Deploy LLMTrace on Kubernetes using the official Helm chart. The chart provision
 
 ## Quick Start
 
-### 1. Use the GHCR Image (or Build Your Own)
+### Use the GHCR Image (or Build Your Own)
 
 Pre-built multi-arch images are published to GHCR on every release:
 
@@ -31,7 +38,7 @@ docker build -t your-registry.io/llmtrace-proxy:0.1.3 .
 docker push your-registry.io/llmtrace-proxy:0.1.3
 ```
 
-### 2. Update Helm Dependencies
+### Update Helm Dependencies
 
 ```bash
 cd deployments/helm/llmtrace
@@ -40,7 +47,7 @@ helm dependency update
 
 This downloads the Bitnami sub-charts (ClickHouse, PostgreSQL, Redis) into the `charts/` directory.
 
-### 3. Install (Development)
+### Install (Development)
 
 ```bash
 helm install llmtrace ./deployments/helm/llmtrace \
@@ -49,7 +56,7 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set proxy.image.repository=ghcr.io/epappas/llmtrace-proxy
 ```
 
-### 4. Install (Production)
+### Install (Production)
 
 ```bash
 helm install llmtrace ./deployments/helm/llmtrace \
@@ -75,7 +82,7 @@ helm install llmtrace ./deployments/helm/llmtrace \
   --set proxy.image.repository=ghcr.io/epappas/llmtrace-proxy
 ```
 
-### 5. Verify
+### Verify
 
 ```bash
 # Watch pods come up

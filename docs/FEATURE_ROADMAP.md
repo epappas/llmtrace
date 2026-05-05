@@ -5,13 +5,12 @@
 **Author**: LLMTrace Engineering
 **Scope**: Comprehensive feature gap analysis across 21 research documents in `docs/research/`, competitive landscape, and phased implementation plan
 
----
 
 ## Table of Contents
 
-1. [Executive Summary](#1-executive-summary)
-2. [Current Capabilities](#2-current-capabilities)
-3. [Feature Gap Analysis](#3-feature-gap-analysis)
+- [Executive Summary](#1-executive-summary)
+- [Current Capabilities](#2-current-capabilities)
+- [Feature Gap Analysis](#3-feature-gap-analysis)
    - [3.1 Input Security](#31-input-security)
    - [3.2 Output Security](#32-output-security)
    - [3.3 Agent Security](#33-agent-security)
@@ -19,13 +18,12 @@
    - [3.5 Multimodal Security](#35-multimodal-security)
    - [3.6 Privacy](#36-privacy)
    - [3.7 Evaluation & Benchmarking](#37-evaluation--benchmarking)
-4. [Implementation Roadmap](#4-implementation-roadmap)
-5. [Competitive Landscape](#5-competitive-landscape)
-6. [Research Paper Reference Index](#6-research-paper-reference-index)
+- [Implementation Roadmap](#4-implementation-roadmap)
+- [Competitive Landscape](#5-competitive-landscape)
+- [Research Paper Reference Index](#6-research-paper-reference-index)
 
----
 
-## 1. Executive Summary
+## Executive Summary
 
 ### Where LLMTrace Stands Today
 
@@ -34,28 +32,62 @@ LLMTrace is a **Rust-native transparent security proxy** for LLM interactions. I
 **Overall Assessment: 7/10** — LLMTrace has strong foundational architecture and is ahead of most open-source frameworks on performance and streaming analysis. However, significant gaps exist in advanced attack detection, agent/protocol security, multimodal threats, and over-defense mitigation.
 
 ### Key Strengths
-- **Rust-native performance**: <1ms regex analysis, ~50-100ms ML inference — faster than any Python framework
-- **True transparent proxy**: Zero-code integration deployment model
-- **Streaming security**: Real-time SSE analysis with output-side monitoring and early stopping
-- **Feature-level fusion**: Implemented (ADR-013) — DeBERTa average-pooled embedding concatenated with 10-dim binary heuristic vector through 2-layer FC classifier (random weights). All 6 DMPI-PMHFE architectural deviations resolved: DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), DMPI-004 (repetition threshold >=3), DMPI-005 (missing features), DMPI-006 (paper naming). See section 3.4.1.
-- **Comprehensive input security**: 40+ regex patterns covering 8 attack categories (flattery, urgency, roleplay, impersonation, covert, excuse, many-shot, repetition)
-- **Unicode normalisation**: NFKC + zero-width stripping + homoglyph mapping (Cyrillic, Greek)
-- **Output safety**: Toxicity detection (BERT-based + keyword fallback), hallucination detection (cross-encoder + heuristic fallback)
-- **Code security**: Static analysis for 7 vulnerability categories across 11 programming languages
-- **PII with validation**: Checksum validation (Luhn, IBAN, SSN) + context-aware false-positive suppression
-- **Secret scanning**: JWT, AWS keys, GitHub tokens, GCP, Slack, SSH keys
+
+**Rust-native performance**: <1ms regex analysis, ~50-100ms ML inference — faster than any Python framework
+
+
+**True transparent proxy**: Zero-code integration deployment model
+
+
+**Streaming security**: Real-time SSE analysis with output-side monitoring and early stopping
+
+
+**Feature-level fusion**: Implemented (ADR-013) — DeBERTa average-pooled embedding concatenated with 10-dim binary heuristic vector through 2-layer FC classifier (random weights). All 6 DMPI-PMHFE architectural deviations resolved: DMPI-001 (average pooling), DMPI-002 (2 FC layers), DMPI-003 (10 binary features), DMPI-004 (repetition threshold >=3), DMPI-005 (missing features), DMPI-006 (paper naming). See section 3.4.1.
+
+
+**Comprehensive input security**: 40+ regex patterns covering 8 attack categories (flattery, urgency, roleplay, impersonation, covert, excuse, many-shot, repetition)
+
+
+**Unicode normalisation**: NFKC + zero-width stripping + homoglyph mapping (Cyrillic, Greek)
+
+
+**Output safety**: Toxicity detection (BERT-based + keyword fallback), hallucination detection (cross-encoder + heuristic fallback)
+
+
+**Code security**: Static analysis for 7 vulnerability categories across 11 programming languages
+
+
+**PII with validation**: Checksum validation (Luhn, IBAN, SSN) + context-aware false-positive suppression
+
+
+**Secret scanning**: JWT, AWS keys, GitHub tokens, GCP, Slack, SSH keys
+
 
 ### Critical Gaps vs State-of-the-Art
-1. **Over-defense mitigation** — No MOF training strategy; FPR at deployment-realistic thresholds unknown [Papers: InjecGuard, PromptShield]
-2. **Protocol security** — No MCP/A2A/ANP protocol monitoring [Paper: Protocol Exploits]
-3. **Tool-boundary firewalling** — No input minimisation or output sanitisation at tool boundaries [Papers: Indirect Injection Firewalls, Tool Result Parsing]
-4. **Multimodal attacks** — No image/audio injection detection [Paper: Protocol Exploits]
-5. **Adversarial ML robustness** — ProtectAI DeBERTa model has documented 20-95% ASR from TextAttack [Paper: Bypassing Guardrails]
-6. **Multi-agent coordination** — Single-pass analysis vs multi-pass defence-in-depth [Paper: Multi-Agent Defense]
-7. **Benchmark evaluation** — No evaluation against AgentDojo, NotInject, InjecAgent, WASP [Paper: Benchmarks & Tools]
+
+**Over-defense mitigation**: — No MOF training strategy; FPR at deployment-realistic thresholds unknown [Papers: InjecGuard, PromptShield]
+
+
+**Protocol security**: — No MCP/A2A/ANP protocol monitoring [Paper: Protocol Exploits]
+
+
+**Tool-boundary firewalling**: — No input minimisation or output sanitisation at tool boundaries [Papers: Indirect Injection Firewalls, Tool Result Parsing]
+
+
+**Multimodal attacks**: — No image/audio injection detection [Paper: Protocol Exploits]
+
+
+**Adversarial ML robustness**: — ProtectAI DeBERTa model has documented 20-95% ASR from TextAttack [Paper: Bypassing Guardrails]
+
+
+**Multi-agent coordination**: — Single-pass analysis vs multi-pass defence-in-depth [Paper: Multi-Agent Defense]
+
+
+**Benchmark evaluation**: — No evaluation against AgentDojo, NotInject, InjecAgent, WASP [Paper: Benchmarks & Tools]
+
 
 ### Audit Acceptance Criteria (Literature-Anchored)
-All roadmap items can only be marked **✅ Implemented** if the implementation matches the behaviors and metrics described in the cited literature. Heuristic or partial substitutes must remain **⚠️ Partial**.
+All roadmap items can only be marked **✅ Implemented** if the implementation matches the behaviours and metrics described in the cited literature. Heuristic or partial substitutes must remain **⚠️ Partial**.
 
 Functional Requirements: Input-security improvements must implement MOF training (token-wise bias detection, debiasing data generation, retraining) and calibrated FPR operating points as described in `docs/research/injecguard-over-defense-mitigation.md` and `docs/research/security-state-of-art-2026.md`. Tool-boundary defenses must implement LLM-based tool result parsing and CheckTool-style triggering detection per `docs/research/defense-tool-result-parsing.md` and `docs/research/indirect-injection-firewalls.md`. Multi-agent defense must be a multi-pass coordinator+guard architecture with a second-opinion path per `docs/research/multi-agent-defense-pipeline.md`. Output safety must implement HaluGate-style token-level detection, NLI explanation, and SCM streaming models per `docs/research/security-state-of-art-2026.md`.
 
@@ -63,11 +95,10 @@ DMPI-PMHFE Architecture (DMPI-001–DMPI-006): The fusion pipeline matches the p
 
 Non-Functional Requirements: Latency classes and streaming compatibility must meet literature expectations (e.g., sentinel-class latency, token-level detection ranges) from `docs/research/security-state-of-art-2026.md`. Implementations must be deterministic, testable, and include benchmark evidence where the literature reports metrics (e.g., ASR, FPR, F1) using datasets from `docs/research/benchmarks-and-tools-landscape.md` and `docs/research/wasp-web-agent-security-benchmark.md`.
 
----
 
-## 2. Current Capabilities
+## Current Capabilities
 
-### 2.1 Input Security
+### 1 Input Security
 
 | Capability | Module | Description |
 |-----------|--------|-------------|
@@ -89,7 +120,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | Unicode normalisation | `normalise.rs` | NFKC normalisation + 18 zero-width character stripping + 30+ homoglyph mappings |
 | Ensemble combination | `ensemble.rs` | Regex + ML + NER + Fusion, agreement boost (+0.1 confidence) |
 
-### 2.2 Output Security
+### 2 Output Security
 
 | Capability | Module | Description |
 |-----------|--------|-------------|
@@ -105,7 +136,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | Streaming output analysis | Proxy layer | Output-side PII, secrets, leakage, toxicity during SSE streaming |
 | Early stopping | Proxy config | `early_stop_on_critical` flag for halting generation on critical findings |
 
-### 2.3 Agent Security
+### 3 Agent Security
 
 | Capability | Module | Description |
 |-----------|--------|-------------|
@@ -115,7 +146,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | Tool call tracking | `core/lib.rs` | `AgentAction` types: ToolCall, SkillInvocation, CommandExecution, WebAccess, FileAccess |
 | Action result capture | `core/lib.rs` | Truncated to 4KB, stored with span |
 
-### 2.4 Infrastructure
+### 4 Infrastructure
 
 | Capability | Module | Description |
 |-----------|--------|-------------|
@@ -132,13 +163,12 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | PII redaction | `lib.rs` | Three modes: AlertOnly, AlertAndRedact, RedactSilent |
 | Graceful shutdown | `shutdown.rs` | Configurable drain timeout for Kubernetes |
 
----
 
-## 3. Feature Gap Analysis
+## Feature Gap Analysis
 
-### 3.1 Input Security
+### 1 Input Security
 
-#### 3.1.1 Over-Defense Mitigation
+#### 1 Over-Defense Mitigation
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -154,7 +184,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - IS-001: The MOF strategy involves: (1) standard training on curated dataset, (2) token-wise bias detection — feed each vocabulary token individually and identify those predicted as "attack", (3) generate 1000 benign samples using combinations of 1-3 biased tokens via LLM, (4) retrain from scratch on combined data. InjecGuard achieved 87.32% over-defense accuracy vs ProtectAIv2's 56.64% (+54.17% improvement).
 - IS-006: PromptShield (Jacob et al., ACM CODASPY 2025) showed that at 0.1% FPR, Meta PromptGuard detects only 9.4% of attacks. PromptShield achieved 65.3% TPR at 0.1% FPR. CyberSecEval 2 (arXiv 2404.13161) also introduces a False Refusal Rate (FRR) methodology using borderline cybersecurity-related prompts; most models achieved <15% FRR while CodeLlama-70B showed 70% FRR. See `docs/research/cyberseceval2-llm-security-benchmark.md`.
 
-#### 3.1.2 Advanced Prompt Injection Detection
+#### 2 Advanced Prompt Injection Detection
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -173,7 +203,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - IS-012: The Protocol Exploits paper describes P2SQL injection where attackers exploit LangChain middleware to inject malicious SQL queries through natural language prompts.
 - IS-014: GPTFuzz achieves >90% ASR via genetic algorithm mutation of jailbreak templates. Defense requires adversarial training on mutated attack samples.
 
-#### 3.1.3 Adversarial Robustness
+#### 3 Adversarial Robustness
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -189,7 +219,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | IS-029 | **Confidence calibration** — Platt scaling to reduce transferability | Bypassing Guardrails | P3 | Medium | ⚠️ Partial |
 | IS-030 | **Word importance transferability mitigation** — prevent white-box model rankings from improving black-box attacks | Bypassing Guardrails | P3 | High | ❌ Missing |
 | IS-031 | **Diacritics-based evasion defense** — accent marks used to evade detection | Bypassing Guardrails | P2 | Low | ✅ Implemented |
-| IS-050 | **Perplexity-based anomaly detection** — detect GCG-optimized adversarial strings in tool outputs and agent traces by scoring token-sequence perplexity | Agent-as-a-Proxy | P0 | Medium | ❌ Missing |
+| IS-050 | **Perplexity-based anomaly detection** — detect GCG-optimised adversarial strings in tool outputs and agent traces by scoring token-sequence perplexity | Agent-as-a-Proxy | P0 | Medium | ❌ Missing |
 | IS-051 | **Adaptive monitoring scope** — configurable input-only vs hybrid (input+output) monitoring to control attack surface exposure per threat model | Agent-as-a-Proxy | P1 | Medium | ❌ Missing |
 | IS-052 | **Adversarial string propagation blocking** — detect and strip high-perplexity token sequences from tool outputs before they can be repeated by agents in subsequent traces | Agent-as-a-Proxy, Indirect Injection Firewalls | P0 | High | ❌ Missing |
 
@@ -197,11 +227,11 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - IS-020: Emoji smuggling achieved 100% ASR on both prompt injection and jailbreaks across all tested systems. Implementation: add emoji stripping/normalization as pre-processing step. Use Unicode character category detection to filter emoji code points.
 - IS-024: The Bypassing Guardrails paper specifically tested our ProtectAI DeBERTa model. TextFooler achieved 95.18% ASR, BERT-Attack 67.87% ASR on ProtectAI v1. Even v2 had 20.26% ASR. Defense requires ensemble diversification + adversarial training.
 - IS-025: Replace single-model reliance with ensemble of different architectures. Candidates: Meta Prompt Guard 2 (86M), InjecGuard model, PIGuard model.
-- IS-050: GCG-optimized adversarial strings have characteristically high perplexity (they are gibberish tokens optimized via gradient descent). A lightweight surprisal scorer on tool outputs can flag these before the agent processes them. The Agent-as-a-Proxy paper (arXiv 2602.05066) identifies this as a viable countermeasure but does not implement it. **Tiered implementation:** (1) MVP: statistical per-token surprisal using n-gram language model or byte-level entropy -- no GPU required, runs in Rust proxy, latency <5ms; (2) Follow-up: causal LM-based surprisal (e.g., GPT-2 117M quantized via Candle) for higher accuracy -- adds ~20-50ms latency, requires model loading infrastructure. **False positive considerations:** code snippets, base64-encoded content, and non-English text naturally have high surprisal; must whitelist known high-entropy patterns (base64 regex, code block markers, CJK/Arabic Unicode ranges) or use a two-stage approach (entropy pre-filter -> LM verification). IS-052 depends on IS-050's scoring output. This complements AS-002 (sanitization) -- surprisal detection catches what pattern-based sanitization misses.
+- IS-050: GCG-optimised adversarial strings have characteristically high perplexity (they are gibberish tokens optimised via gradient descent). A lightweight surprisal scorer on tool outputs can flag these before the agent processes them. The Agent-as-a-Proxy paper (arXiv 2602.05066) identifies this as a viable countermeasure but does not implement it. **Tiered implementation:** (1) MVP: statistical per-token surprisal using n-gram language model or byte-level entropy -- no GPU required, runs in Rust proxy, latency <5ms; (2) Follow-up: causal LM-based surprisal (e.g., GPT-2 117M quantized via Candle) for higher accuracy -- adds ~20-50ms latency, requires model loading infrastructure. **False positive considerations:** code snippets, base64-encoded content, and non-English text naturally have high surprisal; must whitelist known high-entropy patterns (base64 regex, code block markers, CJK/Arabic Unicode ranges) or use a two-stage approach (entropy pre-filter -> LM verification). IS-052 depends on IS-050's scoring output. This complements AS-002 (sanitization) -- surprisal detection catches what pattern-based sanitization misses.
 - IS-051: The Agent-as-a-Proxy paper demonstrates a "hybrid monitoring paradox": observing more agent traces (tool calls, outputs) is stronger against static attacks but *increases* attack surface for adaptive attacks (more insertion sites for adversarial strings). LLMTrace should support configurable monitoring scope: input-only mode (lower attack surface, less coverage) vs full hybrid mode (higher coverage, larger attack surface). Default to hybrid for most deployments, but allow switching to input-only when facing known adaptive adversaries. **Config mechanism:** per-tenant YAML field `monitoring_scope: hybrid | input_only | output_only` in existing tenant config (hot-reloadable via existing config watch). Switching trigger: automated when IS-050 detects sustained high-perplexity anomalies in tool outputs (suggests active adaptive attack), or manual operator override.
-- IS-052: The core mechanism of the Agent-as-a-Proxy attack is that the agent repeats adversarial strings from tool outputs into its reasoning traces, which then manipulate the monitor. Blocking this propagation at the tool-output boundary (AS-002 sanitization) is the structural defense the paper validates. IS-052 specifically targets high-perplexity sequences: strip or replace token sequences that exceed surprisal threshold before returning tool outputs to the agent. This breaks the attack chain at its source. **Dependency:** IS-052 depends on IS-050's surprisal scoring output; IS-050 must be implemented first. **Execution order with AS-002:** IS-052 (perplexity-based stripping) runs as the first stage of the tool-output sanitization pipeline, before AS-002 (pattern-based sanitization). This ensures GCG strings are removed before pattern matching, and AS-002 catches anything IS-052 misses. **False positive mitigation:** code, base64, non-English text, and compressed data naturally have high byte-level entropy. Mitigations: (1) whitelist content within recognized code fences, base64 blocks, and known non-Latin script ranges; (2) use sliding window (e.g., 20-token window matching GCG optimization length) rather than whole-content scoring; (3) require both high surprisal AND low semantic coherence (GCG strings are high-entropy AND semantically meaningless, unlike code which is high-entropy but parseable). Differs from AS-002 (which sanitizes all suspicious content) in that IS-052 specifically targets gradient-optimized strings.
+- IS-052: The core mechanism of the Agent-as-a-Proxy attack is that the agent repeats adversarial strings from tool outputs into its reasoning traces, which then manipulate the monitor. Blocking this propagation at the tool-output boundary (AS-002 sanitization) is the structural defense the paper validates. IS-052 specifically targets high-perplexity sequences: strip or replace token sequences that exceed surprisal threshold before returning tool outputs to the agent. This breaks the attack chain at its source. **Dependency:** IS-052 depends on IS-050's surprisal scoring output; IS-050 must be implemented first. **Execution order with AS-002:** IS-052 (perplexity-based stripping) runs as the first stage of the tool-output sanitization pipeline, before AS-002 (pattern-based sanitization). This ensures GCG strings are removed before pattern matching, and AS-002 catches anything IS-052 misses. **False positive mitigation:** code, base64, non-English text, and compressed data naturally have high byte-level entropy. Mitigations: (1) whitelist content within recognized code fences, base64 blocks, and known non-Latin script ranges; (2) use sliding window (e.g., 20-token window matching GCG optimisation length) rather than whole-content scoring; (3) require both high surprisal AND low semantic coherence (GCG strings are high-entropy AND semantically meaningless, unlike code which is high-entropy but parseable). Differs from AS-002 (which sanitizes all suspicious content) in that IS-052 specifically targets gradient-optimised strings.
 
-#### 3.1.4 Data Format Coverage
+#### 4 Data Format Coverage
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -214,13 +244,12 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - DMPI-PMHFE architectural deviations (DMPI-001–DMPI-006) tracked in section 3.4.1. These are prerequisites for IS-010/IS-011 full compliance and for ML-001 training.
 - Protocol exploit items (P2SQL, long-context, multi-turn extraction): `docs/research/prompt-injections-to-protocol-exploits.md`.
 - Adversarial evasion and transferability requirements (IS-020–IS-031): `docs/research/bypassing-llm-guardrails-evasion.md`.
-- Agent-as-a-Proxy defense requirements (IS-050–IS-052): `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses are fundamentally fragile (90%+ ASR). IS-050 (perplexity detection) and IS-052 (propagation blocking) counter GCG-optimized strings. IS-051 (adaptive monitoring scope) addresses the hybrid monitoring paradox.
+- Agent-as-a-Proxy defense requirements (IS-050–IS-052): `docs/research/agent-as-a-proxy-attacks.md`. Monitoring-based defenses are fundamentally fragile (90%+ ASR). IS-050 (perplexity detection) and IS-052 (propagation blocking) counter GCG-optimised strings. IS-051 (adaptive monitoring scope) addresses the hybrid monitoring paradox.
 
----
 
-### 3.2 Output Security
+### 2 Output Security
 
-#### 3.2.1 Advanced Hallucination Detection
+#### 1 Advanced Hallucination Detection
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -235,7 +264,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - OS-001: HaluGate achieves 76-162ms latency (CPU) vs 2-5 seconds for LLM-as-judge. As a proxy, LLMTrace is perfectly positioned since we see both tool-call results and LLM responses.
 - OS-003: Current sentinel uses word-overlap heuristic capped at 0.85. HaluGate uses ModernBERT-based sentinel with 96.4% accuracy at 12ms. Requires porting ModernBERT to Candle.
 
-#### 3.2.2 Streaming Output Safety
+#### 2 Streaming Output Safety
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -247,7 +276,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 **Implementation Notes:**
 - OS-010: SCM achieves 95%+ macro F1 by seeing only first 18% of tokens. Uses hierarchical consistency-aware learning for incomplete-sequence judgment. Our current streaming analysis re-runs full-text detectors on accumulated content — this is less efficient and less accurate than purpose-built streaming models.
 
-#### 3.2.3 Content Safety
+#### 3 Content Safety
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -257,7 +286,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | OS-023 | **Sentiment analysis** — detect negative or manipulative sentiment in outputs | Benchmarks (LLM Guard) | P3 | Low | ❌ Missing |
 | OS-024 | **Language detection** — identify unexpected language switches (potential attack vector) | Benchmarks (LLM Guard) | P3 | Low | ❌ Missing |
 
-#### 3.2.4 Code Security Enhancement
+#### 4 Code Security Enhancement
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -271,11 +300,10 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - Content safety expectations (Llama Guard, bias, sentiment/language detection): `docs/research/security-state-of-art-2026.md`.
 - CodeShield-level analysis requirements: `docs/research/security-state-of-art-2026.md`.
 
----
 
-### 3.3 Agent Security
+### 3 Agent Security
 
-#### 3.3.1 Tool-Boundary Firewalling
+#### 1 Tool-Boundary Firewalling
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -293,7 +321,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - AS-004: Tool Result Parsing achieves 10x lower ASR (0.19%) than DeBERTa classification (1.19%) and 51.84% utility vs 34.08% for DeBERTa. Key insight: "What data do I actually need?" > "Is this malicious?"
 - AS-008: Define `ToolDefinition` with category (WebBrowsing, CodeExecution, FileSystem, Database, Communication, DataProcessing), risk score, permission requirements.
 
-#### 3.3.2 Design Pattern Enforcement
+#### 2 Design Pattern Enforcement
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -309,7 +337,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - AS-010: The Design Patterns paper presents 6 provable patterns. Action-Selector is most applicable to proxy layer: enforce that agents can only select from predefined action sets. Implementation: action allowlist in config, reject requests with unlisted tool calls.
 - AS-012: Context-Minimization removes user prompt from context after action determination. At proxy level: strip context fields from forwarded requests when tool boundary detected.
 
-#### 3.3.3 Multi-Agent Defense
+#### 3 Multi-Agent Defense
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -325,7 +353,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - AS-020/AS-021: Multi-Agent Defense paper achieved **0% ASR** across 400 attack instances (vs 20-30% baseline). Architecture: Coordinator → [safe refusal | Domain LLM + Guard]. For LLMTrace: implement as optional multi-pass security engine within existing proxy.
 - AS-023: When primary analysis yields score 0.6-0.8 (borderline), invoke specialist models for consensus. Target <200ms additional latency.
 
-#### 3.3.4 Protocol Security
+#### 4 Protocol Security
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -348,11 +376,10 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - Multi-agent coordination expectations (Coordinator + Guard + second opinion): `docs/research/multi-agent-defense-pipeline.md`.
 - Protocol exploit expectations (MCP/A2A/ANP, ToolHijacker, Toxic Agent Flow): `docs/research/prompt-injections-to-protocol-exploits.md`.
 
----
 
-### 3.4 ML Pipeline & Architecture
+### 4 ML Pipeline & Architecture
 
-#### 3.4.1 Model Architecture
+#### 1 Model Architecture
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -364,7 +391,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | ML-006 | **Multi-model ensemble voting** — diverse architectures with majority voting, operating-point thresholds, over-defence suppression, single-detector score cap. E2E validated: 83.7% accuracy, 84.7% F1 on 153-sample stress test. | Bypassing Guardrails | P1 | Medium | ✅ Implemented |
 | ML-007 | **Model hot-swapping** — swap models without proxy restart | Design Patterns | P3 | Medium | ❌ Missing |
 
-#### 3.4.1a DMPI-PMHFE Architecture Alignment (Prerequisites for ML-001)
+#### 1a DMPI-PMHFE Architecture Alignment (Prerequisites for ML-001)
 
 6 architectural deviations between the current codebase and the DMPI-PMHFE paper (arXiv 2506.06384). All 6 resolved (DMPI-001, DMPI-002, DMPI-003, DMPI-004, DMPI-005, DMPI-006). Fusion training (ML-001) is no longer blocked by DMPI deviations. Reference: `docs/research/dmpi-pmhfe-prompt-injection-detection.md`.
 
@@ -384,7 +411,7 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - DMPI-003 and DMPI-005 are coupled: fixing feature dimension requires adding the 3 missing paper features and removing the 7 extra numeric features.
 - DMPI-006 (naming) should be done last since it touches all downstream finding types and serialization.
 
-#### 3.4.2 Training Strategies
+#### 2 Training Strategies
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -394,9 +421,9 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | ML-013 | **Robust training with character injection variants** — train on Unicode evasion samples | Bypassing Guardrails | P2 | Medium | ❌ Missing |
 | ML-014 | **Curated training dataset** — balanced dataset (InjecGuard: 61,089 benign + 15,666 injection) | InjecGuard | P1 | Medium | ✅ Implemented |
 | ML-015 | **GradSafe integration** — safety-critical gradient analysis for enhanced detection | Benchmarks | P3 | High | ❌ Missing |
-| ML-016 | **GCG adversarial sample generation** — generate adversarial training samples using Greedy Coordinate Gradient to improve classifier resilience against gradient-optimized attacks | Agent-as-a-Proxy, Bypassing Guardrails | P1 | High | ❌ Missing |
+| ML-016 | **GCG adversarial sample generation** — generate adversarial training samples using Greedy Coordinate Gradient to improve classifier resilience against gradient-optimised attacks | Agent-as-a-Proxy, Bypassing Guardrails | P1 | High | ❌ Missing |
 
-#### 3.4.3 Inference Optimisation
+#### 3 Inference Optimisation
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -408,9 +435,9 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 - InjecGuard MOF training and over-defense mitigation expectations: `docs/research/injecguard-over-defense-mitigation.md`.
 - Ensemble diversification expectations and robustness claims: `docs/research/bypassing-llm-guardrails-evasion.md`.
 - HaluGate/ModernBERT support expectations: `docs/research/security-state-of-art-2026.md`.
-- ML-016: GCG adversarial samples complement ML-012 (TextAttack-based). GCG is more powerful (gradient-optimized vs heuristic perturbation) but requires white-box access to the detection model. The Agent-as-a-Proxy paper shows GCG achieves 90%+ ASR where TextAttack achieves 46-48%. Training on GCG samples provides robustness against the strongest known attack class. **Tooling dependency:** GCG optimization requires Python + PyTorch + `transformers` for gradient computation against the detection model. This is offline tooling (not in the Rust proxy runtime) -- lives in a `tools/gcg/` or `scripts/adversarial/` directory. Shared with EV-017 (red-team testing uses the same GCG pipeline to generate test samples). Parameters from paper: 20 initial tokens, 500 GCG steps, 512 candidates/iteration, top-k=256. See `docs/research/agent-as-a-proxy-attacks.md`.
+- ML-016: GCG adversarial samples complement ML-012 (TextAttack-based). GCG is more powerful (gradient-optimised vs heuristic perturbation) but requires white-box access to the detection model. The Agent-as-a-Proxy paper shows GCG achieves 90%+ ASR where TextAttack achieves 46-48%. Training on GCG samples provides robustness against the strongest known attack class. **Tooling dependency:** GCG optimisation requires Python + PyTorch + `transformers` for gradient computation against the detection model. This is offline tooling (not in the Rust proxy runtime) -- lives in a `tools/gcg/` or `scripts/adversarial/` directory. Shared with EV-017 (red-team testing uses the same GCG pipeline to generate test samples). Parameters from paper: 20 initial tokens, 500 GCG steps, 512 candidates/iteration, top-k=256. See `docs/research/agent-as-a-proxy-attacks.md`.
 
-#### 3.4.4 E2E Stress Test Results & Remaining ML Work (2026-02-15)
+#### 4 E2E Stress Test Results & Remaining ML Work (2026-02-15)
 
 **Stress test corpus:** 153 samples (79 malicious, 74 benign) from 13+ benchmark datasets including notinject, deepset-v2, safeguard, jackhhao, tensor-trust, cyberseceval2, injecagent, bipia, HPI.
 
@@ -426,13 +453,13 @@ Non-Functional Requirements: Latency classes and streaming compatibility must me
 | FN | 10 | 10 | 0 (different composition) |
 
 **Changes that produced these gains:**
-1. Fixed `is_injection_finding()` gate to include `synonym_injection` and `p2sql_injection` (corrected majority voting)
-2. Implemented `apply_over_defence()` in `ensemble.rs` that suppresses auxiliary-only findings when no injection corroboration exists (eliminated 6 FPs from `is_hypothetical`, `is_repeated_token`, `context_flooding`, `pii_detected`)
-3. Wired `OperatingPoint` and `over_defence` config through proxy main.rs to the ensemble
-4. Implemented `filter_by_thresholds()` for per-category confidence filtering with observability logging
-5. Added single-detector score cap at 60 in `add_security_finding()` (prevents single-detector findings from scoring higher than Medium)
-6. Added regex patterns: `roleplay_lets` (jailbreak type), `authority_claim_update`, `disable_safety`
-7. Optimal config: `operating_point: balanced` (injection threshold 0.75), `over_defence: true`
+- Fixed `is_injection_finding()` gate to include `synonym_injection` and `p2sql_injection` (corrected majority voting)
+- Implemented `apply_over_defence()` in `ensemble.rs` that suppresses auxiliary-only findings when no injection corroboration exists (eliminated 6 FPs from `is_hypothetical`, `is_repeated_token`, `context_flooding`, `pii_detected`)
+- Wired `OperatingPoint` and `over_defence` config through proxy main.rs to the ensemble
+- Implemented `filter_by_thresholds()` for per-category confidence filtering with observability logging
+- Added single-detector score cap at 60 in `add_security_finding()` (prevents single-detector findings from scoring higher than Medium)
+- Added regex patterns: `roleplay_lets` (jailbreak type), `authority_claim_update`, `disable_safety`
+- Optimal config: `operating_point: balanced` (injection threshold 0.75), `over_defence: true`
 
 **Remaining 15 FPs (all ML single-detector false positives):**
 
@@ -485,9 +512,8 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 | IS-070 | **Shell command injection detection** — Detect dangerous shell commands (curl with exfiltration, python -c with socket, wget, reverse shell, rm -rf) in prompt content. Extend existing RL3-02 regex patterns. Critical for agent systems with tool-use capabilities. | Medium | **P1** (elevated: shell injection in agent contexts is high-severity) |
 | ML-034 | **Encoding decoder preprocessor** — Before ML inference, apply decoding pipeline: base64, rot13, leetspeak, hex, binary, upside-down text, Cyrillic homoglyphs. Add content-type heuristic before decoding (skip base64 if string contains spaces/punctuation). Latency cap: 5ms. Augments existing `jailbreak_detector.rs`. 7/11 encoding evasion test cases detected (64%); 4 misses are encoded payloads without plaintext injection markers. | Medium | **P1** (elevated: active evasion vector) |
 
----
 
-### 3.5 Multimodal Security
+### 5 Multimodal Security
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -505,9 +531,8 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 **Audit Notes (Literature Alignment):**
 - Multimodal attack expectations (image/audio/stego/video): `docs/research/prompt-injections-to-protocol-exploits.md`.
 
----
 
-### 3.6 Privacy
+### 6 Privacy
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -532,9 +557,8 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 - Privacy and protocol exploit expectations (membership inference, poisoning, MINJA): `docs/research/prompt-injections-to-protocol-exploits.md`.
 - PII expansion and compliance mapping expectations: `docs/research/security-state-of-art-2026.md`.
 
----
 
-### 3.7 Evaluation & Benchmarking
+### 7 Evaluation & Benchmarking
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -552,10 +576,10 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 | EV-012 | **deepset-v2 evaluation** — 354 challenging external validation samples | SoA Report (DMPI-PMHFE) | P1 | Low | ❌ Missing |
 | EV-013 | **Ivanleomk-v2 evaluation** — 610 external validation samples from `ivanleomk/prompt_injection_password` | SoA Report (DMPI-PMHFE) | P1 | Low | ❌ Missing |
 | EV-014 | **BIPIA evaluation** — indirect prompt injection benchmark: 86,250 test prompts across 5 scenarios (email QA, web QA, table QA, summarization, code QA), 50 attack types (30 text + 20 code). 25-model ASR baseline available. | BIPIA Breakdown, Benchmarks, Indirect Injection Firewalls | P1 | Medium | ❌ Missing |
-| EV-015 | **HarmBench evaluation** — standardized jailbreak/safety ASR measurement across violence, illegal activity, hate speech categories | Benchmarks, Bypassing Guardrails, SoA Report | P1 | Medium | ❌ Missing |
-| EV-016 | **AgentDojo Slack suite adaptive attack evaluation** — Agent-as-a-Proxy attack resilience on Slack suite (89 samples after filtering). Measure detection rate for both static and GCG-optimized adaptive attacks. | Agent-as-a-Proxy, Benchmarks | P0 | High | ❌ Missing |
-| EV-017 | **Multi-objective GCG adversarial robustness testing** — generate adversarial strings optimized to simultaneously bypass LLMTrace's regex + ML ensemble using multi-objective GCG. Red-team evaluation. | Agent-as-a-Proxy | P1 | High | ❌ Missing |
-| EV-018 | **Cross-model transfer attack resistance** — test whether adversarial strings optimized against one detection model (e.g., DeBERTa) transfer to bypass LLMTrace's full ensemble. Evaluate ensemble diversity as transfer resistance. | Agent-as-a-Proxy, Bypassing Guardrails | P1 | Medium | ❌ Missing |
+| EV-015 | **HarmBench evaluation** — standardised jailbreak/safety ASR measurement across violence, illegal activity, hate speech categories | Benchmarks, Bypassing Guardrails, SoA Report | P1 | Medium | ❌ Missing |
+| EV-016 | **AgentDojo Slack suite adaptive attack evaluation** — Agent-as-a-Proxy attack resilience on Slack suite (89 samples after filtering). Measure detection rate for both static and GCG-optimised adaptive attacks. | Agent-as-a-Proxy, Benchmarks | P0 | High | ❌ Missing |
+| EV-017 | **Multi-objective GCG adversarial robustness testing** — generate adversarial strings optimised to simultaneously bypass LLMTrace's regex + ML ensemble using multi-objective GCG. Red-team evaluation. | Agent-as-a-Proxy | P1 | High | ❌ Missing |
+| EV-018 | **Cross-model transfer attack resistance** — test whether adversarial strings optimised against one detection model (e.g., DeBERTa) transfer to bypass LLMTrace's full ensemble. Evaluate ensemble diversity as transfer resistance. | Agent-as-a-Proxy, Bypassing Guardrails | P1 | Medium | ❌ Missing |
 
 **Audit Notes (Literature Alignment):**
 - Benchmark suite expectations (AgentDojo, ASB, InjecAgent, WASP, etc.): `docs/research/benchmarks-and-tools-landscape.md`.
@@ -563,11 +587,10 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 - CyberSecEval 2 benchmark details (EV-006): `docs/research/cyberseceval2-llm-security-benchmark.md`. The 251 prompt injection sample count is cross-referenced from DMPI-PMHFE (arXiv 2506.06384, Table reference [28]). The paper also introduces FRR methodology relevant to IS-006/IS-007.
 - BIPIA benchmark (EV-014): `docs/research/bipia-indirect-prompt-injection-benchmark.md`. First systematic indirect prompt injection benchmark (KDD 2025, arXiv 2312.14197). 86,250 test prompts, 50 attack types, 25-model vulnerability baseline (GPT-4: 31% ASR, average: 11.8%). Proposes boundary token injection (`<data>`/`</data>`) and explicit reminder injection as proxy-level defenses relevant to AS-001/AS-002. Key finding: more capable models are more vulnerable (r=0.6423). Also cited in `benchmarks-and-tools-landscape.md`, `injecguard-over-defense-mitigation.md`, `indirect-injection-firewalls.md`.
 - HarmBench benchmark (EV-015): cited in 3 research docs (`benchmarks-and-tools-landscape.md`, `bypassing-llm-guardrails-evasion.md`, `security-state-of-art-2026.md`). Foundational jailbreak/safety benchmark that newer benchmarks build upon. Measures ASR across harmful content categories.
-- Agent-as-a-Proxy attacks (EV-016, EV-017, EV-018): `docs/research/agent-as-a-proxy-attacks.md`. Demonstrates monitoring-based defenses (including proxy-level monitoring like LLMTrace) are fundamentally fragile: 90%+ ASR via GCG-optimized adversarial strings that agents repeat in their traces. Validates structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) over pure monitoring. High-perplexity string detection identified as viable countermeasure. **Dependencies:** EV-016 shares AgentDojo infrastructure with EV-001 (both use AgentDojo benchmark; EV-001 covers 97 environments, EV-016 focuses on Slack suite 89 samples with adaptive attacks). EV-017 depends on ML-016 (shared GCG Python/PyTorch tooling for adversarial string generation). EV-018 depends on ML-006 (ensemble must be wired before transfer testing). All three require Python/PyTorch offline tooling, not Rust proxy changes.
+- Agent-as-a-Proxy attacks (EV-016, EV-017, EV-018): `docs/research/agent-as-a-proxy-attacks.md`. Demonstrates monitoring-based defenses (including proxy-level monitoring like LLMTrace) are fundamentally fragile: 90%+ ASR via GCG-optimised adversarial strings that agents repeat in their traces. Validates structural defenses (AS-001/AS-002 sanitization, BIPIA boundary tokens) over pure monitoring. High-perplexity string detection identified as viable countermeasure. **Dependencies:** EV-016 shares AgentDojo infrastructure with EV-001 (both use AgentDojo benchmark; EV-001 covers 97 environments, EV-016 focuses on Slack suite 89 samples with adaptive attacks). EV-017 depends on ML-016 (shared GCG Python/PyTorch tooling for adversarial string generation). EV-018 depends on ML-006 (ensemble must be wired before transfer testing). All three require Python/PyTorch offline tooling, not Rust proxy changes.
 
----
 
-### 3.8 System & Architecture Gaps
+### 8 System & Architecture Gaps
 
 | ID | Feature | Paper(s) | Priority | Complexity | Status |
 |----|---------|----------|----------|------------|--------|
@@ -586,9 +609,8 @@ The DeBERTa model (`protectai/deberta-v3-base-prompt-injection-v2`) produces fal
 - Policy language and orchestration expectations: `docs/research/llmtrace-defense-pipeline-design.md`.
 - Backdoor/poisoning and protocol exploit expectations: `docs/research/prompt-injections-to-protocol-exploits.md`.
 
----
 
-## 4. Implementation Roadmap
+## Implementation Roadmap
 
 ### Phase 1: Critical / Quick Wins (Weeks 1-6)
 
@@ -651,11 +673,10 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 - Protocol attack detection: Monitor all MCP/A2A tool calls
 - Streaming detection: 95%+ F1 at 18% token visibility (matching SCM)
 
----
 
-## 5. Competitive Landscape
+## Competitive Landscape
 
-### 5.1 Feature Comparison Matrix
+### 1 Feature Comparison Matrix
 
 | Capability | LLMTrace | InjecGuard | LLM Guard | Lakera Guard | NeMo Guardrails | LlamaFirewall | IBM OneShield | Guardrails AI |
 |-----------|----------|------------|-----------|-------------|-----------------|---------------|---------------|--------------|
@@ -688,26 +709,45 @@ Focus: Cutting-edge capabilities, multimodal, advanced protocols.
 | **Language** | Rust | Python | Python | N/A | Python | Python | Java | Python |
 | **Latency (p50)** | <100ms | ~15ms | ~200ms | ~50ms | ~500ms | ~200ms | Unknown | ~1s |
 
-### 5.2 LLMTrace Unique Differentiators
+### 2 LLMTrace Unique Differentiators
 
-1. **Only Rust-native LLM security proxy** — performance advantage is structural
-2. **Only system with feature-level fusion architecture** — DMPI-PMHFE-inspired, all 6 architectural deviations resolved (DMPI-001 through DMPI-006); architecture matches paper spec, ready for training (see §3.4.1a)
-3. **Only system combining streaming analysis + early stopping + output safety** — no competitor has all three
-4. **Only system with integrated cost control + security** — single deployment for both concerns
-5. **Most comprehensive Unicode normalisation** — 30+ homoglyph mappings + 18 zero-width chars
-6. **Only system with code security + toxicity + hallucination in one proxy** — others require multiple tools
+**Only Rust-native LLM security proxy**: — performance advantage is structural
 
-### 5.3 Key Competitive Gaps to Close
 
-1. **InjecGuard's MOF training** — only open-source solution for over-defense mitigation
-2. **NeMo's Colang policy language** — declarative guardrails are the future
-3. **LlamaFirewall's Agent Alignment Checker** — multi-step agentic operation monitoring
-4. **Lakera Guard's commercial maturity** — production-grade at scale
-5. **IBM OneShield's compliance depth** — enterprise compliance automation
+**Only system with feature-level fusion architecture**: — DMPI-PMHFE-inspired, all 6 architectural deviations resolved (DMPI-001 through DMPI-006); architecture matches paper spec, ready for training (see §3.4.1a)
 
----
 
-## 6. Research Paper Reference Index
+**Only system combining streaming analysis + early stopping + output safety**: — no competitor has all three
+
+
+**Only system with integrated cost control + security**: — single deployment for both concerns
+
+
+**Most comprehensive Unicode normalisation**: — 30+ homoglyph mappings + 18 zero-width chars
+
+
+**Only system with code security + toxicity + hallucination in one proxy**: — others require multiple tools
+
+
+### 3 Key Competitive Gaps to Close
+
+**InjecGuard's MOF training**: — only open-source solution for over-defense mitigation
+
+
+**NeMo's Colang policy language**: — declarative guardrails are the future
+
+
+**LlamaFirewall's Agent Alignment Checker**: — multi-step agentic operation monitoring
+
+
+**Lakera Guard's commercial maturity**: — production-grade at scale
+
+
+**IBM OneShield's compliance depth**: — enterprise compliance automation
+
+
+
+## Research Paper Reference Index
 
 All features in this roadmap are traceable to specific research papers:
 
@@ -735,7 +775,6 @@ All features in this roadmap are traceable to specific research papers:
 | **Spotlighting** | Defending Against Indirect Prompt Injection Attacks With Spotlighting (Microsoft, arXiv 2403.14720) | 2024 | Datamarking (whitespace replacement) reduces ASR from >50% to <3% with zero NLP quality impact. Encoding (base64) achieves 0% ASR but requires GPT-4-class models. Delimiting alone is insufficient. Dynamic/randomized tokens essential. Validates and extends IS-004 boundary tag approach. Breakdown: `docs/research/spotlighting-indirect-injection-defense.md` |
 | **Instruction Hierarchy** | The Instruction Hierarchy: Training LLMs to Prioritize Privileged Instructions (OpenAI, arXiv 2404.13208) | 2024 | Privilege hierarchy (system > user > tool) via SFT + RLHF. +63.1 pp on system message extraction, +33.8 pp on jailbreak defense (generalized to unseen attacks). Over-refusal is main trade-off (-22.7 pp on jailbreak-styled benign prompts). Validates proxy-level boundary tags as complement to model-level hierarchy. Breakdown: `docs/research/instruction-hierarchy-defense.md` |
 
----
 
 ## Appendix A: OWASP LLM Top 10 2025 Coverage Matrix
 
@@ -798,6 +837,5 @@ All features in this roadmap are traceable to specific research papers:
 | vectara/hallucination_evaluation_model | ~110M | ~60-100ms | Apache 2.0 | N/A | ✅ In use | Current |
 | cross-encoder/nli-deberta-v3-base | 86M | ~60-100ms | Apache 2.0 | N/A | ✅ DeBERTa | P2 |
 
----
 
 *This document covers findings from all 21 research documents in `docs/research/` (18 external papers + 3 internal analysis docs). Every feature, technique, attack vector, and defense mechanism mentioned across all papers is catalogued with unique IDs, paper references, priority levels, and implementation notes. This roadmap will serve as the basis for development planning and academic paper preparation.*

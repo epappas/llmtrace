@@ -8,11 +8,11 @@ LLMTrace is evolving from a passive observability proxy into a security-aware en
 
 We are adding five core capabilities.
 
-1. A structured defense pipeline with explicit hook points and deterministic decision paths, so policy can be enforced before an LLM or tool is called and after a response is generated.
-2. A detector/guard plugin interface that normalizes risk scores, evidence spans, and recommended actions across heuristics, ML classifiers, and LLM-judge models.
-3. A policy engine with a clear precedence model and actions that include allow, block, redact, rewrite, require confirmation, downgrade model, and tool disabling.
-4. A data model that captures request/response/tool events with PII-safe storage, auditable evidence, and retention controls.
-5. A metrics and tracing layer that quantifies latency, risk, and action outcomes so security posture can be monitored and improved over time.
+- A structured defense pipeline with explicit hook points and deterministic decision paths, so policy can be enforced before an LLM or tool is called and after a response is generated.
+- A detector/guard plugin interface that normalizes risk scores, evidence spans, and recommended actions across heuristics, ML classifiers, and LLM-judge models.
+- A policy engine with a clear precedence model and actions that include allow, block, redact, rewrite, require confirmation, downgrade model, and tool disabling.
+- A data model that captures request/response/tool events with PII-safe storage, auditable evidence, and retention controls.
+- A metrics and tracing layer that quantifies latency, risk, and action outcomes so security posture can be monitored and improved over time.
 
 These additions are driven by the literature on prompt injection, indirect tool injection, and multi-agent defenses. The papers emphasize that prompt-only defenses are insufficient, evasion is practical, and tool boundaries are the real security perimeter. LLMTrace is well positioned to enforce guardrails at that perimeter because it already mediates traffic between clients, LLMs, and tools. Our strategy is to combine low-latency heuristics and ML classifiers for inline decisions with heavier LLM-judge models and clustering for asynchronous review.
 
@@ -38,7 +38,7 @@ Attacker goals:
 Trust boundaries and control:
 
 - LLMTrace controls the proxy path for requests, tool calls, and responses.
-- LLMTrace does not control model weights, provider-side safety mechanisms, or upstream client behavior.
+- LLMTrace does not control model weights, provider-side safety mechanisms, or upstream client behaviour.
 - Tool outputs and external content are untrusted by default and must be treated as tainted.
 - The policy engine can block or redact, but cannot guarantee behavioral correctness of the model.
 
@@ -54,7 +54,7 @@ Design goals:
 
 Non-goals:
 
-- Replacing application-level authorization logic.
+- Replacing application-level authorisation logic.
 - Guaranteeing perfect detection (defense-in-depth only).
 - Running high-latency LLM judges on every request.
 - Storing raw sensitive data without explicit configuration.

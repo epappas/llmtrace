@@ -17,7 +17,6 @@ export OPENAI_API_KEY="sk-..."
 
 The proxy forwards this key to the upstream provider. Without it, proxied requests will fail with `401 Unauthorized`.
 
----
 
 ## Option A: One-line Install (Fastest)
 
@@ -31,7 +30,6 @@ This downloads the latest binary for your platform and a starter `config.yaml`. 
 llmtrace-proxy --config config.yaml
 ```
 
----
 
 ## Option B: Cargo Install
 
@@ -41,7 +39,6 @@ cp config.example.yaml config.yaml
 llmtrace-proxy --config config.yaml
 ```
 
----
 
 ## Option C: Docker (GHCR)
 
@@ -50,7 +47,6 @@ docker pull ghcr.io/epappas/llmtrace-proxy:latest
 docker run -p 8080:8080 ghcr.io/epappas/llmtrace-proxy:latest
 ```
 
----
 
 ## Option D: From Source
 
@@ -64,7 +60,6 @@ cp config.example.yaml config.yaml
 
 The `--features ml` flag enables the DeBERTa ML-based security detectors. Without it, only regex-based detection is available.
 
----
 
 ## Optional: Start Infra + Dashboard (Docker Compose)
 
@@ -77,7 +72,6 @@ docker compose up -d
 # Then run the proxy (from source or Docker)
 ```
 
----
 
 ## Test the Proxy
 
@@ -104,7 +98,6 @@ curl http://localhost:8080/api/v1/traces | jq '.[0]'
 curl http://localhost:8080/api/v1/security/findings | jq
 ```
 
----
 
 ## Quick Integration Example (OpenAI SDK)
 
@@ -122,7 +115,6 @@ response = client.chat.completions.create(
 )
 ```
 
----
 
 ## Troubleshooting
 

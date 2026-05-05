@@ -69,8 +69,11 @@ security_analysis:
 
 These are independent of the operating point thresholds. A finding passes through two gates:
 
-1. **Model threshold**: the model must be confident enough to emit a finding at all
-2. **Category threshold** (from operating point): the finding must exceed the per-category threshold to survive filtering
+**Model threshold**: the model must be confident enough to emit a finding at all
+
+
+**Category threshold**: (from operating point): the finding must exceed the per-category threshold to survive filtering
+
 
 ## Over-Defence Toggle
 
@@ -80,15 +83,17 @@ The `over_defence` setting controls whether ML-only single-detector findings are
 security_analysis:
   over_defence: true   # suppress ML-only single-detector findings
 ```
+**`true`**: reduces false positives from single-model hallucinations. Recommended when you see false positives on security research text, educational content, or benign queries that contain security terminology.
 
-- **`true`**: reduces false positives from single-model hallucinations. Recommended when you see false positives on security research text, educational content, or benign queries that contain security terminology.
-- **`false`** (default): all findings that pass threshold filtering are reported.
+
+**`false`**: (default): all findings that pass threshold filtering are reported.
+
 
 When InjecGuard or PIGuard are active, the over-defence logic is automatically bypassed because majority voting among 3+ models already controls false positives.
 
 ## Tuning Workflow
 
-### 1. Start Conservative
+### Start Conservative
 
 Begin with `balanced` operating point and `over_defence: false`:
 
@@ -98,7 +103,7 @@ security_analysis:
   over_defence: false
 ```
 
-### 2. Monitor for 7 Days
+### Monitor for 7 Days
 
 Review security findings in the dashboard or via the API:
 
@@ -107,11 +112,17 @@ curl http://localhost:8080/api/v1/security/findings | jq
 ```
 
 Track:
-- **False positives**: benign requests flagged as threats
-- **False negatives**: known attacks that were not detected (test with known injection payloads)
-- **Finding types**: which categories generate the most noise
 
-### 3. Adjust Incrementally
+**False positives**: benign requests flagged as threats
+
+
+**False negatives**: known attacks that were not detected (test with known injection payloads)
+
+
+**Finding types**: which categories generate the most noise
+
+
+### Adjust Incrementally
 
 **Too many false positives?**
 - Switch to `high_precision` operating point
@@ -133,7 +144,7 @@ security_analysis:
   ml_threshold: 0.9  # raise DeBERTa gate to reduce injection FPs
 ```
 
-### 4. Consider Enabling More Models
+### Consider Enabling More Models
 
 If false negatives are a concern, enable InjecGuard and PIGuard for additional coverage. With 3+ models, majority voting naturally suppresses single-model false positives:
 

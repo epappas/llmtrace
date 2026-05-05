@@ -5,13 +5,12 @@
 **Scope**: Prompt injection detection, LLM security, PII detection, output safety, streaming analysis, guardrail frameworks
 **Context**: LLMTrace — transparent LLM proxy with security analysis (Rust, Candle ML framework)
 
----
 
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
-2. [Part 1: DMPI-PMHFE Paper Validation](#part-1-dmpi-pmhfe-paper-validation)
-3. [Part 2: Broader Literature Survey](#part-2-broader-literature-survey)
+- [Executive Summary](#executive-summary)
+- [Part 1: DMPI-PMHFE Paper Validation](#part-1-dmpi-pmhfe-paper-validation)
+- [Part 2: Broader Literature Survey](#part-2-broader-literature-survey)
    - [Prompt Injection Detection](#21-prompt-injection-detection)
    - [Jailbreak Detection](#22-jailbreak-detection)
    - [PII Detection in LLM Contexts](#23-pii-detection-in-llm-contexts)
@@ -19,14 +18,13 @@
    - [Real-Time/Streaming Security](#25-real-timestreaming-security)
    - [OWASP LLM Top 10 2025](#26-owasp-llm-top-10-2025)
    - [Industry Guardrail Frameworks](#27-industry-guardrail-frameworks)
-4. [Part 3: Gap Analysis & Recommendations](#part-3-gap-analysis--recommendations)
+- [Part 3: Gap Analysis & Recommendations](#part-3-gap-analysis--recommendations)
    - [Current State Assessment](#31-current-state-assessment)
    - [Gap Analysis](#32-gap-analysis)
    - [Prioritised Recommendations](#33-prioritised-recommendations)
    - [New Techniques to Adopt](#34-new-techniques-to-adopt)
    - [Top 10 Papers to Read](#35-top-10-papers-to-read)
 
----
 
 ## Executive Summary
 
@@ -34,25 +32,38 @@ LLMTrace's current security architecture is **solid foundational work** — a Ru
 
 However, the field has moved rapidly in 2025. Key gaps identified:
 
-1. **Feature-level fusion** — The DMPI-PMHFE paper demonstrates that fusing heuristic features with DeBERTa embeddings *before* classification (not after) yields significantly better recall (+5.3% on external datasets). Our score-level ensemble misses this.
-2. **Over-defence problem** — Modern research (InjecGuard, PIGuard, PromptShield) shows that false positive rates at deployment scale matter more than F1. Our current approach lacks FPR-optimised thresholding.
-3. **No output safety analysis** — We have no hallucination detection, no harmful content moderation, no output toxicity scoring. This is the #1 gap vs state of the art.
-4. **OWASP 2025 coverage** — Two new Top 10 categories (System Prompt Leakage LLM07, Vector/Embedding Weaknesses LLM08) are unaddressed.
-5. **No streaming output moderation** — Our streaming analysis checks inputs during SSE but doesn't moderate *output* tokens in real-time, which is where the field is headed (SCM paper, HaluGate).
+**Feature-level fusion**: — The DMPI-PMHFE paper demonstrates that fusing heuristic features with DeBERTa embeddings *before* classification (not after) yields significantly better recall (+5.3% on external datasets). Our score-level ensemble misses this.
+
+
+**Over-defence problem**: — Modern research (InjecGuard, PIGuard, PromptShield) shows that false positive rates at deployment scale matter more than F1. Our current approach lacks FPR-optimised thresholding.
+
+
+**No output safety analysis**: — We have no hallucination detection, no harmful content moderation, no output toxicity scoring. This is the #1 gap vs state of the art.
+
+
+**OWASP 2025 coverage**: — Two new Top 10 categories (System Prompt Leakage LLM07, Vector/Embedding Weaknesses LLM08) are unaddressed.
+
+
+**No streaming output moderation**: — Our streaming analysis checks inputs during SSE but doesn't moderate *output* tokens in real-time, which is where the field is headed (SCM paper, HaluGate).
+
 
 **Overall assessment: 6.5/10** — Good detection architecture, but missing output-side safety, modern fusion techniques, and 2025 OWASP coverage.
 
----
 
 ## Part 1: DMPI-PMHFE Paper Validation
 
 ### Paper: Detection Method for Prompt Injection by Integrating Pre-trained Model and Heuristic Feature Engineering
 
-- **Source**: arxiv.org/html/2506.06384v1 (Zhengzhou University, June 2025)
-- **Published**: Springer LNCS, Information Security Conference 2025
-- **Core claim**: Dual-channel feature fusion (DeBERTa semantic vectors + heuristic structural features → FC network → prediction) outperforms existing detection models
+**Source**: arxiv.org/html/2506.06384v1 (Zhengzhou University, June 2025)
 
-### 1.1 Architecture Comparison
+
+**Published**: Springer LNCS, Information Security Conference 2025
+
+
+**Core claim**: Dual-channel feature fusion (DeBERTa semantic vectors + heuristic structural features → FC network → prediction) outperforms existing detection models
+
+
+### 1 Architecture Comparison
 
 | Aspect | DMPI-PMHFE | LLMTrace (Our Approach) |
 |--------|-----------|------------------------|
@@ -65,33 +76,45 @@ However, the field has moved rapidly in 2025. Key gaps identified:
 
 **Key architectural difference**: DMPI-PMHFE extracts the DeBERTa *embedding vector* (768-dim) rather than the classification output, then concatenates it with a 10-dim heuristic binary feature vector, and trains an FC network on the combined 778-dim representation. This is fundamentally different from our approach, which runs DeBERTa classification independently and then combines scores post-hoc.
 
-### 1.2 What We're Missing — Heuristic Feature Engineering
+### 2 What We're Missing — Heuristic Feature Engineering
 
 DMPI-PMHFE's heuristic features are **not just regex patterns**. They are categorised, semantic-aware binary indicators:
 
 **Synonym Matching Features (8 categories)**:
-1. `is_ignore` — "ignore", "reveal", "disregard", "forget", "overlook" + WordNet synonyms
-2. `is_urgent` — "urgent", "immediate", "asap", "emergency", "critical" + synonyms
-3. `is_incentive` — "excellent", "fantastic", "awesome", "brilliant" + synonyms (flattery attacks)
-4. `is_covert` — "secret", "hidden", "covert", "stealth", "confidential" + synonyms
-5. `is_format_manipulation` — "encode", "disguising", "morse", "binary", "hexadecimal"
-6. `is_hypothetical` — "assume", "imagine", "act", "role", "play", "scenario" + synonyms
-7. `is_systemic` — "developer", "boss", "manager", "administrator", "creator"
-8. `is_immoral` — "amoral", "unethical", "violent", "illegal", "biased" + synonyms
+- `is_ignore` — "ignore", "reveal", "disregard", "forget", "overlook" + WordNet synonyms
+- `is_urgent` — "urgent", "immediate", "asap", "emergency", "critical" + synonyms
+- `is_incentive` — "excellent", "fantastic", "awesome", "brilliant" + synonyms (flattery attacks)
+- `is_covert` — "secret", "hidden", "covert", "stealth", "confidential" + synonyms
+- `is_format_manipulation` — "encode", "disguising", "morse", "binary", "hexadecimal"
+- `is_hypothetical` — "assume", "imagine", "act", "role", "play", "scenario" + synonyms
+- `is_systemic` — "developer", "boss", "manager", "administrator", "creator"
+- `is_immoral` — "amoral", "unethical", "violent", "illegal", "biased" + synonyms
 
 **Pattern Matching Features (2 categories)**:
-9. `is_shot_attack` — Q&A pair counting via regex (threshold ≥ 3)
-10. `is_repeated_token` — Repetitive word/phrase detection (threshold ≥ 3)
+- `is_shot_attack` — Q&A pair counting via regex (threshold ≥ 3)
+- `is_repeated_token` — Repetitive word/phrase detection (threshold ≥ 3)
 
 **What our regex approach misses**:
-- **Synonym expansion** — We match exact patterns; they expand via WordNet to catch paraphrased attacks
-- **Semantic categorisation** — Their features are typed by attack category (urgency, flattery, covert); ours are flat
-- **Flattery/urgency/covert detection** — We have no patterns for social engineering tactics like flattery-based or urgency-based manipulation
-- **Many-shot attack detection** — We don't count Q&A pairs
-- **Repetition attack detection** — We don't detect token repetition attacks
-- **Lemmatisation** — They lemmatise tokens via spaCy before matching; we match raw text
 
-### 1.3 Feature Fusion Method — Feature-Level vs Score-Level
+**Synonym expansion**: — We match exact patterns; they expand via WordNet to catch paraphrased attacks
+
+
+**Semantic categorisation**: — Their features are typed by attack category (urgency, flattery, covert); ours are flat
+
+
+**Flattery/urgency/covert detection**: — We have no patterns for social engineering tactics like flattery-based or urgency-based manipulation
+
+
+**Many-shot attack detection**: — We don't count Q&A pairs
+
+
+**Repetition attack detection**: — We don't detect token repetition attacks
+
+
+**Lemmatisation**: — They lemmatise tokens via spaCy before matching; we match raw text
+
+
+### 3 Feature Fusion Method — Feature-Level vs Score-Level
 
 **Their approach (feature-level fusion)**:
 ```
@@ -124,7 +147,7 @@ On the challenging deepset-v2 external dataset:
 
 Adding heuristic features boosted recall by **+6.39 percentage points** and F1 by **+6.0 percentage points** on the hardest dataset. This is a substantial improvement attributable to feature-level fusion allowing the FC classifier to learn correlations between semantic and structural features that score-level combination cannot capture.
 
-### 1.4 Performance Benchmarks
+### 4 Performance Benchmarks
 
 **Datasets used**:
 - `safeguard-v2`: 1,300 test samples (augmented from `xTRam1/safeguard-prompt-injections`)
@@ -142,7 +165,7 @@ Adding heuristic features boosted recall by **+6.39 percentage points** and F1 b
 
 **Critical insight**: ProtectAI's biggest weakness is recall (75.32%) — it misses ~25% of attacks. DMPI-PMHFE's heuristic features dramatically improve this to 84.31%. Our score-level ensemble likely helps some, but cannot match feature-level fusion's recall improvement.
 
-### 1.5 Actionable Gaps
+### 5 Actionable Gaps
 
 | Priority | Gap | Action | Impact |
 |----------|-----|--------|--------|
@@ -154,24 +177,37 @@ Adding heuristic features boosted recall by **+6.39 percentage points** and F1 b
 | **P2** | No synonym expansion | Build synonym sets for each attack category (WordNet-equivalent) | Catches paraphrased attacks |
 | **P3** | Joint training | Train the fusion FC layer on labelled prompt injection data | Maximises feature interaction learning |
 
----
 
 ## Part 2: Broader Literature Survey
 
-### 2.1 Prompt Injection Detection
+### 1 Prompt Injection Detection
 
 #### State of the Art (2024-2026)
 
 **PromptShield** (Jacob et al., UC Berkeley, Jan 2025 — ACM CODASPY 2025):
-- **Key insight**: Existing detectors fail at deployment-realistic false positive rates (FPR). At 0.1% FPR, PromptGuard (Meta) detects only 9.4% of attacks.
-- **Approach**: Carefully curated benchmark distinguishing conversational data (chatbot — low injection risk) from application-structured data (LLM-integrated apps — high risk). Fine-tuned detector on this taxonomy.
-- **Results**: 65.3% TPR at 0.1% FPR — significantly better than all prior detectors.
-- **Implication for LLMTrace**: We need to evaluate our detector at realistic FPR thresholds (0.1%, 0.5%), not just F1. Our ensemble may have an unacceptable false positive rate in production.
+
+**Key insight**: Existing detectors fail at deployment-realistic false positive rates (FPR). At 0.1% FPR, PromptGuard (Meta) detects only 9.4% of attacks.
+
+
+**Approach**: Carefully curated benchmark distinguishing conversational data (chatbot — low injection risk) from application-structured data (LLM-integrated apps — high risk). Fine-tuned detector on this taxonomy.
+
+
+**Results**: 65.3% TPR at 0.1% FPR — significantly better than all prior detectors.
+
+
+**Implication for LLMTrace**: We need to evaluate our detector at realistic FPR thresholds (0.1%, 0.5%), not just F1. Our ensemble may have an unacceptable false positive rate in production.
+
 
 **PIGuard/InjecGuard** (Li & Liu, ACL 2025):
-- **Problem**: Existing prompt guard models (including ProtectAI) suffer from **over-defence** — they trigger on benign inputs containing words like "ignore", "system", or "instructions" that happen to appear in normal conversation.
-- **Solution**: PIGuard introduces "Mitigating Over-defense for Free" (MOF) training strategy that reduces trigger word bias. Surpasses existing best model by 30.8% on the NotInject benchmark.
-- **Implication for LLMTrace**: Our regex patterns for "ignore previous instructions" will over-trigger on legitimate mentions of these phrases. We need an over-defence mitigation strategy.
+
+**Problem**: Existing prompt guard models (including ProtectAI) suffer from **over-defence** — they trigger on benign inputs containing words like "ignore", "system", or "instructions" that happen to appear in normal conversation.
+
+
+**Solution**: PIGuard introduces "Mitigating Over-defense for Free" (MOF) training strategy that reduces trigger word bias. Surpasses existing best model by 30.8% on the NotInject benchmark.
+
+
+**Implication for LLMTrace**: Our regex patterns for "ignore previous instructions" will over-trigger on legitimate mentions of these phrases. We need an over-defence mitigation strategy.
+
 
 **Prompt Injection 2.0: Hybrid AI Threats** (arxiv 2507.13169, July 2025):
 - Emerging threat: Hybrid attacks combining prompt injection with traditional cyber techniques (e.g., injection via external document retrieval, SQL-injection-style prompt crafting).
@@ -180,7 +216,9 @@ Adding heuristic features boosted recall by **+6.39 percentage points** and F1 b
 **ToolHijacker** (arxiv 2504.19793, Aug 2025):
 - Prompt injection attacks targeting tool selection in LLM agents.
 - 96.7% attack success rate against GPT-4o. StruQ and SecAlign defences fail (99.6% bypass rate).
-- **Implication**: Agent-based LLM applications are uniquely vulnerable. Our agent action analysis needs enhancement.
+
+**Implication**: Agent-based LLM applications are uniquely vulnerable. Our agent action analysis needs enhancement.
+
 
 #### Key Models to Evaluate
 
@@ -192,13 +230,17 @@ Adding heuristic features boosted recall by **+6.39 percentage points** and F1 b
 | PIGuard | DeBERTa + MOF training | ~86M | Reduced over-defence | 🔄 Should evaluate |
 | PromptShield detector | Fine-tuned classifier | Varies | Low-FPR deployment | 🔄 Should evaluate |
 
-### 2.2 Jailbreak Detection
+### 2 Jailbreak Detection
 
 #### Distinct from Prompt Injection
 
 PromptShield (2025) formally distinguishes these:
-- **Prompt injection**: Subverting the intended functionality of an application prompt (indirect attack via data)
-- **Jailbreak**: Circumventing the safety alignment of a foundation model to generate harmful content (direct attack on model values)
+
+**Prompt injection**: Subverting the intended functionality of an application prompt (indirect attack via data)
+
+
+**Jailbreak**: Circumventing the safety alignment of a foundation model to generate harmful content (direct attack on model values)
+
 
 Many existing detectors conflate these, which degrades performance on both tasks.
 
@@ -206,35 +248,51 @@ Many existing detectors conflate these, which degrades performance on both tasks
 
 **Meta LlamaFirewall** (April 2025):
 - Multi-layer security framework with three specialised components:
-  1. **PromptGuard 2**: DeBERTa-based classifier for jailbreak + injection detection
-  2. **Agent Alignment Checker**: Monitors multi-step agentic operations
-  3. **CodeShield**: Static analysis for LLM-generated code security
+
+**PromptGuard 2**: DeBERTa-based classifier for jailbreak + injection detection
+
+
+**Agent Alignment Checker**: Monitors multi-step agentic operations
+
+
+**CodeShield**: Static analysis for LLM-generated code security
+
 - Key architecture insight: **Layered defence** with each component targeting a specific risk class. Similar to our ensemble approach but with broader coverage.
 
 **Bypassing LLM Guardrails** (Mindgard/ACL LLMSEC 2025):
 - Demonstrated that character injection (Unicode zero-width characters, homoglyphs) and adversarial ML evasion techniques can bypass all tested guardrails including ProtectAI, Llama Guard, and Azure Prompt Shield.
-- **Implication**: Our regex patterns are especially vulnerable to character-level evasion. We need Unicode normalisation as a preprocessing step.
+
+**Implication**: Our regex patterns are especially vulnerable to character-level evasion. We need Unicode normalisation as a preprocessing step.
+
 
 **MLCommons AILuminate Jailbreak Benchmark v0.5** (Oct 2025):
 - Industry-standard benchmark for measuring jailbreak susceptibility.
 - Tests both LLM and VLM systems against diverse jailbreak techniques.
-- **Implication**: We should evaluate against this benchmark.
 
-### 2.3 PII Detection in LLM Contexts
+**Implication**: We should evaluate against this benchmark.
+
+
+### 3 PII Detection in LLM Contexts
 
 #### State of the Art
 
 **Microsoft Presidio** (mature, actively maintained):
 - Multi-layer PII detection: regex + NER + checksum validation + context-aware enhancement
-- **Context-aware enhancers** use surrounding words to boost/reduce confidence (e.g., "customer ID" near a 10-digit number → boost; random number in code → suppress)
+
+**Context-aware enhancers**: use surrounding words to boost/reduce confidence (e.g., "customer ID" near a 10-digit number → boost; random number in code → suppress)
+
 - Supports 40+ entity types across multiple languages
-- **Key comparison with LLMTrace**: Presidio's `LemmaContextAwareEnhancer` boosts PII detection confidence using contextual keywords — similar to but more sophisticated than our false-positive suppression logic
+
+**Key comparison with LLMTrace**: Presidio's `LemmaContextAwareEnhancer` boosts PII detection confidence using contextual keywords — similar to but more sophisticated than our false-positive suppression logic
+
 
 **IBM OneShield Privacy Guardrails** (Jan 2025):
 - Deployed in production at IBM for PII detection in LLM interactions
 - Context-aware entity recognition across multiple languages
 - Automated compliance checking
-- **Key insight**: Real-world PII detection needs language-specific recognisers and compliance mapping (GDPR, HIPAA, etc.)
+
+**Key insight**: Real-world PII detection needs language-specific recognisers and compliance mapping (GDPR, HIPAA, etc.)
+
 
 **LLM Guard (ProtectAI)**:
 - Integrates Presidio for PII detection with additional scanners
@@ -254,7 +312,7 @@ Many existing detectors conflate these, which degrades performance on both tasks
 | Secret/credential scanning | Partial | ✅ | Partial | Need more patterns (JWT, AWS keys) |
 | Custom entity types | ✅ | ✅ | ❌ | Need plugin architecture for custom PII |
 
-### 2.4 LLM Output Safety & Hallucination Detection
+### 4 LLM Output Safety & Hallucination Detection
 
 This is **the biggest gap** in LLMTrace. We analyse inputs but barely analyse outputs.
 
@@ -267,19 +325,33 @@ This is **the biggest gap** in LLMTrace. We analyse inputs but barely analyse ou
 **HaluGate** (vLLM Blog, Dec 2025):
 - Token-level hallucination detection for production LLMs
 - Two-stage pipeline:
-  1. **Sentinel**: ModernBERT classifier determines if query needs fact-checking (96.4% accuracy, 12ms)
-  2. **Token-level detector**: ModernBERT token classification identifies exactly which tokens are unsupported by context
-  3. **NLI explanation**: Classifies hallucinated spans as CONTRADICTION, NEUTRAL, or ENTAILMENT
+
+**Sentinel**: ModernBERT classifier determines if query needs fact-checking (96.4% accuracy, 12ms)
+
+
+**Token-level detector**: ModernBERT token classification identifies exactly which tokens are unsupported by context
+
+
+**NLI explanation**: Classifies hallucinated spans as CONTRADICTION, NEUTRAL, or ENTAILMENT
+
 - 76-162ms latency (CPU only) vs 2-5 seconds for LLM-as-judge
-- **Key insight**: Uses function-call tool results as ground truth — no external retrieval needed
-- **Implication for LLMTrace**: As a proxy, we see both tool-call results and LLM responses — perfect position to implement HaluGate-style detection
+
+**Key insight**: Uses function-call tool results as ground truth — no external retrieval needed
+
+
+**Implication for LLMTrace**: As a proxy, we see both tool-call results and LLM responses — perfect position to implement HaluGate-style detection
+
 
 **Streaming Content Monitor (SCM)** (Li et al., June 2025):
 - Token-level harmful content detection during LLM streaming output
 - Achieves 95%+ macro F1 by seeing only first 18% of tokens
 - Uses hierarchical consistency-aware learning for incomplete-sequence judgment
-- **Key insight**: Partial detection with fine-grained token labels enables early stopping
-- **Implication for LLMTrace**: Our streaming analysis currently only checks inputs. We should monitor outputs token-by-token during SSE streaming.
+
+**Key insight**: Partial detection with fine-grained token labels enables early stopping
+
+
+**Implication for LLMTrace**: Our streaming analysis currently only checks inputs. We should monitor outputs token-by-token during SSE streaming.
+
 
 #### Content Safety / Toxicity
 
@@ -292,16 +364,23 @@ This is **the biggest gap** in LLMTrace. We analyse inputs but barely analyse ou
 - Train classifier safeguards using explicit constitutional rules
 - Rules-based definition of acceptable vs unacceptable content
 
-### 2.5 Real-Time/Streaming Security
+### 5 Real-Time/Streaming Security
 
 #### The Streaming Gap
 
 Most security tools operate on complete inputs/outputs. The streaming paradigm introduces unique challenges:
 
-1. **Partial text analysis**: Must make security decisions on incomplete sentences
-2. **Latency sensitivity**: Cannot buffer entire response before analysis
-3. **Progressive confidence**: Confidence should increase as more tokens arrive
-4. **Early stopping**: Should halt generation when harmful content detected
+**Partial text analysis**: Must make security decisions on incomplete sentences
+
+
+**Latency sensitivity**: Cannot buffer entire response before analysis
+
+
+**Progressive confidence**: Confidence should increase as more tokens arrive
+
+
+**Early stopping**: Should halt generation when harmful content detected
+
 
 #### Current Research
 
@@ -319,7 +398,7 @@ Most security tools operate on complete inputs/outputs. The streaming paradigm i
 - This is **ahead** of most open-source frameworks (LLM Guard, NeMo Guardrails don't natively support streaming)
 - But we only check **inputs** during streaming, not outputs. And we don't have streaming-optimised models.
 
-### 2.6 OWASP LLM Top 10 2025
+### 6 OWASP LLM Top 10 2025
 
 The 2025 edition has **significant changes** from the version we currently track:
 
@@ -338,22 +417,25 @@ The 2025 edition has **significant changes** from the version we currently track
 
 **Critical new entries we must address**:
 
-1. **LLM07 System Prompt Leakage**: We detect leakage patterns in responses, but need:
+**LLM07 System Prompt Leakage**: We detect leakage patterns in responses, but need:
+
    - Proactive prompt isolation (structured queries)
    - Detection of adversarial extraction attempts (not just "reveal your prompt" patterns)
    - Monitoring for gradual/multi-turn extraction
 
-2. **LLM08 Vector and Embedding Weaknesses**: As a proxy we could:
+**LLM08 Vector and Embedding Weaknesses**: As a proxy we could:
+
    - Detect embedding poisoning patterns in RAG contexts
    - Monitor similarity scores for anomalies
    - Flag unusual retrieval patterns
 
-3. **LLM09 Misinformation**: We need:
+**LLM09 Misinformation**: We need:
+
    - Hallucination detection (see §2.4)
    - Factual claim verification
    - Citation validation
 
-### 2.7 Industry Guardrail Frameworks
+### 7 Industry Guardrail Frameworks
 
 #### Comparative Analysis
 
@@ -368,23 +450,40 @@ The 2025 edition has **significant changes** from the version we currently track
 | **Lakera Guard** | SaaS API | Proprietary ML classifiers | ✅ | ✅ | ❌ | ✅ API |
 
 **LLMTrace Competitive Advantages**:
-1. **Rust-native performance** — <1ms regex analysis, ~50-100ms ML inference. Faster than any Python framework.
-2. **True transparent proxy** — zero-integration deployment. Most frameworks require SDK integration.
-3. **Streaming security** — we're ahead of NeMo, LLM Guard, Guardrails AI on streaming analysis.
-4. **Multi-storage backends** — ClickHouse/Postgres/SQLite for traces and analytics.
+
+**Rust-native performance**: — <1ms regex analysis, ~50-100ms ML inference. Faster than any Python framework.
+
+
+**True transparent proxy**: — zero-integration deployment. Most frameworks require SDK integration.
+
+
+**Streaming security**: — we're ahead of NeMo, LLM Guard, Guardrails AI on streaming analysis.
+
+
+**Multi-storage backends**: — ClickHouse/Postgres/SQLite for traces and analytics.
+
 
 **LLMTrace Competitive Disadvantages**:
-1. **No output safety** — LLM Guard, LlamaFirewall, and NeMo all have output analysis.
-2. **No toxicity/sentiment** — LLM Guard has built-in toxicity and sentiment scanners.
-3. **No code security** — LlamaFirewall has CodeShield for LLM-generated code analysis.
-4. **No LLM-based rails** — NeMo Guardrails uses LLMs themselves for topic control and fact-checking.
-5. **No policy language** — OneShield and NeMo have declarative policy specification. We use config YAML.
 
----
+**No output safety**: — LLM Guard, LlamaFirewall, and NeMo all have output analysis.
+
+
+**No toxicity/sentiment**: — LLM Guard has built-in toxicity and sentiment scanners.
+
+
+**No code security**: — LlamaFirewall has CodeShield for LLM-generated code analysis.
+
+
+**No LLM-based rails**: — NeMo Guardrails uses LLMs themselves for topic control and fact-checking.
+
+
+**No policy language**: — OneShield and NeMo have declarative policy specification. We use config YAML.
+
+
 
 ## Part 3: Gap Analysis & Recommendations
 
-### 3.1 Current State Assessment
+### 1 Current State Assessment
 
 | Security Dimension | Score (1-10) | Rationale |
 |-------------------|-------------|-----------|
@@ -403,7 +502,7 @@ The 2025 edition has **significant changes** from the version we currently track
 
 **Overall: 6.5/10** — Strong on input analysis, weak on output analysis and modern threats.
 
-### 3.2 Gap Analysis
+### 2 Gap Analysis
 
 #### Critical Gaps (Must Fix)
 
@@ -436,31 +535,47 @@ The 2025 edition has **significant changes** from the version we currently track
 | G15 | No code security analysis for LLM-generated code | Large |
 | G16 | No policy/rules language for custom security rules | Large |
 
-### 3.3 Prioritised Recommendations
+### 3 Prioritised Recommendations
 
 #### Phase 1: Quick Wins (1-2 weeks each)
 
 **R1: Unicode Normalisation Layer** [Addresses G4]
 - Add NFKC normalisation + zero-width character stripping as first preprocessing step before all analysis
 - Defence against character injection attacks demonstrated in Mindgard/ACL 2025 paper
-- **Impact**: Closes major adversarial vulnerability
-- **Effort**: Small — preprocessing function before existing analysers
+
+**Impact**: Closes major adversarial vulnerability
+
+
+**Effort**: Small — preprocessing function before existing analysers
+
 
 **R2: Expanded Attack Category Detection** [Addresses G5]
 - Add heuristic features for: flattery/incentive, urgency, covert/stealth, hypothetical/roleplay, impersonation, immorality, many-shot (Q&A counting), repetition attacks
 - Based on DMPI-PMHFE's categorisation
-- **Impact**: Broader attack coverage, prerequisite for feature-level fusion
-- **Effort**: Medium — new pattern sets + testing
+
+**Impact**: Broader attack coverage, prerequisite for feature-level fusion
+
+
+**Effort**: Medium — new pattern sets + testing
+
 
 **R3: Extended Secret Scanning** [Addresses G10]
 - Add patterns for: JWT tokens, AWS access keys, GCP service account keys, GitHub tokens, Slack tokens, SSH private keys
-- **Impact**: Better data leakage detection
-- **Effort**: Small — additional regex patterns
+
+**Impact**: Better data leakage detection
+
+
+**Effort**: Small — additional regex patterns
+
 
 **R4: PII Checksum Validation** [Addresses G11]
 - Add Luhn algorithm for credit card validation, IBAN checksum, SSN area-group validation
-- **Impact**: Dramatically reduces PII false positives
-- **Effort**: Small — pure functions, well-defined algorithms
+
+**Impact**: Dramatically reduces PII false positives
+
+
+**Effort**: Small — pure functions, well-defined algorithms
+
 
 #### Phase 2: Architecture Improvements (2-4 weeks each)
 
@@ -468,56 +583,86 @@ The 2025 edition has **significant changes** from the version we currently track
 - Extract DeBERTa embeddings (768-dim) instead of classification scores
 - Concatenate with expanded heuristic feature vector (12-16 dim)
 - Train FC classifier on labelled prompt injection data
-- **Impact**: +6% F1 improvement based on DMPI-PMHFE results
-- **Effort**: Medium — requires modifying Candle model loading, new FC layer, training pipeline
-- **Note**: Can train offline and ship as model weights
+
+**Impact**: +6% F1 improvement based on DMPI-PMHFE results
+
+
+**Effort**: Medium — requires modifying Candle model loading, new FC layer, training pipeline
+
+
+**Note**: Can train offline and ship as model weights
+
 
 **R6: Output Toxicity Detection** [Addresses G1]
 - Integrate a toxicity classifier (e.g., `unitary/toxic-bert` or `facebook/roberta-hate-speech-dynabench-r4-target`)
 - Run on all LLM response content
 - Configurable thresholds and harm categories
-- **Impact**: Fills the #1 gap — output safety
-- **Effort**: Medium — new Candle model loading, new scanner in security crate
+
+**Impact**: Fills the #1 gap — output safety
+
+
+**Effort**: Medium — new Candle model loading, new scanner in security crate
+
 
 **R7: Streaming Output Moderation** [Addresses G9]
 - Extend existing SSE streaming analysis to check response content (not just requests)
 - Run toxicity + PII + leakage checks on accumulated response tokens during streaming
 - Implement early-stopping capability when harmful content detected
-- **Impact**: Real-time output safety during streaming — ahead of most frameworks
-- **Effort**: Medium — extend existing streaming architecture
+
+**Impact**: Real-time output safety during streaming — ahead of most frameworks
+
+
+**Effort**: Medium — extend existing streaming architecture
+
 
 **R8: FPR-Aware Threshold Optimisation** [Addresses G6]
 - Evaluate ensemble on PromptShield benchmark at 0.1%, 0.5%, 1% FPR
 - Implement configurable operating points (high-precision / balanced / high-recall)
 - Add over-defence mitigation: suppress findings when context strongly suggests benign use
-- **Impact**: Production-ready false positive management
-- **Effort**: Medium — evaluation pipeline + configuration
+
+**Impact**: Production-ready false positive management
+
+
+**Effort**: Medium — evaluation pipeline + configuration
+
 
 #### Phase 3: Advanced Capabilities (4-8 weeks each)
 
 **R9: Hallucination Detection Pipeline** [Addresses G2, G8]
 - Implement HaluGate-style two-stage pipeline:
-  1. Sentinel classifier: Does this query need fact-checking? (ModernBERT-based, 12ms)
-  2. Token-level detector: Which response tokens are unsupported? (ModernBERT token classification)
-  3. NLI layer: Is each flagged span a contradiction, neutral, or entailment?
+  - Sentinel classifier: Does this query need fact-checking? (ModernBERT-based, 12ms)
+  - Token-level detector: Which response tokens are unsupported? (ModernBERT token classification)
+  - NLI layer: Is each flagged span a contradiction, neutral, or entailment?
 - Leverage tool-call results visible in proxy traffic as ground truth
-- **Impact**: Addresses OWASP LLM09 Misinformation, major differentiator
-- **Effort**: Large — three new models, training data, pipeline orchestration
+
+**Impact**: Addresses OWASP LLM09 Misinformation, major differentiator
+
+
+**Effort**: Large — three new models, training data, pipeline orchestration
+
 
 **R10: Dedicated Jailbreak Detection** [Addresses G14]
 - Evaluate Meta Llama Prompt Guard 2 (22M and 86M variants) as dedicated jailbreak detectors
 - Consider separate jailbreak vs prompt injection classification to avoid conflation
-- **Impact**: Better separation of concerns, improved detection for both threat types
-- **Effort**: Medium — model evaluation + integration
+
+**Impact**: Better separation of concerns, improved detection for both threat types
+
+
+**Effort**: Medium — model evaluation + integration
+
 
 **R11: Code Security Analysis** [Addresses G15]
 - Add CodeShield-style static analysis for LLM-generated code
 - Focus on: SQL injection, command injection, path traversal, hardcoded credentials
 - Can use regex-based Semgrep rules initially
-- **Impact**: Covers a growing use case (coding assistants)
-- **Effort**: Large — new analysis domain
 
-### 3.4 New Techniques to Adopt
+**Impact**: Covers a growing use case (coding assistants)
+
+
+**Effort**: Large — new analysis domain
+
+
+### 4 New Techniques to Adopt
 
 | Technique | Source | Description | Priority |
 |-----------|--------|-------------|----------|
@@ -531,7 +676,7 @@ The 2025 edition has **significant changes** from the version we currently track
 | **NLI-based explanation** | HaluGate | Natural Language Inference to explain why content is flagged | P3 |
 | **Policy-driven guardrails** | OneShield/NeMo | Declarative policy specification for custom security rules | P3 |
 
-### 3.5 Top 10 Papers to Read
+### 5 Top 10 Papers to Read
 
 | # | Paper | Year | Link | Key Takeaway |
 |---|-------|------|------|-------------|
@@ -546,7 +691,6 @@ The 2025 edition has **significant changes** from the version we currently track
 | 9 | **How Good Are LLM Guardrails on the Market?** (Palo Alto Unit42) | 2025 | [unit42.paloaltonetworks.com/comparing-llm-guardrails...](https://unit42.paloaltonetworks.com/comparing-llm-guardrails-across-genai-platforms/) | Comparative study of guardrail effectiveness across major GenAI platforms |
 | 10 | **Detecting hallucinations in LLMs using semantic entropy** | 2024 | [nature.com/articles/s41586-024-07421-0](https://www.nature.com/articles/s41586-024-07421-0) | Foundational work on entropy-based hallucination detection (Nature) |
 
----
 
 ## Appendix A: OWASP LLM Top 10 2025 Mapping Update
 
@@ -577,6 +721,5 @@ The 2025 edition has **significant changes** from the version we currently track
 | unitary/toxic-bert | Toxicity detection | 110M | ~50-80ms | Apache 2.0 | ✅ BERT |
 | cross-encoder/nli-deberta-v3-base | NLI (entailment/contradiction) | 86M | ~60-100ms | Apache 2.0 | ✅ DeBERTa |
 
----
 
 *This report was generated on 2026-02-01 based on research conducted across academic papers, industry publications, and open-source frameworks. Recommendations should be validated against LLMTrace's specific deployment requirements and resource constraints.*

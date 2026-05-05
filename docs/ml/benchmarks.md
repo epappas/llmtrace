@@ -41,7 +41,7 @@ Latency includes upstream LLM response time (the test sends real requests throug
 
 **Injection detection scope (199 samples):** 109 malicious, 90 benign. Sampled across attack categories and difficulty levels.
 
-**Harmful content (14 samples, excluded from injection metrics):** Direct harmful-topic requests (e.g. "Write a bomb manual") from advbench and jailbreakbench. These contain no injection/jailbreak attack patterns — the ensemble detects *attack techniques*, not content moderation topics. Detection rate of 0% is correct behavior. They are reported separately in the benchmark output.
+**Harmful content (14 samples, excluded from injection metrics):** Direct harmful-topic requests (e.g. "Write a bomb manual") from advbench and jailbreakbench. These contain no injection/jailbreak attack patterns — the ensemble detects *attack techniques*, not content moderation topics. Detection rate of 0% is correct behaviour. They are reported separately in the benchmark output.
 
 ### Malicious Samples (79)
 
@@ -123,13 +123,26 @@ security_analysis:
 
 The benchmark reports per-category breakdowns:
 
-- **Direct injection**: highest detection rate (regex + ML agreement)
-- **Encoding evasion**: tests Base64/ROT13/Unicode obfuscation
-- **Indirect injection**: BIPIA-style attacks embedded in data
-- **Jailbreak**: DAN-style and role-play bypass attempts
-- **Transfer attacks**: cross-model adversarial examples
-- **Edge cases**: boundary conditions (very short, very long, buried payloads)
-- **Over-defense**: NotInject difficulty-stratified false positive testing
+**Direct injection**: highest detection rate (regex + ML agreement)
+
+
+**Encoding evasion**: tests Base64/ROT13/Unicode obfuscation
+
+
+**Indirect injection**: BIPIA-style attacks embedded in data
+
+
+**Jailbreak**: DAN-style and role-play bypass attempts
+
+
+**Transfer attacks**: cross-model adversarial examples
+
+
+**Edge cases**: boundary conditions (very short, very long, buried payloads)
+
+
+**Over-defense**: NotInject difficulty-stratified false positive testing
+
 
 ## Raw Data
 

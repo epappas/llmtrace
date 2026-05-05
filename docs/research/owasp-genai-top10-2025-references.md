@@ -5,7 +5,6 @@
 **Context**: LLMTrace security proxy threat model alignment
 **Sources**: OWASP GenAI project, academic papers, industry research, incident reports
 
----
 
 ## Overview
 
@@ -17,7 +16,6 @@ The OWASP Top 10 for Large Language Model Applications (2025) identifies the mos
 - 2025 Edition: https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/
 - GitHub Repository: https://github.com/OWASP/www-project-top-10-for-large-language-model-applications
 
----
 
 ## LLM01: Prompt Injection
 
@@ -25,7 +23,7 @@ The OWASP Top 10 for Large Language Model Applications (2025) identifies the mos
 
 ### Description
 
-Prompt injection occurs when attacker-crafted inputs manipulate an LLM into deviating from its intended behavior. Direct injection overwrites system prompts; indirect injection embeds malicious instructions in external data sources (documents, web pages, tool outputs) that the LLM processes.
+Prompt injection occurs when attacker-crafted inputs manipulate an LLM into deviating from its intended behaviour. Direct injection overwrites system prompts; indirect injection embeds malicious instructions in external data sources (documents, web pages, tool outputs) that the LLM processes.
 
 ### Key Research
 
@@ -79,7 +77,6 @@ LLMTrace addresses LLM01 through its ensemble detection pipeline:
 - Streaming analysis during SSE for real-time detection
 - Proxy position intercepts both direct and indirect injection vectors
 
----
 
 ## LLM02: Sensitive Information Disclosure
 
@@ -125,7 +122,6 @@ LLMTrace addresses LLM02 through:
 - System prompt leakage detection in responses
 - Configurable redaction and blocking policies
 
----
 
 ## LLM03: Supply Chain Vulnerabilities
 
@@ -138,7 +134,7 @@ LLM supply chain risks include compromised pre-trained models, poisoned training
 **Attack Vectors** (per OWASP):
 - Compromising supplier accounts on model repositories
 - Creating look-alike accounts/repositories combined with social engineering
-- Uploading malicious LoRA adapters that alter base model behavior
+- Uploading malicious LoRA adapters that alter base model behaviour
 - Exploiting LoRA support in inference platforms (vLLM, OpenLLM) to inject adapters
 - Poisoned training data from third-party sources
 
@@ -176,17 +172,16 @@ LLM supply chain risks include compromised pre-trained models, poisoned training
 **vLLM LoRA Adapters Documentation**
 - Docs: https://docs.vllm.ai/en/stable/features/lora/
 - LoRA (Low-Rank Adaptation) enables fine-tuning with minimal parameter changes
-- Supply chain risk: malicious LoRA adapters can subtly alter model behavior
+- Supply chain risk: malicious LoRA adapters can subtly alter model behaviour
 - Defense: adapter provenance verification and behavioral testing before deployment
 
 ### LLMTrace Relevance
 
 LLM03 is partially outside LLMTrace's proxy scope (CI/CD, model selection), but:
 - Model hash verification for LLMTrace's own ML models (DeBERTa, NER)
-- Monitoring for unexpected model behavior changes in proxied traffic
+- Monitoring for unexpected model behaviour changes in proxied traffic
 - Detection of anomalous response patterns that may indicate model compromise
 
----
 
 ## LLM04: Data and Model Poisoning
 
@@ -194,7 +189,7 @@ LLM03 is partially outside LLMTrace's proxy scope (CI/CD, model selection), but:
 
 ### Description
 
-Data poisoning manipulates training or fine-tuning data to introduce vulnerabilities, backdoors, or biases. Model poisoning directly modifies model weights or architecture. Both can cause models to produce harmful, biased, or manipulated outputs while appearing to function normally. Backdoors may leave model behavior untouched until a specific trigger activates them, creating "sleeper agents."
+Data poisoning manipulates training or fine-tuning data to introduce vulnerabilities, backdoors, or biases. Model poisoning directly modifies model weights or architecture. Both can cause models to produce harmful, biased, or manipulated outputs while appearing to function normally. Backdoors may leave model behaviour untouched until a specific trigger activates them, creating "sleeper agents."
 
 **Attack Vectors** (per OWASP):
 - Manipulating pre-training data at scale
@@ -206,7 +201,7 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 - Vet data vendors; validate model outputs against trusted sources
 - Implement strict sandboxing for unverified data sources
 - Use Data Version Control (DVC) to track dataset changes and detect manipulation
-- Monitor training loss and analyze model behavior for anomalies
+- Monitor training loss and analyse model behaviour for anomalies
 - Red-teaming and adversarial testing
 
 ### Key Research
@@ -221,7 +216,7 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 **Sleeper Agents: Deceptive LLMs That Persist Through Safety Training** (Anthropic, 2024)
 - Blog: https://www.anthropic.com/news/sleeper-agents-training-deceptive-llms-that-persist-through-safety-training
 - Proof-of-concept: models trained to write secure code in 2023 but insert exploitable code when year is 2024
-- Backdoor behaviors survived standard safety training: SFT, RLHF, and adversarial training
+- Backdoor behaviours survived standard safety training: SFT, RLHF, and adversarial training
 - Larger models and chain-of-thought reasoning made deception more persistent
 - Adversarial training sometimes made models better at hiding deception rather than removing it
 - Implies current safety techniques may create false sense of security
@@ -235,12 +230,11 @@ Data poisoning manipulates training or fine-tuning data to introduce vulnerabili
 ### LLMTrace Relevance
 
 LLM04 is primarily a training-time concern, but LLMTrace can:
-- Monitor for anomalous model behavior patterns in proxied responses
+- Monitor for anomalous model behaviour patterns in proxied responses
 - Detect trigger-pattern activation through statistical response analysis
 - Ensure integrity of LLMTrace's own ML models via hash verification
 - Provide audit trail for forensic analysis of suspected poisoning incidents
 
----
 
 ## LLM05: Improper Output Handling
 
@@ -278,7 +272,6 @@ LLMTrace addresses LLM05 through:
 - Configurable output blocking/redaction policies
 - Streaming output monitoring for real-time dangerous content detection
 
----
 
 ## LLM06: Excessive Agency
 
@@ -320,7 +313,6 @@ LLMTrace addresses LLM06 through:
 - Configurable tool allowlists and schema validation
 - Multi-step action correlation for detecting escalation patterns
 
----
 
 ## LLM07: System Prompt Leakage
 
@@ -328,7 +320,7 @@ LLMTrace addresses LLM06 through:
 
 ### Description
 
-System prompt leakage occurs when the system-level instructions, configurations, or internal prompts designed to guide LLM behavior are exposed to users. Leaked system prompts can reveal business logic, safety constraints, RAG architectures, and security policies that attackers can use to craft more effective attacks.
+System prompt leakage occurs when the system-level instructions, configurations, or internal prompts designed to guide LLM behaviour are exposed to users. Leaked system prompts can reveal business logic, safety constraints, RAG architectures, and security policies that attackers can use to craft more effective attacks.
 
 ### Key Research
 
@@ -347,7 +339,6 @@ LLMTrace addresses LLM07 through:
 - Partial coverage: detects leakage in responses but limited proactive prevention of extraction attempts
 - Gap: needs multi-turn extraction attempt detection and adversarial extraction pattern recognition
 
----
 
 ## LLM08: Vector and Embedding Weaknesses
 
@@ -383,7 +374,6 @@ LLM08 is a gap in current LLMTrace coverage:
 - Potential: monitoring for poisoned retrieval content that contains injection patterns
 - Currently not implemented
 
----
 
 ## LLM09: Misinformation
 
@@ -429,7 +419,6 @@ LLM09 is a gap in current LLMTrace coverage:
 - Planned: HaluGate-style two-stage pipeline (sentinel + token-level detection)
 - Proxy position advantageous: can see both tool-call results (ground truth) and LLM responses
 
----
 
 ## LLM10: Unbounded Consumption
 
@@ -483,7 +472,6 @@ LLMTrace addresses LLM10 through:
 - Context window size monitoring
 - Gap: no sponge-example detection or context-window flooding analysis
 
----
 
 ## Cross-Cutting Resources
 
@@ -492,7 +480,7 @@ LLMTrace addresses LLM10 through:
 **Secure MCP Server Development Guide** (OWASP, 2026)
 - Reference: https://genai.owasp.org/resource/a-practical-guide-for-secure-mcp-server-development/
 - Published: February 2026
-- Covers secure architecture, authentication, authorization, validation, session isolation, and hardened deployment
+- Covers secure architecture, authentication, authorisation, validation, session isolation, and hardened deployment
 - Operates under Zero Trust Model: "never trust, always verify" for every MCP interaction
 - Key threats: tool poisoning, prompt injection, memory poisoning, tool interference
 - Defenses: network segmentation, application gateway controls, just-in-time access, behavioral anomaly detection
@@ -526,7 +514,6 @@ LLMTrace addresses LLM10 through:
 - Cataloged AI vulnerabilities including training data extraction from ChatGPT
 - Taxonomy for AI/ML vulnerability classification
 
----
 
 ## Coverage Summary
 

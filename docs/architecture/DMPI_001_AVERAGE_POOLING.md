@@ -4,9 +4,8 @@
 **Deviation:** DMPI-001 (see TODO.md, FEATURE_ROADMAP.md section 3.4.1a)
 **Paper:** DMPI-PMHFE (arXiv 2506.06384), Section III-A
 
----
 
-## 1. Problem Statement
+## Problem Statement
 
 The DMPI-PMHFE paper specifies **average pooling** over all token embeddings to produce the fixed-dimensional semantic feature vector for fusion. The current LLMTrace implementation extracts the **CLS token** (position 0) for BERT and uses `DebertaV2ContextPooler` (dense + activation on CLS) for DeBERTa.
 
@@ -25,9 +24,8 @@ Both:     mean(hidden_states * mask, dim=seq) / sum(mask, dim=seq)  -> shape [hi
 
 Average pooling captures information from **all** token positions rather than relying on a single CLS position. This is critical because the paper's fusion classifier was designed and evaluated with average-pooled features.
 
----
 
-## 2. Scope
+## Scope
 
 ### In Scope
 
@@ -45,11 +43,10 @@ Average pooling captures information from **all** token positions rather than re
 - Changes to the classification model paths (BERT/DeBERTa classifiers are separate)
 - Training or fine-tuning weights
 
----
 
-## 3. Architecture
+## Architecture
 
-### 3.1 PoolingStrategy Enum
+### 1 PoolingStrategy Enum
 
 ```rust
 /// Pooling strategy for extracting a fixed-size embedding from transformer hidden states.
@@ -65,7 +62,7 @@ pub(crate) enum PoolingStrategy {
 
 Default: `MeanPool` (paper-aligned).
 
-### 3.2 Masked Average Pooling Algorithm
+### 2 Masked Average Pooling Algorithm
 
 ```
 Input:
@@ -84,7 +81,7 @@ Steps:
 
 Division-by-zero safety: `counts` is clamped to a minimum of 1e-9 (at least one real token is always present after tokenization).
 
-### 3.3 EmbeddingModel Changes
+### 3 EmbeddingModel Changes
 
 ```
 Before:
@@ -102,7 +99,7 @@ After:
 
 The `pooler` becomes `Option` because it is only needed when `strategy == Cls`.
 
-### 3.4 Data Flow (After Change)
+### 4 Data Flow (After Change)
 
 ```
 LoadedModel::extract_embedding(text)
@@ -122,7 +119,7 @@ LoadedModel::extract_embedding(text)
               MeanPool -> masked_mean_pool(hidden_states, attention_mask).squeeze(0)  -> [768]
 ```
 
-### 3.5 File Change Map
+### 5 File Change Map
 
 | File | Change | Lines Affected |
 |------|--------|---------------|
@@ -135,7 +132,7 @@ LoadedModel::extract_embedding(text)
 | `fusion_classifier.rs` | Update doc comments (CLS -> average pooling) | Lines 1-15, 103 |
 | `feature_extraction.rs` | Update doc comment (CLS -> average pooling) | Line 5 |
 
-### 3.6 Output Dimension
+### 6 Output Dimension
 
 Average pooling produces the same output shape as CLS extraction: `[hidden_size]` (768 for DeBERTa-v3-base). No changes needed in:
 
@@ -144,24 +141,22 @@ Average pooling produces the same output shape as CLS extraction: `[hidden_size]
 - `extract_heuristic_features` (unchanged)
 - `EnsembleSecurityAnalyzer::analyze_with_fusion` (unchanged)
 
----
 
-## 4. Implementation Steps
+## Implementation Steps
 
-1. Add `PoolingStrategy` enum and `masked_mean_pool` function to `ml_detector.rs`
-2. Refactor `EmbeddingModel` enum to carry `PoolingStrategy` per variant
-3. Refactor `extract_embedding` to dispatch on strategy for both BERT and DeBERTa
-4. Update `build_embedding_model` to accept `PoolingStrategy` and conditionally load pooler
-5. Thread `PoolingStrategy` from config (default `MeanPool`)
-6. Update doc comments in `fusion_classifier.rs` and `feature_extraction.rs`
-7. Add unit tests for `masked_mean_pool` and strategy dispatch
-8. Run full test suite (`cargo test --package llmtrace-security`)
-9. Run `cargo clippy` and `cargo fmt --check`
-10. Update DMPI-001 status in TODO.md and FEATURE_ROADMAP.md
+- Add `PoolingStrategy` enum and `masked_mean_pool` function to `ml_detector.rs`
+- Refactor `EmbeddingModel` enum to carry `PoolingStrategy` per variant
+- Refactor `extract_embedding` to dispatch on strategy for both BERT and DeBERTa
+- Update `build_embedding_model` to accept `PoolingStrategy` and conditionally load pooler
+- Thread `PoolingStrategy` from config (default `MeanPool`)
+- Update doc comments in `fusion_classifier.rs` and `feature_extraction.rs`
+- Add unit tests for `masked_mean_pool` and strategy dispatch
+- Run full test suite (`cargo test --package llmtrace-security`)
+- Run `cargo clippy` and `cargo fmt --check`
+- Update DMPI-001 status in TODO.md and FEATURE_ROADMAP.md
 
----
 
-## 5. Testing Strategy
+## Testing Strategy
 
 ### Unit Tests (ml_detector.rs)
 
@@ -179,9 +174,8 @@ Average pooling produces the same output shape as CLS extraction: `[hidden_size]
 - `ensemble::tests` (34 tests) - fusion pipeline unchanged
 - `owasp_llm_top10` (63 integration tests) - regex path unchanged
 
----
 
-## 6. Risk Assessment
+## Risk Assessment
 
 | Risk | Mitigation |
 |------|-----------|

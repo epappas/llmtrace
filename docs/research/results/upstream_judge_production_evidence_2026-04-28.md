@@ -111,9 +111,9 @@ A small follow-up: persist `cost_used_usd` into the JSON sidecar so future night
 
 **Fix options (none of these block the calibration loop closing):**
 
-1. Tighten the system prompt to enforce a `reason` length budget (e.g. *"`reason` MUST be ≤ 100 characters"*).
-2. Bump `LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_OUTPUT_TOKENS` for `kimi-k2.6` specifically (e.g. 2048) to give reasoning models more headroom for the answer after the trace.
-3. Add lenient JSON parsing (close unterminated strings before re-trying `json.loads`) — requires more care; could mask genuine model errors.
+- Tighten the system prompt to enforce a `reason` length budget (e.g. *"`reason` MUST be ≤ 100 characters"*).
+- Bump `LLMTRACE_E2E_UPSTREAM_JUDGE_MAX_OUTPUT_TOKENS` for `kimi-k2.6` specifically (e.g. 2048) to give reasoning models more headroom for the answer after the trace.
+- Add lenient JSON parsing (close unterminated strings before re-trying `json.loads`) — requires more care; could mask genuine model errors.
 
 Recommended: (1) first, (2) as a safety net, (3) only if the first two prove insufficient. Tracked as a follow-up — doesn't block today.
 
@@ -123,11 +123,20 @@ The same nightly ran on 2026-04-25 with the regex judge only (commit `397a096`).
 
 ## What this proves
 
-1. **Secret wiring is correct.** The `gh secret set MOONSHOT_API_KEY ...` followed by an unmodified nightly run flipped from regex to LLM judge with no further coordination — exactly the secret-gated UX from PR #145.
-2. **The OpenAI-compatible adapter is production-stable.** 50 real Moonshot API calls, 49 returned parseable JSON, 1 hit a known token-budget edge case the harness handles observationally.
-3. **The reasoning-model fix lands in production.** kimi-k2.6 runs with `max_output_tokens=1024` (the openai-backend default introduced in PR #144) and emits valid JSON content for 49/50 cases.
-4. **The auto-PR pipeline still works on the new content.** PR #143 carries the new judgement data without any regression in the report's pass/fail / regression-diff sections.
-5. **Cost is firmly inside the safety margin.** ~\$0.08 against a \$0.50 cap; tomorrow's scheduled run will be the first end-to-end sample.
+**Secret wiring is correct.**: The `gh secret set MOONSHOT_API_KEY ...` followed by an unmodified nightly run flipped from regex to LLM judge with no further coordination — exactly the secret-gated UX from PR #145.
+
+
+**The OpenAI-compatible adapter is production-stable.**: 50 real Moonshot API calls, 49 returned parseable JSON, 1 hit a known token-budget edge case the harness handles observationally.
+
+
+**The reasoning-model fix lands in production.**: kimi-k2.6 runs with `max_output_tokens=1024` (the openai-backend default introduced in PR #144) and emits valid JSON content for 49/50 cases.
+
+
+**The auto-PR pipeline still works on the new content.**: PR #143 carries the new judgement data without any regression in the report's pass/fail / regression-diff sections.
+
+
+**Cost is firmly inside the safety margin.**: ~\$0.08 against a \$0.50 cap; tomorrow's scheduled run will be the first end-to-end sample.
+
 
 ## Pointers
 

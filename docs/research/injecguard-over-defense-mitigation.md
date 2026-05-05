@@ -26,37 +26,60 @@ The authors demonstrate that current state-of-the-art models like ProtectAIv2 ac
 
 ### Proposed Approach
 
-#### 1. NotInject Benchmark Dataset
-- **339 benign samples** containing trigger words common in prompt injection attacks
-- **Three difficulty levels**: 1, 2, or 3 trigger words per sample
+#### NotInject Benchmark Dataset
+
+**339 benign samples**: containing trigger words common in prompt injection attacks
+
+
+**Three difficulty levels**: 1, 2, or 3 trigger words per sample
+
 - Systematically constructed using:
   - Frequency analysis between benign and malicious datasets
   - LLM-based filtering and manual verification
   - GPT-4o-mini generation with safety refinement
 
-#### 2. Mitigating Over-defense for Free (MOF) Training Strategy
+#### Mitigating Over-defense for Free (MOF) Training Strategy
 
 MOF is a novel training approach that addresses over-defense without requiring specific over-defense datasets:
 
-1. **Standard Training**: Train model normally on curated dataset (61,089 benign + 15,666 injection samples)
-2. **Token-wise Bias Detection**: Test every token in vocabulary individually - tokens predicted as "attack" reveal model bias
-3. **Adaptive Data Generation**: Generate 1,000 benign samples using combinations of biased tokens (1-3 tokens)
-4. **Retraining from Scratch**: Combine original + generated data for final model training
+**Standard Training**: Train model normally on curated dataset (61,089 benign + 15,666 injection samples)
+
+
+**Token-wise Bias Detection**: Test every token in vocabulary individually - tokens predicted as "attack" reveal model bias
+
+
+**Adaptive Data Generation**: Generate 1,000 benign samples using combinations of biased tokens (1-3 tokens)
+
+
+**Retraining from Scratch**: Combine original + generated data for final model training
+
 
 > "After identifying the biased tokens, we prompt GPT-4o-mini to generate benign data using random combinations of these tokens."
 
-#### 3. Data-Centric Augmentation
+#### Data-Centric Augmentation
 Addresses long-tail formats in prompt injection attacks by generating samples in 17 different formats: Email, Document, Chat, JSON, Code, Markdown, HTML, URL, Base64, Table, XML, CSV, Config File, Log File, Image Link, Translation, Website.
 
 ### Key Results and Benchmarks
 
 **Performance Metrics (InjecGuard vs. competitors):**
-- **Average Accuracy:** 83.48% (vs. ProtectAIv2: 63.81%, +30.8% improvement)
-- **Over-defense Accuracy:** 87.32% (vs. ProtectAIv2: 56.64%, +54.17% improvement)  
-- **Benign Accuracy:** 85.74%
-- **Malicious Accuracy:** 77.39%
-- **Inference Time:** 15.34ms (503x faster than GPT-4o at 7907.18ms)
-- **GFLOPs:** 60.45 (comparable to other DeBERTa models)
+
+**Average Accuracy:**: 83.48% (vs. ProtectAIv2: 63.81%, +30.8% improvement)
+
+
+**Over-defense Accuracy:**: 87.32% (vs. ProtectAIv2: 56.64%, +54.17% improvement)  
+
+
+**Benign Accuracy:**: 85.74%
+
+
+**Malicious Accuracy:**: 77.39%
+
+
+**Inference Time:**: 15.34ms (503x faster than GPT-4o at 7907.18ms)
+
+
+**GFLOPs:**: 60.45 (comparable to other DeBERTa models)
+
 
 **Baseline Comparison:**
 ```
@@ -70,9 +93,14 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 ### Architecture Description
 
-- **Backbone:** DeBERTa-v3-base (same as ProtectAI and PromptGuard)
-- **Training Details:** 32 batch size, 3 epochs, Adam optimizer, 2e-5 learning rate, 512 max tokens
-- **Attention Mechanism:** Unlike ProtectAIv2 which shows excessive attention to trigger words, InjecGuard distributes attention across entire input context
+**Backbone:**: DeBERTa-v3-base (same as ProtectAI and PromptGuard)
+
+
+**Training Details:**: 32 batch size, 3 epochs, Adam optimizer, 2e-5 learning rate, 512 max tokens
+
+
+**Attention Mechanism:**: Unlike ProtectAIv2 which shows excessive attention to trigger words, InjecGuard distributes attention across entire input context
+
 
 ## Feature Delta with LLMTrace
 
@@ -95,20 +123,40 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 ### What InjecGuard Does That We Don't
 
-1. **Systematic Over-defense Mitigation**: MOF training strategy specifically targets and reduces false positives
-2. **Bias Token Detection**: Automated identification of problematic tokens that cause over-defense
-3. **Three-Dimensional Evaluation**: Separate metrics for benign, malicious, and over-defense scenarios
-4. **Adaptive Training Data Generation**: Automatically generates training data to counteract discovered biases
-5. **NotInject-style Benchmarking**: Specific evaluation of model performance on benign inputs with trigger words
+**Systematic Over-defense Mitigation**: MOF training strategy specifically targets and reduces false positives
+
+
+**Bias Token Detection**: Automated identification of problematic tokens that cause over-defense
+
+
+**Three-Dimensional Evaluation**: Separate metrics for benign, malicious, and over-defense scenarios
+
+
+**Adaptive Training Data Generation**: Automatically generates training data to counteract discovered biases
+
+
+**NotInject-style Benchmarking**: Specific evaluation of model performance on benign inputs with trigger words
+
 
 ### What We Do That InjecGuard Doesn't
 
-1. **Specialized Jailbreak Detection**: Dedicated module with encoding evasion detection (Base64, ROT13, leetspeak, reversed text)
-2. **PII Detection & Validation**: Comprehensive personal information detection with checksum validation
-3. **Agent Security Analysis**: Detection of dangerous commands, suspicious URLs, sensitive file access
-4. **Streaming Security Monitoring**: Real-time analysis of content deltas
-5. **Hybrid Architecture**: Combination of ML and regex approaches for robustness
-6. **Granular Threat Categories**: Multiple finding types (prompt_injection, role_injection, data_leakage, etc.)
+**Specialized Jailbreak Detection**: Dedicated module with encoding evasion detection (Base64, ROT13, leetspeak, reversed text)
+
+
+**PII Detection & Validation**: Comprehensive personal information detection with checksum validation
+
+
+**Agent Security Analysis**: Detection of dangerous commands, suspicious URLs, sensitive file access
+
+
+**Streaming Security Monitoring**: Real-time analysis of content deltas
+
+
+**Hybrid Architecture**: Combination of ML and regex approaches for robustness
+
+
+**Granular Threat Categories**: Multiple finding types (prompt_injection, role_injection, data_leakage, etc.)
+
 
 ### Where We're Aligned
 
@@ -122,83 +170,125 @@ InjecGuard      |    87.32%    | 85.74%  |  77.39%   | 83.48%
 
 ### P0 (Critical - Immediate Implementation)
 
-1. **Implement Over-defense Detection** 
-   - **Effort:** 2-3 weeks
+**Implement Over-defense Detection**: **Effort:** 2-3 weeks
+
    - Add evaluation metric for over-defense accuracy in `MLSecurityAnalyzer`
    - Create benchmark dataset similar to NotInject for LLMTrace testing
-   - **Code Impact:** New metric in `AnalysisContext`, test dataset in `tests/`
 
-2. **MOF-Inspired Training Strategy**
-   - **Effort:** 3-4 weeks  
+**Code Impact:**: New metric in `AnalysisContext`, test dataset in `tests/`
+
+
+**MOF-Inspired Training Strategy**: **Effort:** 3-4 weeks  
+
    - Implement token-wise bias detection during model training
    - Add adaptive training data generation for biased tokens
-   - **Code Impact:** New training pipeline in `ml_detector.rs`, bias detection utilities
+
+**Code Impact:**: New training pipeline in `ml_detector.rs`, bias detection utilities
+
 
 ### P1 (High Priority - Next Quarter)
 
-3. **Three-Dimensional Evaluation Framework**
-   - **Effort:** 2 weeks
+**Three-Dimensional Evaluation Framework**: **Effort:** 2 weeks
+
    - Separate benign/malicious/over-defense accuracy tracking
    - Update `SecurityFinding` to include over-defense classification
-   - **Code Impact:** Enhanced metrics in `inference_stats.rs`
 
-4. **Enhanced Trigger Word Analysis**
-   - **Effort:** 3 weeks
+**Code Impact:**: Enhanced metrics in `inference_stats.rs`
+
+
+**Enhanced Trigger Word Analysis**: **Effort:** 3 weeks
+
    - Extend jailbreak detector to identify problematic trigger words
    - Add attention weight analysis for bias detection
-   - **Code Impact:** Updates to `jailbreak_detector.rs`, new attention analysis module
+
+**Code Impact:**: Updates to `jailbreak_detector.rs`, new attention analysis module
+
 
 ### P2 (Medium Priority - Future Releases)
 
-5. **Multi-language Trigger Detection**
-   - **Effort:** 4-5 weeks
+**Multi-language Trigger Detection**: **Effort:** 4-5 weeks
+
    - Extend pattern detection to Chinese, Russian, other languages
    - Add Unicode normalization improvements
-   - **Code Impact:** Updates to `normalise.rs`, new language patterns
 
-6. **Format-Specific Training**
-   - **Effort:** 2-3 weeks
+**Code Impact:**: Updates to `normalise.rs`, new language patterns
+
+
+**Format-Specific Training**: **Effort:** 2-3 weeks
+
    - Generate training data for underrepresented formats (CSV, XML, etc.)
-   - **Code Impact:** Training data augmentation scripts
+
+**Code Impact:**: Training data augmentation scripts
+
 
 ### Potential Code/Model Integration
 
-1. **InjecGuard Model Integration**
-   - Consider adding InjecGuard as alternative backbone in `MLSecurityConfig`
-   - Compare performance against current ProtectAI DeBERTa model
-   - **HuggingFace Model:** Not yet available (paper just released)
+**InjecGuard Model Integration**: Consider adding InjecGuard as alternative backbone in `MLSecurityConfig`
 
-2. **NotInject Dataset**
-   - Use as additional test suite for LLMTrace models
+   - Compare performance against current ProtectAI DeBERTa model
+
+**HuggingFace Model:**: Not yet available (paper just released)
+
+
+**NotInject Dataset**: Use as additional test suite for LLMTrace models
+
    - Available at: `https://github.com/SaFoLab-WISC/InjecGuard`
 
-3. **MOF Training Code**
-   - Adapt their bias detection algorithm for our ensemble approach
+**MOF Training Code**: Adapt their bias detection algorithm for our ensemble approach
+
    - Integrate with existing `FusionClassifier` architecture
 
 ## Key Metrics Comparison
 
 ### InjecGuard Reported Performance
-- **Precision/Recall:** Not explicitly reported (accuracy-focused evaluation)
-- **F1 Score:** Not reported
-- **Average Accuracy:** 83.48%
-- **Over-defense Accuracy:** 87.32% (most critical metric)
-- **Malicious Detection:** 77.39%
-- **Benign Recognition:** 85.74%
+
+**Precision/Recall:**: Not explicitly reported (accuracy-focused evaluation)
+
+
+**F1 Score:**: Not reported
+
+
+**Average Accuracy:**: 83.48%
+
+
+**Over-defense Accuracy:**: 87.32% (most critical metric)
+
+
+**Malicious Detection:**: 77.39%
+
+
+**Benign Recognition:**: 85.74%
+
 
 ### Comparison to ProtectAI DeBERTa (Our Current Model)
 InjecGuard vs. ProtectAI DeBERTa v2 (which we use):
-- **Overall Performance:** +30.8% improvement in average accuracy
-- **Over-defense:** +54.17% improvement (87.32% vs 56.64%)
-- **Architecture:** Similar (both DeBERTa-based)
-- **Efficiency:** Comparable inference time (~15ms)
+
+**Overall Performance:**: +30.8% improvement in average accuracy
+
+
+**Over-defense:**: +54.17% improvement (87.32% vs 56.64%)
+
+
+**Architecture:**: Similar (both DeBERTa-based)
+
+
+**Efficiency:**: Comparable inference time (~15ms)
+
 
 ### NotInject Benchmark Results
 Current SOTA models perform poorly on over-defense:
-- **PromptGuard (Meta):** 0.88% over-defense accuracy
-- **Deepset:** 5.31% over-defense accuracy  
-- **Fmops:** 5.60% over-defense accuracy
-- **ProtectAI v2:** 56.64% over-defense accuracy
+
+**PromptGuard (Meta):**: 0.88% over-defense accuracy
+
+
+**Deepset:**: 5.31% over-defense accuracy  
+
+
+**Fmops:**: 5.60% over-defense accuracy
+
+
+**ProtectAI v2:**: 56.64% over-defense accuracy
+
 
 > "None of the existing open-source prompt guard models achieve an over-defense accuracy greater than 60%, where 50% represents random guessing."
 
@@ -229,9 +319,9 @@ impl OverDefenseDetector {
 ### Integration with Existing Architecture
 
 The MOF strategy could be integrated into our ensemble approach:
-1. Apply bias detection to our ML models
-2. Generate additional training data for problematic patterns
-3. Retrain ensemble components with augmented dataset
-4. Maintain compatibility with existing regex-based detection
+- Apply bias detection to our ML models
+- Generate additional training data for problematic patterns
+- Retrain ensemble components with augmented dataset
+- Maintain compatibility with existing regex-based detection
 
 This represents a significant opportunity to improve LLMTrace's robustness against over-defense while maintaining our strengths in PII detection, agent security analysis, and real-time streaming capabilities.

@@ -13,7 +13,6 @@
 - Integration surface (proxy): enforce tool input minimization before tool execution and sanitize tool outputs before they re-enter the agent context.
 - Productizable vs research-only: tool-aware minimization/sanitization is productizable; benchmark redesign and ablation studies are research-only.
 
----
 
 ## Paper Summary
 
@@ -21,8 +20,11 @@
 
 The paper introduces a **simple, modular, and model-agnostic defense** for tool-calling LLM agents based on two firewalls operating at the agent-tool boundary:
 
-1. **Tool-Input Firewall (Minimizer)** — Filters sensitive information from tool call arguments before execution
-2. **Tool-Output Firewall (Sanitizer)** — Removes malicious content from tool responses before returning to the agent
+**Tool-Input Firewall (Minimizer)**: — Filters sensitive information from tool call arguments before execution
+
+
+**Tool-Output Firewall (Sanitizer)**: — Removes malicious content from tool responses before returning to the agent
+
 
 This "minimize & sanitize" approach requires **no LLM retraining** and can be deployed out-of-the-box.
 
@@ -33,49 +35,68 @@ User Task → Agent → [Minimizer] → Tool → [Sanitizer] → Agent Response
 ```
 
 **Algorithm Flow:**
-1. Agent generates tool call with input arguments
-2. **Minimize Phase:** Filter sensitive data from input arguments using context of user task and tool description
-3. **Tool Execution:** Execute tool with filtered inputs
-4. **Sanitize Phase:** Remove malicious outputs using knowledge of user task and input arguments
-5. Return sanitized output to agent
+- Agent generates tool call with input arguments
+
+**Minimize Phase:**: Filter sensitive data from input arguments using context of user task and tool description
+
+
+**Tool Execution:**: Execute tool with filtered inputs
+
+
+**Sanitize Phase:**: Remove malicious outputs using knowledge of user task and input arguments
+
+- Return sanitized output to agent
 
 ### Evaluation & Results
 
 **Benchmarks Tested:**
-- **AgentDojo:** 949 security evaluations across banking, slack, travel, workspace domains
-- **Agent Security Bench (ASB):** 400 evaluations with two-stage tool selection
-- **InjecAgent:** Simulated tool calls with basic/enhanced injection attacks  
-- **Tau-Bench:** Augmented with data stealing attacks via DoomArena framework
+
+**AgentDojo:**: 949 security evaluations across banking, slack, travel, workspace domains
+
+
+**Agent Security Bench (ASB):**: 400 evaluations with two-stage tool selection
+
+
+**InjecAgent:**: Simulated tool calls with basic/enhanced injection attacks  
+
+
+**Tau-Bench:**: Augmented with data stealing attacks via DoomArena framework
+
 
 **Key Results:**
-- **0% Attack Success Rate (ASR)** across all benchmarks with minimal utility degradation
-- **Sanitizer alone** achieved optimal security-utility tradeoff
-- **Combined approach** (Minimizer + Sanitizer) showed slightly lower utility due to aggressive input redaction
+
+**0% Attack Success Rate (ASR)**: across all benchmarks with minimal utility degradation
+
+
+**Sanitizer alone**: achieved optimal security-utility tradeoff
+
+
+**Combined approach**: (Minimizer + Sanitizer) showed slightly lower utility due to aggressive input redaction
+
 - Outperformed complex defenses like CaMeL and Melon while maintaining higher utility
 
 ### Critical Benchmark Limitations Identified
 
 The paper exposed significant flaws in existing security benchmarks:
 
-1. **AgentDojo Issues:**
-   - Injection vectors overwrite task-critical content making tasks unsolvable
+**AgentDojo Issues:**: Injection vectors overwrite task-critical content making tasks unsolvable
+
    - Brittle utility metrics that mis-score semantic success
    - Fixed evaluation improved utility by 18%
 
-2. **Agent Security Bench Issues:**
-   - Forced injection of "attack-tools" inflates ASR artificially  
+**Agent Security Bench Issues:**: Forced injection of "attack-tools" inflates ASR artificially  
+
    - ASR dropped from 70% → 9.25% when attack-tools weren't force-injected
    - Poor utility evaluation ignoring task sequence requirements
 
-3. **InjecAgent Issues:**
-   - No utility metrics provided
+**InjecAgent Issues:**: No utility metrics provided
+
    - Overly simplistic attack patterns
 
 ### Defense Limitations
 
 Despite strong benchmark performance, the authors demonstrated successful bypass using **Braille encoding** to defeat the GPT-4o-based Sanitizer, highlighting the need for stronger, more diverse attack strategies in future benchmarks.
 
----
 
 ## Feature Delta with LLMTrace
 
@@ -98,18 +119,38 @@ LLMTrace operates as a **transparent proxy** (WAF-like architecture) providing r
 ### Current LLMTrace Security Features
 
 **✅ Strengths:**
-- **Comprehensive Pattern Detection:** RegexSecurityAnalyzer with 40+ injection patterns
-- **PII Detection & Redaction:** International PII patterns with checksum validation
-- **ML-based Analysis:** DeBERTa models for sophisticated attack detection
-- **Streaming Security:** Real-time token-level analysis during SSE streams
-- **Behavioral Analysis:** Statistical anomaly detection and cost monitoring
-- **Agent Action Analysis:** Command execution, file access, web request monitoring
+
+**Comprehensive Pattern Detection:**: RegexSecurityAnalyzer with 40+ injection patterns
+
+
+**PII Detection & Redaction:**: International PII patterns with checksum validation
+
+
+**ML-based Analysis:**: DeBERTa models for sophisticated attack detection
+
+
+**Streaming Security:**: Real-time token-level analysis during SSE streams
+
+
+**Behavioral Analysis:**: Statistical anomaly detection and cost monitoring
+
+
+**Agent Action Analysis:**: Command execution, file access, web request monitoring
+
 
 **❌ Current Limitations vs Paper:**
-- **No Input Minimization:** LLMTrace doesn't filter request arguments before forwarding
-- **No Tool Context:** Doesn't understand tool purposes or legitimate data requirements
-- **No Output Sanitization:** Detects but doesn't actively filter tool response content
-- **Limited Tool-Boundary Analysis:** Operates at HTTP proxy level, not tool execution level
+
+**No Input Minimization:**: LLMTrace doesn't filter request arguments before forwarding
+
+
+**No Tool Context:**: Doesn't understand tool purposes or legitimate data requirements
+
+
+**No Output Sanitization:**: Detects but doesn't actively filter tool response content
+
+
+**Limited Tool-Boundary Analysis:**: Operates at HTTP proxy level, not tool execution level
+
 
 ### Specific Indirect Prompt Injection Handling
 
@@ -135,15 +176,20 @@ pub fn detect_injection_patterns(&self, text: &str) -> Vec<SecurityFinding> {
 ```
 
 **Paper's Approach:**
-- **Contextual Analysis:** Firewall decisions based on user task + tool description + original arguments
-- **Proactive Filtering:** Actually modifies content rather than just alerting
-- **Tool-Specific Logic:** Different filtering strategies per tool type
 
----
+**Contextual Analysis:**: Firewall decisions based on user task + tool description + original arguments
+
+
+**Proactive Filtering:**: Actually modifies content rather than just alerting
+
+
+**Tool-Specific Logic:**: Different filtering strategies per tool type
+
+
 
 ## Actionable Recommendations
 
-### 1. Implement Tool-Boundary Firewalling (High Priority)
+### Implement Tool-Boundary Firewalling (High Priority)
 
 **Recommendation:** Add tool-aware input minimization and output sanitization to LLMTrace's proxy-level analysis.
 
@@ -208,14 +254,20 @@ impl ToolBoundaryAnalyzer {
 }
 ```
 
-### 2. Add Context-Aware Input Minimization (Medium Priority)
+### Add Context-Aware Input Minimization (Medium Priority)
 
 **Approach:** Implement the paper's Tool-Input Firewall concept within LLMTrace's request processing pipeline.
 
 **Key Features:**
-- **PII Minimization:** Remove unnecessary personal data from tool arguments
-- **Context Validation:** Ensure tool arguments align with stated user task
-- **Argument Filtering:** Remove potentially dangerous or unnecessary parameters
+
+**PII Minimization:**: Remove unnecessary personal data from tool arguments
+
+
+**Context Validation:**: Ensure tool arguments align with stated user task
+
+
+**Argument Filtering:**: Remove potentially dangerous or unnecessary parameters
+
 
 **Implementation:**
 ```rust
@@ -250,14 +302,20 @@ impl ContextAwareMinimizer {
 }
 ```
 
-### 3. Enhance Tool Output Sanitization (High Priority)
+### Enhance Tool Output Sanitization (High Priority)
 
 **Approach:** Implement contextual output filtering that understands the user's original intent and tool's purpose.
 
 **Features:**
-- **Instruction Removal:** Strip potential injection commands from tool responses
-- **Content Validation:** Ensure response aligns with user task
-- **Metadata Filtering:** Remove system prompts or internal information
+
+**Instruction Removal:**: Strip potential injection commands from tool responses
+
+
+**Content Validation:**: Ensure response aligns with user task
+
+
+**Metadata Filtering:**: Remove system prompts or internal information
+
 
 **Implementation:**
 ```rust
@@ -295,7 +353,7 @@ impl ContextualSanitizer {
 }
 ```
 
-### 4. Create Tool Registry and Classification System (Medium Priority)
+### Create Tool Registry and Classification System (Medium Priority)
 
 **Rationale:** To implement tool-aware security, LLMTrace needs to understand different tool types and their security requirements.
 
@@ -327,7 +385,7 @@ pub struct SecurityLevel {
 }
 ```
 
-### 5. Extend Streaming Analysis for Tool Responses (Low Priority)
+### Extend Streaming Analysis for Tool Responses (Low Priority)
 
 **Approach:** Apply the paper's sanitization logic to streaming tool responses in real-time.
 
@@ -348,7 +406,7 @@ pub struct SecurityLevel {
 The paper's firewall approach is **highly applicable** to LLMTrace's proxy architecture:
 
 **✅ Compatible Aspects:**
-- Both systems analyze content for security threats
+- Both systems analyse content for security threats
 - Both can operate without model retraining
 - Both support real-time analysis
 - Both focus on practical deployment
@@ -356,31 +414,43 @@ The paper's firewall approach is **highly applicable** to LLMTrace's proxy archi
 **🔧 Adaptation Required:**
 - LLMTrace operates at HTTP proxy level vs. tool execution level
 - Need to parse and understand tool calls from LLM requests
-- Must maintain transparent proxy behavior while adding filtering
+- Must maintain transparent proxy behaviour while adding filtering
 - Integration with existing security analysis pipeline
 
 **📈 Expected Benefits:**
-- **Reduced False Positives:** Context-aware analysis vs. generic pattern matching
-- **Proactive Defense:** Content filtering vs. passive detection
-- **Tool-Specific Security:** Tailored defenses per tool category
-- **Enhanced Coverage:** Address indirect prompt injection specifically
 
----
+**Reduced False Positives:**: Context-aware analysis vs. generic pattern matching
+
+
+**Proactive Defense:**: Content filtering vs. passive detection
+
+
+**Tool-Specific Security:**: Tailored defenses per tool category
+
+
+**Enhanced Coverage:**: Address indirect prompt injection specifically
+
+
 
 ## Conclusion
-
 The paper's "minimize & sanitize" approach represents a **significant advancement** in LLM agent security that is highly relevant to LLMTrace. While LLMTrace has strong foundational security capabilities, implementing tool-boundary firewalling would address key gaps in handling indirect prompt injections.
 
 **Key Strategic Insights:**
-1. **Contextual Analysis > Pattern Matching:** The paper's success shows that understanding user intent and tool purpose dramatically improves security effectiveness
-2. **Proactive Filtering > Passive Detection:** Actually sanitizing content prevents attacks vs. just alerting on them
-3. **Tool-Awareness Essential:** Different tools have different security requirements and attack surfaces
+
+**Contextual Analysis > Pattern Matching:**: The paper's success shows that understanding user intent and tool purpose dramatically improves security effectiveness
+
+
+**Proactive Filtering > Passive Detection:**: Actually sanitizing content prevents attacks vs. just alerting on them
+
+
+**Tool-Awareness Essential:**: Different tools have different security requirements and attack surfaces
+
 
 **Next Steps:**
-1. Begin with **Tool Registry implementation** to establish foundation
-2. Implement **Output Sanitization** for immediate security improvement  
-3. Add **Input Minimization** for comprehensive tool-boundary protection
-4. Develop **streaming integration** for real-time filtering
-5. Create **custom benchmarks** that address the weaknesses identified in existing evaluation frameworks
+- Begin with **Tool Registry implementation** to establish foundation
+- Implement **Output Sanitization** for immediate security improvement  
+- Add **Input Minimization** for comprehensive tool-boundary protection
+- Develop **streaming integration** for real-time filtering
+- Create **custom benchmarks** that address the weaknesses identified in existing evaluation frameworks
 
 This research reinforces that LLMTrace's transparent proxy approach is architecturally sound, but can be significantly enhanced by incorporating the paper's contextual, tool-aware security strategies.

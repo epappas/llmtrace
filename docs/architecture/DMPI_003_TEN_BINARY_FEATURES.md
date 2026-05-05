@@ -4,21 +4,24 @@
 **Deviation:** DMPI-003, DMPI-005 (see TODO.md, FEATURE_ROADMAP.md section 3.4.1a)
 **Paper:** DMPI-PMHFE (arXiv 2506.06384), Appendix A
 
----
 
-## 1. Problem Statement
+## Problem Statement
 
 The DMPI-PMHFE paper specifies exactly **10 binary (0/1) features** in the heuristic feature vector. The previous implementation had 15 features (8 binary + 7 numeric), deviating from the paper in three ways:
 
-1. **7 extra numeric features** (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent.
-2. **3 missing paper features** (`is_ignore`, `is_format_manipulation`, `is_immoral`) were not implemented.
-3. **Feature ordering** did not match the paper's Appendix A table.
+**7 extra numeric features**: (injection count, max confidence, PII count, secret leakage count, text length, special char ratio, avg word length) have no paper equivalent.
+
+
+**3 missing paper features**: (`is_ignore`, `is_format_manipulation`, `is_immoral`) were not implemented.
+
+
+**Feature ordering**: did not match the paper's Appendix A table.
+
 
 Training on this 15-dim architecture would not reproduce paper results.
 
----
 
-## 2. Scope
+## Scope
 
 ### In Scope (DMPI-003 + DMPI-005)
 
@@ -39,9 +42,8 @@ Training on this 15-dim architecture would not reproduce paper results.
 - Repetition threshold change (DMPI-004, separate)
 - Training or fine-tuning weights
 
----
 
-## 3. Architecture
+## Architecture
 
 ### Before (15 mixed features)
 
@@ -78,17 +80,21 @@ Training on this 15-dim architecture would not reproduce paper results.
 | 8 | is_shot_attack | Finding: is_shot_attack |
 | 9 | is_repeated_token | Finding: is_repeated_token |
 
----
 
-## 4. Design Decisions
+## Design Decisions
 
 ### Keyword-in-text checks (not regex patterns in lib.rs)
 
 The 3 new features (`is_ignore`, `is_format_manipulation`, `is_immoral`) use simple keyword matching in `feature_extraction.rs` rather than adding new regex patterns to `lib.rs`. Rationale:
 
-- **Paper-faithful:** the paper tokenizes text and checks for keyword presence. These are classifier INPUT signals, not security findings.
-- **Self-contained:** all changes stay in `feature_extraction.rs`.
-- **Avoids polluting** the SecurityFinding pipeline with low-confidence keyword matches.
+**Paper-faithful:**: the paper tokenizes text and checks for keyword presence. These are classifier INPUT signals, not security findings.
+
+
+**Self-contained:**: all changes stay in `feature_extraction.rs`.
+
+
+**Avoids polluting**: the SecurityFinding pipeline with low-confidence keyword matches.
+
 
 ### Keyword matching semantics
 
@@ -101,9 +107,8 @@ The 3 new features (`is_ignore`, `is_format_manipulation`, `is_immoral`) use sim
 
 Its regex patterns still emit findings for the pipeline; they just no longer feed the feature vector. DMPI-006 (rename) resolved.
 
----
 
-## 5. Dimension Impact
+## Dimension Impact
 
 | Component | Before | After |
 |-----------|--------|-------|
@@ -112,9 +117,8 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 | fc1 layer | Linear(783, 256) | Linear(778, 256) |
 | Feature types | 8 binary + 7 numeric | 10 binary |
 
----
 
-## 6. File Changes
+## File Changes
 
 | File | Change |
 |------|--------|
@@ -126,9 +130,8 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 - `ensemble.rs` -- calls `extract_heuristic_features(findings, text)`, passes result to `predict()`. Both signature and flow unchanged.
 - `lib.rs` -- regex patterns unchanged, finding types unchanged, export of `HEURISTIC_FEATURE_DIM` auto-reflects new value.
 
----
 
-## 7. Testing
+## Testing
 
 | Test | Validates |
 |------|-----------|
@@ -146,9 +149,8 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 | `test_unrelated_findings_ignored` | Non-mapped findings produce zero vector |
 | `test_fusion_input_dim` | `768 + 10 = 778` |
 
----
 
-## 8. Risk Assessment
+## Risk Assessment
 
 | Risk | Mitigation |
 |------|-----------|
@@ -157,9 +159,8 @@ Its regex patterns still emit findings for the pipeline; they just no longer fee
 | Keyword false positives | Exact whole-word match only; no partial/stemmed matching |
 | is_immoral naming | Finding type renamed from excuse_attack to is_immoral per DMPI-006. |
 
----
 
-## 9. Paper Reference
+## Paper Reference
 
 DMPI-PMHFE (arXiv 2506.06384), Appendix A:
 

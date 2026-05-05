@@ -48,14 +48,14 @@ Error: Failed to download model
 
 The proxy downloads ML models from Hugging Face Hub on first startup. If this fails:
 
-1. Check internet connectivity
-2. Increase the download timeout:
+- Check internet connectivity
+- Increase the download timeout:
    ```yaml
    security_analysis:
      ml_download_timeout_seconds: 1200
    ```
-3. Pre-download models and set the cache directory (see [ML Model Reference](../ml/models.md#offline--air-gapped-usage))
-4. Disable ML to run regex-only:
+- Pre-download models and set the cache directory (see [ML Model Reference](../ml/models.md#offline--air-gapped-usage))
+- Disable ML to run regex-only:
    ```yaml
    security_analysis:
      ml_enabled: false
@@ -98,7 +98,7 @@ curl http://localhost:8080/api/v1/security/findings | jq
 
 ### Storage not configured
 
-If `enable_trace_storage: false` or no storage backend is configured, findings are analyzed but not persisted.
+If `enable_trace_storage: false` or no storage backend is configured, findings are analysed but not persisted.
 
 ```yaml
 enable_security_analysis: true
@@ -123,20 +123,18 @@ Benign requests flagged as threats.
 
 ### Quick fixes
 
-1. **Switch to a higher-precision operating point**:
-   ```yaml
+**Switch to a higher-precision operating point**: 
+```yaml
    security_analysis:
      operating_point: "high_precision"
    ```
-
-2. **Enable over-defence suppression**:
-   ```yaml
+**Enable over-defence suppression**: 
+```yaml
    security_analysis:
      over_defence: true
    ```
-
-3. **Raise the per-model threshold**:
-   ```yaml
+**Raise the per-model threshold**: 
+```yaml
    security_analysis:
      ml_threshold: 0.9
    ```
@@ -149,22 +147,20 @@ Known attacks not being detected.
 
 ### Quick fixes
 
-1. **Enable additional detectors**:
-   ```yaml
+**Enable additional detectors**: 
+```yaml
    security_analysis:
      ml_enabled: true
      injecguard_enabled: true
      piguard_enabled: true
    ```
-
-2. **Switch to high-recall operating point**:
-   ```yaml
+**Switch to high-recall operating point**: 
+```yaml
    security_analysis:
      operating_point: "high_recall"
    ```
-
-3. **Lower per-model thresholds**:
-   ```yaml
+**Lower per-model thresholds**: 
+```yaml
    security_analysis:
      ml_threshold: 0.7
      injecguard_threshold: 0.75
