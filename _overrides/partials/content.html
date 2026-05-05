@@ -1,0 +1,20 @@
+{#-
+  This file overrides the default Material for MkDocs content partial
+  to move page tags from the top of the article to the bottom.
+-#}
+
+{% include "partials/actions.html" %}
+
+{% if "\u003ch1" not in page.content %}
+  <h1>{{ page.title | d(config.site_name, true)}}</h1>
+{% endif %}
+
+{{ page.content }}
+
+{#- Relocate tags to the bottom of the content area -#}
+<hr />
+{% include "partials/tags.html" %}
+
+{% include "partials/source-file.html" %}
+{% include "partials/feedback.html" %}
+{% include "partials/comments.html" %}

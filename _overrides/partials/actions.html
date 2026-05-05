@@ -1,0 +1,35 @@
+{#-
+  This file overrides the default Material for MkDocs actions partial
+  to add a custom "Copy for LLM" button.
+-#}
+
+<!-- Default actions (Edit, View Source) -->
+{% if page.edit_url %}
+  <a href="{{ page.edit_url }}" title="{{ lang.t('edit.link.title') }}" class="md-content__button md-icon">
+    {% include ".icons/material/pencil.svg" %}
+  </a>
+{% endif %}
+
+{% if config.repo_url %}
+  <a href="{{ config.repo_url }}" title="{{ lang.t('source.link.title') }}" class="md-content__button md-icon">
+    {% if "github" in config.repo_url %}
+      {% include ".icons/fontawesome/brands/github.svg" %}
+    {% elif "gitlab" in config.repo_url %}
+      {% include ".icons/fontawesome/brands/gitlab.svg" %}
+    {% elif "bitbucket" in config.repo_url %}
+      {% include ".icons/fontawesome/brands/bitbucket.svg" %}
+    {% else %}
+      {% include ".icons/material/source-repository.svg" %}
+    {% endif %}
+  </a>
+{% endif %}
+
+<!-- Custom TTS button -->
+<a href="#" title="Listen to article" class="md-content__button md-icon tts-button">
+  {% include ".icons/material/volume-high.svg" %}
+</a>
+
+<!-- Custom "Copy for LLM" button -->
+<a href="#" title="Copy for LLM" class="md-content__button md-icon copy-llm-button">
+  {% include ".icons/material/robot-outline.svg" %}
+</a>

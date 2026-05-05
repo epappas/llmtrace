@@ -9,6 +9,7 @@ copyright: Copyright &copy; LLMTrace contributors. Licensed under MIT.
 
 theme:
   name: material
+  custom_dir: _overrides
   language: en
   features:
     - navigation.sections
