@@ -14,30 +14,30 @@ This document describes the current, code-backed architecture of LLMTrace as imp
 
 ```mermaid
 flowchart LR
-    App[LLM Application] -->|HTTP/S| Proxy[LLMTrace Proxy]
-    Proxy -->|Forwarded HTTP/S| Provider[LLM Provider]
-    User[Operators / Security Teams] -->|REST API| Proxy
-    Proxy -->|Alerts| Alerts[Webhook / Slack / PagerDuty]
-    Proxy -->|Metrics| Prometheus[Prometheus Scraper]
-    Proxy -->|Traces / Metadata / Cache| Storage[(SQLite or ClickHouse + Postgres + Redis)]
+    App["LLM Application"] -->|HTTP/S| Proxy["LLMTrace Proxy"]
+    Proxy -->|Forwarded HTTP/S| Provider["LLM Provider"]
+    User["Operators / Security Teams"] -->|REST API| Proxy
+    Proxy -->|Alerts| Alerts["Webhook / Slack / PagerDuty"]
+    Proxy -->|Metrics| Prometheus["Prometheus Scraper"]
+    Proxy -->|Traces / Metadata / Cache| Storage[("SQLite or ClickHouse + Postgres + Redis")]
 ```
 
 ### Container Diagram
 
 ```mermaid
 flowchart TD
-    subgraph Runtime[llmtrace-proxy (single process)]
-        ProxyHTTP[HTTP Proxy + REST API]
-        OTel[OTLP/HTTP Ingest (/v1/traces)]
-        Grpc[gRPC Ingest (optional)]
-        Security[Security Analysis]
-        AlertsEngine[Alert Engine]
-        StorageLayer[Storage Adapter]
-        Metrics[Metrics + Health]
+    subgraph Runtime["llmtrace-proxy (single process)"]
+        ProxyHTTP["HTTP Proxy + REST API"]
+        OTel["OTLP/HTTP Ingest (/v1/traces)"]
+        Grpc["gRPC Ingest (optional)"]
+        Security["Security Analysis"]
+        AlertsEngine["Alert Engine"]
+        StorageLayer["Storage Adapter"]
+        Metrics["Metrics + Health"]
     end
 
-    App[LLM Application] --> ProxyHTTP
-    ProxyHTTP --> Provider[LLM Provider]
+    App["LLM Application"] --> ProxyHTTP
+    ProxyHTTP --> Provider["LLM Provider"]
     ProxyHTTP --> Security
     ProxyHTTP --> StorageLayer
     OTel --> Security
@@ -45,9 +45,9 @@ flowchart TD
     Grpc --> Security
     Grpc --> StorageLayer
     Security --> AlertsEngine
-    AlertsEngine --> Alerts[Webhook / Slack / PagerDuty]
-    Metrics --> Prometheus[Prometheus]
-    StorageLayer --> Storage[(SQLite / ClickHouse + Postgres + Redis)]
+    AlertsEngine --> Alerts["Webhook / Slack / PagerDuty"]
+    Metrics --> Prometheus["Prometheus"]
+    StorageLayer --> Storage[("SQLite / ClickHouse + Postgres + Redis")]
 ```
 
 ## Runtime Flow

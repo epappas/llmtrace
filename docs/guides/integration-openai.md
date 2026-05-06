@@ -537,13 +537,13 @@ client = openai.OpenAI(
 
 ## Next Steps
 
-**[LangChain Integration](integration-langchain.md)**: — Use with LangChain framework
+**[LangChain Integration](integration-langchain.md)**: Use with LangChain framework
 
 
-**[API Guide](API.md)**: — REST queries + proxy paths
+**[API Guide](API.md)**: REST queries + proxy paths
 
 
-**[Custom Policies](custom-policies.md)**: — Configure security and budgets
+**[Custom Policies](custom-policies.md)**: Configure security and budgets
 
 
 **Need help?** [Open an issue](https://github.com/epappas/llmtrace/issues) or check the [troubleshooting guide](troubleshooting.md).

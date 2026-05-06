@@ -74,13 +74,13 @@ LLMTrace solves these transparently. Nothing about your application code changes
 
 ```mermaid
 flowchart LR
-    A[Your app] -->|OpenAI-compatible request| B[LLMTrace Proxy]
-    B --> C{Security Ensemble<br/>regex · DeBERTa · InjecGuard · PIGuard}
-    C -->|allow| D[LLM Provider]
-    C -->|block / flag| E[Policy Action]
+    A["Your app"] -->|OpenAI-compatible request| B["LLMTrace Proxy"]
+    B --> C{"Security Ensemble<br/>regex · DeBERTa · InjecGuard · PIGuard"}
+    C -->|allow| D["LLM Provider"]
+    C -->|block / flag| E["Policy Action"]
     D --> B
-    B -->|trace + metrics| F[(Storage<br/>SQLite · PG · ClickHouse)]
-    B --> G[Dashboard / REST API]
+    B -->|trace + metrics| F[("Storage<br/>SQLite · PG · ClickHouse")]
+    B --> G["Dashboard / REST API"]
 ```
 
 Deep-dive: [System architecture](architecture/SYSTEM_ARCHITECTURE.md) · [Transparent proxy mechanics](architecture/TRANSPARENT_PROXY.md) · [LLM-as-judge](architecture/LLM_JUDGE.md).
