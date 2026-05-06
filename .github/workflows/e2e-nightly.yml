@@ -77,6 +77,12 @@ jobs:
           # in-process mock when unset so this workflow runs unchanged
           # whether or not the secret is configured.
           LLMTRACE_E2E_REAL_UPSTREAM_URL: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_URL }}
+          LLMTRACE_E2E_REAL_UPSTREAM_MODEL: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_MODEL }}
+          # Optional auth for real-upstream runs. Prefer the raw API-key
+          # secret; use the Authorization secret only for providers that
+          # require a non-Bearer scheme or additional header parameters.
+          LLMTRACE_E2E_REAL_UPSTREAM_API_KEY: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_API_KEY }}
+          LLMTRACE_E2E_REAL_UPSTREAM_AUTHORIZATION: ${{ secrets.LLMTRACE_E2E_REAL_UPSTREAM_AUTHORIZATION }}
           LLMTRACE_JUDGE_OPENAI_API_KEY: ${{ secrets.LLMTRACE_JUDGE_OPENAI_API_KEY }}
           # LLM-backed upstream-fell-for-it judge (#123). Auto-enabled
           # when MOONSHOT_API_KEY is configured as a repo secret. Without
