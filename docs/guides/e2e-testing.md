@@ -79,6 +79,8 @@ The harness boots an in-process FastAPI mock upstream by default. To point the p
 
 ```bash
 export LLMTRACE_E2E_REAL_UPSTREAM_URL=https://openrouter.ai/api/v1
+export LLMTRACE_E2E_REAL_UPSTREAM_MODEL=moonshotai/kimi-k2
+export LLMTRACE_E2E_REAL_UPSTREAM_API_KEY=...
 pytest tests/e2e/test_cascade.py -v \
   --scenario-results-json=out/scenario-results.json \
   --cost-cap-usd=2.00
@@ -86,6 +88,11 @@ pytest tests/e2e/test_cascade.py -v \
 
 The cost cap reads `llmtrace_cost_usd_total` after every scenario and aborts the session via `pytest.exit` on overrun. Unset = no cap.
 
+When `LLMTRACE_E2E_REAL_UPSTREAM_URL` is set, the harness forwards an upstream auth header if either of these is set:
+
+- `LLMTRACE_E2E_REAL_UPSTREAM_API_KEY` — sent as `Authorization: Bearer <value>`.
+- `LLMTRACE_E2E_REAL_UPSTREAM_AUTHORIZATION` — sent verbatim as `Authorization: <value>` for non-standard schemes.
+- `LLMTRACE_E2E_REAL_UPSTREAM_MODEL` — optional chat-completions model name. Defaults to `mock-model` for mock-upstream compatibility.
 
 ## Architecture
 
@@ -355,6 +362,9 @@ Cron `0 3 * * *` + `workflow_dispatch`. Runs the full 50-scenario corpus, genera
 Optional secrets:
 
 - `LLMTRACE_E2E_REAL_UPSTREAM_URL` — points the proxy at a real LLM. Without it, the workflow runs against the mock (still useful for catching harness/observer regressions).
+- `LLMTRACE_E2E_REAL_UPSTREAM_MODEL` — optional provider model name for real-upstream runs.
+- `LLMTRACE_E2E_REAL_UPSTREAM_API_KEY` — optional raw provider key for real-upstream runs; forwarded as `Authorization: Bearer ...`.
+- `LLMTRACE_E2E_REAL_UPSTREAM_AUTHORIZATION` — optional full authorization header value for real-upstream runs; use only when the provider needs a non-standard auth value.
 - `LLMTRACE_JUDGE_OPENAI_API_KEY` — wires up the judge tier's slow backend.
 
 The cost-cap fixture (`--cost-cap-usd`, default `2.0` in the nightly) reads `llmtrace_cost_usd_total` after every scenario and aborts the session on overrun.

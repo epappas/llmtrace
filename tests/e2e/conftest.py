@@ -41,6 +41,11 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 MOCK_UPSTREAM_PATH = Path(__file__).resolve().parent / "mock_upstream.py"
 
 PROXY_BIN_ENV = "LLMTRACE_PROXY_BIN"
+REAL_UPSTREAM_URL_ENV = "LLMTRACE_E2E_REAL_UPSTREAM_URL"
+REAL_UPSTREAM_MODEL_ENV = "LLMTRACE_E2E_REAL_UPSTREAM_MODEL"
+REAL_UPSTREAM_AUTHORIZATION_ENV = "LLMTRACE_E2E_REAL_UPSTREAM_AUTHORIZATION"
+REAL_UPSTREAM_API_KEY_ENV = "LLMTRACE_E2E_REAL_UPSTREAM_API_KEY"
+DEFAULT_CHAT_MODEL = "mock-model"
 DEFAULT_PROXY_BINARIES = (
     REPO_ROOT / "target" / "release" / "llmtrace-proxy",
     REPO_ROOT / "target" / "debug" / "llmtrace-proxy",
@@ -187,6 +192,30 @@ def _terminate(process: subprocess.Popen, label: str) -> None:
         )
 
 
+def _real_upstream_authorization() -> str | None:
+    """Return an Authorization header for real-upstream e2e runs, if configured."""
+    if not os.environ.get(REAL_UPSTREAM_URL_ENV):
+        return None
+
+    explicit = os.environ.get(REAL_UPSTREAM_AUTHORIZATION_ENV, "").strip()
+    if explicit:
+        return explicit
+
+    api_key = os.environ.get(REAL_UPSTREAM_API_KEY_ENV, "").strip()
+    if api_key:
+        return f"Bearer {api_key}"
+
+    return None
+
+
+def _chat_model() -> str:
+    """Return the model name for chat requests sent through the proxy."""
+    if not os.environ.get(REAL_UPSTREAM_URL_ENV):
+        return DEFAULT_CHAT_MODEL
+
+    return os.environ.get(REAL_UPSTREAM_MODEL_ENV, DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL
+
+
 # ---------------------------------------------------------------------------
 # Mock upstream fixture
 # ---------------------------------------------------------------------------
@@ -243,10 +272,12 @@ class ProxyHandle:
         import requests
 
         headers = {"content-type": "application/json"}
+        if auth := _real_upstream_authorization():
+            headers["authorization"] = auth
         if trace_id is not None:
             headers["x-llmtrace-trace-id"] = str(trace_id)
         body = {
-            "model": "mock-model",
+            "model": _chat_model(),
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         }
@@ -317,7 +348,7 @@ def proxy(
     # the proxy at that real LLM (used by the nightly workflow).
     # Otherwise fall back to the in-process FastAPI mock so PR-gate
     # runs stay self-contained and free.
-    real_upstream = os.environ.get("LLMTRACE_E2E_REAL_UPSTREAM_URL")
+    real_upstream = os.environ.get(REAL_UPSTREAM_URL_ENV)
     env["LLMTRACE_UPSTREAM_URL"] = real_upstream or mock_upstream.base_url
     env["LLMTRACE_STORAGE_DATABASE_PATH"] = str(db_path)
     env["LLMTRACE_STORAGE_PROFILE"] = "lite"
