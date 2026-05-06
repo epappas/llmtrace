@@ -17,6 +17,8 @@ path = "src/train_fusion.rs"
 
 [features]
 default = []
+# Enables heavyweight benchmark cases that require loading the full ML ensemble.
+ml = []
 cuda = ["llmtrace-security/cuda"]
 metal = ["llmtrace-security/metal"]
 

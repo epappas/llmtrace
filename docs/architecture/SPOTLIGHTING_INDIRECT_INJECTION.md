@@ -514,6 +514,17 @@ to skip ensemble fan-out and only run regex per-zone, with ML running
 once on the data-zone *concatenation*. This is cheaper but loses some of
 the dilution benefit. Worth measuring before deciding.
 
+**Benchmark status.** `benchmarks/benches/zone_detection.rs` now has two
+paths:
+
+- Default: regex-only control (`cargo bench -p llmtrace-benchmarks --bench zone_detection`).
+- Full ensemble: `cargo bench -p llmtrace-benchmarks --bench zone_detection --features ml`.
+
+The full-ensemble path constructs DeBERTa + InjecGuard + PIGuard and
+fails fast if any model silently falls back to regex-only. Set
+`LLMTRACE_ZONE_BENCH_MODEL_CACHE_DIR` to a populated HuggingFace cache to
+avoid measuring cold download time. Replace this proposal with measured
+p99 once #157 has run on a warm model cache.
 
 ## Zone boundary detection — design
 
