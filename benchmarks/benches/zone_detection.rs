@@ -11,6 +11,9 @@
 //!   * `zone_two_zones` — zone detection on with two Data zones, the
 //!     shape that motivates the parallel fan-out. Wall-clock should
 //!     approach `max(t1, t2)` rather than `t1 + t2`.
+//!   * `full_ensemble_*` — enabled with `--features ml`; refuses to run
+//!     unless DeBERTa, InjecGuard, and PIGuard are all loaded so the
+//!     measurement cannot silently degrade to regex-only.
 //!
 //! The brief's latency budget proposal (§3.5 of
 //! `docs/architecture/SPOTLIGHTING_INDIRECT_INJECTION.md`) is 25 ms
@@ -25,8 +28,13 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use llmtrace_core::{AnalysisContext, LLMProvider, SecurityAnalyzer, TenantId};
 use llmtrace_security::zone_detector::{Zone, ZoneKind, ZoneOrigin};
 use llmtrace_security::EnsembleSecurityAnalyzer;
+#[cfg(feature = "ml")]
+use llmtrace_security::{InjecGuardConfig, MLSecurityConfig, PIGuardConfig};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+#[cfg(feature = "ml")]
+const MODEL_CACHE_ENV: &str = "LLMTRACE_ZONE_BENCH_MODEL_CACHE_DIR";
 
 const BIPIA_TABLE_FIXTURE: &str = "| Year | Award | Result |\n\
 | 2007 | Cosmopolitan | Won |\n\
@@ -131,5 +139,115 @@ fn bench_baseline(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(feature = "ml")]
+fn cache_dir() -> Option<String> {
+    std::env::var(MODEL_CACHE_ENV)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+#[cfg(feature = "ml")]
+fn build_full_ensemble(rt: &tokio::runtime::Runtime) -> Arc<EnsembleSecurityAnalyzer> {
+    let cache_dir = cache_dir();
+    let ml_config = MLSecurityConfig {
+        model_id: "protectai/deberta-v3-base-prompt-injection-v2".to_string(),
+        threshold: 0.8,
+        cache_dir: cache_dir.clone(),
+    };
+    let injecguard_config = InjecGuardConfig {
+        model_id: "leolee99/InjecGuard".to_string(),
+        threshold: 0.85,
+        cache_dir: cache_dir.clone(),
+    };
+    let piguard_config = PIGuardConfig {
+        model_id: "leolee99/PIGuard".to_string(),
+        threshold: 0.85,
+        cache_dir,
+    };
+
+    let analyzer = rt
+        .block_on(EnsembleSecurityAnalyzer::with_piguard(
+            &ml_config,
+            None,
+            Some(&injecguard_config),
+            Some(&piguard_config),
+        ))
+        .expect("full ensemble analyzer must initialize");
+
+    assert!(
+        analyzer.is_ml_active(),
+        "DeBERTa model is not loaded; set {MODEL_CACHE_ENV} to a populated cache or allow HF download"
+    );
+    assert!(
+        analyzer.is_injecguard_active(),
+        "InjecGuard model is not loaded; set {MODEL_CACHE_ENV} to a populated cache or allow HF download"
+    );
+    assert!(
+        analyzer.is_piguard_active(),
+        "PIGuard model is not loaded; set {MODEL_CACHE_ENV} to a populated cache or allow HF download"
+    );
+
+    Arc::new(analyzer)
+}
+
+#[cfg(feature = "ml")]
+fn bench_full_ensemble(c: &mut Criterion) {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let analyzer = build_full_ensemble(&rt);
+    let mut group = c.benchmark_group("zone_detection_full_ensemble");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(30));
+
+    group.bench_function(
+        BenchmarkId::new("full_ensemble_baseline", "1zone-text"),
+        |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    analyzer
+                        .analyze_request(BIPIA_TABLE_FIXTURE, &ctx())
+                        .await
+                        .unwrap()
+                })
+            })
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("full_ensemble_zone_one_zone", "data"),
+        |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    Arc::clone(&analyzer)
+                        .analyze_request_with_zones(make_zones_one(), false, ctx())
+                        .await
+                        .unwrap()
+                })
+            })
+        },
+    );
+
+    group.bench_function(
+        BenchmarkId::new("full_ensemble_zone_two_zones", "data+data"),
+        |b| {
+            b.iter(|| {
+                rt.block_on(async {
+                    Arc::clone(&analyzer)
+                        .analyze_request_with_zones(make_zones_two(), false, ctx())
+                        .await
+                        .unwrap()
+                })
+            })
+        },
+    );
+
+    group.finish();
+}
+
+#[cfg(feature = "ml")]
+criterion_group!(zone_detection, bench_baseline, bench_full_ensemble);
+#[cfg(not(feature = "ml"))]
 criterion_group!(zone_detection, bench_baseline);
 criterion_main!(zone_detection);
