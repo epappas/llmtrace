@@ -763,9 +763,21 @@ def _build_openai_client(
         user: str,
         max_tokens: int,
     ) -> LLMCallResult:
+        # Constrain the model to emit a JSON object (#160 Option 1).
+        # The investigation report at
+        # docs/research/results/upstream_judge_calibration_none_investigation_2026-05-02.md
+        # identified "model returned prose instead of JSON" as the
+        # direct cause of `_parse_llm_verdict()` returning None on
+        # ~5–10% of calibration cases per night. JSON response mode
+        # forces valid JSON at the provider level, eliminating that
+        # failure mode without a retry layer. Supported by Moonshot,
+        # OpenAI, OpenRouter passthrough, and most OpenAI-compatible
+        # gateways. Providers that ignore the field still receive a
+        # well-formed request.
         response = client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
