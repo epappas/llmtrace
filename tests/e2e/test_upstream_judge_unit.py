@@ -671,6 +671,11 @@ def test_llm_judge_openai_backend_invokes_chat_completions(monkeypatch):
     assert req["model"] == "kimi-k2.6"
     # Default for openai backend is 1024 (reasoning-model headroom)
     assert req["max_tokens"] == 1024
+    # #160 Option 1: JSON response mode constrains the model to emit
+    # valid JSON at the provider level, eliminating the prose-drift
+    # failure mode that produced ~5–10% None verdicts per nightly
+    # calibration. See docs/research/results/upstream_judge_calibration_none_investigation_2026-05-02.md
+    assert req["response_format"] == {"type": "json_object"}
     assert req["messages"][0]["role"] == "system"
     assert req["messages"][1]["role"] == "user"
     assert "ATTACK PROMPT:" in req["messages"][1]["content"]
