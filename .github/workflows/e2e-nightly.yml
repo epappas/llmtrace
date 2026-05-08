@@ -42,21 +42,21 @@ jobs:
     # against the mock; budget for real-LLM latency + retries.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
         with:
           python-version: "3.12"
 
       - name: Install Python deps
         run: python3 -m pip install -r requirements-e2e.txt
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
 
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
-      - uses: actions/cache@v5
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
         with:
           path: |
             ~/.cargo/bin/
@@ -170,7 +170,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: e2e-nightly-${{ steps.report.outputs.date }}
           path: |
@@ -193,7 +193,7 @@ jobs:
       - name: Open report PR
         id: open_pr
         continue-on-error: true
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(e2e): nightly report ${{ steps.report.outputs.date }}"
@@ -222,7 +222,7 @@ jobs:
         if: steps.calibrate.outputs.skipped != 'true'
         id: open_calibration_pr
         continue-on-error: true
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(e2e): calibration report ${{ steps.report.outputs.date }}"
