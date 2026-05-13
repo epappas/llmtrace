@@ -17,6 +17,15 @@ ignore = [
     # Unmaintained transitive crates (no fixed upgrade available).
     "RUSTSEC-2025-0119", # number_prefix
     "RUSTSEC-2024-0436", # paste
+    # rand 0.8 unsoundness — only triggers when a custom log::Log implementation
+    # calls rand::rng() and a TryRng method on ThreadRng from inside the logger,
+    # AND the ThreadRng reseeds (every 64 KB) while called from the logger.
+    # We verified our codebase has zero `impl log::Log` implementations
+    # (grep -rln "log::Log\|impl Log\|set_logger" crates/ returns empty), so
+    # the precondition cannot be met. The fix (rand 0.9) is a major bump with
+    # breaking API changes — Dependabot PR #197 captured the migration but
+    # the API surface needs source edits we don't currently need.
+    "RUSTSEC-2026-0097", # rand 0.8 — n/a, no custom logger; see #197
 ]
 
 # =============================================================================
