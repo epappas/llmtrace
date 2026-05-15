@@ -500,6 +500,65 @@ fn clone_zone_inputs(
     out
 }
 
+/// Build the IS-060 PR-2 `spotlighting_applied` audit-trail finding
+/// from a [`DatamarkingPipelineOutcome`].
+///
+/// Severity is `Info` so the action router (`action_router.rs:192`
+/// `if finding.severity < rule.min_severity`) ignores it. The
+/// metadata carries the marker codepoint, byte ranges affected, byte
+/// delta, and shadow mode flag so dashboards and the audit log can
+/// attribute the transform to a specific request.
+fn build_spotlighting_finding(
+    outcome: &crate::datamarking_pipeline::DatamarkingPipelineOutcome,
+) -> llmtrace_core::SecurityFinding {
+    use llmtrace_core::{SecurityFinding, SecuritySeverity};
+    let mut finding = SecurityFinding::new(
+        SecuritySeverity::Info,
+        "spotlighting_applied".to_string(),
+        format!(
+            "Datamarking transform marked {n} data zone(s); shadow={shadow}",
+            n = outcome.zones_marked,
+            shadow = outcome.shadow_mode,
+        ),
+        1.0,
+    )
+    .with_alert_required(false);
+    // Marker codepoint — record the first marker seen across all
+    // messages so dashboards can attribute the request to one
+    // recognisable PUA character.
+    let marker_codepoint: u32 = outcome
+        .marker_per_message
+        .iter()
+        .find_map(|m| m.map(|c| c as u32))
+        .unwrap_or(0);
+    finding = finding
+        .with_metadata("marker_codepoint".to_string(), marker_codepoint.to_string())
+        .with_metadata(
+            "byte_delta".to_string(),
+            outcome.byte_delta_total.to_string(),
+        )
+        .with_metadata("shadow_mode".to_string(), outcome.shadow_mode.to_string())
+        .with_metadata(
+            "zone_byte_ranges".to_string(),
+            render_zone_ranges(&outcome.zone_byte_ranges_per_message),
+        );
+    finding
+}
+
+/// Render zone byte ranges as a stable, parseable string. One entry
+/// per message: `0:0-100,2:0-512` reads "message 0 has a data zone
+/// 0..100; message 2 has a data zone 0..512". Empty messages contribute
+/// nothing.
+fn render_zone_ranges(per_message: &[Vec<std::ops::Range<usize>>]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (i, ranges) in per_message.iter().enumerate() {
+        for r in ranges {
+            parts.push(format!("{i}:{}-{}", r.start, r.end));
+        }
+    }
+    parts.join(",")
+}
+
 /// Build the upstream URL for a given request path.
 fn build_upstream_url(config: &ProxyConfig, path: &str, query: Option<&str>) -> String {
     let base = config.upstream_url.trim_end_matches('/');
@@ -884,6 +943,60 @@ pub async fn proxy_handler(
         );
     }
 
+    // --- IS-060 PR-2: datamarking transform ---
+    // Runs AFTER boundary defense per design doc §4.5. When the flag
+    // is OFF this is a pure no-op (passthrough). When shadow_mode is
+    // ON, metrics + the audit finding are emitted but the proxy still
+    // forwards the un-marked bytes upstream so operators can validate
+    // runtime safety before flipping the bit.
+    let pre_datamark_body: &[u8] = if boundary_active {
+        &boundary_result.body
+    } else if zone_outcome.body_rewritten {
+        &zone_outcome.body
+    } else {
+        &body_bytes
+    };
+    let datamarking_outcome = crate::datamarking_pipeline::run(
+        pre_datamark_body,
+        &zone_outcome,
+        &cfg.boundary_defense.datamarking,
+    );
+    if cfg.boundary_defense.datamarking.enabled {
+        debug!(
+            %trace_id,
+            zones_marked = datamarking_outcome.zones_marked,
+            byte_delta = datamarking_outcome.byte_delta_total,
+            marker_collisions = datamarking_outcome.marker_collisions,
+            shadow_mode = datamarking_outcome.shadow_mode,
+            failures = datamarking_outcome.failures.len(),
+            "Datamarking pipeline applied"
+        );
+        state.metrics.record_datamarking(
+            datamarking_outcome.zones_marked,
+            datamarking_outcome.byte_delta_total,
+            datamarking_outcome.marker_collisions,
+            datamarking_outcome.shadow_mode,
+            &datamarking_outcome.failures,
+        );
+        // Audit-trail finding per design doc §5.2. Severity Info means
+        // the action router ignores it (see ActionRouter::min_severity
+        // filter at action_router.rs:192) — purely observability.
+        // Recorded on `security_findings_total` directly so the metric
+        // is present whether or not the trace-capture background task
+        // also records it via the response path.
+        if datamarking_outcome.zones_marked > 0 {
+            let finding = build_spotlighting_finding(&datamarking_outcome);
+            state
+                .metrics
+                .record_security_findings(std::slice::from_ref(&finding));
+            flagged_findings.push(finding);
+        }
+    }
+    let datamarking_active = cfg.boundary_defense.datamarking.enabled
+        && !cfg.boundary_defense.datamarking.shadow_mode
+        && datamarking_outcome.body_rewritten;
+    let body_was_rewritten = body_was_rewritten || datamarking_active;
+
     // Build the upstream request
     let upstream_url = build_upstream_url(&cfg, &path, query.as_deref());
 
@@ -913,9 +1026,13 @@ pub async fn proxy_handler(
     }
     upstream_req = upstream_req.headers(forwarded_headers);
 
-    // Forward the modified body when EITHER boundary defense or the
-    // zone pipeline rewrote it; otherwise forward the original.
-    let forward_body = if boundary_active {
+    // Forward the modified body whenever any defence in the chain
+    // rewrote it. Order matters: datamarking ran last on top of
+    // whichever upstream defence (boundary / zone-strip) was active,
+    // so its body already incorporates earlier transforms.
+    let forward_body = if datamarking_active {
+        datamarking_outcome.body
+    } else if boundary_active {
         boundary_result.body
     } else if zone_outcome.body_rewritten {
         zone_outcome.body.clone()

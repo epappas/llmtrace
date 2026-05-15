@@ -390,6 +390,22 @@ output_safety:
 #   inject_system_reminder: true
 #   # Custom reminder text (leave empty to use built-in default).
 #   # system_reminder_text: ""
+#   # IS-060 PR-2 — datamarking transform (Microsoft Spotlighting "Option C").
+#   # Replaces whitespace inside detected Data zones with a Unicode
+#   # Private Use Area marker codepoint, telling the upstream model
+#   # (via a system-reminder addendum) that the marked text is data,
+#   # not instructions. Defaults to disabled. When first enabled,
+#   # operators MUST flip shadow_mode = false ONLY after one nightly
+#   # cycle confirms zero upstream 4xx delta vs prior nightly.
+#   datamarking:
+#     enabled: false           # default: false (no-op)
+#     shadow_mode: true        # compute + emit metrics, forward original bytes
+#     marker_strategy:
+#       kind: randomized       # sample fresh PUA codepoint per request
+#     # For deterministic nightly diffs, pin a fixed marker instead:
+#     # marker_strategy:
+#     #   kind: fixed
+#     #   value: "\uE000"
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown — connection draining and task completion

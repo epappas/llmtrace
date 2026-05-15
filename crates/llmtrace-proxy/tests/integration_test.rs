@@ -885,3 +885,215 @@ async fn test_security_analysis_unaffected_by_boundary() {
         "regex must surface the injection regardless of boundary defense"
     );
 }
+
+// ---------------------------------------------------------------------------
+// IS-060 PR-2 — datamarking transform integration tests
+// ---------------------------------------------------------------------------
+
+fn datamarking_config(
+    upstream_url: &str,
+    datamarking_enabled: bool,
+    datamarking_shadow: bool,
+    zone_detection_enabled: bool,
+) -> ProxyConfig {
+    use llmtrace_core::{MarkerStrategy, ZoneDetectionMode};
+    let mut cfg = boundary_config(upstream_url, false, false);
+    cfg.security_analysis.zone_detection.enabled = zone_detection_enabled;
+    cfg.security_analysis.zone_detection.mode = ZoneDetectionMode::Both;
+    cfg.boundary_defense.datamarking.enabled = datamarking_enabled;
+    cfg.boundary_defense.datamarking.shadow_mode = datamarking_shadow;
+    // Pin the marker so assertions are deterministic.
+    cfg.boundary_defense.datamarking.marker_strategy = MarkerStrategy::Fixed('\u{E000}');
+    cfg
+}
+
+/// IS-060 PR-2: when the datamarking flag is OFF (default), the
+/// upstream MUST see the original bytes verbatim. The payload is a
+/// heuristic-detectable HTML table — the zone pipeline produces
+/// zones but never rewrites the body bytes — so the comparison is
+/// byte-exact end-to-end.
+#[tokio::test]
+async fn test_datamarking_disabled_passthrough() {
+    let (router, captured_body, _cl) = capturing_upstream();
+    let (upstream_url, _h) = serve(router).await;
+    let cfg = datamarking_config(&upstream_url, false, false, true);
+    let (_state, app) = build_proxy_with_config(cfg).await;
+
+    let payload = json!({
+        "model": "gpt-4",
+        "messages": [
+            {"role": "user", "content": "<table><tr><td>data with whitespace</td></tr></table>"},
+        ],
+    });
+    let original_bytes = serde_json::to_vec(&payload).unwrap();
+    assert_eq!(send_through_proxy(app, payload).await, StatusCode::OK);
+    let body = captured_body.lock().await.clone();
+    assert_eq!(
+        body, original_bytes,
+        "datamarking disabled MUST mean upstream sees original bytes"
+    );
+}
+
+/// IS-060 PR-2: when datamarking is enabled but shadow_mode is on,
+/// the upstream sees the ORIGINAL bytes while metrics + audit
+/// findings reflect the would-be work. The stripped inline marker
+/// would normally rewrite the body via zone_pipeline; since the
+/// inline-marker strip happens regardless of datamarking, this test
+/// uses a heuristic-detected data zone (HTML table) so the zone
+/// pipeline does not rewrite the body and the comparison stays
+/// byte-exact.
+#[tokio::test]
+async fn test_datamarking_shadow_mode_forwards_original() {
+    let (router, captured_body, _cl) = capturing_upstream();
+    let (upstream_url, _h) = serve(router).await;
+    let cfg = datamarking_config(&upstream_url, true, true, true);
+    let (state, app) = build_proxy_with_config(cfg).await;
+
+    let payload = json!({
+        "model": "gpt-4",
+        "messages": [
+            {"role": "user", "content": "<table><tr><td>data with whitespace</td></tr></table>"},
+        ],
+    });
+    let original_bytes = serde_json::to_vec(&payload).unwrap();
+    assert_eq!(send_through_proxy(app, payload).await, StatusCode::OK);
+    let body = captured_body.lock().await.clone();
+    assert_eq!(
+        body, original_bytes,
+        "shadow mode MUST forward original bytes upstream"
+    );
+    // But the spotlighting metrics must register the would-be load.
+    let zones = state
+        .metrics
+        .spotlighting_zones_total
+        .with_label_values(&["data", "true"])
+        .get();
+    assert!(
+        zones >= 1,
+        "shadow mode must still emit spotlighting_zones_total"
+    );
+}
+
+/// IS-060 PR-2: when datamarking is enabled AND shadow_mode is off,
+/// the upstream sees marker substitution inside the HTML-table data
+/// zone, and the instruction prefix / suffix are byte-identical.
+#[tokio::test]
+async fn test_datamarking_active_mode_substitutes_in_data_zone_only() {
+    let (router, captured_body, _cl) = capturing_upstream();
+    let (upstream_url, _h) = serve(router).await;
+    let cfg = datamarking_config(&upstream_url, true, false, true);
+    let (_state, app) = build_proxy_with_config(cfg).await;
+
+    let payload = json!({
+        "model": "gpt-4",
+        "messages": [
+            {"role": "user", "content": "Please summarize: <table><tr><td>untrusted data with spaces</td></tr></table> Thanks."},
+        ],
+    });
+    assert_eq!(send_through_proxy(app, payload).await, StatusCode::OK);
+    let body = captured_body.lock().await.clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let messages = parsed["messages"].as_array().unwrap();
+    // Active mode prepends a system reminder describing the marker;
+    // user message moves to index 1.
+    assert_eq!(messages[0]["role"], "system");
+    let sys = messages[0]["content"].as_str().unwrap();
+    assert!(
+        sys.contains('\u{E000}'),
+        "active-mode reminder must mention the marker"
+    );
+    let user_content = messages[1]["content"].as_str().unwrap();
+    // Instruction prefix preserved (no marker substitution).
+    assert!(
+        user_content.starts_with("Please summarize: "),
+        "instruction prefix must be byte-identical, got {user_content:?}"
+    );
+    // Instruction suffix preserved.
+    assert!(user_content.ends_with(" Thanks."));
+    // Data zone (HTML table span) has whitespace substituted.
+    assert!(user_content.contains('\u{E000}'));
+}
+
+/// IS-060 PR-2 § design doc §4.5: order is boundary -> datamarking.
+/// When boundary_defense AND datamarking are both active, the
+/// upstream sees tool-message content wrapped in
+/// <llmtrace-boundary>...</llmtrace-boundary> AND (if a Data zone
+/// was detected) whitespace replaced with the marker. This is the
+/// composition test the design doc calls out explicitly.
+#[tokio::test]
+async fn test_datamarking_composes_after_boundary_defense() {
+    let (router, captured_body, _cl) = capturing_upstream();
+    let (upstream_url, _h) = serve(router).await;
+    let mut cfg = datamarking_config(&upstream_url, true, false, true);
+    // Turn boundary defense on (active mode) alongside datamarking.
+    cfg.boundary_defense.enabled = true;
+    cfg.boundary_defense.shadow_mode = false;
+    let (_state, app) = build_proxy_with_config(cfg).await;
+
+    let payload = json!({
+        "model": "gpt-4",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Please summarize: <table><tr><td>untrusted data with spaces</td></tr></table> Thanks."},
+            {"role": "tool", "content": "tool output with spaces", "tool_call_id": "t1"},
+        ],
+    });
+    assert_eq!(send_through_proxy(app, payload).await, StatusCode::OK);
+    let body = captured_body.lock().await.clone();
+    let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // The tool message MUST carry boundary delimiters (boundary
+    // defense ran first).
+    let messages = parsed["messages"].as_array().unwrap();
+    let tool_msg = messages
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .expect("tool message must be present");
+    let tool_content = tool_msg["content"].as_str().unwrap();
+    assert!(
+        tool_content.contains("<llmtrace-boundary>"),
+        "boundary defense must wrap tool content; got {tool_content:?}"
+    );
+    // The user message contains an HTML-table data zone, so
+    // datamarking ran AFTER boundary and inserted the marker.
+    let user_msg = messages
+        .iter()
+        .find(|m| m["role"] == "user")
+        .expect("user message must be present");
+    let user_content = user_msg["content"].as_str().unwrap();
+    assert!(
+        user_content.contains('\u{E000}'),
+        "datamarking must run on the data zone; got {user_content:?}"
+    );
+}
+
+/// IS-060 PR-2 §5.2: the audit-trail finding must be emitted with
+/// `finding_type = spotlighting_applied` and `severity = Info`. The
+/// action router ignores Info findings so this never affects
+/// enforcement.
+#[tokio::test]
+async fn test_datamarking_emits_spotlighting_applied_info_finding() {
+    let (router, _captured_body, _cl) = capturing_upstream();
+    let (upstream_url, _h) = serve(router).await;
+    let cfg = datamarking_config(&upstream_url, true, true, true);
+    let (state, app) = build_proxy_with_config(cfg).await;
+
+    let payload = json!({
+        "model": "gpt-4",
+        "messages": [
+            {"role": "user", "content": "<table><tr><td>data with whitespace</td></tr></table>"},
+        ],
+    });
+    assert_eq!(send_through_proxy(app, payload).await, StatusCode::OK);
+
+    // Inspect the security findings counter at severity=Info,
+    // finding_type=spotlighting_applied.
+    let info_findings = state
+        .metrics
+        .security_findings_total
+        .with_label_values(&["Info", "spotlighting_applied"])
+        .get();
+    assert!(
+        info_findings >= 1,
+        "spotlighting_applied Info finding must be emitted"
+    );
+}

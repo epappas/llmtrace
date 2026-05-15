@@ -103,6 +103,33 @@ pub struct Metrics {
     /// reason.
     pub zone_detection_failures_total: IntCounterVec,
 
+    /// Data zones marked by the datamarking transform (IS-060 PR-2),
+    /// labelled by `kind` (currently always `data`; reserved for
+    /// future expansion to support data-classification subtypes) and
+    /// `shadow` (`true`/`false`).
+    pub spotlighting_zones_total: IntCounterVec,
+
+    /// Cumulative bytes added by marker substitution per request,
+    /// labelled by `shadow`. Whitespace and PUA codepoints differ in
+    /// UTF-8 width so this is non-zero even when the input had any
+    /// whitespace at all. Negative values are possible if a future
+    /// fixed-marker strategy picks a sub-byte codepoint (no such
+    /// codepoint exists today; the gauge stays >= 0 in practice).
+    pub spotlighting_byte_delta_total: IntCounterVec,
+
+    /// Marker collisions — the first sampled marker codepoint
+    /// happened to appear inside the data-zone content and the
+    /// transform had to resample from PUA. Counted per data-zone
+    /// transformation, not per request.
+    pub spotlighting_marker_collision_total: IntCounter,
+
+    /// Datamarking pipeline failures (`no_zones_available`,
+    /// `body_parse_failed`, `body_reserialize_failed`,
+    /// `body_missing_messages`), labelled by reason. Non-zero values
+    /// here mean the pipeline fell open and forwarded the original
+    /// bytes; the proxy stays available either way.
+    pub spotlighting_failures_total: IntCounterVec,
+
     /// ML sliding window chunks processed per classify call.
     pub ml_chunks_total: HistogramVec,
 
@@ -436,6 +463,52 @@ impl Metrics {
         registry
             .register(Box::new(zone_detection_failures_total.clone()))
             .expect("register zone_detection_failures_total");
+
+        // Datamarking transform metrics (IS-060 PR-2)
+        let spotlighting_zones_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_spotlighting_zones_total",
+                "Data zones marked by the IS-060 PR-2 datamarking transform",
+            ),
+            &["kind", "shadow"],
+        )
+        .expect("metric: spotlighting_zones_total");
+        registry
+            .register(Box::new(spotlighting_zones_total.clone()))
+            .expect("register spotlighting_zones_total");
+
+        let spotlighting_byte_delta_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_spotlighting_byte_delta_total",
+                "Cumulative bytes added by marker substitution per request",
+            ),
+            &["shadow"],
+        )
+        .expect("metric: spotlighting_byte_delta_total");
+        registry
+            .register(Box::new(spotlighting_byte_delta_total.clone()))
+            .expect("register spotlighting_byte_delta_total");
+
+        let spotlighting_marker_collision_total = IntCounter::new(
+            "llmtrace_spotlighting_marker_collision_total",
+            "Marker codepoints resampled because the first sample collided with zone content",
+        )
+        .expect("metric: spotlighting_marker_collision_total");
+        registry
+            .register(Box::new(spotlighting_marker_collision_total.clone()))
+            .expect("register spotlighting_marker_collision_total");
+
+        let spotlighting_failures_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_spotlighting_failures_total",
+                "Datamarking pipeline failures (fail-open events), by reason",
+            ),
+            &["reason"],
+        )
+        .expect("metric: spotlighting_failures_total");
+        registry
+            .register(Box::new(spotlighting_failures_total.clone()))
+            .expect("register spotlighting_failures_total");
 
         // ML long-input defense metrics
         let ml_chunks_total = HistogramVec::new(
@@ -777,6 +850,10 @@ impl Metrics {
             zone_detection_zones_total,
             zone_detection_findings_total,
             zone_detection_failures_total,
+            spotlighting_zones_total,
+            spotlighting_byte_delta_total,
+            spotlighting_marker_collision_total,
+            spotlighting_failures_total,
             ml_chunks_total,
             ml_input_truncated_total,
             response_truncated_total,
@@ -974,6 +1051,45 @@ impl Metrics {
                     .with_label_values(&[&f.finding_type, zone_kind])
                     .inc();
             }
+        }
+    }
+
+    /// Record datamarking pipeline outcome (IS-060 PR-2).
+    ///
+    /// `zones_marked` is the number of Data zones that had whitespace
+    /// substituted with a marker. `byte_delta` is the cumulative
+    /// signed byte delta; we observe only the non-negative magnitude
+    /// because Prometheus `IntCounter` cannot decrement.
+    /// `marker_collisions` is the per-request count of resamples.
+    /// `failure_reasons` is one entry per pipeline failure (typically
+    /// empty in the happy path).
+    pub fn record_datamarking(
+        &self,
+        zones_marked: u32,
+        byte_delta: i64,
+        marker_collisions: u32,
+        shadow_mode: bool,
+        failure_reasons: &[&str],
+    ) {
+        let shadow = if shadow_mode { "true" } else { "false" };
+        if zones_marked > 0 {
+            self.spotlighting_zones_total
+                .with_label_values(&["data", shadow])
+                .inc_by(u64::from(zones_marked));
+        }
+        if byte_delta > 0 {
+            self.spotlighting_byte_delta_total
+                .with_label_values(&[shadow])
+                .inc_by(byte_delta as u64);
+        }
+        if marker_collisions > 0 {
+            self.spotlighting_marker_collision_total
+                .inc_by(u64::from(marker_collisions));
+        }
+        for reason in failure_reasons {
+            self.spotlighting_failures_total
+                .with_label_values(&[reason])
+                .inc();
         }
     }
 
