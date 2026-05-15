@@ -2685,6 +2685,11 @@ pub struct BoundaryTokenConfig {
     /// Custom system reminder text. When empty, uses the built-in default.
     #[serde(default)]
     pub system_reminder_text: String,
+    /// Datamarking transform configuration (IS-060 PR-2). When
+    /// `datamarking.enabled` is false (default) the transform is a
+    /// pure no-op and existing scenarios are byte-identical.
+    #[serde(default)]
+    pub datamarking: DatamarkingConfig,
 }
 
 fn default_boundary_wrap_roles() -> Vec<String> {
@@ -2709,6 +2714,77 @@ impl Default for BoundaryTokenConfig {
             randomize_nonce: false,
             inject_system_reminder: default_boundary_inject_reminder(),
             system_reminder_text: String::new(),
+            datamarking: DatamarkingConfig::default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Datamarking transform configuration (IS-060 PR-2)
+// ---------------------------------------------------------------------------
+
+/// Strategy for picking the marker codepoint used by the datamarking
+/// transform (IS-060 PR-2).
+///
+/// The Microsoft Spotlighting paper recommends a randomised marker per
+/// request so an attacker who leaks the system prompt cannot pre-craft
+/// payloads that align with a fixed marker — see
+/// `docs/architecture/SPOTLIGHTING_INDIRECT_INJECTION.md` §3.3 and the
+/// "Use dynamic/randomised marking tokens" guidance from the paper's
+/// recommendations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum MarkerStrategy {
+    /// Use the given codepoint for every request. Provided for
+    /// reproducibility in nightly diffs and unit tests; not recommended
+    /// for production.
+    Fixed(char),
+    /// Sample a fresh codepoint from the Unicode Private Use Area
+    /// (`U+E000`..=`U+F8FF`) for every request. Default.
+    #[default]
+    Randomized,
+}
+
+/// Configuration for the datamarking transform (IS-060 PR-2).
+///
+/// Replaces Unicode whitespace inside detected Data zones with a marker
+/// codepoint from the Private Use Area, telling the upstream model
+/// (via a system-reminder addendum) that the marked text is data and
+/// must not be treated as an instruction.
+///
+/// Defaults: `enabled = false`, `shadow_mode = true`, `marker_strategy
+/// = Randomized`. The shadow-mode default applies the moment an
+/// operator flips `enabled` to `true` so they can validate runtime
+/// safety (metrics + audit findings) for one nightly cycle before the
+/// transformed bytes actually reach upstream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DatamarkingConfig {
+    /// Master toggle. Default: `false` — pure no-op until an operator
+    /// opts in.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Shadow mode: compute the transform and emit metrics + audit
+    /// findings, but forward the original (un-transformed) bytes
+    /// upstream. Default: `true`. Operators flip this to `false` after
+    /// a clean nightly cycle.
+    #[serde(default = "default_datamarking_shadow_mode")]
+    pub shadow_mode: bool,
+    /// Strategy for picking the marker codepoint. Default:
+    /// `Randomized`.
+    #[serde(default)]
+    pub marker_strategy: MarkerStrategy,
+}
+
+fn default_datamarking_shadow_mode() -> bool {
+    true
+}
+
+impl Default for DatamarkingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shadow_mode: default_datamarking_shadow_mode(),
+            marker_strategy: MarkerStrategy::Randomized,
         }
     }
 }
@@ -4992,5 +5068,61 @@ mod tests {
         assert!(result.is_char_boundary(result.len()));
         // Should have backed up, keeping only the ASCII padding
         assert_eq!(result.len(), AGENT_ACTION_RESULT_MAX_BYTES - 1);
+    }
+}
+
+// IS-060 PR-2 — DatamarkingConfig tests.
+#[cfg(test)]
+mod datamarking_config_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_pr2_brief() {
+        let cfg = DatamarkingConfig::default();
+        assert!(!cfg.enabled, "datamarking MUST default to disabled");
+        assert!(
+            cfg.shadow_mode,
+            "datamarking MUST default to shadow_mode = true on first enable"
+        );
+        assert_eq!(cfg.marker_strategy, MarkerStrategy::Randomized);
+    }
+
+    #[test]
+    fn boundary_default_carries_datamarking_default() {
+        let bt = BoundaryTokenConfig::default();
+        assert_eq!(bt.datamarking, DatamarkingConfig::default());
+    }
+
+    #[test]
+    fn serde_round_trip_default() {
+        let cfg = DatamarkingConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: DatamarkingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, cfg);
+    }
+
+    #[test]
+    fn partial_override_keeps_shadow_default_true() {
+        // Operators enabling datamarking without specifying shadow_mode
+        // must land on the safe default: shadow_mode = true. We probe
+        // this via JSON since it shares serde infrastructure with YAML.
+        let parsed: DatamarkingConfig = serde_json::from_str("{\"enabled\": true}").unwrap();
+        assert!(parsed.enabled);
+        assert!(
+            parsed.shadow_mode,
+            "missing shadow_mode key must inherit shadow-first default"
+        );
+    }
+
+    #[test]
+    fn fixed_marker_round_trip() {
+        let cfg = DatamarkingConfig {
+            enabled: true,
+            shadow_mode: false,
+            marker_strategy: MarkerStrategy::Fixed('\u{e000}'),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: DatamarkingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, cfg);
     }
 }

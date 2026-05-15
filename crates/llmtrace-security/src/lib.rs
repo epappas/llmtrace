@@ -30,6 +30,7 @@ pub mod action_policy;
 pub mod adversarial_defense;
 pub mod canary;
 pub mod code_security;
+pub mod datamarking;
 pub(crate) mod encoding;
 pub mod fpr_monitor;
 pub mod golden_set;

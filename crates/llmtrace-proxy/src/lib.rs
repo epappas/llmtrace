@@ -15,6 +15,7 @@ pub mod config;
 pub mod config_handle;
 pub mod cost;
 pub mod cost_caps;
+pub mod datamarking_pipeline;
 pub mod debug;
 pub mod enforcement;
 pub mod feature_flags;
