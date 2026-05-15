@@ -66,20 +66,22 @@ security_analysis:
 
 
 # IS-060 — Boundary defense + datamarking transform.
-# Enabled in shadow mode for the first validation cycle: data zones are
-# wrapped with <llmtrace-boundary>...</llmtrace-boundary> tags AND the
-# datamarking pipeline computes the U+E000 substitution + emits metrics,
-# but shadow_mode=true means the original (unmarked) bytes still go
-# upstream. Validate one nightly cycle for zero 4xx delta and non-zero
-# byte_delta_total before flipping shadow_mode to false in a follow-up
-# ops PR. See PR #214 + docs/architecture/SPOTLIGHTING_INDIRECT_INJECTION.md.
+# Active mode: data zones are wrapped with <llmtrace-boundary>...
+# </llmtrace-boundary> tags AND the datamarking pipeline substitutes a
+# Unicode Private Use Area marker for whitespace in detected Data zones
+# BEFORE forwarding upstream. The system-reminder addendum tells the
+# upstream model that marked text is data, not instructions. Shadow-mode validated 2026-05-15 via workflow_dispatch run 25937040210:
+# 85/91 passed with zero errors and zero 4xx-rate shift vs prior nightly.
+# This flip activates marker substitution against the production
+# upstream (Gemini 2.0 Flash via OpenRouter); the next 3-5 scheduled
+# nightlies measure ASR delta on BIPIA scenarios vs the shadow baseline. See PR #214 + docs/architecture/SPOTLIGHTING_INDIRECT_INJECTION.md.
 boundary_defense:
   enabled: true
   randomize_nonce: true
   inject_system_reminder: true
   datamarking:
     enabled: true
-    shadow_mode: true
+    shadow_mode: false
     marker_strategy:
       kind: randomized
 
