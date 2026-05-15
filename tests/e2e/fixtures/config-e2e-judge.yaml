@@ -54,6 +54,17 @@ health_check:
   timeout_ms: 5000
   retries: 3
 
+# IS-060 PR-1 zone detection — required for datamarking (PR-2) to have
+# Data zones to transform. Both heuristic and operator-declared zones
+# are honoured; instruction zones are skipped per the default policy
+# (data zones are the only candidates for marker substitution).
+security_analysis:
+  zone_detection:
+    enabled: true
+    mode: both
+    scan_instruction_zones: false
+
+
 # IS-060 — Boundary defense + datamarking transform.
 # Enabled in shadow mode for the first validation cycle: data zones are
 # wrapped with <llmtrace-boundary>...</llmtrace-boundary> tags AND the
