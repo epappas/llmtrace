@@ -260,6 +260,12 @@ pub(crate) fn extract_code_payloads(text: &str) -> Vec<String> {
     // JSON string values
     for cap in JSON_STRING_RE.captures_iter(text) {
         if let Some(val) = cap.get(1) {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
             let unescaped = val.as_str().replace("\\n", "\n").replace("\\\"", "\"");
             if unescaped.len() >= 10 {
                 payloads.push(unescaped);
