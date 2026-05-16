@@ -1,0 +1,155 @@
+# =============================================================================
+# Publish Tenant Images — proxy + dashboard images for the multi-tenant
+# Basilica lifecycle.
+#
+# Unlike release.yml (tag-triggered, cuts a real release + crates.io + PyPI),
+# this workflow only builds + pushes container images to GHCR under the
+# techlab-innov org. Two trigger paths:
+#
+#   - push to main → publish `:main` and `:sha-<short>` tags (auto)
+#   - workflow_dispatch → optionally tag as `:latest` and/or a custom label
+#
+# The product's `tenant-lifecycle.yml` workflow references the published
+# images via the per-tenant config file (image: ghcr.io/techlab-innov/...).
+# =============================================================================
+name: publish-images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "Dockerfile"
+      - "dashboard/**"
+      - ".github/workflows/publish-images.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Additional image tag to publish (e.g. 'latest', 'rc1')"
+        required: false
+        type: string
+        default: "latest"
+      mark_latest:
+        description: "Publish :latest alongside the sha + tag"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: techlab-innov
+
+jobs:
+  proxy:
+    name: Proxy image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        env:
+          MARK_LATEST: ${{ inputs.mark_latest }}
+          CUSTOM_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${OWNER}/llmtrace-proxy"
+          short_sha="${GITHUB_SHA::7}"
+          tags=("${image}:sha-${short_sha}" "${image}:main")
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ -n "${CUSTOM_TAG}" ]] && tags+=("${image}:${CUSTOM_TAG}")
+            [[ "${MARK_LATEST}" == "true" ]] && tags+=("${image}:latest")
+          else
+            # Auto push from main always refreshes :latest
+            tags+=("${image}:latest")
+          fi
+          printf 'tags=' >> "${GITHUB_OUTPUT}"
+          printf '%s,' "${tags[@]}" | sed 's/,$//' >> "${GITHUB_OUTPUT}"
+          printf '\n' >> "${GITHUB_OUTPUT}"
+          printf 'tags computed:\n'; printf '  %s\n' "${tags[@]}"
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,mode=max,scope=proxy
+
+  dashboard:
+    name: Dashboard image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        env:
+          MARK_LATEST: ${{ inputs.mark_latest }}
+          CUSTOM_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${OWNER}/llmtrace-dashboard"
+          short_sha="${GITHUB_SHA::7}"
+          tags=("${image}:sha-${short_sha}" "${image}:main")
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ -n "${CUSTOM_TAG}" ]] && tags+=("${image}:${CUSTOM_TAG}")
+            [[ "${MARK_LATEST}" == "true" ]] && tags+=("${image}:latest")
+          else
+            tags+=("${image}:latest")
+          fi
+          printf 'tags=' >> "${GITHUB_OUTPUT}"
+          printf '%s,' "${tags[@]}" | sed 's/,$//' >> "${GITHUB_OUTPUT}"
+          printf '\n' >> "${GITHUB_OUTPUT}"
+          printf 'tags computed:\n'; printf '  %s\n' "${tags[@]}"
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: ./dashboard
+          file: ./dashboard/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard

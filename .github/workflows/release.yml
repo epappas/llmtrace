@@ -10,7 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: epappas/llmtrace-proxy
+  IMAGE_NAME: techlab-innov/llmtrace-proxy
 
 permissions:
   contents: write
@@ -59,12 +59,12 @@ jobs:
             echo "### Install"
             echo ""
             echo '```bash'
-            echo "curl -sS https://raw.githubusercontent.com/epappas/llmtrace/main/scripts/install.sh | bash"
+            echo "curl -sS https://raw.githubusercontent.com/techlab-innov/llmtrace/main/scripts/install.sh | bash"
             echo ""
             echo "# Or use:"
             echo "cargo install llmtrace       # Rust proxy"
             echo "pip install llmtracing         # Python SDK"
-            echo "docker pull ghcr.io/epappas/llmtrace-proxy:$VERSION"
+            echo "docker pull ghcr.io/techlab-innov/llmtrace-proxy:$VERSION"
             echo '```'
             echo ""
             echo "- [crates.io/crates/llmtrace](https://crates.io/crates/llmtrace)"
