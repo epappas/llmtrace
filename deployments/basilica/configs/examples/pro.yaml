@@ -1,0 +1,38 @@
+# LLMTrace tenant config — pro tier example.
+# Multi-replica proxy, persistent dashboard, debug logging, datamarking on.
+
+proxy:
+  image: "ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}"
+  port: 8080
+  cpu: "4"
+  memory: 8Gi
+  replicas: 2
+  health_check_path: /health
+  startup_timeout_seconds: 600
+  env:
+    LLMTRACE_UPSTREAM_URL: "${LLMTRACE_UPSTREAM_URL}"
+    LLMTRACE_STORAGE_PROFILE: "${LLMTRACE_STORAGE_PROFILE:-sqlite}"
+    LLMTRACE_ML_ENABLED: "1"
+    LLMTRACE_ML_PRELOAD: "1"
+    LLMTRACE_ML_CACHE_DIR: /home/llmtrace/.cache/llmtrace/models
+    LLMTRACE_LOG_LEVEL: "${LLMTRACE_LOG_LEVEL:-info}"
+    LLMTRACE_LOG_FORMAT: json
+    LLMTRACE_DATAMARKING_ENABLED: "true"
+    LLMTRACE_DATAMARKING_SHADOW_MODE: "false"
+    LLMTRACE_ZONE_DETECTION_ENABLED: "true"
+    RUST_LOG: info
+    OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+
+dashboard:
+  image: "ghcr.io/techlab-innov/llmtrace-dashboard:${LLMTRACE_VERSION:-latest}"
+  port: 3000
+  cpu: "2"
+  memory: 2Gi
+  replicas: 1
+  health_check_path: /health
+  startup_timeout_seconds: 300
+  env:
+    HOSTNAME: 0.0.0.0
+    NODE_ENV: production
+    LLMTRACE_AUTH_ADMIN_KEY: "${LLMTRACE_AUTH_ADMIN_KEY:-}"

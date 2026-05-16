@@ -1,0 +1,48 @@
+# LLMTrace tenant config — starter tier example.
+#
+# Every field below is required from the caller. The `lifecycle` library has
+# no built-in defaults for runtime config — what you write here is exactly
+# what gets deployed.
+#
+# `${VAR}` and `${VAR:-default}` placeholders in string values are resolved
+# from the process environment at deploy time. Use this to keep secrets out
+# of the config file.
+
+proxy:
+  image: ghcr.io/techlab-innov/llmtrace-proxy:latest
+  port: 8080
+  cpu: "2"
+  memory: 4Gi
+  replicas: 1
+  health_check_path: /health
+  startup_timeout_seconds: 600
+  env:
+    LLMTRACE_UPSTREAM_URL: "${LLMTRACE_UPSTREAM_URL}"
+    LLMTRACE_STORAGE_PROFILE: memory
+    LLMTRACE_ML_ENABLED: "1"
+    LLMTRACE_ML_PRELOAD: "1"
+    LLMTRACE_ML_CACHE_DIR: /home/llmtrace/.cache/llmtrace/models
+    LLMTRACE_LOG_LEVEL: info
+    LLMTRACE_LOG_FORMAT: json
+    RUST_LOG: info
+    # Per-tenant upstream API key, pulled from process env at deploy time.
+    OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+
+dashboard:
+  image: ghcr.io/techlab-innov/llmtrace-dashboard:latest
+  port: 3000
+  cpu: "1"
+  memory: 1Gi
+  replicas: 1
+  health_check_path: /health
+  startup_timeout_seconds: 300
+  env:
+    HOSTNAME: 0.0.0.0
+    NODE_ENV: production
+    LLMTRACE_AUTH_ADMIN_KEY: "${LLMTRACE_AUTH_ADMIN_KEY:-}"
+
+# Optional — override if your tenant naming scheme differs.
+# proxy_name_template: "llmtrace-proxy-{tenant_id}"
+# dashboard_name_template: "llmtrace-dashboard-{tenant_id}"
+# inject_proxy_url_into_dashboard: true
+# proxy_url_env_var: LLMTRACE_PROXY_URL
