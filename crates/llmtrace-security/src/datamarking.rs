@@ -17,13 +17,14 @@
 //!   zones pass through unchanged. The Microsoft Spotlighting paper's
 //!   threat model requires the instruction surface (system prompt,
 //!   user's own question) to remain a normal natural-language signal.
-//! * Whitespace is `char::is_whitespace()` (Unicode whitespace
-//!   property) — matches the paper's intent and covers ASCII space,
-//!   tab, newline, NBSP (`U+00A0`), ZWSP (`U+200B`), etc.
+//! * Whitespace is [`is_substitutable_whitespace`] — the Unicode
+//!   `White_Space` property plus the zero-width / formatting codepoints
+//!   used as invisible prompt-injection vectors (ZWSP, ZWNJ, ZWJ, WJ,
+//!   BOM). See that function's docs for the rationale.
 //! * The transform is idempotent: applying it twice to the same input
 //!   produces the same output. This is required because the proxy may
 //!   retry requests and because the marker is also a PUA codepoint
-//!   that `is_whitespace()` rejects.
+//!   that the predicate rejects.
 //! * Marker selection: try the configured default first. If it appears
 //!   inside the zone content (a vanishingly rare collision), resample
 //!   from `PUA_RANGE` until a non-colliding codepoint is found. The
@@ -193,8 +194,26 @@ impl DatamarkingTransform {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Replace every Unicode whitespace codepoint in `content` with `marker`.
-/// Returns `(substituted_string, byte_delta)`.
+/// Predicate for codepoints the datamarking transform must replace
+/// with the marker.
+///
+/// `char::is_whitespace` follows the Unicode `White_Space` property
+/// which excludes zero-width / formatting codepoints (ZWSP `U+200B`,
+/// ZWNJ `U+200C`, ZWJ `U+200D`, WJ `U+2060`, BOM `U+FEFF`). Those
+/// codepoints are documented prompt-injection vectors used to smuggle
+/// invisible instructions inside otherwise-benign Data zones, so the
+/// attack surface is wider than the Unicode whitespace property. This
+/// predicate closes that gap (issue #215, follow-up to PR #214).
+pub fn is_substitutable_whitespace(c: char) -> bool {
+    c.is_whitespace()
+        || matches!(
+            c,
+            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+        )
+}
+
+/// Replace every substitutable whitespace codepoint in `content` with
+/// `marker`. Returns `(substituted_string, byte_delta)`.
 ///
 /// Byte delta is `substituted.len() as i64 - content.len() as i64`. A
 /// positive value means the marker's UTF-8 width exceeds the
@@ -204,7 +223,7 @@ fn substitute_whitespace(content: &str, marker: char) -> (String, i64) {
     let original_len = content.len() as i64;
     let mut out = String::with_capacity(content.len());
     for ch in content.chars() {
-        if ch.is_whitespace() {
+        if is_substitutable_whitespace(ch) {
             out.push(marker);
         } else {
             out.push(ch);
@@ -341,9 +360,9 @@ mod tests {
         let t = fixed_marker_transform();
         // ASCII space, tab, newline, NBSP, vertical tab, form feed —
         // all six are in the Unicode `White_Space` property used by
-        // `char::is_whitespace()`. ZWSP (`U+200B`) is intentionally
-        // NOT in that property (Unicode classifies it as format/Cf,
-        // not whitespace) and is tested separately below.
+        // `char::is_whitespace()`. Zero-width formatting codepoints
+        // (ZWSP/ZWNJ/ZWJ/WJ/BOM) are NOT in that property; they are
+        // covered by the dedicated zero-width tests below.
         let zone = data_zone("a b\tc\nd\u{00A0}e\u{000B}f\u{000C}g");
         let out = t.apply(&[zone]);
         let mz = &out[0];
@@ -355,19 +374,59 @@ mod tests {
     }
 
     #[test]
-    fn zwsp_is_not_substituted_by_design() {
-        // The brief pinned `char::is_whitespace()` as the classifier.
-        // ZWSP (`U+200B`) is not in the Unicode `White_Space` property,
-        // so it MUST pass through unchanged. Documenting this so a
-        // future "fix" to also substitute ZWSP comes with an
-        // explicit decision to widen the contract.
+    fn zwsp_is_substituted() {
+        // Inverse of the original `zwsp_is_not_substituted_by_design`
+        // (issue #215). ZWSP (`U+200B`) is a documented prompt-injection
+        // vector — it MUST be replaced by the marker, not passed through.
         let t = fixed_marker_transform();
         let zone = data_zone("a\u{200B}b");
         let out = t.apply(&[zone]);
         let mz = &out[0];
-        assert!(mz.content.contains('\u{200B}'));
-        assert!(!mz.content.contains(DEFAULT_MARKER));
+        assert!(!mz.content.contains('\u{200B}'));
+        assert!(mz.content.contains(DEFAULT_MARKER));
+        // ZWSP is 3 bytes in UTF-8, same as U+E000 -> zero net delta.
         assert_eq!(mz.byte_delta, 0);
+        assert_eq!(mz.content, format!("a{}b", DEFAULT_MARKER));
+    }
+
+    #[test]
+    fn zwnj_is_substituted() {
+        let t = fixed_marker_transform();
+        let zone = data_zone("a\u{200C}b");
+        let out = t.apply(&[zone]);
+        let mz = &out[0];
+        assert!(!mz.content.contains('\u{200C}'));
+        assert!(mz.content.contains(DEFAULT_MARKER));
+    }
+
+    #[test]
+    fn zwj_is_substituted() {
+        let t = fixed_marker_transform();
+        let zone = data_zone("a\u{200D}b");
+        let out = t.apply(&[zone]);
+        let mz = &out[0];
+        assert!(!mz.content.contains('\u{200D}'));
+        assert!(mz.content.contains(DEFAULT_MARKER));
+    }
+
+    #[test]
+    fn word_joiner_is_substituted() {
+        let t = fixed_marker_transform();
+        let zone = data_zone("a\u{2060}b");
+        let out = t.apply(&[zone]);
+        let mz = &out[0];
+        assert!(!mz.content.contains('\u{2060}'));
+        assert!(mz.content.contains(DEFAULT_MARKER));
+    }
+
+    #[test]
+    fn bom_is_substituted() {
+        let t = fixed_marker_transform();
+        let zone = data_zone("a\u{FEFF}b");
+        let out = t.apply(&[zone]);
+        let mz = &out[0];
+        assert!(!mz.content.contains('\u{FEFF}'));
+        assert!(mz.content.contains(DEFAULT_MARKER));
     }
 
     #[test]
@@ -395,9 +454,11 @@ mod tests {
     #[test]
     fn idempotence_apply_twice_equals_apply_once() {
         // The marker is not whitespace, so a second pass MUST be a
-        // no-op (zero new replacements, zero new byte delta).
+        // no-op (zero new replacements, zero new byte delta). Input
+        // mixes ordinary whitespace and zero-width codepoints to
+        // exercise both classifier branches.
         let t = fixed_marker_transform();
-        let zone = data_zone("hello world\nfoo bar");
+        let zone = data_zone("hello world\nfoo\u{200B}bar\u{FEFF}baz");
         let first = t.apply(&[zone]);
         let once_content = first[0].content.clone();
         let once_byte_range = first[0].byte_range.clone();
