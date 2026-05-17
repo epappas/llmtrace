@@ -290,6 +290,270 @@ tenant-supplied values).
   Basilica. Treat the Basilica account as a trust boundary; revoke + rotate
   any tenant key that leaks if the account is compromised.
 
+## Embedding in your app (skip GitHub Actions)
+
+The GitHub Actions workflow is a convenience wrapper around `lifecycle.py`.
+If your app already has a worker / queue / scheduler, you can drive
+provisioning directly and skip the workflow entirely. Reasons you might
+want this:
+
+- **Zero public log surface** — workflow runs in a public repo leak
+  tenant IDs, URLs, and timestamps; in-process leaves no public trace.
+- **Lower latency** — no Actions runner cold-start (typically 10–30s of
+  startup before the CLI even runs).
+- **Tighter secret handling** — bearers never leave the app's process or
+  its secret store; nothing rides through GitHub's webhook surface.
+- **Native error handling** — Python exceptions instead of parsing
+  step-output JSON.
+- **Your app's auth/RBAC/idempotency** wraps the trigger — no
+  duplicate dispatch issues.
+
+### Dependency footprint
+
+Just two pip packages:
+
+```bash
+pip install basilica-sdk PyYAML
+```
+
+`PyYAML` is only needed if you load configs from YAML files; if you
+construct `TenantSpec` directly in code, you can drop it.
+
+### Distribution options
+
+| Option | When |
+|---|---|
+| **Vendor** `deployments/basilica/{__init__,lifecycle,cli}.py` + `configs/examples/*.yaml` into your app's repo | Simplest; ~700 LoC total. Lets your app evolve the library independently. Pin the upstream commit in a comment for traceability |
+| **Git submodule / subtree** | If you want upstream changes to flow in semi-automatically |
+| **`pip install git+https://github.com/techlab-innov/llmtrace.git`** | Not currently set up — the repo isn't packaged as a pip-installable; would need a top-level `pyproject.toml` exposing `deployments.basilica`. Open an issue if you want this |
+| **Re-implement using `basilica-sdk` directly** in your app's language (Node, Go, Rust, etc.) | If your app isn't Python. The Python library is ~400 LoC of wrapping; the underlying SDK is what does the work. See `lifecycle.py:213-249` (`_create_component`) for the minimum shape |
+
+### Library API at a glance
+
+```python
+from deployments.basilica.lifecycle import (
+    ComponentSpec, TenantSpec, TenantInstances, InstanceInfo,
+    provision, update, deprovision, status, make_client,
+)
+
+# Make a client once (uses BASILICA_API_TOKEN env, or pass api_key explicitly).
+client = make_client(api_key="basilica_...")
+
+# Build a spec for the tenant (everything is required from you — no defaults).
+spec = TenantSpec(
+    tenant_id="acme",
+    proxy=ComponentSpec(
+        image="ghcr.io/techlab-innov/llmtrace-proxy:latest",
+        port=8080,
+        cpu="2",
+        memory="4Gi",
+        replicas=1,
+        env={
+            "LLMTRACE_UPSTREAM_URL": "https://api.openai.com",
+            "OPENAI_API_KEY": tenant_record.openai_api_key,  # from your DB
+            "LLMTRACE_STORAGE_PROFILE": "memory",
+            "LLMTRACE_ML_ENABLED": "1",
+            "LLMTRACE_LOG_LEVEL": "info",
+            "LLMTRACE_LOG_FORMAT": "json",
+            "RUST_LOG": "info",
+        },
+        startup_timeout_seconds=600,
+    ),
+    dashboard=ComponentSpec(
+        image="ghcr.io/techlab-innov/llmtrace-dashboard:latest",
+        port=3000,
+        cpu="1",
+        memory="1Gi",
+        replicas=1,
+        env={
+            "HOSTNAME": "0.0.0.0",
+            "NODE_ENV": "production",
+            "LLMTRACE_AUTH_ADMIN_KEY": tenant_record.dashboard_admin_key,
+        },
+        startup_timeout_seconds=300,
+    ),
+    # inject_proxy_url_into_dashboard defaults to True
+)
+
+# Provision (blocking — see below for the async pattern).
+instances: TenantInstances = provision(spec, client=client)
+
+# Persist the UUIDs to your DB — they're the only handle for future ops.
+tenant_record.proxy_instance_id = instances.proxy.instance_id
+tenant_record.proxy_url = instances.proxy.url
+tenant_record.dashboard_instance_id = instances.dashboard.instance_id
+tenant_record.dashboard_url = instances.dashboard.url
+tenant_record.save()
+```
+
+Subsequent ops use the persisted UUIDs:
+
+```python
+# Health check before sending traffic
+current = status(
+    tenant_id=tenant_record.id,
+    proxy_instance_id=tenant_record.proxy_instance_id,
+    dashboard_instance_id=tenant_record.dashboard_instance_id,
+    client=client,
+)
+if current.proxy is None or current.proxy.state != "Active":
+    # tenant's proxy went missing — recover
+
+# Plan upgrade — recreates with new spec; URL changes
+new_instances = update(
+    spec=upgraded_spec,
+    proxy_instance_id=tenant_record.proxy_instance_id,
+    dashboard_instance_id=tenant_record.dashboard_instance_id,
+    strategy="recreate",
+    client=client,
+)
+tenant_record.proxy_instance_id = new_instances.proxy.instance_id    # overwrite!
+tenant_record.proxy_url = new_instances.proxy.url
+# ... same for dashboard, then save
+
+# Stripe cancellation → deprovision
+deprovision(
+    tenant_id=tenant_record.id,
+    proxy_instance_id=tenant_record.proxy_instance_id,
+    dashboard_instance_id=tenant_record.dashboard_instance_id,
+    client=client,
+)
+```
+
+### Subprocess invocation (language-agnostic)
+
+If your app isn't Python, fork the CLI as a subprocess with the secrets in
+the child's environment. The CLI emits JSON to stdout; parse and persist:
+
+```bash
+# From a Node / Go / Rust / Ruby worker
+OPENAI_API_KEY="$tenant_openai_key" \
+LLMTRACE_UPSTREAM_URL="https://api.openai.com" \
+BASILICA_API_TOKEN="$platform_token" \
+python -m deployments.basilica.cli provision \
+  --tenant-id "$tenant_id" \
+  --config /etc/llmtrace/tenant-config.yaml
+# stdout is JSON:
+# { "tenant_id": "...", "proxy_instance_id": "...", "proxy_url": "...", ... }
+```
+
+Exit codes: `0` success, `2` usage error, `3` lifecycle error. The CLI's
+`${VAR}` substitution reads from the child's env — same secret-injection
+shape as the workflow, just driven by your app instead of the
+`Inject tenant secrets` workflow step.
+
+### Async wrapping (FastAPI / Starlette / aiohttp)
+
+The library is synchronous and blocks on `_wait_until_ready` (up to
+`startup_timeout_seconds`, default 600s for the proxy). Don't call
+`provision` from a request handler — wrap it in a background worker.
+
+Quick adapter for async code:
+
+```python
+import asyncio
+from deployments.basilica import lifecycle
+
+async def provision_async(spec: lifecycle.TenantSpec) -> lifecycle.TenantInstances:
+    return await asyncio.to_thread(lifecycle.provision, spec)
+```
+
+This runs the blocking call in a thread pool so the event loop stays free.
+Same pattern for `update`, `deprovision`, `status`.
+
+### Background-worker pattern (recommended)
+
+The real shape for production:
+
+```python
+# Worker task (Celery / RQ / dramatiq / Hatchet / Temporal / etc.)
+@worker.task(bind=True, max_retries=3, soft_time_limit=900)
+def provision_tenant(self, tenant_id: str) -> None:
+    tenant = db.session.query(Tenant).get(tenant_id)
+    if tenant.proxy_instance_id:
+        return  # idempotent: already provisioned
+
+    spec = build_spec_from_tenant_record(tenant)
+    try:
+        result = lifecycle.provision(spec)
+    except lifecycle.RuntimeError as exc:
+        tenant.last_error = str(exc)
+        tenant.state = "provision_failed"
+        db.session.commit()
+        raise self.retry(exc=exc, countdown=60)
+
+    tenant.proxy_instance_id = result.proxy.instance_id
+    tenant.proxy_url = result.proxy.url
+    tenant.dashboard_instance_id = result.dashboard.instance_id
+    tenant.dashboard_url = result.dashboard.url
+    tenant.state = "active"
+    db.session.commit()
+```
+
+Flow: Stripe webhook → enqueue task → worker pulls → calls
+`lifecycle.provision()` → persists UUIDs → updates tenant state. Request
+handlers stay sub-100ms; the actual provision happens out-of-band.
+
+### Error handling
+
+The library raises three exception classes that your worker should map:
+
+| Exception | Meaning | Recommended action |
+|---|---|---|
+| `ValueError` | Bad input (invalid `tenant_id` slug, unknown `strategy`, missing required spec field) | 4xx to caller; don't retry |
+| `RuntimeError` | Basilica-side failure (deployment entered terminal `Failed` state, `BASILICA_API_TOKEN` missing, etc.) | 5xx + alert; retry with backoff if transient |
+| `TimeoutError` | `startup_timeout_seconds` elapsed without ready | 5xx; check Basilica's UI for stuck deployment; consider a manual `deprovision` to clean up |
+
+The CLI maps both `RuntimeError` and `TimeoutError` to exit code 3 with
+the message in the JSON output. From a subprocess caller, key on the exit
+code rather than parsing the error string.
+
+### Secret handling without the workflow
+
+When the workflow runs, the `Inject tenant secrets` step + `::add-mask::`
+machinery exists to keep per-tenant values out of public logs. In your
+app, you can do better: keep the values in process memory, pass them
+directly into the `ComponentSpec.env` dict, and never serialise them to
+anywhere except the Basilica API call itself.
+
+Recommended pattern:
+
+1. Stripe webhook arrives with `tenant_id` + plan.
+2. App fetches per-tenant secrets from its store (Vault / AWS Secrets
+   Manager / encrypted Postgres column).
+3. Worker builds `ComponentSpec.env` with the resolved values.
+4. `lifecycle.provision()` ships them once to Basilica's
+   `create_deployment`.
+5. The values are never logged. (Basilica stores them as deployment
+   env — that's the boundary the Basilica account owns.)
+
+No environment variables, no `${VAR}` substitution layer, no GitHub
+secrets. Just dict-passing. This is the cleanest secret-flow path you
+can build.
+
+### Auth — how the app holds `BASILICA_API_TOKEN`
+
+The token is the only platform-side credential. Store it the same way
+your app stores its other infrastructure secrets (env var, secret
+manager, IAM-role-derived). Pass it to `make_client(api_key=...)`
+explicitly, or set `BASILICA_API_TOKEN` in the worker's env and let
+`make_client()` pick it up.
+
+Rotate periodically. Compromised token = whoever holds it can list /
+read / modify / delete every tenant's deployment. Treat it like a root
+key.
+
+### When to still use the workflow
+
+- You don't have a worker infrastructure yet and want to get a first
+  tenant up without writing one.
+- You want GitHub's audit log of every dispatch (in addition to your
+  app's own log) — useful for compliance.
+- You want operators to fire ad-hoc lifecycle ops via the `gh` CLI from
+  their laptop.
+- You're in early prototyping and the workflow's 25-minute timeout is a
+  useful safety net.
+
 ## Provider examples
 
 Per-tenant `tenant_secrets` shape for each provider. The proxy forwards
