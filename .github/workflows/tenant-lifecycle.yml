@@ -44,6 +44,29 @@ on:
         options:
           - recreate
           - restart
+      tenant_secrets_json:
+        description: >-
+          JSON object of per-tenant secrets to inject as env vars before the
+          CLI runs, e.g. {"OPENAI_API_KEY":"sk-...","LLMTRACE_UPSTREAM_URL":"https://..."}.
+          The CLI's ${VAR} substitution resolves these into the tenant config.
+          Values are masked in step logs via ::add-mask::, but workflow_dispatch
+          input VALUES are visible in the run UI to anyone with actions:read.
+          For production multi-tenant use, trigger via repository_dispatch with
+          client_payload (event_type: tenant-lifecycle) — those payloads are
+          NOT shown in the run UI. See README for the migration path.
+        required: false
+        type: string
+        default: "{}"
+
+  # Production trigger: client_payload is not visible in the run UI.
+  # POST /repos/{owner}/{repo}/dispatches with:
+  #   {"event_type": "tenant-lifecycle",
+  #    "client_payload": {"tenant_id": "...", "action": "provision",
+  #                       "config_json": "{...}",
+  #                       "tenant_secrets": {"OPENAI_API_KEY": "sk-..."}}}
+  repository_dispatch:
+    types:
+      - tenant-lifecycle
 
 permissions:
   contents: read
@@ -73,76 +96,161 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install basilica-sdk PyYAML
 
-      - name: Validate inputs
+      - name: Resolve inputs (workflow_dispatch or repository_dispatch)
         env:
-          ACTION: ${{ inputs.action }}
-          CONFIG_PATH: ${{ inputs.config_path }}
-          CONFIG_JSON: ${{ inputs.config_json }}
-          PROXY_ID: ${{ inputs.proxy_instance_id }}
-          DASHBOARD_ID: ${{ inputs.dashboard_instance_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          WF_TENANT_ID: ${{ inputs.tenant_id }}
+          WF_ACTION: ${{ inputs.action }}
+          WF_CONFIG_PATH: ${{ inputs.config_path }}
+          WF_CONFIG_JSON: ${{ inputs.config_json }}
+          WF_PROXY_ID: ${{ inputs.proxy_instance_id }}
+          WF_DASHBOARD_ID: ${{ inputs.dashboard_instance_id }}
+          WF_STRATEGY: ${{ inputs.strategy }}
+          WF_SECRETS: ${{ inputs.tenant_secrets_json }}
+          RD_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          event = os.environ.get("EVENT_NAME", "")
+          if event == "workflow_dispatch":
+              tenant_id = os.environ.get("WF_TENANT_ID", "")
+              action    = os.environ.get("WF_ACTION", "")
+              cfg_path  = os.environ.get("WF_CONFIG_PATH", "")
+              cfg_json  = os.environ.get("WF_CONFIG_JSON", "")
+              proxy_id  = os.environ.get("WF_PROXY_ID", "")
+              dash_id   = os.environ.get("WF_DASHBOARD_ID", "")
+              strategy  = os.environ.get("WF_STRATEGY", "")
+              secrets_json = os.environ.get("WF_SECRETS", "{}") or "{}"
+              try:
+                  secrets = json.loads(secrets_json)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(f"::error::tenant_secrets_json is invalid JSON: {exc}")
+          elif event == "repository_dispatch":
+              payload = json.loads(os.environ.get("RD_PAYLOAD", "{}") or "{}")
+              tenant_id = payload.get("tenant_id", "")
+              action    = payload.get("action", "")
+              cfg_path  = payload.get("config_path", "")
+              cfg_json  = payload.get("config_json", "")
+              if cfg_json and not isinstance(cfg_json, str):
+                  cfg_json = json.dumps(cfg_json)
+              proxy_id  = payload.get("proxy_instance_id", "")
+              dash_id   = payload.get("dashboard_instance_id", "")
+              strategy  = payload.get("strategy", "recreate")
+              secrets   = payload.get("tenant_secrets", {}) or {}
+          else:
+              raise SystemExit(f"::error::unsupported event {event!r}")
+
+          if not isinstance(secrets, dict):
+              raise SystemExit("::error::tenant_secrets must be a JSON object")
+
+          env_path = pathlib.Path(os.environ["GITHUB_ENV"])
+          with env_path.open("a") as fh:
+              fh.write(f"TENANT_ID={tenant_id}\n")
+              fh.write(f"ACTION={action}\n")
+              fh.write(f"CFG_PATH={cfg_path}\n")
+              fh.write(f"PROXY_ID={proxy_id}\n")
+              fh.write(f"DASHBOARD_ID={dash_id}\n")
+              fh.write(f"STRATEGY={strategy}\n")
+              # config_json may contain newlines; use heredoc form
+              if cfg_json:
+                  fh.write(f"CFG_JSON<<__LIFECYCLE_EOF__\n{cfg_json}\n__LIFECYCLE_EOF__\n")
+
+          pathlib.Path("/tmp/tenant_secrets.json").write_text(json.dumps(secrets))
+          print(f"resolved: tenant_id={tenant_id} action={action} secret_keys={sorted(secrets.keys())}")
+          PY
+
+      - name: Inject tenant secrets
+        env:
+          SECRETS_PATH: /tmp/tenant_secrets.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib, secrets as _secrets
+          data = json.loads(pathlib.Path(os.environ["SECRETS_PATH"]).read_text() or "{}")
+          if not data:
+              print("no tenant secrets to inject")
+              raise SystemExit(0)
+          env_path = pathlib.Path(os.environ["GITHUB_ENV"])
+          with env_path.open("a") as fh:
+              for key, value in data.items():
+                  if not isinstance(key, str) or not key:
+                      raise SystemExit(f"::error::secret key must be a non-empty string, got {key!r}")
+                  value = "" if value is None else str(value)
+                  # Mask FIRST so any later log line containing the value is redacted.
+                  print(f"::add-mask::{value}")
+                  # Random per-value delimiter — paranoid guard against a secret
+                  # that happens to contain a static EOF token.
+                  delim = f"__SEC_{_secrets.token_hex(8)}__"
+                  if delim in value:
+                      raise SystemExit(f"::error::generated delimiter collided with secret value for {key}")
+                  fh.write(f"{key}<<{delim}\n{value}\n{delim}\n")
+                  print(f"injected {key} ({len(value)} chars)")
+          PY
+
+      - name: Validate inputs
         run: |
           set -euo pipefail
           if [[ -z "${BASILICA_API_TOKEN:-}" ]]; then
             echo "::error::BASILICA_API_TOKEN secret is not configured"
             exit 2
           fi
-          case "${ACTION}" in
+          if [[ -z "${TENANT_ID:-}" ]]; then
+            echo "::error::tenant_id is required"
+            exit 2
+          fi
+          case "${ACTION:-}" in
             provision)
-              if [[ -z "${CONFIG_PATH}" && -z "${CONFIG_JSON}" ]]; then
+              if [[ -z "${CFG_PATH:-}" && -z "${CFG_JSON:-}" ]]; then
                 echo "::error::action=provision requires config_path or config_json"
                 exit 2
               fi
               ;;
             update)
-              if [[ -z "${CONFIG_PATH}" && -z "${CONFIG_JSON}" ]]; then
+              if [[ -z "${CFG_PATH:-}" && -z "${CFG_JSON:-}" ]]; then
                 echo "::error::action=update requires config_path or config_json"
                 exit 2
               fi
-              if [[ -z "${PROXY_ID}" || -z "${DASHBOARD_ID}" ]]; then
+              if [[ -z "${PROXY_ID:-}" || -z "${DASHBOARD_ID:-}" ]]; then
                 echo "::error::action=update requires proxy_instance_id and dashboard_instance_id"
                 exit 2
               fi
+              ;;
+            status|deprovision)
+              :
+              ;;
+            *)
+              echo "::error::unknown or missing action: ${ACTION:-<empty>}"
+              exit 2
               ;;
           esac
 
       - name: Run lifecycle action
         id: run
-        env:
-          TENANT_ID: ${{ inputs.tenant_id }}
-          ACTION: ${{ inputs.action }}
-          CONFIG_PATH: ${{ inputs.config_path }}
-          CONFIG_JSON: ${{ inputs.config_json }}
-          PROXY_ID: ${{ inputs.proxy_instance_id }}
-          DASHBOARD_ID: ${{ inputs.dashboard_instance_id }}
-          STRATEGY: ${{ inputs.strategy }}
         run: |
           set -euo pipefail
           args=("--tenant-id" "${TENANT_ID}")
           case "${ACTION}" in
             provision)
-              if [[ -n "${CONFIG_JSON}" ]]; then
-                args+=("--config-json" "${CONFIG_JSON}")
+              if [[ -n "${CFG_JSON:-}" ]]; then
+                args+=("--config-json" "${CFG_JSON}")
               else
-                args+=("--config" "${CONFIG_PATH}")
+                args+=("--config" "${CFG_PATH}")
               fi
               ;;
             update)
               args+=("--strategy" "${STRATEGY}")
               args+=("--proxy-instance-id" "${PROXY_ID}")
               args+=("--dashboard-instance-id" "${DASHBOARD_ID}")
-              if [[ -n "${CONFIG_JSON}" ]]; then
-                args+=("--config-json" "${CONFIG_JSON}")
+              if [[ -n "${CFG_JSON:-}" ]]; then
+                args+=("--config-json" "${CFG_JSON}")
               else
-                args+=("--config" "${CONFIG_PATH}")
+                args+=("--config" "${CFG_PATH}")
               fi
               ;;
             status|deprovision)
-              [[ -n "${PROXY_ID}" ]] && args+=("--proxy-instance-id" "${PROXY_ID}")
-              [[ -n "${DASHBOARD_ID}" ]] && args+=("--dashboard-instance-id" "${DASHBOARD_ID}")
-              ;;
-            *)
-              echo "::error::unknown action ${ACTION}"
-              exit 2
+              [[ -n "${PROXY_ID:-}" ]] && args+=("--proxy-instance-id" "${PROXY_ID}")
+              [[ -n "${DASHBOARD_ID:-}" ]] && args+=("--dashboard-instance-id" "${DASHBOARD_ID}")
               ;;
           esac
 
@@ -166,9 +274,6 @@ jobs:
 
       - name: Write step summary
         if: always()
-        env:
-          ACTION: ${{ inputs.action }}
-          TENANT_ID: ${{ inputs.tenant_id }}
         run: |
           set -euo pipefail
           {
