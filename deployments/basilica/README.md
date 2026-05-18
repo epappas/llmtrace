@@ -247,6 +247,109 @@ wins for that tenant.
 
 Both demonstrate `${VAR}` substitution and the optional override pattern.
 
+## Per-tenant API key auth (secure by default)
+
+LLMTrace's proxy has built-in API-key auth (`crates/llmtrace-proxy/src/auth.rs`).
+Without it, the public Basilica URL accepts any request — anyone with the
+URL can burn the tenant's upstream quota and pollute their traces. With it
+on, every non-`/health` request must carry `Authorization: Bearer llmt_<key>`
+or get a 401.
+
+The lifecycle library enables this **by default** at provision time:
+
+1. Resolves a key, in priority order:
+   - Explicit `spec.api_key` from the caller (or `api_key:` field in the
+     YAML config), used for plan-recreates that must preserve the tenant's
+     existing key
+   - Existing `LLMTRACE_AUTH_ADMIN_KEY` in `proxy.env` (rare — caller wrote
+     it themselves)
+   - Auto-generated `llmt_<64-hex>` via `generate_api_key()` matching the
+     format produced by the Rust proxy at `auth.rs:44`
+2. Injects `LLMTRACE_AUTH_ENABLED=true` + `LLMTRACE_AUTH_ADMIN_KEY=<key>`
+   into the proxy's env, and the same `LLMTRACE_AUTH_ADMIN_KEY` into the
+   dashboard's env (so the dashboard can authenticate to the proxy's admin
+   endpoints)
+3. Returns the plaintext key in `TenantInstances.api_key` — **this is the
+   only time it's exposed**. Persist it in your app DB and ship it to the
+   tenant.
+
+```python
+result = lifecycle.provision(spec)
+tenant_record.api_key = result.api_key      # llmt_xxxxxxxxxxxx... — only exposed here
+tenant_record.proxy_url = result.proxy.url
+db.session.commit()
+```
+
+The CLI emits it in the result JSON:
+
+```json
+{
+  "tenant_id": "acme",
+  "proxy_url": "https://...basilica.ai",
+  "dashboard_url": "https://...basilica.ai",
+  "api_key": "llmt_d34c8a..."
+}
+```
+
+The workflow registers `::add-mask::` for the key before any `cat`
+operation, so it never appears in run logs — only in step outputs (which
+the calling app fetches via the Actions API).
+
+### Tenant-side usage
+
+The tenant programs their downstream apps to send their API key on every
+request to their proxy URL:
+
+```bash
+curl -X POST https://<proxy_uuid>.deployments.basilica.ai/v1/chat/completions \
+  -H "Authorization: Bearer llmt_d34c8a..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
+```
+
+A 401 means they used the wrong key. A 200 means LLMTrace authenticated
+them, then forwarded upstream (with whatever upstream auth was configured
+in `tenant_secrets`).
+
+### Disabling auth
+
+For a trusted-network deploy where the proxy URL won't leak (a VPC-only
+mesh, a dev sandbox, etc.), turn auth off:
+
+```yaml
+enable_proxy_auth: false
+```
+
+The library skips key generation, doesn't inject `LLMTRACE_AUTH_*`, and
+returns `api_key: null` in the result. The proxy URL is then wide open;
+own the consequences.
+
+### Preserving the key across recreates
+
+`update(..., strategy="recreate")` calls `provision()` under the hood,
+which will auto-generate a fresh key unless you pass the existing one.
+For plan upgrades where the tenant's apps shouldn't break, fetch the
+current key from your DB and put it in the spec:
+
+```python
+spec = build_spec_from_tenant_record(tenant_record)
+spec = dataclasses.replace(spec, api_key=tenant_record.api_key)  # preserve
+new_instances = lifecycle.update(spec, proxy_id=..., dashboard_id=..., strategy="recreate")
+# new_instances.api_key == tenant_record.api_key  (carried forward)
+```
+
+### Caveats
+
+- **Admin-key-as-runtime-key is overpowered.** The auto-generated key
+  takes the `auth.admin_key` slot (bootstrap admin role), meaning the
+  tenant's apps technically have admin scope on their own instance.
+  Hardening: after provision, POST a scoped non-admin key via the
+  proxy's `/admin/keys` endpoint and hand THAT to the tenant. Tracked
+  as a follow-up.
+- **Defence-in-depth** still worth doing separately: per-tenant rate
+  limits (LLMTrace likely has them — configure), and DoS protection
+  against CPU burn from ML detectors running before the upstream call.
+
 ## Per-tenant secret injection
 
 Two trigger paths, pick by intended audience:
@@ -757,15 +860,16 @@ win).
 
 | File | Purpose |
 |---|---|
-| `lifecycle.py:51` | `ComponentSpec` dataclass — one component's full deployment shape |
-| `lifecycle.py:76` | `TenantSpec` dataclass — tenant's pair |
-| `lifecycle.py:279` | `provision(spec)` |
-| `lifecycle.py:309` | `update(spec, proxy_id, dashboard_id, strategy)` |
-| `lifecycle.py:360` | `deprovision(tenant_id, proxy_id?, dashboard_id?)` |
-| `lifecycle.py:374` | `status(tenant_id, proxy_id?, dashboard_id?)` |
+| `lifecycle.py:66` | `ComponentSpec` dataclass — one component's full deployment shape |
+| `lifecycle.py:91` | `TenantSpec` dataclass — tenant's pair (incl. `enable_proxy_auth` + `api_key`) |
+| `lifecycle.py:55` | `generate_api_key()` — `llmt_<64-hex>` matching the Rust proxy |
+| `lifecycle.py:343` | `provision(spec)` |
+| `lifecycle.py:387` | `update(spec, proxy_id, dashboard_id, strategy)` |
+| `lifecycle.py:438` | `deprovision(tenant_id, proxy_id?, dashboard_id?)` |
+| `lifecycle.py:452` | `status(tenant_id, proxy_id?, dashboard_id?)` |
 | `cli.py:40` | `_substitute_env` — `${VAR}` resolver |
 | `cli.py:60` | `_load_config` — YAML/JSON loader |
 | `cli.py:113` | `_tenant_spec_from_config` — dict → `TenantSpec` |
-| `cli.py:151` | `_build_parser` — argparse subcommand wiring |
+| `cli.py:154` | `_build_parser` — argparse subcommand wiring |
 | `.github/workflows/tenant-lifecycle.yml` | Spawn workflow (workflow_dispatch + repository_dispatch) |
 | `.github/workflows/publish-images.yml` | Image build/push pipeline |
