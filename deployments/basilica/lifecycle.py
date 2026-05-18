@@ -26,6 +26,7 @@ import dataclasses
 import logging
 import os
 import re
+import secrets as _secrets
 import time
 from dataclasses import dataclass
 from typing import Mapping, Optional
@@ -45,6 +46,20 @@ POLL_INTERVAL_SECONDS = 10
 
 DEFAULT_PROXY_NAME_TEMPLATE = "llmtrace-proxy-{tenant_id}"
 DEFAULT_DASHBOARD_NAME_TEMPLATE = "llmtrace-dashboard-{tenant_id}"
+
+# LLMTrace API key format — matches `crates/llmtrace-proxy/src/auth.rs::generate_api_key`.
+API_KEY_PREFIX = "llmt_"
+API_KEY_RANDOM_BYTES = 32
+
+
+def generate_api_key() -> str:
+    """Generate an LLMTrace-compatible API key.
+
+    Format: `llmt_` + 32 random bytes hex-encoded (64 hex chars).
+    Matches the layout produced by the Rust proxy so a generated key drops
+    straight into `LLMTRACE_AUTH_ADMIN_KEY` without translation.
+    """
+    return API_KEY_PREFIX + _secrets.token_hex(API_KEY_RANDOM_BYTES)
 
 
 @dataclass(frozen=True)
@@ -85,6 +100,13 @@ class TenantSpec:
     # under `proxy_url_env_var` before the dashboard is created.
     inject_proxy_url_into_dashboard: bool = True
     proxy_url_env_var: str = "LLMTRACE_PROXY_URL"
+    # If True, the proxy is provisioned with LLMTRACE_AUTH_ENABLED=true plus
+    # an admin key (caller-supplied via `api_key`, or auto-generated). The
+    # same key is also injected into the dashboard env so it can authenticate
+    # to the proxy's admin endpoints. Set False to deploy an open proxy
+    # (anyone with the URL can use it — only do this for trusted networks).
+    enable_proxy_auth: bool = True
+    api_key: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -106,11 +128,18 @@ class InstanceInfo:
 
 @dataclass(frozen=True)
 class TenantInstances:
-    """A tenant's deployment pair. Either side may be None when absent."""
+    """A tenant's deployment pair. Either side may be None when absent.
+
+    `api_key` is populated only on `provision()` and `update(..., strategy="recreate")`;
+    it is the plaintext bearer the tenant must send as `Authorization: Bearer <key>`
+    on every non-`/health` request to the proxy. None on `status` / `deprovision`
+    and when `enable_proxy_auth=False`.
+    """
 
     tenant_id: str
     proxy: Optional[InstanceInfo]
     dashboard: Optional[InstanceInfo]
+    api_key: Optional[str] = None
 
 
 def validate_tenant_id(tenant_id: str) -> str:
@@ -276,6 +305,41 @@ def _safe_delete(client: BasilicaClient, instance_id: Optional[str], label: str)
         raise
 
 
+def _resolve_api_key(spec: TenantSpec) -> Optional[str]:
+    """Resolve the LLMTrace tenant API key for `provision`.
+
+    Priority: explicit `spec.api_key` > existing `LLMTRACE_AUTH_ADMIN_KEY`
+    in `spec.proxy.env` > newly generated. Returns None when
+    `enable_proxy_auth` is False.
+    """
+    if not spec.enable_proxy_auth:
+        return None
+    if spec.api_key:
+        return spec.api_key
+    env_key = spec.proxy.env.get("LLMTRACE_AUTH_ADMIN_KEY", "")
+    if env_key:
+        return env_key
+    return generate_api_key()
+
+
+def _apply_proxy_auth(
+    proxy_spec: ComponentSpec, dashboard_spec: ComponentSpec, api_key: str
+) -> tuple[ComponentSpec, ComponentSpec]:
+    """Inject `LLMTRACE_AUTH_ENABLED=true` + the admin key into both envs.
+
+    The admin key is set unconditionally (we want proxy + dashboard
+    consistent); `LLMTRACE_AUTH_ENABLED` is only defaulted (caller may
+    explicitly turn it off in env).
+    """
+    proxy_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": api_key}
+    proxy_env.setdefault("LLMTRACE_AUTH_ENABLED", "true")
+    dashboard_env = {**dashboard_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": api_key}
+    return (
+        dataclasses.replace(proxy_spec, env=proxy_env),
+        dataclasses.replace(dashboard_spec, env=dashboard_env),
+    )
+
+
 def provision(
     spec: TenantSpec, client: Optional[BasilicaClient] = None
 ) -> TenantInstances:
@@ -286,6 +350,12 @@ def provision(
     operations (status / update / deprovision) — Basilica does not expose
     a friendly-name → UUID lookup, so the IDs cannot be rediscovered.
 
+    If `spec.enable_proxy_auth` is True (default), an LLMTrace API key
+    is resolved (explicit > env > auto-generated) and injected into both
+    component envs as `LLMTRACE_AUTH_ADMIN_KEY`. The plaintext key is
+    returned in `TenantInstances.api_key` so the caller can persist it
+    and hand it to the tenant — it's the only time the key is exposed.
+
     To make provision *idempotent at the caller*: before calling, check
     your own DB for existing IDs; if found, call `status(...)` with those
     IDs instead.
@@ -295,15 +365,23 @@ def provision(
     proxy_name = spec.proxy_name_template.format(tenant_id=tenant_id)
     dashboard_name = spec.dashboard_name_template.format(tenant_id=tenant_id)
 
-    proxy = _create_component(client, proxy_name, spec.proxy)
+    api_key = _resolve_api_key(spec)
+    proxy_spec, dashboard_spec = (spec.proxy, spec.dashboard)
+    if api_key is not None:
+        proxy_spec, dashboard_spec = _apply_proxy_auth(
+            proxy_spec, dashboard_spec, api_key
+        )
 
-    dashboard_spec = spec.dashboard
+    proxy = _create_component(client, proxy_name, proxy_spec)
+
     if spec.inject_proxy_url_into_dashboard:
         merged_env = {**dashboard_spec.env, spec.proxy_url_env_var: proxy.url}
         dashboard_spec = dataclasses.replace(dashboard_spec, env=merged_env)
     dashboard = _create_component(client, dashboard_name, dashboard_spec)
 
-    return TenantInstances(tenant_id=tenant_id, proxy=proxy, dashboard=dashboard)
+    return TenantInstances(
+        tenant_id=tenant_id, proxy=proxy, dashboard=dashboard, api_key=api_key
+    )
 
 
 def update(

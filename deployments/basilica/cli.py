@@ -127,6 +127,8 @@ def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.T
         "dashboard_name_template",
         "inject_proxy_url_into_dashboard",
         "proxy_url_env_var",
+        "enable_proxy_auth",
+        "api_key",
     ):
         if key in cfg:
             kwargs[key] = cfg[key]
@@ -145,6 +147,7 @@ def _serialise(instances: lifecycle.TenantInstances) -> dict[str, Any]:
         "dashboard_instance_id": instances.dashboard.instance_id if instances.dashboard else None,
         "proxy_url": instances.proxy.url if instances.proxy else None,
         "dashboard_url": instances.dashboard.url if instances.dashboard else None,
+        "api_key": instances.api_key,
     }
 
 

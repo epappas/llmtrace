@@ -1,5 +1,9 @@
 # LLMTrace tenant config — pro tier example.
 # Multi-replica proxy, persistent dashboard, debug logging, datamarking on.
+#
+# Auth: per-tenant API key is auto-generated at provision time (or supply
+# `api_key:` at the top level to force a specific value). See starter.yaml
+# for the full auth contract.
 
 proxy:
   image: "ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}"
