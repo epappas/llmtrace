@@ -259,16 +259,18 @@ jobs:
           code=$?
           set -e
 
-          # Mask the api_key BEFORE any log line (cat / step summary) touches
-          # result.json. ::add-mask:: is per-job and applies to subsequent log
-          # lines, so registering it here covers the cat below + the summary
-          # step + any downstream consumers that print step outputs.
+          # Mask BOTH api_key and admin_key BEFORE any log line (cat /
+          # step summary) touches result.json. ::add-mask:: is per-job
+          # and applies to subsequent log lines, so registering them
+          # here covers the cat below + the summary step + any
+          # downstream consumers that print step outputs.
           python3 - <<'PY'
           import json, pathlib
           data = json.loads(pathlib.Path("result.json").read_text() or "{}")
-          key = data.get("api_key")
-          if key:
-              print(f"::add-mask::{key}")
+          for field in ("api_key", "admin_key"):
+              value = data.get(field)
+              if value:
+                  print(f"::add-mask::{value}")
           PY
 
           cat result.json
@@ -280,10 +282,14 @@ jobs:
           print(f"dashboard_instance_id={data.get('dashboard_instance_id') or ''}")
           print(f"proxy_url={data.get('proxy_url') or ''}")
           print(f"dashboard_url={data.get('dashboard_url') or ''}")
-          # api_key is masked; emitting it as a step output is fine because
-          # downstream consumers (the caller's app via the Actions API) need it
-          # to give the tenant their bearer token. The value is opaque to logs.
+          # api_key (operator-scoped, given to the tenant) and admin_key
+          # (bootstrap-scoped, retained by the caller for self-service /
+          # admin pages) are masked above. Emitting them as step outputs
+          # is fine because downstream consumers (the caller's app via
+          # the Actions API) need both: api_key for the tenant's bearer,
+          # admin_key for the platform's own admin pages.
           print(f"api_key={data.get('api_key') or ''}")
+          print(f"admin_key={data.get('admin_key') or ''}")
           PY
           if [[ "${code}" -ne 0 ]]; then
             exit "${code}"

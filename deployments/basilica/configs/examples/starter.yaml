@@ -8,13 +8,22 @@
 # from the process environment at deploy time. Use this to keep secrets out
 # of the config file.
 #
-# Auth: `enable_proxy_auth` defaults to true. On provision, the lifecycle
-# library either uses a caller-supplied `api_key` (top-level) or auto-generates
-# an `llmt_<64-hex>` key, injects it into both proxy + dashboard envs as
-# LLMTRACE_AUTH_ADMIN_KEY, and returns it in the result JSON. The plaintext
-# key is exposed once on provision — your app must persist it and ship it to
-# the tenant as their `Authorization: Bearer llmt_<key>` header. Set
-# `enable_proxy_auth: false` to deploy an open proxy.
+# Auth: `enable_proxy_auth` defaults to true. The lifecycle library issues
+# TWO keys at provision time (see README "Per-tenant API key auth"):
+#
+#   - admin_key  — bootstrap admin scope. Used by the lifecycle layer to
+#                  mint per-tenant keys + retained by the caller for the
+#                  self-service / admin portal. NEVER given to the tenant.
+#                  Sourced from `api_key:` below (if set) or `LLMTRACE_AUTH_ADMIN_KEY`
+#                  in proxy.env, or auto-generated `llmt_<64-hex>`.
+#   - api_key    — operator scope. Minted on the live proxy via
+#                  POST /api/v1/auth/keys after the proxy is ready. This is
+#                  the key handed to the tenant for runtime traffic; it
+#                  cannot manage tenants/keys/audit logs.
+#
+# Both plaintext keys are exposed once in the result JSON (`api_key` and
+# `admin_key`). Persist them in your secret store immediately. Set
+# `enable_proxy_auth: false` to deploy an open proxy with no auth at all.
 
 proxy:
   image: ghcr.io/techlab-innov/llmtrace-proxy:latest
@@ -48,9 +57,12 @@ dashboard:
     HOSTNAME: 0.0.0.0
     NODE_ENV: production
     # LLMTRACE_AUTH_ADMIN_KEY is set by the lifecycle library at provision
-    # time to match the proxy's resolved key. If you set it here explicitly,
-    # that value wins for the dashboard env (but the proxy's resolved key is
-    # what the tenant must actually send — keep them consistent).
+    # time to match the proxy's resolved admin key (used by dashboard
+    # server-side handlers for admin endpoints). LLMTRACE_AUTH_RUNTIME_KEY
+    # is set after the operator key is minted — dashboard wiring to
+    # consume the runtime key for tenant-facing traffic is a follow-up.
+    # If you set either var here explicitly, that value wins for the
+    # dashboard env.
 
 # Optional — override if your tenant naming scheme differs.
 # proxy_name_template: "llmtrace-proxy-{tenant_id}"
@@ -58,8 +70,10 @@ dashboard:
 # inject_proxy_url_into_dashboard: true
 # proxy_url_env_var: LLMTRACE_PROXY_URL
 
-# Auth controls (defaults shown). Set explicit `api_key` to force a specific
-# value (e.g. when recreating to preserve the existing tenant key).
+# Auth controls (defaults shown). `api_key` here pins the BOOTSTRAP ADMIN
+# key (so the admin_key stays stable across recreates). The runtime
+# operator key is always re-minted on recreate (the proxy's DB is fresh)
+# and verified-or-re-minted on restart (same volume).
 # enable_proxy_auth: true
 # api_key: null
 

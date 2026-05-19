@@ -298,7 +298,7 @@ wins for that tenant.
 
 Both demonstrate `${VAR}` substitution and the optional override pattern.
 
-## Per-tenant API key auth (secure by default)
+## Per-tenant API key auth (two-tier, scoped runtime key)
 
 LLMTrace's proxy has built-in API-key auth (`crates/llmtrace-proxy/src/auth.rs`).
 Without it, the public Basilica URL accepts any request — anyone with the
@@ -306,61 +306,92 @@ URL can burn the tenant's upstream quota and pollute their traces. With it
 on, every non-`/health` request must carry `Authorization: Bearer llmt_<key>`
 or get a 401.
 
-The lifecycle library enables this **by default** at provision time:
+The lifecycle library enables auth **by default** at provision time, and
+issues TWO keys with distinct scopes:
 
-1. Resolves a key, in priority order:
+| Key | Role | Who holds it | What it can do |
+|---|---|---|---|
+| `admin_key` | bootstrap admin | the **caller** (your app / portal) | Mint / list / revoke per-tenant keys, manage tenants, read audit logs, change feature flags. Used by the lifecycle layer itself and by your self-service / admin portal pages |
+| `api_key`   | operator | the **tenant**'s runtime apps | Proxy LLM calls, write traces, report agent actions. **No** key management, **no** audit-log access, **no** tenant CRUD |
+
+### Bootstrap sequence (what `provision()` does internally)
+
+1. Resolves a bootstrap admin key, priority order:
    - Explicit `spec.api_key` from the caller (or `api_key:` field in the
-     YAML config), used for plan-recreates that must preserve the tenant's
-     existing key
-   - Existing `LLMTRACE_AUTH_ADMIN_KEY` in `proxy.env` (rare — caller wrote
-     it themselves)
-   - Auto-generated `llmt_<64-hex>` via `generate_api_key()` matching the
-     format produced by the Rust proxy at `auth.rs:44`
-2. Injects `LLMTRACE_AUTH_ENABLED=true` + `LLMTRACE_AUTH_ADMIN_KEY=<key>`
-   into the proxy's env, and the same `LLMTRACE_AUTH_ADMIN_KEY` into the
-   dashboard's env (so the dashboard can authenticate to the proxy's admin
-   endpoints)
-3. Returns the plaintext key in `TenantInstances.api_key` — **this is the
-   only time it's exposed**. Persist it in your app DB and ship it to the
-   tenant.
+     YAML config) — pin this if you need the admin key stable across
+     recreates.
+   - Existing `LLMTRACE_AUTH_ADMIN_KEY` in `proxy.env` (rare — caller
+     wrote it themselves).
+   - Auto-generated `llmt_<64-hex>` via `generate_api_key()`.
+2. Injects `LLMTRACE_AUTH_ENABLED=true` + `LLMTRACE_AUTH_ADMIN_KEY=<admin_key>`
+   into BOTH the proxy and dashboard envs. The dashboard keeps the admin
+   key so its server-side handlers can call the proxy's admin endpoints
+   on behalf of the operator/portal UI.
+3. Creates the proxy deployment and waits for it to become ready.
+4. Calls `POST /api/v1/tenants` on the live proxy URL (auth: admin key)
+   to materialise the per-pod tenant row. Captures the assigned tenant
+   UUID.
+5. Calls `POST /api/v1/auth/keys` (auth: admin key, scoped to that
+   tenant UUID) with body `{name: "tenant-runtime", role: "operator",
+   tenant_id: <uuid>}` and captures the plaintext operator key.
+6. Adds `LLMTRACE_AUTH_RUNTIME_KEY=<operator_key>` to the dashboard env
+   (informational today; consumed by a follow-up dashboard wiring
+   change) and creates the dashboard deployment.
+7. Returns `TenantInstances(api_key=<operator>, admin_key=<admin>)`.
+
+Both plaintext keys are exposed only at this moment. Persist them
+immediately in your app's secret store.
 
 ```python
 result = lifecycle.provision(spec)
-tenant_record.api_key = result.api_key      # llmt_xxxxxxxxxxxx... — only exposed here
+tenant_record.api_key   = result.api_key     # operator-scoped — ship to the tenant
+tenant_record.admin_key = result.admin_key   # bootstrap-scoped — retain in your app
 tenant_record.proxy_url = result.proxy.url
 db.session.commit()
 ```
 
-The CLI emits it in the result JSON:
+The CLI emits both in the result JSON:
 
 ```json
 {
   "tenant_id": "acme",
   "proxy_url": "https://...basilica.ai",
   "dashboard_url": "https://...basilica.ai",
-  "api_key": "llmt_d34c8a..."
+  "api_key": "llmt_op...",
+  "admin_key": "llmt_ad..."
 }
 ```
 
-The workflow registers `::add-mask::` for the key before any `cat`
-operation, so it never appears in run logs — only in step outputs (which
+The workflow registers `::add-mask::` for BOTH keys before any `cat`
+operation, so neither appears in run logs — only in step outputs (which
 the calling app fetches via the Actions API).
 
 ### Tenant-side usage
 
-The tenant programs their downstream apps to send their API key on every
-request to their proxy URL:
+The tenant programs their downstream apps to send the OPERATOR key on
+every request to their proxy URL:
 
 ```bash
 curl -X POST https://<proxy_uuid>.deployments.basilica.ai/v1/chat/completions \
-  -H "Authorization: Bearer llmt_d34c8a..." \
+  -H "Authorization: Bearer llmt_op..." \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-A 401 means they used the wrong key. A 200 means LLMTrace authenticated
-them, then forwarded upstream (with whatever upstream auth was configured
-in `tenant_secrets`).
+A 401 means they used the wrong key. A 403 with "Insufficient permissions"
+means they tried an admin-only endpoint (`/api/v1/auth/keys`,
+`/api/v1/tenants`, etc.) with the operator key — by design.
+
+### Update semantics
+
+| Strategy | DB persistence | Operator key behaviour |
+|---|---|---|
+| `recreate` | DB volume is destroyed alongside the pods | Always re-minted. `result.api_key` carries the new operator key; caller must overwrite the stored value |
+| `restart`  | Same DB volume — rows survive | The library lists `GET /api/v1/tenants` to rediscover the tenant by label, then lists `GET /api/v1/auth/keys` for that tenant. If a non-revoked `tenant-runtime` operator key is found, `result.api_key` is `None` (carry forward the previously-stored plaintext from your DB — the proxy stores only a hash, so re-fetching the plaintext is impossible). If the record is missing (e.g. DB wipe), a fresh operator key is minted and returned |
+
+The admin key follows the same recreate / restart split: pin it via
+`spec.api_key` (or `api_key:` in YAML) if you need it stable across
+recreates; on restart it is simply re-derived from spec and not re-minted.
 
 ### Disabling auth
 
@@ -371,43 +402,41 @@ mesh, a dev sandbox, etc.), turn auth off:
 enable_proxy_auth: false
 ```
 
-The library skips key generation, doesn't inject `LLMTRACE_AUTH_*`, and
-returns `api_key: null` in the result. The proxy URL is then wide open;
-own the consequences.
+The library skips both the admin-key injection AND the operator-key
+bootstrap; `api_key` and `admin_key` are both `null` in the result. The
+proxy URL is then wide open; own the consequences.
 
-### Preserving the key across recreates
+### Why two keys
 
-`update(..., strategy="recreate")` calls `provision()` under the hood,
-which will auto-generate a fresh key unless you pass the existing one.
-For plan upgrades where the tenant's apps shouldn't break, fetch the
-current key from your DB and put it in the spec:
+Before this PR the lifecycle layer handed the bootstrap admin key
+straight to the tenant. That key can mint more keys, view audit logs,
+manage feature flags, and create/delete tenants. A compromised tenant
+app would have taken the whole proxy with it. The operator role exists
+exactly to bound runtime traffic to "proxy LLM calls + report actions"
+without any control-plane scope. See
+`crates/llmtrace-core/src/lib.rs::ApiKeyRole` for the role definitions.
 
-```python
-spec = build_spec_from_tenant_record(tenant_record)
-spec = dataclasses.replace(spec, api_key=tenant_record.api_key)  # preserve
-new_instances = lifecycle.update(spec, proxy_id=..., dashboard_id=..., strategy="recreate")
-# new_instances.api_key == tenant_record.api_key  (carried forward)
-```
+### Caveats and follow-ups
 
-### Caveats
-
-- **Admin-key-as-runtime-key is overpowered.** The auto-generated key
-  takes the `auth.admin_key` slot (bootstrap admin role), meaning the
-  tenant's apps technically have admin scope on their own instance.
-  Hardening: after provision, POST a scoped non-admin key via the
-  proxy's `/admin/keys` endpoint and hand THAT to the tenant. Tracked
-  as a follow-up.
-- **Defence-in-depth** still worth doing separately: per-tenant rate
-  limits (LLMTrace likely has them — configure), and DoS protection
-  against CPU burn from ML detectors running before the upstream call.
-  The proxy now bounds intra-pod ML detection concurrency via a tokio
-  semaphore — tune the cap per-pod with the
-  `LLMTRACE_ML_MAX_CONCURRENT` env var (default `8`). Excess requests
-  receive `503 Service Unavailable` with `Retry-After: 1` instead of
-  every concurrent request stalling on contended CPU; the counter
-  `llmtrace_ml_rejected_total` and the gauge
-  `llmtrace_ml_inflight_requests` are exposed on `/metrics` for
-  alerting on sustained saturation.
+- **Dashboard wiring follow-up**: the Next.js dashboard
+  (`dashboard/src/lib/api.ts`, `dashboard/src/lib/proxy-helpers.ts`)
+  currently only reads `LLMTRACE_AUTH_ADMIN_KEY`. The lifecycle layer
+  injects `LLMTRACE_AUTH_RUNTIME_KEY` informationally; a separate PR
+  should switch the dashboard to use the runtime key for tenant-facing
+  traffic and the admin key only for admin pages.
+- **Admin key rotation** is opt-in via `rotate_admin_after_bootstrap:
+  true` in the tenant config — see the "Admin key rotation" section
+  below. Without it the bootstrap admin key lives in the proxy env for
+  the life of the deployment.
+- **Per-tenant rate limits** ship via the `rate_limit:` block in the
+  tenant config (see "Tenant config format"); when set, the proxy
+  honours `LLMTRACE_RATE_LIMIT_RPS` / `LLMTRACE_RATE_LIMIT_BURST`.
+- **DoS protection against CPU burn from ML detectors** is enforced by
+  an intra-pod tokio semaphore — tune with `LLMTRACE_ML_MAX_CONCURRENT`
+  (default `8`). Excess requests receive `503 Service Unavailable` with
+  `Retry-After: 1` instead of stalling on contended CPU; the counter
+  `llmtrace_ml_rejected_total` and gauge `llmtrace_ml_inflight_requests`
+  are exposed on `/metrics` for alerting on sustained saturation.
 
 ## Per-tenant secret injection
 
@@ -919,13 +948,14 @@ win).
 
 | File | Purpose |
 |---|---|
-| `lifecycle.py:66` | `ComponentSpec` dataclass — one component's full deployment shape |
-| `lifecycle.py:91` | `TenantSpec` dataclass — tenant's pair (incl. `enable_proxy_auth` + `api_key`) |
-| `lifecycle.py:55` | `generate_api_key()` — `llmt_<64-hex>` matching the Rust proxy |
-| `lifecycle.py:343` | `provision(spec)` |
-| `lifecycle.py:387` | `update(spec, proxy_id, dashboard_id, strategy)` |
-| `lifecycle.py:438` | `deprovision(tenant_id, proxy_id?, dashboard_id?)` |
-| `lifecycle.py:452` | `status(tenant_id, proxy_id?, dashboard_id?)` |
+| `lifecycle.py` | `ComponentSpec`, `TenantSpec`, `TenantInstances` (`api_key` + `admin_key`) |
+| `lifecycle.py` | `generate_api_key()` — `llmt_<64-hex>` matching the Rust proxy |
+| `lifecycle.py` | `_bootstrap_tenant_in_proxy`, `_mint_operator_key`, `_find_tenant_by_label`, `_find_operator_key_record`, `_verify_or_remint_operator_key` — admin HTTP boundary against `/api/v1/tenants` + `/api/v1/auth/keys` |
+| `lifecycle.py` | `provision(spec)` — bootstrap admin key, deploy proxy, mint operator key, deploy dashboard |
+| `lifecycle.py` | `update(spec, proxy_id, dashboard_id, strategy)` — recreate re-mints operator; restart verifies + re-mints only if missing |
+| `lifecycle.py` | `deprovision(tenant_id, proxy_id?, dashboard_id?)` |
+| `lifecycle.py` | `status(tenant_id, proxy_id?, dashboard_id?)` |
+| `deployments/basilica/tests/test_operator_key_minting.py` | Unit tests for the admin HTTP boundary, `provision()` integration, CLI serialisation |
 | `cli.py:40` | `_substitute_env` — `${VAR}` resolver |
 | `cli.py:60` | `_load_config` — YAML/JSON loader |
 | `cli.py:113` | `_tenant_spec_from_config` — dict → `TenantSpec` |
