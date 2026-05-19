@@ -84,3 +84,10 @@ dashboard:
 # rate_limit:
 #   requests_per_second: 50
 #   burst_size: 100
+
+# rotate_admin_after_bootstrap: false
+# ↑ Set to `true` for production tenants where the bootstrap admin key
+#   must be invalidated immediately after provision. Adds ~30s to
+#   provisioning (extra proxy re-roll) and changes the proxy
+#   instance_id + url — caller must persist the post-rotation values.
+#   See README.md → "Admin key rotation".

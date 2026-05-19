@@ -438,6 +438,84 @@ without any control-plane scope. See
   `llmtrace_ml_rejected_total` and gauge `llmtrace_ml_inflight_requests`
   are exposed on `/metrics` for alerting on sustained saturation.
 
+### Admin key rotation
+
+After `provision`, the bootstrap admin key lives in the proxy pod env
+indefinitely. The key was returned once on the workflow run output and
+flows through the calling app's secret-handling path before reaching the
+tenant. If you treat the workflow output / app log surface as a higher
+exposure boundary than the live Basilica pod env, you can **rotate the
+admin key after bootstrap** so the value returned at provision time is
+no longer the live key.
+
+**When to enable.** Production tenants where you want the bootstrap admin
+key invalidated as soon as the tenant has it (or you don't trust the
+single-channel return path). Skip for dev / sandbox tenants — the
+rotation is opt-in because it costs an extra proxy re-roll.
+
+**Trade-off.** Rotation deletes the bootstrap proxy and creates a fresh
+one with the rotated `LLMTRACE_AUTH_ADMIN_KEY`. That adds ~30s to
+provisioning time, and **the proxy's `instance_id` and `url` change** as
+a result (Basilica's SDK has no env-patch primitive — see *Lifecycle
+operations in detail* below). The caller MUST persist the post-rotation
+`proxy_instance_id` and `proxy_url` over the bootstrap values; the
+result JSON returns the post-rotation UUID/URL.
+
+**Enable via YAML config:**
+
+```yaml
+rotate_admin_after_bootstrap: true
+```
+
+With the flag set, `provision` runs as usual, then internally calls
+`rotate_admin_key(proxy_instance_id=...)` against the just-created proxy,
+regenerates a fresh `llmt_<64-hex>` key, and returns that as the
+`api_key` field in the result JSON. The bootstrap key never leaves the
+library boundary.
+
+**Invoke the rotation independently** (e.g. for an already-running
+tenant whose admin key you want to roll on a schedule):
+
+```bash
+python -m deployments.basilica.cli rotate-admin-key \
+  --tenant-id acme \
+  --config deployments/basilica/configs/examples/starter.yaml \
+  --proxy-instance-id <current_proxy_uuid>
+# optional: --new-key llmt_...   to force a specific value
+```
+
+Result JSON shape:
+
+```json
+{
+  "tenant_id": "acme",
+  "proxy_instance_id": "<new_uuid>",
+  "proxy_url": "https://<new_uuid>.deployments.basilica.ai",
+  "admin_key": "llmt_..."
+}
+```
+
+**Dispatch via the workflow:**
+
+```bash
+gh api -X POST /repos/techlab-innov/llmtrace/dispatches \
+  --raw-field event_type=tenant-lifecycle \
+  --raw-field 'client_payload={
+    "tenant_id":"acme","action":"rotate-admin-key",
+    "config_path":"deployments/basilica/configs/examples/starter.yaml",
+    "proxy_instance_id":"<current_proxy_uuid>"
+  }'
+```
+
+The workflow `::add-mask::`s the returned `admin_key` before any
+`cat result.json` line, same as it does for `api_key` on provision. The
+key is then available as a step output (`steps.run.outputs.admin_key`)
+for the dispatching app to consume via the Actions API.
+
+**Idempotency.** Re-running rotation on an already-rotated tenant
+generates a fresh key (it's not a no-op). The caller must serialise
+rotation per tenant to avoid concurrent delete+create races.
+
 ## Per-tenant secret injection
 
 Two trigger paths, pick by intended audience:

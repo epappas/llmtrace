@@ -52,3 +52,7 @@ dashboard:
 # rate_limit:
 #   requests_per_second: 500
 #   burst_size: 1000
+
+# Rotate the admin key once the proxy is up. Adds ~30s and changes the
+# proxy instance_id + url; recommended for production. Opt-in.
+# rotate_admin_after_bootstrap: true

@@ -16,6 +16,7 @@ on:
           - update
           - status
           - deprovision
+          - rotate-admin-key
       config_path:
         description: "Path in repo to a YAML/JSON tenant config (provision/update only)"
         required: false
@@ -44,6 +45,11 @@ on:
         options:
           - recreate
           - restart
+      new_admin_key:
+        description: "Optional explicit new admin key for rotate-admin-key (else auto-generated)"
+        required: false
+        type: string
+        default: ""
       tenant_secrets_json:
         description: >-
           JSON object of per-tenant secrets to inject as env vars before the
@@ -106,6 +112,7 @@ jobs:
           WF_PROXY_ID: ${{ inputs.proxy_instance_id }}
           WF_DASHBOARD_ID: ${{ inputs.dashboard_instance_id }}
           WF_STRATEGY: ${{ inputs.strategy }}
+          WF_NEW_ADMIN_KEY: ${{ inputs.new_admin_key }}
           WF_SECRETS: ${{ inputs.tenant_secrets_json }}
           RD_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
@@ -121,6 +128,7 @@ jobs:
               proxy_id  = os.environ.get("WF_PROXY_ID", "")
               dash_id   = os.environ.get("WF_DASHBOARD_ID", "")
               strategy  = os.environ.get("WF_STRATEGY", "")
+              new_admin_key = os.environ.get("WF_NEW_ADMIN_KEY", "")
               secrets_json = os.environ.get("WF_SECRETS", "{}") or "{}"
               try:
                   secrets = json.loads(secrets_json)
@@ -137,12 +145,19 @@ jobs:
               proxy_id  = payload.get("proxy_instance_id", "")
               dash_id   = payload.get("dashboard_instance_id", "")
               strategy  = payload.get("strategy", "recreate")
+              new_admin_key = payload.get("new_admin_key", "") or ""
               secrets   = payload.get("tenant_secrets", {}) or {}
           else:
               raise SystemExit(f"::error::unsupported event {event!r}")
 
           if not isinstance(secrets, dict):
               raise SystemExit("::error::tenant_secrets must be a JSON object")
+
+          # Mask the optional explicit new admin key from the workflow input
+          # surface — it ends up as a CLI arg downstream and must not show up
+          # in subsequent log lines.
+          if new_admin_key:
+              print(f"::add-mask::{new_admin_key}")
 
           env_path = pathlib.Path(os.environ["GITHUB_ENV"])
           with env_path.open("a") as fh:
@@ -152,6 +167,7 @@ jobs:
               fh.write(f"PROXY_ID={proxy_id}\n")
               fh.write(f"DASHBOARD_ID={dash_id}\n")
               fh.write(f"STRATEGY={strategy}\n")
+              fh.write(f"NEW_ADMIN_KEY={new_admin_key}\n")
               # config_json may contain newlines; use heredoc form
               if cfg_json:
                   fh.write(f"CFG_JSON<<__LIFECYCLE_EOF__\n{cfg_json}\n__LIFECYCLE_EOF__\n")
@@ -219,6 +235,16 @@ jobs:
             status|deprovision)
               :
               ;;
+            rotate-admin-key)
+              if [[ -z "${CFG_PATH:-}" && -z "${CFG_JSON:-}" ]]; then
+                echo "::error::action=rotate-admin-key requires config_path or config_json"
+                exit 2
+              fi
+              if [[ -z "${PROXY_ID:-}" ]]; then
+                echo "::error::action=rotate-admin-key requires proxy_instance_id"
+                exit 2
+              fi
+              ;;
             *)
               echo "::error::unknown or missing action: ${ACTION:-<empty>}"
               exit 2
@@ -251,6 +277,17 @@ jobs:
             status|deprovision)
               [[ -n "${PROXY_ID:-}" ]] && args+=("--proxy-instance-id" "${PROXY_ID}")
               [[ -n "${DASHBOARD_ID:-}" ]] && args+=("--dashboard-instance-id" "${DASHBOARD_ID}")
+              ;;
+            rotate-admin-key)
+              args+=("--proxy-instance-id" "${PROXY_ID}")
+              if [[ -n "${CFG_JSON:-}" ]]; then
+                args+=("--config-json" "${CFG_JSON}")
+              else
+                args+=("--config" "${CFG_PATH}")
+              fi
+              if [[ -n "${NEW_ADMIN_KEY:-}" ]]; then
+                args+=("--new-key" "${NEW_ADMIN_KEY}")
+              fi
               ;;
           esac
 

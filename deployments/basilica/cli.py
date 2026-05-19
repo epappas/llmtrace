@@ -142,6 +142,7 @@ def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.T
         "proxy_url_env_var",
         "enable_proxy_auth",
         "api_key",
+        "rotate_admin_after_bootstrap",
     ):
         if key in cfg:
             kwargs[key] = cfg[key]
@@ -169,6 +170,16 @@ def _serialise(instances: lifecycle.TenantInstances) -> dict[str, Any]:
         "dashboard_url": instances.dashboard.url if instances.dashboard else None,
         "api_key": instances.api_key,
         "admin_key": instances.admin_key,
+    }
+
+
+def _serialise_rotation(result: lifecycle.RotationResult) -> dict[str, Any]:
+    return {
+        "tenant_id": result.tenant_id,
+        "proxy": dataclasses.asdict(result.proxy),
+        "proxy_instance_id": result.proxy.instance_id,
+        "proxy_url": result.proxy.url,
+        "admin_key": result.admin_key,
     }
 
 
@@ -229,10 +240,33 @@ def _build_parser() -> argparse.ArgumentParser:
     add_tenant(p_dep)
     add_ids(p_dep, required=False)
 
+    p_rot = sub.add_parser(
+        "rotate-admin-key",
+        help=(
+            "Rotate the proxy admin key on a live deployment. "
+            "Delete+recreate under the hood — proxy_instance_id and URL change."
+        ),
+    )
+    add_tenant(p_rot)
+    add_config(p_rot)
+    p_rot.add_argument(
+        "--proxy-instance-id",
+        required=True,
+        help="Basilica UUID for the existing proxy deployment",
+    )
+    p_rot.add_argument(
+        "--new-key",
+        required=False,
+        default=None,
+        help="Optional explicit new admin key (else a fresh llmt_<64-hex> is generated)",
+    )
+
     return parser
 
 
-def _dispatch(args: argparse.Namespace) -> lifecycle.TenantInstances:
+def _dispatch(
+    args: argparse.Namespace,
+) -> lifecycle.TenantInstances | lifecycle.RotationResult:
     if args.action == "provision":
         cfg = _load_config(args.config, args.config_json)
         spec = _tenant_spec_from_config(args.tenant_id, cfg)
@@ -258,6 +292,16 @@ def _dispatch(args: argparse.Namespace) -> lifecycle.TenantInstances:
             proxy_instance_id=args.proxy_instance_id,
             dashboard_instance_id=args.dashboard_instance_id,
         )
+    if args.action == "rotate-admin-key":
+        cfg = _load_config(args.config, args.config_json)
+        spec = _tenant_spec_from_config(args.tenant_id, cfg)
+        return lifecycle.rotate_admin_key(
+            tenant_id=args.tenant_id,
+            proxy_instance_id=args.proxy_instance_id,
+            proxy_spec=spec.proxy,
+            new_key=args.new_key,
+            proxy_name_template=spec.proxy_name_template,
+        )
     raise SystemExit(f"unknown action {args.action!r}")
 
 
@@ -276,7 +320,11 @@ def main(argv: list[str] | None = None) -> int:
         json.dump({"error": str(exc), "action": args.action}, sys.stdout)
         sys.stdout.write("\n")
         return 3
-    json.dump(_serialise(result), sys.stdout, indent=2, sort_keys=True)
+    if isinstance(result, lifecycle.RotationResult):
+        payload = _serialise_rotation(result)
+    else:
+        payload = _serialise(result)
+    json.dump(payload, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
 

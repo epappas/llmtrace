@@ -154,6 +154,12 @@ class TenantSpec:
     # `rate_limiting:` block. Unset means the proxy keeps whatever it
     # was built with (default 100 rps / 200 burst).
     rate_limit: Optional[RateLimitSpec] = None
+    # If True, after `provision()` brings the pair up, the proxy is rotated
+    # to a freshly-generated admin key. The key returned by `provision()` at
+    # bootstrap is then INVALIDATED — only the post-rotation key is live.
+    # Trade-off: adds one proxy re-roll (~30s) to provisioning. Opt-in
+    # because most callers will not need it.
+    rotate_admin_after_bootstrap: bool = False
 
 
 @dataclass(frozen=True)
@@ -199,6 +205,23 @@ class TenantInstances:
     dashboard: Optional[InstanceInfo]
     api_key: Optional[str] = None
     admin_key: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class RotationResult:
+    """Outcome of a proxy admin-key rotation.
+
+    `admin_key` is the new plaintext bearer the tenant must now use. The
+    previous key is invalidated as soon as the new proxy pod is ready.
+
+    `proxy` carries the new `InstanceInfo` — note that under the Basilica
+    SDK the rotation goes through a delete+create cycle, so `proxy.instance_id`
+    and `proxy.url` change. Callers MUST persist these new values.
+    """
+
+    tenant_id: str
+    proxy: InstanceInfo
+    admin_key: str
 
 
 def validate_tenant_id(tenant_id: str) -> str:
@@ -609,6 +632,54 @@ def _find_tenant_by_label(
     return None
 
 
+def rotate_admin_key(
+    *,
+    tenant_id: str,
+    proxy_instance_id: str,
+    proxy_spec: ComponentSpec,
+    new_key: Optional[str] = None,
+    proxy_name_template: str = DEFAULT_PROXY_NAME_TEMPLATE,
+    client: Optional[BasilicaClient] = None,
+) -> RotationResult:
+    """Rotate the admin key on a live proxy deployment.
+
+    Generates a fresh `llmt_<64-hex>` key if `new_key` is not supplied,
+    rebuilds the proxy with `LLMTRACE_AUTH_ADMIN_KEY=<new_key>` in its env,
+    waits for readiness, and returns the new plaintext + new InstanceInfo.
+
+    Mechanism: the Basilica SDK exposes no env-patch primitive — only
+    `create_deployment`, `delete_deployment`, and `restart_deployment`
+    (which rolls pods without touching env). Rotation therefore deletes
+    the existing proxy UUID and creates a fresh one with the rotated env.
+    Consequence: `proxy_instance_id` and `proxy.url` change. The caller
+    MUST persist `result.proxy.instance_id` over the old UUID.
+
+    Idempotent on retry only insofar as the caller passes the (possibly
+    already-deleted) old UUID — `_safe_delete` no-ops on 404. A successful
+    re-run still creates a fresh proxy with a fresh key.
+    """
+    tenant_id = validate_tenant_id(tenant_id)
+    if not proxy_instance_id:
+        raise ValueError("proxy_instance_id is required")
+    client = client or make_client()
+    rotated_key = new_key or generate_api_key()
+
+    new_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": rotated_key}
+    new_env.setdefault("LLMTRACE_AUTH_ENABLED", "true")
+    rotated_spec = dataclasses.replace(proxy_spec, env=new_env)
+
+    proxy_name = proxy_name_template.format(tenant_id=tenant_id)
+    LOGGER.info(
+        "rotating admin key tenant=%s old_proxy=%s", tenant_id, proxy_instance_id
+    )
+    _safe_delete(client, proxy_instance_id, "proxy")
+    new_proxy = _create_component(client, proxy_name, rotated_spec)
+    LOGGER.info(
+        "rotated admin key tenant=%s new_proxy=%s", tenant_id, new_proxy.instance_id
+    )
+    return RotationResult(tenant_id=tenant_id, proxy=new_proxy, admin_key=rotated_key)
+
+
 def provision(
     spec: TenantSpec, client: Optional[BasilicaClient] = None
 ) -> TenantInstances:
@@ -655,6 +726,23 @@ def provision(
 
     operator_key: Optional[str] = None
     if admin_key is not None:
+        # Rotate admin key BEFORE minting the operator key. Rotation
+        # deletes + recreates the proxy (the Basilica SDK has no env-patch
+        # primitive), which resets the proxy DB — so any tenant / operator
+        # key minted beforehand would be lost. Sequencing rotation first
+        # also ensures the dashboard is only ever deployed with the
+        # post-rotation operator key.
+        if spec.rotate_admin_after_bootstrap:
+            rotation = rotate_admin_key(
+                tenant_id=tenant_id,
+                proxy_instance_id=proxy.instance_id,
+                proxy_spec=proxy_spec,
+                proxy_name_template=spec.proxy_name_template,
+                client=client,
+            )
+            proxy = rotation.proxy
+            admin_key = rotation.admin_key
+
         tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
         dashboard_spec = _inject_runtime_key_into_dashboard(
