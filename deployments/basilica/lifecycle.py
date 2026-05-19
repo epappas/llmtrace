@@ -23,13 +23,16 @@ does a rolling restart of the existing pods (URL stable, no config change).
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import os
 import re
 import secrets as _secrets
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from basilica import (
     BasilicaClient,
@@ -50,6 +53,14 @@ DEFAULT_DASHBOARD_NAME_TEMPLATE = "llmtrace-dashboard-{tenant_id}"
 # LLMTrace API key format — matches `crates/llmtrace-proxy/src/auth.rs::generate_api_key`.
 API_KEY_PREFIX = "llmt_"
 API_KEY_RANDOM_BYTES = 32
+
+# Proxy admin API endpoints (see `crates/llmtrace-proxy/src/main.rs` routing).
+TENANTS_PATH = "/api/v1/tenants"
+AUTH_KEYS_PATH = "/api/v1/auth/keys"
+# Default name applied to the minted operator key. Visible in audit logs.
+OPERATOR_KEY_NAME = "tenant-runtime"
+# How long we'll wait on an admin HTTP call before bailing.
+ADMIN_HTTP_TIMEOUT_SECONDS = 30
 
 
 def generate_api_key() -> str:
@@ -166,16 +177,28 @@ class InstanceInfo:
 class TenantInstances:
     """A tenant's deployment pair. Either side may be None when absent.
 
-    `api_key` is populated only on `provision()` and `update(..., strategy="recreate")`;
-    it is the plaintext bearer the tenant must send as `Authorization: Bearer <key>`
-    on every non-`/health` request to the proxy. None on `status` / `deprovision`
-    and when `enable_proxy_auth=False`.
+    Two-tier key model (PR-3 hardening on bootstrap-admin-as-runtime):
+
+    - `api_key` — plaintext OPERATOR-scoped key the tenant uses for runtime
+      traffic (`Authorization: Bearer <key>` on every non-`/health` request).
+      Cannot manage tenants, mint keys, or read audit logs. Populated on
+      `provision()` and `update(..., strategy="recreate")`. Re-minted on
+      restart only if the previous operator key cannot be located. None on
+      `status` / `deprovision` and when `enable_proxy_auth=False`.
+    - `admin_key` — plaintext bootstrap ADMIN-scoped key the lifecycle layer
+      uses to mint/list/revoke per-tenant operator keys. The caller retains
+      it for self-service / admin portal flows; it must NOT be given to the
+      tenant's runtime apps. Populated on the same paths as `api_key`.
+
+    Both keys are exposed only at provision/recreate time. Persist them in
+    the caller's secret store immediately.
     """
 
     tenant_id: str
     proxy: Optional[InstanceInfo]
     dashboard: Optional[InstanceInfo]
     api_key: Optional[str] = None
+    admin_key: Optional[str] = None
 
 
 def validate_tenant_id(tenant_id: str) -> str:
@@ -359,17 +382,21 @@ def _resolve_api_key(spec: TenantSpec) -> Optional[str]:
 
 
 def _apply_proxy_auth(
-    proxy_spec: ComponentSpec, dashboard_spec: ComponentSpec, api_key: str
+    proxy_spec: ComponentSpec, dashboard_spec: ComponentSpec, admin_key: str
 ) -> tuple[ComponentSpec, ComponentSpec]:
-    """Inject `LLMTRACE_AUTH_ENABLED=true` + the admin key into both envs.
+    """Inject `LLMTRACE_AUTH_ENABLED=true` + the bootstrap admin key into envs.
 
-    The admin key is set unconditionally (we want proxy + dashboard
-    consistent); `LLMTRACE_AUTH_ENABLED` is only defaulted (caller may
-    explicitly turn it off in env).
+    The admin key is set unconditionally on both sides so the dashboard
+    can still talk to the proxy's admin endpoints (key management,
+    tenant CRUD) on behalf of the portal/self-service UI;
+    `LLMTRACE_AUTH_ENABLED` is only defaulted (caller may explicitly turn
+    it off in env). The operator key (`LLMTRACE_AUTH_RUNTIME_KEY`) is
+    injected later in `_inject_runtime_key_into_dashboard` once the proxy
+    is live and the key has been minted.
     """
-    proxy_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": api_key}
+    proxy_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": admin_key}
     proxy_env.setdefault("LLMTRACE_AUTH_ENABLED", "true")
-    dashboard_env = {**dashboard_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": api_key}
+    dashboard_env = {**dashboard_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": admin_key}
     return (
         dataclasses.replace(proxy_spec, env=proxy_env),
         dataclasses.replace(dashboard_spec, env=dashboard_env),
@@ -394,41 +421,245 @@ def _apply_rate_limit(
     return dataclasses.replace(proxy_spec, env=proxy_env)
 
 
+def _inject_runtime_key_into_dashboard(
+    dashboard_spec: ComponentSpec, operator_key: str
+) -> ComponentSpec:
+    """Add `LLMTRACE_AUTH_RUNTIME_KEY=<operator_key>` to the dashboard env.
+
+    NOTE: as of this PR the Next.js dashboard only reads
+    `LLMTRACE_AUTH_ADMIN_KEY` (`dashboard/src/lib/api.ts`,
+    `dashboard/src/lib/proxy-helpers.ts`). The runtime variable is set
+    informationally so the dashboard wiring follow-up (consume the
+    operator key for tenant-facing traffic, fall back to admin only for
+    admin pages) is a pure dashboard change with no platform side.
+    """
+    env = {**dashboard_spec.env, "LLMTRACE_AUTH_RUNTIME_KEY": operator_key}
+    return dataclasses.replace(dashboard_spec, env=env)
+
+
+def _admin_http_request(
+    proxy_url: str,
+    path: str,
+    method: str,
+    admin_key: str,
+    *,
+    tenant_uuid: Optional[str] = None,
+    body: Optional[Mapping[str, Any]] = None,
+    timeout: int = ADMIN_HTTP_TIMEOUT_SECONDS,
+) -> tuple[int, dict[str, Any]]:
+    """Send an authenticated admin request to the proxy. Returns (status, json).
+
+    Uses urllib so we don't add a dependency on `requests` / `httpx`. On
+    non-2xx responses the body is still parsed (best-effort) and returned
+    so callers can surface the proxy's structured error.
+    """
+    url = proxy_url.rstrip("/") + path
+    headers = {
+        "Authorization": f"Bearer {admin_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if tenant_uuid:
+        headers["X-LLMTrace-Tenant-ID"] = tenant_uuid
+    data = json.dumps(dict(body)).encode("utf-8") if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            payload = resp.read().decode("utf-8") or "{}"
+            parsed = json.loads(payload) if payload.strip() else {}
+            return resp.status, parsed if isinstance(parsed, dict) else {"_list": parsed}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        try:
+            parsed = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            parsed = {"raw": raw}
+        return exc.code, parsed if isinstance(parsed, dict) else {"_list": parsed}
+
+
+def _bootstrap_tenant_in_proxy(
+    proxy_url: str, admin_key: str, tenant_label: str
+) -> str:
+    """Create the per-pod tenant row via `POST /api/v1/tenants`.
+
+    The proxy's `create_api_key` handler verifies the tenant exists, so we
+    must materialise one. Returns the tenant UUID. The bootstrap admin
+    key authenticates this call; the resulting tenant row owns all
+    operator keys minted afterwards.
+    """
+    status, payload = _admin_http_request(
+        proxy_url,
+        TENANTS_PATH,
+        "POST",
+        admin_key,
+        body={"name": tenant_label, "plan": "default", "config": {}},
+    )
+    if status != 201:
+        raise RuntimeError(
+            f"tenant bootstrap failed: status={status} body={payload}"
+        )
+    tenant_uuid = payload.get("id")
+    if not isinstance(tenant_uuid, str) or not tenant_uuid:
+        raise RuntimeError(
+            f"tenant bootstrap response missing 'id': body={payload}"
+        )
+    LOGGER.info("bootstrapped tenant in proxy uuid=%s label=%s", tenant_uuid, tenant_label)
+    return tenant_uuid
+
+
+def _mint_operator_key(
+    proxy_url: str, admin_key: str, tenant_uuid: str
+) -> str:
+    """Mint a scoped Operator-role key via `POST /api/v1/auth/keys`.
+
+    The plaintext key is returned only once (see `auth.rs::create_api_key`);
+    after this call the proxy stores only a hash. Caller must persist.
+    """
+    status, payload = _admin_http_request(
+        proxy_url,
+        AUTH_KEYS_PATH,
+        "POST",
+        admin_key,
+        tenant_uuid=tenant_uuid,
+        body={
+            "name": OPERATOR_KEY_NAME,
+            "role": "operator",
+            "tenant_id": tenant_uuid,
+        },
+    )
+    if status != 201:
+        raise RuntimeError(
+            f"operator key mint failed: status={status} body={payload}"
+        )
+    key = payload.get("key")
+    if not isinstance(key, str) or not key.startswith(API_KEY_PREFIX):
+        raise RuntimeError(
+            f"operator key mint returned unexpected body: {payload}"
+        )
+    LOGGER.info(
+        "minted operator key tenant_uuid=%s key_prefix=%s",
+        tenant_uuid,
+        payload.get("key_prefix"),
+    )
+    return key
+
+
+def _find_operator_key_record(
+    proxy_url: str, admin_key: str, tenant_uuid: str
+) -> Optional[dict[str, Any]]:
+    """Look up a non-revoked operator key named `tenant-runtime` for the tenant.
+
+    Used by the restart-update path to decide whether the existing
+    operator key survived (rolling restart on same DB volume) or whether
+    we need to re-mint. Returns the record dict if found, None otherwise.
+    """
+    status, payload = _admin_http_request(
+        proxy_url,
+        AUTH_KEYS_PATH,
+        "GET",
+        admin_key,
+        tenant_uuid=tenant_uuid,
+    )
+    if status != 200:
+        raise RuntimeError(
+            f"list keys failed: status={status} body={payload}"
+        )
+    keys = payload.get("_list", payload) if isinstance(payload, dict) else payload
+    if not isinstance(keys, list):
+        return None
+    for record in keys:
+        if not isinstance(record, dict):
+            continue
+        if (
+            record.get("name") == OPERATOR_KEY_NAME
+            and record.get("role") == "operator"
+            and record.get("revoked_at") is None
+        ):
+            return record
+    return None
+
+
+def _find_tenant_by_label(
+    proxy_url: str, admin_key: str, tenant_label: str
+) -> Optional[str]:
+    """Find an existing tenant row in the proxy DB by its `name` field.
+
+    Used on `update(strategy="restart")`: the lifecycle layer doesn't
+    track the proxy-side tenant UUID (the proxy creates it during
+    `provision`). To rediscover it after a rolling restart, we list all
+    tenants (admin-only) and match by the human-readable label we
+    supplied at create time. Returns the UUID string, or None if no
+    tenant carries this label.
+    """
+    status, payload = _admin_http_request(
+        proxy_url, TENANTS_PATH, "GET", admin_key
+    )
+    if status != 200:
+        raise RuntimeError(
+            f"list tenants failed: status={status} body={payload}"
+        )
+    tenants = payload.get("_list", payload) if isinstance(payload, dict) else payload
+    if not isinstance(tenants, list):
+        return None
+    for record in tenants:
+        if isinstance(record, dict) and record.get("name") == tenant_label:
+            tenant_uuid = record.get("id")
+            if isinstance(tenant_uuid, str) and tenant_uuid:
+                return tenant_uuid
+    return None
+
+
 def provision(
     spec: TenantSpec, client: Optional[BasilicaClient] = None
 ) -> TenantInstances:
-    """Provision a fresh proxy + dashboard pair.
+    """Provision a fresh proxy + dashboard pair with scoped runtime auth.
 
     This always creates new Basilica deployments. The caller MUST track
     the returned `instance_id`s to perform any subsequent lifecycle
     operations (status / update / deprovision) — Basilica does not expose
     a friendly-name → UUID lookup, so the IDs cannot be rediscovered.
 
-    If `spec.enable_proxy_auth` is True (default), an LLMTrace API key
-    is resolved (explicit > env > auto-generated) and injected into both
-    component envs as `LLMTRACE_AUTH_ADMIN_KEY`. The plaintext key is
-    returned in `TenantInstances.api_key` so the caller can persist it
-    and hand it to the tenant — it's the only time the key is exposed.
+    When `spec.enable_proxy_auth` is True (default), the function:
 
-    To make provision *idempotent at the caller*: before calling, check
-    your own DB for existing IDs; if found, call `status(...)` with those
-    IDs instead.
+    1. Resolves a bootstrap admin key (explicit `spec.api_key` > existing
+       `LLMTRACE_AUTH_ADMIN_KEY` in proxy env > auto-generated). Injects
+       it into both proxy and dashboard envs as `LLMTRACE_AUTH_ADMIN_KEY`.
+    2. Creates the proxy and waits for it to become ready.
+    3. Calls `POST /api/v1/tenants` on the live proxy to materialise a
+       tenant row (the operator-key mint requires the tenant to exist).
+    4. Calls `POST /api/v1/auth/keys` to mint a scoped Operator-role key
+       named `tenant-runtime`. This is the key the tenant gets.
+    5. Injects the operator key into the dashboard env as
+       `LLMTRACE_AUTH_RUNTIME_KEY` (informational; dashboard consumption
+       is a follow-up), then deploys the dashboard.
+
+    Returns both keys: `api_key` is the operator key (runtime traffic);
+    `admin_key` is the bootstrap admin key (retained by the caller for
+    self-service / admin portal use, never given to tenants).
     """
     tenant_id = validate_tenant_id(spec.tenant_id)
     client = client or make_client()
     proxy_name = spec.proxy_name_template.format(tenant_id=tenant_id)
     dashboard_name = spec.dashboard_name_template.format(tenant_id=tenant_id)
 
-    api_key = _resolve_api_key(spec)
+    admin_key = _resolve_api_key(spec)
     proxy_spec, dashboard_spec = (spec.proxy, spec.dashboard)
-    if api_key is not None:
+    if admin_key is not None:
         proxy_spec, dashboard_spec = _apply_proxy_auth(
-            proxy_spec, dashboard_spec, api_key
+            proxy_spec, dashboard_spec, admin_key
         )
     if spec.rate_limit is not None:
         proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
 
     proxy = _create_component(client, proxy_name, proxy_spec)
+
+    operator_key: Optional[str] = None
+    if admin_key is not None:
+        tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
+        operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
+        dashboard_spec = _inject_runtime_key_into_dashboard(
+            dashboard_spec, operator_key
+        )
 
     if spec.inject_proxy_url_into_dashboard:
         merged_env = {**dashboard_spec.env, spec.proxy_url_env_var: proxy.url}
@@ -436,8 +667,57 @@ def provision(
     dashboard = _create_component(client, dashboard_name, dashboard_spec)
 
     return TenantInstances(
-        tenant_id=tenant_id, proxy=proxy, dashboard=dashboard, api_key=api_key
+        tenant_id=tenant_id,
+        proxy=proxy,
+        dashboard=dashboard,
+        api_key=operator_key,
+        admin_key=admin_key,
     )
+
+
+def _verify_or_remint_operator_key(
+    spec: TenantSpec, proxy_url: str
+) -> tuple[Optional[str], Optional[str]]:
+    """For restart-strategy updates, check whether the operator key survived.
+
+    Returns `(admin_key, operator_key_plaintext_or_None)`. The plaintext
+    operator key is only present when this function had to re-mint it
+    (the prior key plaintext is unknown to the platform — only its hash
+    lives in the proxy DB). When the key record is still present, we
+    return `None` for the operator key to signal "carry forward the
+    previous value from the caller's DB; nothing changed".
+
+    Tenant rediscovery: the proxy assigns the tenant UUID at create time;
+    the lifecycle layer doesn't persist that UUID across calls. We
+    therefore list tenants by admin and match on the supplied
+    `spec.tenant_id` label (the same label used at provision time). If
+    the label isn't found (DB was wiped despite the volume being
+    "persistent"), we bootstrap a fresh tenant + operator key.
+    """
+    if not spec.enable_proxy_auth:
+        return (None, None)
+    admin_key = _resolve_api_key(spec)
+    if admin_key is None:
+        return (None, None)
+    tenant_uuid = _find_tenant_by_label(proxy_url, admin_key, spec.tenant_id)
+    if tenant_uuid is None:
+        LOGGER.info(
+            "restart: tenant label=%s not found in proxy DB — bootstrapping",
+            spec.tenant_id,
+        )
+        tenant_uuid = _bootstrap_tenant_in_proxy(
+            proxy_url, admin_key, spec.tenant_id
+        )
+        return (admin_key, _mint_operator_key(proxy_url, admin_key, tenant_uuid))
+    existing = _find_operator_key_record(proxy_url, admin_key, tenant_uuid)
+    if existing is not None:
+        LOGGER.info(
+            "restart: existing operator key found prefix=%s — keeping",
+            existing.get("key_prefix"),
+        )
+        return (admin_key, None)
+    LOGGER.info("restart: no operator key found — re-minting")
+    return (admin_key, _mint_operator_key(proxy_url, admin_key, tenant_uuid))
 
 
 def update(
@@ -449,12 +729,18 @@ def update(
 ) -> TenantInstances:
     """Update the pair, addressed by caller-supplied UUIDs.
 
-    `strategy="restart"` rolls the existing pods; URLs and config stay
-    untouched. `spec` is consulted only for timeouts.
+    `strategy="restart"` rolls the existing pods on the same volume; URLs
+    and most config stay untouched. The proxy's DB survives, so the
+    operator key minted at provision time persists. The function verifies
+    the key record still exists; if absent (e.g. DB wipe), a fresh
+    operator key is minted and returned via `api_key`. When the key is
+    intact, `api_key` is None — the caller carries forward the
+    previously-stored plaintext from its own secret store.
 
     `strategy="recreate"` deletes both UUIDs and creates fresh ones from
-    `spec`. URLs change — return value carries the NEW UUIDs the caller
-    must persist.
+    `spec`. The DB is gone, so the operator key is always re-minted.
+    URLs change — return value carries the NEW UUIDs the caller must
+    persist along with the new `api_key`.
     """
     tenant_id = validate_tenant_id(spec.tenant_id)
     client = client or make_client()
@@ -476,7 +762,14 @@ def update(
             spec.dashboard.startup_timeout_seconds,
             expected_replicas=spec.dashboard.replicas,
         )
-        return TenantInstances(tenant_id=tenant_id, proxy=proxy, dashboard=dashboard)
+        admin_key, operator_key = _verify_or_remint_operator_key(spec, proxy.url)
+        return TenantInstances(
+            tenant_id=tenant_id,
+            proxy=proxy,
+            dashboard=dashboard,
+            api_key=operator_key,
+            admin_key=admin_key,
+        )
 
     if strategy != "recreate":
         raise ValueError(

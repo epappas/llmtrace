@@ -168,6 +168,7 @@ def _serialise(instances: lifecycle.TenantInstances) -> dict[str, Any]:
         "proxy_url": instances.proxy.url if instances.proxy else None,
         "dashboard_url": instances.dashboard.url if instances.dashboard else None,
         "api_key": instances.api_key,
+        "admin_key": instances.admin_key,
     }
 
 

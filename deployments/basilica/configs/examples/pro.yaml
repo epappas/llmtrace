@@ -1,9 +1,13 @@
 # LLMTrace tenant config — pro tier example.
 # Multi-replica proxy, persistent dashboard, debug logging, datamarking on.
 #
-# Auth: per-tenant API key is auto-generated at provision time (or supply
-# `api_key:` at the top level to force a specific value). See starter.yaml
-# for the full auth contract.
+# Auth: two-tier key model. The lifecycle library bootstraps a tenant on
+# the live proxy after readiness, then mints a scoped Operator-role key
+# via POST /api/v1/auth/keys. That operator key is what the tenant uses
+# for runtime traffic. The bootstrap admin key (auto-generated or pinned
+# via `api_key:` below) is retained by the caller for self-service /
+# admin pages and NEVER handed to the tenant. See starter.yaml + the
+# README "Per-tenant API key auth" section for the full contract.
 
 proxy:
   image: "ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}"
