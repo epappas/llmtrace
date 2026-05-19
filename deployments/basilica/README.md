@@ -198,6 +198,7 @@ Optional top-level fields:
 | `dashboard_name_template` | `"llmtrace-dashboard-{tenant_id}"` | Same for dashboard |
 | `inject_proxy_url_into_dashboard` | `true` | If true, the resolved proxy URL is auto-injected into the dashboard's env after the proxy is up |
 | `proxy_url_env_var` | `"LLMTRACE_PROXY_URL"` | Which env var to inject the proxy URL under |
+| `rate_limit` | unset | Optional per-tenant rate-limit override surfaced to the proxy as env vars (see below) |
 
 Optional per-component fields (override the defaults shown):
 
@@ -212,6 +213,56 @@ Optional per-component fields (override the defaults shown):
 | `liveness_failure_threshold` | `3` | Liveness probe failures before restart |
 | `readiness_period_seconds` | `10` | Readiness probe interval |
 | `readiness_failure_threshold` | `3` | Readiness probe failures before removing from service |
+
+### Per-tenant `rate_limit`
+
+Optional top-level block. When present, the lifecycle library injects two
+env vars into the proxy's `ComponentSpec` at `provision()` and
+`update(..., strategy="recreate")` time:
+
+| Env var | Source | Effect on the proxy |
+|---|---|---|
+| `LLMTRACE_RATE_LIMIT_RPS` | `rate_limit.requests_per_second` | Overrides `rate_limiting.requests_per_second` (default 100) |
+| `LLMTRACE_RATE_LIMIT_BURST` | `rate_limit.burst_size` | Overrides `rate_limiting.burst_size` (default 200) |
+
+Shape:
+
+```yaml
+rate_limit:
+  requests_per_second: 50   # strictly > 0
+  burst_size: 100           # strictly > 0
+```
+
+Behaviour:
+
+- Both fields are **required when the block is present** and must be
+  strictly positive — `RateLimitSpec.__post_init__` raises `ValueError`
+  otherwise.
+- The injected env vars **override** any same-named values the caller
+  put in `proxy.env` (same precedence as the auth-key injection).
+- On the proxy side, `LLMTRACE_RATE_LIMIT_RPS`/`_BURST` are parsed in
+  `crates/llmtrace-proxy/src/config.rs::apply_env_overrides`. Non-positive
+  or unparseable values are silently ignored so a typo cannot disable
+  rate limiting wholesale.
+- Omit the block to keep the proxy's built-in `RateLimitConfig::default()`
+  (100 rps / 200 burst). Per-tenant `tenant_overrides` set via
+  `RateLimitConfig::tenant_overrides` in the proxy's YAML are unaffected.
+
+### Request body cap
+
+The proxy enforces a hard request body cap before any handler executes
+(see `crates/llmtrace-proxy/src/main.rs::resolve_max_request_bytes`).
+The cap protects downstream ML detectors and the trace pipeline from
+a single oversized payload.
+
+- Default: **1 MiB** (1,048,576 bytes).
+- Configurable per-deployment via the `LLMTRACE_MAX_REQUEST_BYTES` env
+  var. Invalid / non-positive values fall back to the default — set this
+  in your tenant's `proxy.env` if you need a different cap.
+- Requests over the cap are rejected with HTTP `413 Payload Too Large`
+  when the `Content-Length` header is honest. Chunked / streamed bodies
+  that exceed the cap are aborted mid-stream and surface as `400 Bad
+  Request` from the proxy handler.
 
 ### `${VAR}` substitution
 

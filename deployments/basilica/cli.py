@@ -110,6 +110,19 @@ def _component_from_dict(data: dict[str, Any], label: str) -> lifecycle.Componen
     return lifecycle.ComponentSpec(**kwargs)
 
 
+def _rate_limit_from_dict(data: dict[str, Any]) -> lifecycle.RateLimitSpec:
+    required = {"requests_per_second", "burst_size"}
+    missing = required - data.keys()
+    if missing:
+        raise SystemExit(
+            f"rate_limit is missing required keys: {sorted(missing)}"
+        )
+    return lifecycle.RateLimitSpec(
+        requests_per_second=int(data["requests_per_second"]),
+        burst_size=int(data["burst_size"]),
+    )
+
+
 def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.TenantSpec:
     if "proxy" not in cfg or "dashboard" not in cfg:
         raise SystemExit(
@@ -132,6 +145,13 @@ def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.T
     ):
         if key in cfg:
             kwargs[key] = cfg[key]
+    if "rate_limit" in cfg and cfg["rate_limit"] is not None:
+        rate_limit_block = cfg["rate_limit"]
+        if not isinstance(rate_limit_block, dict):
+            raise SystemExit(
+                f"rate_limit must be a mapping, got {type(rate_limit_block).__name__}"
+            )
+        kwargs["rate_limit"] = _rate_limit_from_dict(rate_limit_block)
     return lifecycle.TenantSpec(**kwargs)
 
 

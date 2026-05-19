@@ -40,3 +40,11 @@ dashboard:
     HOSTNAME: 0.0.0.0
     NODE_ENV: production
     LLMTRACE_AUTH_ADMIN_KEY: "${LLMTRACE_AUTH_ADMIN_KEY:-}"
+
+# Optional per-tenant rate limit. Uncomment to surface tenant-specific
+# limits to the proxy at provision time as `LLMTRACE_RATE_LIMIT_RPS` /
+# `LLMTRACE_RATE_LIMIT_BURST` env vars. Both must be strictly positive.
+# Sized higher than starter to match the pro tier's expected load.
+# rate_limit:
+#   requests_per_second: 500
+#   burst_size: 1000

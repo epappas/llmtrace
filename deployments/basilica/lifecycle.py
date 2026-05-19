@@ -63,6 +63,34 @@ def generate_api_key() -> str:
 
 
 @dataclass(frozen=True)
+class RateLimitSpec:
+    """Per-tenant rate-limit knobs surfaced to the proxy as env vars.
+
+    `requests_per_second` is the steady-state allowance and `burst_size`
+    is the token-bucket headroom. Both must be strictly positive — the
+    proxy's `RateLimiter::check` treats non-positive values as
+    misconfiguration and falls back to the global default.
+
+    When present on `TenantSpec.rate_limit`, the lifecycle library
+    injects `LLMTRACE_RATE_LIMIT_RPS` and `LLMTRACE_RATE_LIMIT_BURST`
+    into the proxy ComponentSpec's env at provision/recreate time.
+    """
+
+    requests_per_second: int
+    burst_size: int
+
+    def __post_init__(self) -> None:
+        if self.requests_per_second <= 0:
+            raise ValueError(
+                f"rate_limit.requests_per_second must be > 0, got {self.requests_per_second}"
+            )
+        if self.burst_size <= 0:
+            raise ValueError(
+                f"rate_limit.burst_size must be > 0, got {self.burst_size}"
+            )
+
+
+@dataclass(frozen=True)
 class ComponentSpec:
     """Full deployment spec for one component (proxy or dashboard).
 
@@ -107,6 +135,14 @@ class TenantSpec:
     # (anyone with the URL can use it — only do this for trusted networks).
     enable_proxy_auth: bool = True
     api_key: Optional[str] = None
+    # Optional per-tenant rate-limit knobs. When set, the lifecycle
+    # library injects `LLMTRACE_RATE_LIMIT_RPS` and
+    # `LLMTRACE_RATE_LIMIT_BURST` into the proxy ComponentSpec env at
+    # provision time. The proxy reads these env vars in
+    # `config::apply_env_overrides` and applies them on top of any YAML
+    # `rate_limiting:` block. Unset means the proxy keeps whatever it
+    # was built with (default 100 rps / 200 burst).
+    rate_limit: Optional[RateLimitSpec] = None
 
 
 @dataclass(frozen=True)
@@ -340,6 +376,24 @@ def _apply_proxy_auth(
     )
 
 
+def _apply_rate_limit(
+    proxy_spec: ComponentSpec, rate_limit: RateLimitSpec
+) -> ComponentSpec:
+    """Inject `LLMTRACE_RATE_LIMIT_RPS` and `LLMTRACE_RATE_LIMIT_BURST`
+    into the proxy env.
+
+    The `TenantSpec.rate_limit` block is the source of truth for this
+    deployment, so it overwrites any same-named values the caller put
+    in `ComponentSpec.env` — same precedence model as `_apply_proxy_auth`.
+    """
+    proxy_env = {
+        **proxy_spec.env,
+        "LLMTRACE_RATE_LIMIT_RPS": str(rate_limit.requests_per_second),
+        "LLMTRACE_RATE_LIMIT_BURST": str(rate_limit.burst_size),
+    }
+    return dataclasses.replace(proxy_spec, env=proxy_env)
+
+
 def provision(
     spec: TenantSpec, client: Optional[BasilicaClient] = None
 ) -> TenantInstances:
@@ -371,6 +425,8 @@ def provision(
         proxy_spec, dashboard_spec = _apply_proxy_auth(
             proxy_spec, dashboard_spec, api_key
         )
+    if spec.rate_limit is not None:
+        proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
 
     proxy = _create_component(client, proxy_name, proxy_spec)
 

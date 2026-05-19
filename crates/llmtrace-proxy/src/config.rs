@@ -30,7 +30,15 @@ pub fn load_config(path: &Path) -> anyhow::Result<ProxyConfig> {
 /// - `LLMTRACE_CLICKHOUSE_DATABASE` → `storage.clickhouse_database`
 /// - `LLMTRACE_POSTGRES_URL` → `storage.postgres_url`
 /// - `LLMTRACE_REDIS_URL` → `storage.redis_url`
+/// - `LLMTRACE_AUTH_ENABLED` → `auth.enabled`
+/// - `LLMTRACE_AUTH_ADMIN_KEY` → `auth.admin_key`
+/// - `LLMTRACE_RATE_LIMIT_RPS` → `rate_limiting.requests_per_second`
+/// - `LLMTRACE_RATE_LIMIT_BURST` → `rate_limiting.burst_size`
 /// - `LLMTRACE_ML_MAX_CONCURRENT` → `ml_pipeline.max_concurrent_requests`
+///
+/// Rate-limit overrides only take effect when the parsed value is `> 0`
+/// (a `u32`). Invalid or non-positive values are ignored, leaving the
+/// loaded YAML value (or [`RateLimitConfig::default`]) in place.
 pub fn apply_env_overrides(config: &mut ProxyConfig) {
     if let Ok(val) = std::env::var("LLMTRACE_LISTEN_ADDR") {
         config.listen_addr = val;
@@ -63,6 +71,12 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
     if let Ok(val) = std::env::var("LLMTRACE_AUTH_ADMIN_KEY") {
         config.auth.admin_key = Some(val);
     }
+    if let Some(rps) = parse_positive_u32("LLMTRACE_RATE_LIMIT_RPS") {
+        config.rate_limiting.requests_per_second = rps;
+    }
+    if let Some(burst) = parse_positive_u32("LLMTRACE_RATE_LIMIT_BURST") {
+        config.rate_limiting.burst_size = burst;
+    }
     if let Ok(val) = std::env::var("LLMTRACE_ML_MAX_CONCURRENT") {
         match val.parse::<usize>() {
             Ok(n) if n > 0 => config.ml_pipeline.max_concurrent_requests = n,
@@ -72,6 +86,14 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
             ),
         }
     }
+}
+
+/// Parse a strictly positive `u32` from an env var. Returns `None` for
+/// missing, empty, unparseable, or zero values so the caller leaves the
+/// loaded configuration untouched.
+fn parse_positive_u32(name: &str) -> Option<u32> {
+    let raw = std::env::var(name).ok()?;
+    raw.trim().parse::<u32>().ok().filter(|n| *n > 0)
 }
 
 /// Validate a [`ProxyConfig`] for common configuration errors.
@@ -343,6 +365,44 @@ health_check:
         assert_eq!(config.storage.database_path, "/tmp/test.db");
         std::env::remove_var("LLMTRACE_STORAGE_PROFILE");
         std::env::remove_var("LLMTRACE_STORAGE_DATABASE_PATH");
+    }
+
+    /// Serialises tests that mutate the same rate-limit env vars so they
+    /// do not race when cargo runs them in parallel.
+    static RATE_LIMIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_apply_env_overrides_rate_limit_rps_and_burst() {
+        let _guard = RATE_LIMIT_ENV_LOCK.lock().unwrap();
+        let mut config = ProxyConfig::default();
+        std::env::set_var("LLMTRACE_RATE_LIMIT_RPS", "250");
+        std::env::set_var("LLMTRACE_RATE_LIMIT_BURST", "500");
+        apply_env_overrides(&mut config);
+        std::env::remove_var("LLMTRACE_RATE_LIMIT_RPS");
+        std::env::remove_var("LLMTRACE_RATE_LIMIT_BURST");
+        assert_eq!(config.rate_limiting.requests_per_second, 250);
+        assert_eq!(config.rate_limiting.burst_size, 500);
+    }
+
+    #[test]
+    fn test_apply_env_overrides_rate_limit_ignores_invalid() {
+        let _guard = RATE_LIMIT_ENV_LOCK.lock().unwrap();
+        let baseline = ProxyConfig::default();
+        let mut config = ProxyConfig::default();
+        std::env::set_var("LLMTRACE_RATE_LIMIT_RPS", "not-a-number");
+        std::env::set_var("LLMTRACE_RATE_LIMIT_BURST", "0");
+        apply_env_overrides(&mut config);
+        std::env::remove_var("LLMTRACE_RATE_LIMIT_RPS");
+        std::env::remove_var("LLMTRACE_RATE_LIMIT_BURST");
+        // Invalid / zero values must leave the loaded config untouched.
+        assert_eq!(
+            config.rate_limiting.requests_per_second,
+            baseline.rate_limiting.requests_per_second
+        );
+        assert_eq!(
+            config.rate_limiting.burst_size,
+            baseline.rate_limiting.burst_size
+        );
     }
 
     #[test]
