@@ -30,6 +30,7 @@ pub fn load_config(path: &Path) -> anyhow::Result<ProxyConfig> {
 /// - `LLMTRACE_CLICKHOUSE_DATABASE` → `storage.clickhouse_database`
 /// - `LLMTRACE_POSTGRES_URL` → `storage.postgres_url`
 /// - `LLMTRACE_REDIS_URL` → `storage.redis_url`
+/// - `LLMTRACE_ML_MAX_CONCURRENT` → `ml_pipeline.max_concurrent_requests`
 pub fn apply_env_overrides(config: &mut ProxyConfig) {
     if let Ok(val) = std::env::var("LLMTRACE_LISTEN_ADDR") {
         config.listen_addr = val;
@@ -61,6 +62,15 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
     }
     if let Ok(val) = std::env::var("LLMTRACE_AUTH_ADMIN_KEY") {
         config.auth.admin_key = Some(val);
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_ML_MAX_CONCURRENT") {
+        match val.parse::<usize>() {
+            Ok(n) if n > 0 => config.ml_pipeline.max_concurrent_requests = n,
+            _ => tracing::warn!(
+                value = %val,
+                "LLMTRACE_ML_MAX_CONCURRENT must be a positive integer; keeping current value"
+            ),
+        }
     }
 }
 
@@ -179,6 +189,10 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
 
     if config.security_analysis.max_analysis_text_bytes == 0 {
         errors.push("security_analysis.max_analysis_text_bytes must be > 0".to_string());
+    }
+
+    if config.ml_pipeline.max_concurrent_requests == 0 {
+        errors.push("ml_pipeline.max_concurrent_requests must be >= 1".to_string());
     }
 
     if errors.is_empty() {

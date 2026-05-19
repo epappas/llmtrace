@@ -3,6 +3,18 @@
 //! Receives incoming HTTP requests, extracts LLM metadata, forwards them to
 //! the upstream, captures the response, and spawns async background tasks for
 //! trace storage and security analysis.
+//!
+//! ## ML pipeline concurrency cap
+//!
+//! Pre-request enforcement (the CPU-bound ML detection block) is bounded
+//! by [`AppState::ml_pipeline_semaphore`]. Sized from
+//! `cfg.ml_pipeline.max_concurrent_requests` and tunable per-pod via the
+//! `LLMTRACE_ML_MAX_CONCURRENT` env var. On saturation, the handler
+//! responds 503 with `Retry-After: 1` immediately (`try_acquire` —
+//! never queues) so callers get fast, predictable backpressure rather
+//! than every in-flight request stalling on contended CPU. The gauge
+//! `llmtrace_ml_inflight_requests` and counter
+//! `llmtrace_ml_rejected_total` are exposed on `/metrics`.
 
 use crate::action_router::ActionRouter;
 use crate::circuit_breaker::CircuitBreaker;
@@ -217,6 +229,13 @@ pub struct AppState {
     pub shutdown: crate::shutdown::ShutdownCoordinator,
     /// Prometheus metrics collectors.
     pub metrics: crate::metrics::Metrics,
+    /// Bounds intra-pod concurrency of the CPU-bound ML detection
+    /// pipeline. The synchronous pre-request enforcement path acquires
+    /// a permit via `try_acquire`; on failure it returns 503 with
+    /// `Retry-After: 1` so callers get fast, predictable backpressure
+    /// instead of every concurrent request stalling on contended CPU.
+    /// Sized from `cfg.ml_pipeline.max_concurrent_requests`.
+    pub ml_pipeline_semaphore: Arc<tokio::sync::Semaphore>,
     /// Whether storage initialisation is complete.
     ///
     /// Set to `true` once all storage backends have been confirmed healthy
@@ -845,8 +864,30 @@ pub async fn proxy_handler(
     }
 
     // --- Pre-request security enforcement ---
+    // Cap intra-pod concurrency of the CPU-bound ML pipeline. `try_acquire`
+    // returns immediately when saturated; we reply 503 with `Retry-After: 1`
+    // so the client retries fast instead of every in-flight request stalling
+    // on contended CPU. The permit is held across the inline enforcement +
+    // action-router call; the background analysis path (post-upstream) is
+    // unbounded by design — it does not block client latency.
     let mut flagged_findings: Vec<SecurityFinding> = Vec::new();
     if cfg.enable_security_analysis {
+        let permit = match Arc::clone(&state.ml_pipeline_semaphore).try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                state.metrics.ml_rejected_total.inc();
+                state.metrics.active_connections.dec();
+                warn!(
+                    %trace_id,
+                    cap = state.ml_pipeline_semaphore.available_permits()
+                        + state.metrics.ml_inflight_requests.get() as usize,
+                    "ML pipeline saturated; rejecting request with 503"
+                );
+                return ml_saturated_response(trace_id);
+            }
+        };
+        state.metrics.ml_inflight_requests.inc();
+
         let enf_context = AnalysisContext {
             tenant_id,
             trace_id,
@@ -882,6 +923,10 @@ pub async fn proxy_handler(
             .action_router
             .execute_inline(decision, &action_ctx)
             .await;
+
+        // Release the ML pipeline permit before short-circuiting on Block.
+        state.metrics.ml_inflight_requests.dec();
+        drop(permit);
 
         match decision {
             crate::enforcement::EnforcementDecision::Block { reason, findings } => {
@@ -1912,6 +1957,27 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> Response<Body
 // ---------------------------------------------------------------------------
 
 /// Build a 429 Too Many Requests response for rate limit violations.
+/// Build a 503 Service Unavailable response when the ML pipeline
+/// concurrency cap is saturated. Includes `Retry-After: 1` so clients
+/// back off briefly; one second is enough for the typical 200-500ms ML
+/// inference call to drain a permit at steady state.
+fn ml_saturated_response(trace_id: Uuid) -> Response<Body> {
+    let body = serde_json::json!({
+        "error": {
+            "message": "ML detection pipeline at capacity; retry shortly",
+            "type": "ml_pipeline_saturated",
+            "retry_after_secs": 1,
+        }
+    });
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header("content-type", "application/json")
+        .header("retry-after", "1")
+        .header(TRACE_ID_HEADER, trace_id.to_string())
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
 fn rate_limit_response(
     tenant_id: TenantId,
     limit: u32,

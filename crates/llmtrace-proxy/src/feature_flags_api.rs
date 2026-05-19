@@ -920,6 +920,7 @@ mod tests {
             runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
             shutdown: crate::shutdown::ShutdownCoordinator::new(30),
             metrics: crate::metrics::Metrics::new(),
+            ml_pipeline_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
             ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }

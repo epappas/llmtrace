@@ -349,6 +349,14 @@ new_instances = lifecycle.update(spec, proxy_id=..., dashboard_id=..., strategy=
 - **Defence-in-depth** still worth doing separately: per-tenant rate
   limits (LLMTrace likely has them — configure), and DoS protection
   against CPU burn from ML detectors running before the upstream call.
+  The proxy now bounds intra-pod ML detection concurrency via a tokio
+  semaphore — tune the cap per-pod with the
+  `LLMTRACE_ML_MAX_CONCURRENT` env var (default `8`). Excess requests
+  receive `503 Service Unavailable` with `Retry-After: 1` instead of
+  every concurrent request stalling on contended CPU; the counter
+  `llmtrace_ml_rejected_total` and the gauge
+  `llmtrace_ml_inflight_requests` are exposed on `/metrics` for
+  alerting on sustained saturation.
 
 ## Per-tenant secret injection
 
