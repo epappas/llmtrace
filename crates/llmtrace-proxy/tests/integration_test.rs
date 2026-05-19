@@ -6,6 +6,7 @@
 //! 3. Sends requests through the proxy
 //! 4. Verifies traces, security findings, and streaming behaviour
 
+use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
@@ -14,6 +15,7 @@ use llmtrace_core::{
     ActionRouterConfig, ActionRuleConfig, CategoryEnforcement, EnforcementMode, ProxyConfig,
     SecurityAnalyzer, SecuritySeverity, StorageConfig, TenantId, TraceQuery,
 };
+use llmtrace_core::{AnalysisContext, SecurityFinding};
 use llmtrace_proxy::{health_handler, proxy_handler, AppState, CircuitBreaker};
 use llmtrace_security::RegexSecurityAnalyzer;
 use llmtrace_storage::StorageProfile;
@@ -99,6 +101,7 @@ async fn build_proxy_with_config(config: ProxyConfig) -> (Arc<AppState>, Router)
         runtime_overlay_status: llmtrace_proxy::proxy::RuntimeOverlayStatus::Disabled,
         shutdown: llmtrace_proxy::shutdown::ShutdownCoordinator::new(30),
         metrics: llmtrace_proxy::metrics::Metrics::new(),
+        ml_pipeline_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
         ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
@@ -1095,5 +1098,256 @@ async fn test_datamarking_emits_spotlighting_applied_info_finding() {
     assert!(
         info_findings >= 1,
         "spotlighting_applied Info finding must be emitted"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ML pipeline concurrency cap
+// ---------------------------------------------------------------------------
+
+/// A real `SecurityAnalyzer` that sleeps in `analyze_request` so the ML
+/// pipeline permit is held long enough for N+1 concurrent requests to
+/// race against the cap. NOT a mock — implements the trait honestly,
+/// returns no findings, and never panics. The only deviation from
+/// `RegexSecurityAnalyzer` is that it sleeps `delay_ms` before returning.
+struct SlowAnalyzer {
+    delay_ms: u64,
+}
+
+#[async_trait]
+impl llmtrace_core::SecurityAnalyzer for SlowAnalyzer {
+    async fn analyze_request(
+        &self,
+        _prompt: &str,
+        _context: &AnalysisContext,
+    ) -> llmtrace_core::Result<Vec<SecurityFinding>> {
+        tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+        Ok(Vec::new())
+    }
+
+    async fn analyze_response(
+        &self,
+        _response: &str,
+        _context: &AnalysisContext,
+    ) -> llmtrace_core::Result<Vec<SecurityFinding>> {
+        Ok(Vec::new())
+    }
+
+    fn name(&self) -> &'static str {
+        "slow_test_analyzer"
+    }
+
+    fn version(&self) -> &'static str {
+        "0.0.0"
+    }
+
+    fn supported_finding_types(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    async fn health_check(&self) -> llmtrace_core::Result<()> {
+        Ok(())
+    }
+}
+
+/// Build a proxy whose pre-request enforcement is intentionally slow,
+/// with the ML pipeline semaphore sized to `cap`. The upstream is the
+/// regular mock so requests that ARE admitted complete normally.
+async fn build_proxy_with_slow_analyzer(
+    upstream_url: &str,
+    cap: usize,
+    delay_ms: u64,
+) -> (Arc<AppState>, Router) {
+    let mut config = ProxyConfig {
+        upstream_url: upstream_url.to_string(),
+        listen_addr: "127.0.0.1:0".to_string(),
+        storage: StorageConfig {
+            profile: "memory".to_string(),
+            database_path: String::new(),
+            ..StorageConfig::default()
+        },
+        connection_timeout_ms: 2000,
+        timeout_ms: 5000,
+        enable_security_analysis: true,
+        enable_trace_storage: true,
+        enable_streaming: true,
+        ..ProxyConfig::default()
+    };
+    // mode=Log + empty categories short-circuits run_enforcement before
+    // the analyzer is called; force Flag so SlowAnalyzer is actually awaited
+    // and the semaphore permit is held across all overlapping requests.
+    config.enforcement.mode = llmtrace_core::EnforcementMode::Flag;
+    // Use Full analysis depth so the slow analyzer is exercised.
+    config.enforcement.analysis_depth = llmtrace_core::AnalysisDepth::Full;
+    // Make sure the enforcement timeout is well above the delay; otherwise
+    // the enforcement call will time out, fail-open, and release the permit
+    // before the N+1th request gets to try_acquire.
+    config.enforcement.timeout_ms = (delay_ms * 5).max(1000);
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_millis(config.connection_timeout_ms))
+        .timeout(Duration::from_millis(config.timeout_ms))
+        .build()
+        .unwrap();
+
+    let storage = StorageProfile::Memory.build().await.unwrap();
+    let slow: Arc<dyn SecurityAnalyzer> = Arc::new(SlowAnalyzer { delay_ms });
+    let security = slow.clone();
+    let fast_analyzer = slow;
+
+    let storage_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
+    let security_breaker = Arc::new(CircuitBreaker::new(10, Duration::from_secs(30), 3));
+
+    let cost_estimator = llmtrace_proxy::cost::CostEstimator::new(&config.cost_estimation);
+    let action_router = llmtrace_proxy::action_router::ActionRouter::new(
+        &config.action_router,
+        config.judge.promotion.clone(),
+        config.judge.worker.max_analysis_text_bytes,
+        Some(Arc::clone(&storage.cache)),
+        reqwest::Client::new(),
+    );
+    let cost_tracker =
+        llmtrace_proxy::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+    let rate_limiter =
+        llmtrace_proxy::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
+    let state = Arc::new(AppState {
+        config_handle: llmtrace_proxy::config_handle::ConfigHandle::new(config, None, None),
+        client,
+        storage,
+        security,
+        #[cfg(feature = "ml")]
+        security_ensemble: None,
+        ensemble_runtime: Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+        fast_analyzer,
+        storage_breaker,
+        security_breaker,
+        cost_estimator,
+        alert_engine: None,
+        cost_tracker,
+        anomaly_detector: None,
+        action_router,
+        report_store: llmtrace_proxy::compliance::new_report_store(),
+        rate_limiter,
+        ml_status: llmtrace_proxy::proxy::MlModelStatus::Disabled,
+        judge_worker_spawned: false,
+        runtime_overlay_status: llmtrace_proxy::proxy::RuntimeOverlayStatus::Disabled,
+        shutdown: llmtrace_proxy::shutdown::ShutdownCoordinator::new(30),
+        metrics: llmtrace_proxy::metrics::Metrics::new(),
+        ml_pipeline_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(cap)),
+        ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    });
+
+    let app = Router::new()
+        .route("/health", get(health_handler))
+        .fallback(axum::routing::any(proxy_handler))
+        .with_state(state.clone());
+
+    (state, app)
+}
+
+/// Verify the ML pipeline concurrency cap. With cap=N and N+1
+/// simultaneous requests, exactly one must come back 503 with
+/// `Retry-After: 1`, while the other N must complete with the
+/// upstream's 200 OK. The slow analyzer holds the semaphore permit
+/// long enough that all requests overlap inside `enforcement`.
+#[tokio::test]
+async fn ml_pipeline_semaphore_rejects_excess_concurrent_requests() {
+    let (upstream_url, _h) = serve(mock_upstream()).await;
+    let cap: usize = 3;
+    let delay_ms: u64 = 250;
+    let (state, _app) = build_proxy_with_slow_analyzer(&upstream_url, cap, delay_ms).await;
+
+    // Bind a real TCP listener so we can hammer it with reqwest in parallel.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let url = format!("http://{addr}/v1/chat/completions");
+    let app_router = Router::new()
+        .fallback(axum::routing::any(proxy_handler))
+        .with_state(state.clone());
+    let _server = tokio::spawn(async move {
+        axum::serve(listener, app_router).await.ok();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let body = json!({
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+
+    // Fire cap+1 requests concurrently. They must all enter the
+    // enforcement block before the first permit releases.
+    let mut handles = Vec::new();
+    for _ in 0..(cap + 1) {
+        let client = client.clone();
+        let url = url.clone();
+        let body = body.clone();
+        handles.push(tokio::spawn(async move {
+            client.post(&url).json(&body).send().await.map(|r| {
+                (
+                    r.status(),
+                    r.headers()
+                        .get("retry-after")
+                        .map(|v| v.to_str().unwrap_or("").to_string()),
+                )
+            })
+        }));
+    }
+
+    let mut ok_count = 0;
+    let mut rejected_count = 0;
+    let mut retry_after_seen = None;
+    for h in handles {
+        let (status, retry_after) = h.await.unwrap().unwrap();
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            rejected_count += 1;
+            retry_after_seen = retry_after;
+        } else if status == StatusCode::OK {
+            ok_count += 1;
+        } else {
+            panic!("unexpected status {status}: only 200 or 503 are valid outcomes");
+        }
+    }
+
+    assert_eq!(
+        rejected_count, 1,
+        "exactly one of cap+1 ({cap}+1) requests must be rejected; got {rejected_count} rejections, {ok_count} accepts"
+    );
+    assert_eq!(
+        ok_count, cap,
+        "the remaining cap ({cap}) requests must proceed; got {ok_count}"
+    );
+    assert_eq!(
+        retry_after_seen.as_deref(),
+        Some("1"),
+        "503 must carry Retry-After: 1"
+    );
+
+    // Prometheus counters must reflect the rejection.
+    let metrics_text = state.metrics.gather_text().unwrap();
+    assert!(
+        metrics_text.contains("llmtrace_ml_rejected_total"),
+        "ml_rejected_total must be exposed"
+    );
+    assert!(
+        metrics_text.contains("llmtrace_ml_inflight_requests"),
+        "ml_inflight_requests gauge must be exposed"
+    );
+    assert_eq!(
+        state.metrics.ml_rejected_total.get(),
+        1,
+        "rejection counter must be exactly 1"
+    );
+    // Gauge must drain to zero once all admitted requests finish.
+    // Give the in-flight requests a moment to finish their permit drop.
+    tokio::time::sleep(Duration::from_millis(delay_ms * 2)).await;
+    assert_eq!(
+        state.metrics.ml_inflight_requests.get(),
+        0,
+        "in-flight gauge must drain to zero after all admitted requests release their permit"
     );
 }

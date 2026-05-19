@@ -1243,6 +1243,12 @@ pub struct ProxyConfig {
     /// endpoints (`/debug/judge/verdicts`) added in issue #95.
     #[serde(default)]
     pub server: ServerConfig,
+    /// Concurrency cap for the CPU-bound ML detection pipeline.
+    ///
+    /// Prevents a flood of requests in a single pod from saturating CPU
+    /// running ML inference. Tunable via `LLMTRACE_ML_MAX_CONCURRENT`.
+    #[serde(default)]
+    pub ml_pipeline: MlPipelineConfig,
 }
 
 impl Default for ProxyConfig {
@@ -1285,6 +1291,7 @@ impl Default for ProxyConfig {
             action_router: ActionRouterConfig::default(),
             judge: JudgeConfig::default(),
             server: ServerConfig::default(),
+            ml_pipeline: MlPipelineConfig::default(),
         }
     }
 }
@@ -1888,6 +1895,42 @@ impl Default for RateLimitConfig {
             burst_size: 200,
             window_seconds: 60,
             tenant_overrides: HashMap::new(),
+        }
+    }
+}
+
+/// Concurrency cap for the proxy's ML detection pipeline.
+///
+/// On every inbound request the proxy may run several CPU-bound ML
+/// detectors (zone detection ensemble, jailbreak classifiers, fusion
+/// classifier, etc.). Without a bound, a flood of parallel requests can
+/// saturate the pod's CPU running inference and slow every concurrent
+/// request — including health checks. This struct caps the number of
+/// requests that may be inside the pre-request ML pipeline at any one
+/// time; the proxy returns 503 (with `Retry-After: 1`) for requests
+/// that would exceed the cap.
+///
+/// SaaS operators tune this per-pod via the `LLMTRACE_ML_MAX_CONCURRENT`
+/// environment variable (applied after YAML parse in
+/// `crates/llmtrace-proxy/src/config.rs`). The default of 8 is a safe
+/// lower bound for typical 4-core pods.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MlPipelineConfig {
+    /// Maximum number of requests allowed inside the ML detection
+    /// pipeline at once. Must be >= 1. Defaults to
+    /// [`default_ml_max_concurrent_requests`].
+    #[serde(default = "default_ml_max_concurrent_requests")]
+    pub max_concurrent_requests: usize,
+}
+
+fn default_ml_max_concurrent_requests() -> usize {
+    8
+}
+
+impl Default for MlPipelineConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: default_ml_max_concurrent_requests(),
         }
     }
 }
@@ -4127,6 +4170,7 @@ mod tests {
             boundary_defense: BoundaryTokenConfig::default(),
             judge: JudgeConfig::default(),
             server: ServerConfig::default(),
+            ml_pipeline: MlPipelineConfig::default(),
         };
 
         let serialized = serde_json::to_string(&config).unwrap();

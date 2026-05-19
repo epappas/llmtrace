@@ -530,6 +530,18 @@ async fn build_app_state(
     let metrics = llmtrace_proxy::metrics::Metrics::new();
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+    // Bound intra-pod concurrency of the CPU-bound ML pipeline.
+    // SaaS pods have k8s CPU limits, so cross-tenant blast radius is
+    // bounded; this prevents intra-pod self-saturation by one customer
+    // saturating CPU running ML inference. Tuned via the
+    // `LLMTRACE_ML_MAX_CONCURRENT` env var (see config.rs).
+    let ml_max_concurrent = config.ml_pipeline.max_concurrent_requests.max(1);
+    info!(
+        max_concurrent = ml_max_concurrent,
+        "ML pipeline concurrency cap initialised"
+    );
+    let ml_pipeline_semaphore = Arc::new(tokio::sync::Semaphore::new(ml_max_concurrent));
+
     // Boundary defense startup state
     if config.boundary_defense.enabled {
         info!(
@@ -687,6 +699,7 @@ async fn build_app_state(
         runtime_overlay_status,
         shutdown,
         metrics,
+        ml_pipeline_semaphore,
         ready,
     });
 

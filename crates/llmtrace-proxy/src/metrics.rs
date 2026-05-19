@@ -221,6 +221,18 @@ pub struct Metrics {
     /// Per-category false-positive rate against benign golden-set
     /// entries (#66 T3c). Range `[0.0, 1.0]`.
     pub judge_golden_set_false_positive_rate: GaugeVec,
+
+    /// Number of requests currently inside the ML detection pipeline
+    /// (permits-in-use of the per-pod semaphore). Rises and falls with
+    /// real load; a sustained reading equal to the configured cap
+    /// (`ml_pipeline.max_concurrent_requests`) means the pod is at
+    /// saturation and rejections will follow.
+    pub ml_inflight_requests: IntGauge,
+
+    /// Total ML pipeline requests rejected because the concurrency cap
+    /// was already saturated. Each increment corresponds to one client
+    /// 503 response with `Retry-After: 1`.
+    pub ml_rejected_total: IntCounter,
 }
 
 impl Metrics {
@@ -818,6 +830,24 @@ impl Metrics {
             .register(Box::new(judge_golden_set_false_positive_rate.clone()))
             .expect("register judge_golden_set_false_positive_rate");
 
+        let ml_inflight_requests = IntGauge::new(
+            "llmtrace_ml_inflight_requests",
+            "Requests currently inside the ML detection pipeline (permits-in-use)",
+        )
+        .expect("metric: ml_inflight_requests");
+        registry
+            .register(Box::new(ml_inflight_requests.clone()))
+            .expect("register ml_inflight_requests");
+
+        let ml_rejected_total = IntCounter::new(
+            "llmtrace_ml_rejected_total",
+            "Total ML pipeline requests rejected because the concurrency cap was saturated",
+        )
+        .expect("metric: ml_rejected_total");
+        registry
+            .register(Box::new(ml_rejected_total.clone()))
+            .expect("register ml_rejected_total");
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -878,6 +908,8 @@ impl Metrics {
             judge_shadow_would_block_total,
             judge_golden_set_alignment,
             judge_golden_set_false_positive_rate,
+            ml_inflight_requests,
+            ml_rejected_total,
         }
     }
 
