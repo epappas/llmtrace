@@ -23,6 +23,7 @@ use llmtrace_storage::StorageProfile;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -246,6 +247,9 @@ async fn run_proxy(
         storage_profile = %config.storage.profile,
         shutdown_timeout_seconds = config.shutdown.timeout_seconds,
         runtime_overlay_path = ?runtime_overlay_path,
+        max_request_bytes = resolve_max_request_bytes(),
+        rate_limit_rps = config.rate_limiting.requests_per_second,
+        rate_limit_burst = config.rate_limiting.burst_size,
         "Starting LLMTrace proxy server"
     );
 
@@ -952,12 +956,36 @@ async fn build_security_analyzer(
     }
 }
 
+/// Default request body cap (1 MiB).
+///
+/// The proxy enforces this hard cap before any handler is invoked so a
+/// single oversized payload cannot drive downstream ML detectors or the
+/// trace pipeline arbitrarily hard. Configurable per-deployment via
+/// the `LLMTRACE_MAX_REQUEST_BYTES` env var.
+const DEFAULT_MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// Resolve the per-request body cap from the environment, falling back
+/// to [`DEFAULT_MAX_REQUEST_BYTES`] on missing, empty, or unparseable
+/// values.
+fn resolve_max_request_bytes() -> usize {
+    match std::env::var("LLMTRACE_MAX_REQUEST_BYTES") {
+        Ok(raw) => raw
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_MAX_REQUEST_BYTES),
+        Err(_) => DEFAULT_MAX_REQUEST_BYTES,
+    }
+}
+
 /// Build the axum [`Router`] with all routes.
 fn build_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
+    let body_cap = resolve_max_request_bytes();
 
     let router = Router::new()
         // OpenAPI / Swagger UI (served by the proxy itself, not forwarded upstream).
@@ -1096,6 +1124,10 @@ fn build_router(state: Arc<AppState>) -> Router {
             llmtrace_proxy::auth::auth_middleware,
         ))
         .layer(cors)
+        // Hard request body cap. Rejects oversized requests with HTTP 413
+        // before any handler executes, protecting downstream detectors and
+        // the trace pipeline from arbitrarily large payloads.
+        .layer(RequestBodyLimitLayer::new(body_cap))
         .with_state(state)
 }
 
@@ -1329,6 +1361,119 @@ mod tests {
         let config = load_and_merge_config(&cli).unwrap();
         assert_eq!(config.logging.level, "debug");
         assert_eq!(config.logging.format, "json");
+    }
+
+    /// Mutex serialising tests that mutate process env (env vars are
+    /// per-process, not per-test, so unguarded parallel mutation races).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_resolve_max_request_bytes_defaults_when_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("LLMTRACE_MAX_REQUEST_BYTES");
+        assert_eq!(resolve_max_request_bytes(), DEFAULT_MAX_REQUEST_BYTES);
+    }
+
+    #[test]
+    fn test_resolve_max_request_bytes_parses_valid_value() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LLMTRACE_MAX_REQUEST_BYTES", "2048");
+        let cap = resolve_max_request_bytes();
+        std::env::remove_var("LLMTRACE_MAX_REQUEST_BYTES");
+        assert_eq!(cap, 2048);
+    }
+
+    #[test]
+    fn test_resolve_max_request_bytes_falls_back_on_garbage() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LLMTRACE_MAX_REQUEST_BYTES", "not-a-number");
+        let cap = resolve_max_request_bytes();
+        std::env::remove_var("LLMTRACE_MAX_REQUEST_BYTES");
+        assert_eq!(cap, DEFAULT_MAX_REQUEST_BYTES);
+    }
+
+    #[test]
+    fn test_resolve_max_request_bytes_falls_back_on_zero() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("LLMTRACE_MAX_REQUEST_BYTES", "0");
+        let cap = resolve_max_request_bytes();
+        std::env::remove_var("LLMTRACE_MAX_REQUEST_BYTES");
+        assert_eq!(cap, DEFAULT_MAX_REQUEST_BYTES);
+    }
+
+    #[tokio::test]
+    async fn test_request_body_cap_rejects_oversized_payload() {
+        // Lock the env mutex so we can override the cap to a small value
+        // without racing other env-touching tests. The router captures the
+        // value at build time, so we can drop the guard after build_router.
+        let cap_bytes = 1024usize;
+        let app = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            std::env::set_var("LLMTRACE_MAX_REQUEST_BYTES", cap_bytes.to_string());
+            let state = build_app_state(memory_config(), None).await.unwrap();
+            let app = build_router(state);
+            std::env::remove_var("LLMTRACE_MAX_REQUEST_BYTES");
+            app
+        };
+
+        // Oversized body must be rejected with 413 Payload Too Large
+        // before reaching the upstream proxy handler. We set
+        // Content-Length explicitly so the body-limit layer can refuse
+        // the request without buffering — matching how real clients
+        // present oversized payloads.
+        let oversized = vec![b'x'; cap_bytes + 1];
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("content-type", "application/octet-stream")
+            .header("content-length", oversized.len().to_string())
+            .header("authorization", "Bearer sk-test")
+            .body(Body::from(oversized))
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "request body over the configured cap must be rejected with 413"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_request_body_cap_allows_payload_under_default_limit() {
+        // Default cap is 1 MiB; a small body must route through without
+        // 413. The upstream is intentionally unreachable, so a 502 Bad
+        // Gateway here confirms the request reached the proxy_handler.
+        let config = ProxyConfig {
+            upstream_url: "http://127.0.0.1:1".to_string(),
+            connection_timeout_ms: 100,
+            timeout_ms: 500,
+            storage: llmtrace_core::StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..llmtrace_core::StorageConfig::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let state = build_app_state(config, None).await.unwrap();
+        let app = build_router(state);
+
+        let body = serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer sk-test")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let response = app.oneshot(req).await.unwrap();
+        assert_ne!(
+            response.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "small body must not be rejected by the body cap layer"
+        );
     }
 
     #[tokio::test]

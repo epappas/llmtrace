@@ -62,3 +62,11 @@ dashboard:
 # value (e.g. when recreating to preserve the existing tenant key).
 # enable_proxy_auth: true
 # api_key: null
+
+# Optional per-tenant rate limit. When uncommented, the lifecycle library
+# injects `LLMTRACE_RATE_LIMIT_RPS` and `LLMTRACE_RATE_LIMIT_BURST` into the
+# proxy env at provision time. Both must be strictly positive. Omit the
+# whole block to keep the proxy's built-in default (100 rps / 200 burst).
+# rate_limit:
+#   requests_per_second: 50
+#   burst_size: 100
