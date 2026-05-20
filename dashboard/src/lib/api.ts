@@ -2,6 +2,10 @@
 // LLMTrace REST API Client — typed fetch wrapper
 // ---------------------------------------------------------------------------
 
+import type { AuditEvent } from "./types";
+
+export type { AuditEvent };
+
 const API_BASE = "";
 
 /** Default tenant ID used as a fallback for the "default" tenant. */
@@ -532,4 +536,34 @@ export async function listReports(
 /** Get a single compliance report. */
 export async function getReport(id: string, tenantId?: string): Promise<ComplianceReport> {
   return apiFetch(`/api/v1/reports/${id}`, undefined, tenantId);
+}
+
+// -- Audit log -------------------------------------------------------------
+
+/** Query parameters for `GET /api/v1/audit`. */
+export interface ListAuditEventsParams {
+  event_type?: string;
+  start_time?: string;
+  end_time?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * List audit events for the authenticated tenant.
+ *
+ * The proxy returns a flat JSON array (newest-first). The handler is
+ * admin-only and derives the tenant from the auth context — passing
+ * `tenantId` here only sets the `X-LLMTrace-Tenant-ID` header used by the
+ * bootstrap admin key, never to broaden the result set.
+ */
+export async function listAuditEvents(
+  params: ListAuditEventsParams = {},
+  tenantId?: string,
+): Promise<AuditEvent[]> {
+  return apiFetch(
+    `/api/v1/audit${qs(params as Record<string, string | number | undefined>)}`,
+    undefined,
+    tenantId,
+  );
 }

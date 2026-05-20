@@ -14,6 +14,7 @@ import {
   FileCheck,
   BookOpen,
   Gauge,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { listTenants, setStoredTenant, type Tenant, DEFAULT_TENANT_ID } from "@/lib/api";
@@ -22,6 +23,7 @@ const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/traces", label: "Traces", icon: FileSearch },
   { href: "/security", label: "Security", icon: Shield },
+  { href: "/audit", label: "Audit", icon: ScrollText },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/tenants", label: "Tenants", icon: Users },
   { href: "/compliance", label: "Compliance", icon: FileCheck },
