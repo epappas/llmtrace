@@ -973,11 +973,32 @@ client doesn't accept that media type.
 ### ML preload behaviour
 
 The proxy image has `LLMTRACE_ML_ENABLED=1` and `LLMTRACE_ML_PRELOAD=1` by
-default in `starter.yaml`. Cold-boot includes model warm-up; in live tests
-the proxy hit `phase=ready` in ~60s. If your tenant config sets a smaller
-`startup_timeout_seconds`, the deployment may legitimately time out — bump
-the timeout or set `LLMTRACE_ML_PRELOAD=0` to defer model load to
-first-request time.
+default in `starter.yaml` and `pro.yaml`. Preload loads the
+`prompt_injection`, `ner`, `injecguard`, and `piguard` weights before
+`/health` flips to ready.
+
+Cost on small CPU shapes: the cold-boot wall clock is dominated by model
+load. On `cpu=2 / memory=4Gi` (starter) this consistently lands in the
+600–1500s range; the same image without preload reaches ready in ~40s.
+Bigger shapes are proportionally faster but the same band of preload cost
+applies on first boot.
+
+**Auto-bump** (`deployments/basilica/lifecycle.py::_apply_ml_preload_startup_floor`):
+when the resolved proxy env carries both `LLMTRACE_ML_ENABLED ∈ {1,true,yes}`
+and `LLMTRACE_ML_PRELOAD ∈ {1,true,yes}` AND the caller's
+`startup_timeout_seconds` is below `ML_PRELOAD_STARTUP_FLOOR_SECONDS`
+(currently 1500), the lifecycle library raises the timeout to the floor
+and emits a single WARN. This applies to `provision`,
+`update(strategy="recreate")`, and `rotate_admin_key`. Callers who set
+`startup_timeout_seconds >= 1500` keep their value and see no warning.
+
+**Opt out of preload entirely**: set `LLMTRACE_ML_PRELOAD: "0"` in
+`proxy.env` for lazy load. The first request pays the model-load
+latency; every subsequent request is fast. Useful when readiness latency
+matters more than first-request latency.
+
+**Silence the WARN**: set `startup_timeout_seconds: 1500` (or higher)
+explicitly in your config. Both example configs already do this.
 
 ### Cleanup of orphans
 
