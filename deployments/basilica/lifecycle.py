@@ -54,6 +54,19 @@ DEFAULT_DASHBOARD_NAME_TEMPLATE = "llmtrace-dashboard-{tenant_id}"
 API_KEY_PREFIX = "llmt_"
 API_KEY_RANDOM_BYTES = 32
 
+# Minimum startup window the lifecycle library will apply when the resolved
+# proxy env requests ML preload (`LLMTRACE_ML_ENABLED=1`,
+# `LLMTRACE_ML_PRELOAD=1`). On a cpu=2 shape, loading the prompt_injection +
+# ner + injecguard + piguard weights regularly exceeds the
+# `ComponentSpec.startup_timeout_seconds` default of 600s, so callers who
+# leave it at the default would silently time out. 1500s covers the observed
+# worst case with margin. Callers who explicitly set a higher value win.
+ML_PRELOAD_STARTUP_FLOOR_SECONDS = 1500
+
+# Env values that count as "enabled" for the ML preload flags. Matches the
+# truthiness rules in `crates/llmtrace-proxy/src/config.rs::env_flag`.
+_ML_FLAG_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes"})
+
 # Proxy admin API endpoints (see `crates/llmtrace-proxy/src/main.rs` routing).
 TENANTS_PATH = "/api/v1/tenants"
 AUTH_KEYS_PATH = "/api/v1/auth/keys"
@@ -426,6 +439,42 @@ def _apply_proxy_auth(
     )
 
 
+def _apply_ml_preload_startup_floor(
+    spec: ComponentSpec,
+    *,
+    tenant_id: Optional[str] = None,
+    floor: int = ML_PRELOAD_STARTUP_FLOOR_SECONDS,
+) -> ComponentSpec:
+    """Raise `startup_timeout_seconds` when the proxy env requests ML preload.
+
+    When both `LLMTRACE_ML_ENABLED` and `LLMTRACE_ML_PRELOAD` resolve to a
+    truthy value in `spec.env`, the proxy will block readiness on model
+    weight load before flipping `/health` to ready. On small CPU shapes that
+    can take well over the library's 600s default, so we floor the timeout
+    at `floor` (default `ML_PRELOAD_STARTUP_FLOOR_SECONDS`).
+
+    Callers who explicitly set `startup_timeout_seconds >= floor` keep their
+    value and no warning is emitted. The bump is a pure function on the spec
+    — no SDK calls — so it's safe to apply in any code path that creates the
+    proxy deployment.
+    """
+    ml_enabled = spec.env.get("LLMTRACE_ML_ENABLED", "").strip().lower() in _ML_FLAG_TRUTHY
+    ml_preload = spec.env.get("LLMTRACE_ML_PRELOAD", "").strip().lower() in _ML_FLAG_TRUTHY
+    if not (ml_enabled and ml_preload):
+        return spec
+    if spec.startup_timeout_seconds >= floor:
+        return spec
+    LOGGER.warning(
+        "ML preload detected (LLMTRACE_ML_ENABLED=1, LLMTRACE_ML_PRELOAD=1) "
+        "on tenant=%s; raising startup_timeout_seconds from %d to %d to "
+        "accommodate model load. Set explicitly to silence.",
+        tenant_id or "<unknown>",
+        spec.startup_timeout_seconds,
+        floor,
+    )
+    return dataclasses.replace(spec, startup_timeout_seconds=floor)
+
+
 def _apply_rate_limit(
     proxy_spec: ComponentSpec, rate_limit: RateLimitSpec
 ) -> ComponentSpec:
@@ -667,6 +716,7 @@ def rotate_admin_key(
     new_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": rotated_key}
     new_env.setdefault("LLMTRACE_AUTH_ENABLED", "true")
     rotated_spec = dataclasses.replace(proxy_spec, env=new_env)
+    rotated_spec = _apply_ml_preload_startup_floor(rotated_spec, tenant_id=tenant_id)
 
     proxy_name = proxy_name_template.format(tenant_id=tenant_id)
     LOGGER.info(
@@ -721,6 +771,7 @@ def provision(
         )
     if spec.rate_limit is not None:
         proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
+    proxy_spec = _apply_ml_preload_startup_floor(proxy_spec, tenant_id=tenant_id)
 
     proxy = _create_component(client, proxy_name, proxy_spec)
 

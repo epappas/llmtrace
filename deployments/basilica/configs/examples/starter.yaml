@@ -32,7 +32,14 @@ proxy:
   memory: 4Gi
   replicas: 1
   health_check_path: /health
-  startup_timeout_seconds: 600
+  # ML preload (LLMTRACE_ML_ENABLED=1 + LLMTRACE_ML_PRELOAD=1) loads the
+  # prompt_injection / ner / injecguard / piguard weights before /health flips
+  # to ready. On this cpu=2 shape that takes 600-1500s in practice. The
+  # lifecycle library auto-bumps to 1500s when both flags are on and this
+  # value is lower; we set 1500 explicitly to silence the WARN and document
+  # the cost. Set LLMTRACE_ML_PRELOAD=0 below for lazy load (first request
+  # pays the model-load latency, subsequent requests are fast).
+  startup_timeout_seconds: 1500
   env:
     LLMTRACE_UPSTREAM_URL: "${LLMTRACE_UPSTREAM_URL}"
     LLMTRACE_STORAGE_PROFILE: memory
