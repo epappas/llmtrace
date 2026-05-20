@@ -65,11 +65,11 @@ dashboard:
     NODE_ENV: production
     # LLMTRACE_AUTH_ADMIN_KEY is set by the lifecycle library at provision
     # time to match the proxy's resolved admin key (used by dashboard
-    # server-side handlers for admin endpoints). LLMTRACE_AUTH_RUNTIME_KEY
-    # is set after the operator key is minted — dashboard wiring to
-    # consume the runtime key for tenant-facing traffic is a follow-up.
-    # If you set either var here explicitly, that value wins for the
-    # dashboard env.
+    # server-side handlers for admin endpoints). The operator key minted
+    # for tenant runtime traffic is returned in TenantInstances.api_key
+    # and is NOT injected into the dashboard env — no dashboard code
+    # path consumes it today. If you set LLMTRACE_AUTH_ADMIN_KEY here
+    # explicitly, that value wins for the dashboard env.
 
 # Optional — override if your tenant naming scheme differs.
 # proxy_name_template: "llmtrace-proxy-{tenant_id}"

@@ -334,9 +334,13 @@ issues TWO keys with distinct scopes:
 5. Calls `POST /api/v1/auth/keys` (auth: admin key, scoped to that
    tenant UUID) with body `{name: "tenant-runtime", role: "operator",
    tenant_id: <uuid>}` and captures the plaintext operator key.
-6. Adds `LLMTRACE_AUTH_RUNTIME_KEY=<operator_key>` to the dashboard env
-   (informational today; consumed by a follow-up dashboard wiring
-   change) and creates the dashboard deployment.
+6. Creates the dashboard deployment. The dashboard env carries the
+   admin key (its only consumer today is the proxy's `/api/v1/*` admin
+   endpoints — see `dashboard/src/lib/api.ts`,
+   `dashboard/src/lib/proxy-helpers.ts`). The operator key is **not**
+   injected into the dashboard env because no dashboard code path
+   consumes it; it is returned to the caller for the tenant's external
+   apps to use against `/v1/*` runtime traffic.
 7. Returns `TenantInstances(api_key=<operator>, admin_key=<admin>)`.
 
 Both plaintext keys are exposed only at this moment. Persist them
@@ -418,12 +422,6 @@ without any control-plane scope. See
 
 ### Caveats and follow-ups
 
-- **Dashboard wiring follow-up**: the Next.js dashboard
-  (`dashboard/src/lib/api.ts`, `dashboard/src/lib/proxy-helpers.ts`)
-  currently only reads `LLMTRACE_AUTH_ADMIN_KEY`. The lifecycle layer
-  injects `LLMTRACE_AUTH_RUNTIME_KEY` informationally; a separate PR
-  should switch the dashboard to use the runtime key for tenant-facing
-  traffic and the admin key only for admin pages.
 - **Admin key rotation** is opt-in via `rotate_admin_after_bootstrap:
   true` in the tenant config — see the "Admin key rotation" section
   below. Without it the bootstrap admin key lives in the proxy env for

@@ -321,12 +321,15 @@ def _make_dashboard_spec(env: Optional[dict[str, str]] = None) -> lifecycle.Comp
     )
 
 
-def test_inject_runtime_key_adds_var_without_dropping_existing() -> None:
-    spec = _make_dashboard_spec({"HOSTNAME": "0.0.0.0", "LLMTRACE_AUTH_ADMIN_KEY": ADMIN_KEY})
-    updated = lifecycle._inject_runtime_key_into_dashboard(spec, OPERATOR_KEY)
-    assert updated.env["HOSTNAME"] == "0.0.0.0"
-    assert updated.env["LLMTRACE_AUTH_ADMIN_KEY"] == ADMIN_KEY
-    assert updated.env["LLMTRACE_AUTH_RUNTIME_KEY"] == OPERATOR_KEY
+def test_inject_runtime_key_helper_is_absent() -> None:
+    """Lock in that the dashboard does NOT receive the operator key.
+
+    The runtime-key-injection helper was removed (issue #245) because
+    no dashboard call path consumes the operator key; the dashboard
+    only talks to the proxy's admin endpoints with the admin key. This
+    test guards against re-introducing the dead-weight injection.
+    """
+    assert not hasattr(lifecycle, "_inject_runtime_key_into_dashboard")
 
 
 def test_apply_proxy_auth_sets_admin_key_on_both_sides() -> None:
@@ -495,10 +498,11 @@ def test_provision_returns_operator_key_as_api_key_and_admin_key_separately(
     assert proxy_create["env"]["LLMTRACE_AUTH_ADMIN_KEY"] == ADMIN_KEY
     assert proxy_create["env"]["LLMTRACE_AUTH_ENABLED"] == "true"
 
-    # Verify dashboard was created with BOTH admin and runtime keys in env.
+    # Verify dashboard was created with the admin key in env, and NOT the
+    # operator (runtime) key — no dashboard code path consumes it (issue #245).
     dash_create = next(c for c in fake_client.creates if "dashboard" in c["instance_name"])
     assert dash_create["env"]["LLMTRACE_AUTH_ADMIN_KEY"] == ADMIN_KEY
-    assert dash_create["env"]["LLMTRACE_AUTH_RUNTIME_KEY"] == OPERATOR_KEY
+    assert "LLMTRACE_AUTH_RUNTIME_KEY" not in dash_create["env"]
 
 
 def test_provision_skips_key_flow_when_proxy_auth_disabled(fake_proxy: Any) -> None:

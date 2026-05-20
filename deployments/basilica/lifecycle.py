@@ -426,9 +426,10 @@ def _apply_proxy_auth(
     can still talk to the proxy's admin endpoints (key management,
     tenant CRUD) on behalf of the portal/self-service UI;
     `LLMTRACE_AUTH_ENABLED` is only defaulted (caller may explicitly turn
-    it off in env). The operator key (`LLMTRACE_AUTH_RUNTIME_KEY`) is
-    injected later in `_inject_runtime_key_into_dashboard` once the proxy
-    is live and the key has been minted.
+    it off in env). The operator key is returned to the caller in
+    `TenantInstances.api_key` for tenant runtime apps to use against
+    `/v1/*`; it is intentionally NOT injected into the dashboard env
+    because no dashboard code path consumes it today.
     """
     proxy_env = {**proxy_spec.env, "LLMTRACE_AUTH_ADMIN_KEY": admin_key}
     proxy_env.setdefault("LLMTRACE_AUTH_ENABLED", "true")
@@ -491,22 +492,6 @@ def _apply_rate_limit(
         "LLMTRACE_RATE_LIMIT_BURST": str(rate_limit.burst_size),
     }
     return dataclasses.replace(proxy_spec, env=proxy_env)
-
-
-def _inject_runtime_key_into_dashboard(
-    dashboard_spec: ComponentSpec, operator_key: str
-) -> ComponentSpec:
-    """Add `LLMTRACE_AUTH_RUNTIME_KEY=<operator_key>` to the dashboard env.
-
-    NOTE: as of this PR the Next.js dashboard only reads
-    `LLMTRACE_AUTH_ADMIN_KEY` (`dashboard/src/lib/api.ts`,
-    `dashboard/src/lib/proxy-helpers.ts`). The runtime variable is set
-    informationally so the dashboard wiring follow-up (consume the
-    operator key for tenant-facing traffic, fall back to admin only for
-    admin pages) is a pure dashboard change with no platform side.
-    """
-    env = {**dashboard_spec.env, "LLMTRACE_AUTH_RUNTIME_KEY": operator_key}
-    return dataclasses.replace(dashboard_spec, env=env)
 
 
 def _admin_http_request(
@@ -750,9 +735,10 @@ def provision(
        tenant row (the operator-key mint requires the tenant to exist).
     4. Calls `POST /api/v1/auth/keys` to mint a scoped Operator-role key
        named `tenant-runtime`. This is the key the tenant gets.
-    5. Injects the operator key into the dashboard env as
-       `LLMTRACE_AUTH_RUNTIME_KEY` (informational; dashboard consumption
-       is a follow-up), then deploys the dashboard.
+    5. Deploys the dashboard. Only the admin key is in the dashboard env
+       because the dashboard's only call path today is the proxy's admin
+       endpoints; the operator key is returned to the caller for the
+       tenant's external runtime apps.
 
     Returns both keys: `api_key` is the operator key (runtime traffic);
     `admin_key` is the bootstrap admin key (retained by the caller for
@@ -796,9 +782,6 @@ def provision(
 
         tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
-        dashboard_spec = _inject_runtime_key_into_dashboard(
-            dashboard_spec, operator_key
-        )
 
     if spec.inject_proxy_url_into_dashboard:
         merged_env = {**dashboard_spec.env, spec.proxy_url_env_var: proxy.url}
