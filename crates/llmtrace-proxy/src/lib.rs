@@ -7,6 +7,7 @@ pub mod action_router;
 pub mod alerts;
 pub mod anomaly;
 pub mod api;
+pub mod audit_api;
 pub mod auth;
 pub mod boundary;
 pub mod circuit_breaker;

@@ -40,6 +40,7 @@ impl Modify for SecurityAddon {
         crate::api::get_current_costs,
         crate::api::report_action,
         crate::api::actions_summary,
+        crate::audit_api::list_audit_events,
         crate::auth::create_api_key,
         crate::auth::list_api_keys,
         crate::auth::revoke_api_key,
