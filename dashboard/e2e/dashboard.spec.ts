@@ -121,6 +121,31 @@ test.describe('LLMTrace Dashboard', () => {
     createdTenantIds = createdTenantIds.filter((id) => id !== body.id);
   });
 
+  test('Tenants: should surface proxy connection banner with copyable URL', async ({ page }) => {
+    await page.goto('/tenants');
+    await page.waitForLoadState('networkidle');
+
+    // The banner is server-rendered from LLMTRACE_PROXY_URL. The dashboard
+    // dev server in CI sets it to the proxy base URL, so the populated state
+    // should render. If for any reason the env var is missing, fall back to
+    // asserting the warning state — both are acceptable, but at least one
+    // must be present.
+    const populated = page.getByTestId('proxy-connection-banner');
+    const missing = page.getByTestId('proxy-connection-banner-missing');
+
+    const populatedVisible = await populated.isVisible().catch(() => false);
+    if (populatedVisible) {
+      await expect(populated).toBeVisible();
+      await expect(page.getByTestId('proxy-url-value')).toBeVisible();
+      await expect(page.getByTestId('proxy-url-value')).not.toBeEmpty();
+      await expect(page.getByTestId('copy-proxy-url-button')).toBeVisible();
+      await expect(page.getByTestId('proxy-curl-example')).toBeVisible();
+      await expect(page.getByTestId('copy-proxy-curl-button')).toBeVisible();
+    } else {
+      await expect(missing).toBeVisible();
+    }
+  });
+
   test('Traces: should filter by Trace ID and Model', async ({ page }) => {
     await page.goto('/traces');
     await page.waitForLoadState('networkidle');
