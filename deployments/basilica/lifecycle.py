@@ -23,6 +23,7 @@ does a rolling restart of the existing pods (URL stable, no config change).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import os
@@ -42,8 +43,26 @@ from basilica import (
 
 LOGGER = logging.getLogger(__name__)
 
-# DNS-safe slug, ≤30 chars to leave headroom for friendly-name prefixes.
-TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
+# Maximum length accepted by `validate_tenant_id`. The library accepts any
+# caller-supplied identifier (UUID, email, opaque string); slugging to a
+# DNS-safe Basilica deployment name happens internally in `_basilica_slug`.
+MAX_TENANT_ID_LEN = 256
+
+# DNS-safe Basilica deployment slug guarantee. `_basilica_slug` always
+# returns a value matching this regex; downstream Basilica friendly-name
+# templates need a stable k8s-compatible string.
+_BASILICA_SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
+
+# Maximum slug length (matches the regex's 30-char ceiling). Splits into
+# a sanitised prefix and a 6-hex collision-resistant suffix joined by `-`.
+_SLUG_MAX_LEN = 30
+_SLUG_HASH_HEX = 6
+_SLUG_PREFIX_MAX = _SLUG_MAX_LEN - 1 - _SLUG_HASH_HEX  # 23
+
+# Anything not in `[a-z0-9-]` after lowercasing is rewritten to `-` in the
+# slug prefix.
+_SLUG_INVALID_CHARS = re.compile(r"[^a-z0-9-]")
+_SLUG_DASH_RUN = re.compile(r"-+")
 
 POLL_INTERVAL_SECONDS = 10
 
@@ -250,11 +269,58 @@ class RotationResult:
 
 
 def validate_tenant_id(tenant_id: str) -> str:
-    if not TENANT_ID_PATTERN.match(tenant_id):
+    """Permissive validation for the caller-supplied tenant identifier.
+
+    The library accepts any non-empty string up to `MAX_TENANT_ID_LEN`
+    chars with no whitespace or control characters. The DNS-safe Basilica
+    deployment slug is derived internally via `_basilica_slug` — the two
+    namespaces are intentionally distinct (see issue #259).
+    """
+    if not isinstance(tenant_id, str):
         raise ValueError(
-            f"tenant_id {tenant_id!r} must match {TENANT_ID_PATTERN.pattern}"
+            f"tenant_id must be a str, got {type(tenant_id).__name__}"
         )
+    if not tenant_id:
+        raise ValueError("tenant_id must be non-empty")
+    if len(tenant_id) > MAX_TENANT_ID_LEN:
+        raise ValueError(
+            f"tenant_id length {len(tenant_id)} exceeds max {MAX_TENANT_ID_LEN}"
+        )
+    for ch in tenant_id:
+        if ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F:
+            raise ValueError(
+                f"tenant_id contains whitespace or control character: {tenant_id!r}"
+            )
     return tenant_id
+
+
+def _basilica_slug(tenant_id: str) -> str:
+    """Derive a DNS-safe Basilica deployment slug from any caller identifier.
+
+    Deterministic for the same input. Result matches
+    `^[a-z0-9][a-z0-9-]{0,29}$` — Basilica's k8s naming rule. The slug is
+    `<sanitised-prefix>-<6-char-blake2b-hex>` capped at 30 chars; the hash
+    suffix prevents collisions between two callers whose identifiers
+    sanitise to the same prefix (e.g. `alice@acme` and `alice_acme`).
+    """
+    lowered = tenant_id.lower()
+    cleaned = _SLUG_INVALID_CHARS.sub("-", lowered)
+    cleaned = _SLUG_DASH_RUN.sub("-", cleaned).strip("-")
+    prefix = cleaned or "tenant"
+    prefix = prefix[:_SLUG_PREFIX_MAX]
+    # Trailing dash from truncation is fine (joined by `-` next); leading
+    # dash would break the leading-alnum requirement.
+    if prefix.startswith("-"):
+        prefix = ("x" + prefix)[:_SLUG_PREFIX_MAX]
+    hash6 = hashlib.blake2b(
+        tenant_id.encode("utf-8"), digest_size=_SLUG_HASH_HEX // 2
+    ).hexdigest()
+    slug = f"{prefix}-{hash6}"
+    if not _BASILICA_SLUG_PATTERN.match(slug):
+        raise RuntimeError(
+            f"internal: derived slug {slug!r} fails Basilica naming rule"
+        )
+    return slug
 
 
 def make_client(api_key: Optional[str] = None) -> BasilicaClient:
@@ -730,7 +796,7 @@ def rotate_admin_key(
     rotated_spec = dataclasses.replace(proxy_spec, env=new_env)
     rotated_spec = _apply_ml_preload_startup_floor(rotated_spec, tenant_id=tenant_id)
 
-    proxy_name = proxy_name_template.format(tenant_id=tenant_id)
+    proxy_name = proxy_name_template.format(tenant_id=_basilica_slug(tenant_id))
     LOGGER.info(
         "rotating admin key tenant=%s old_proxy=%s", tenant_id, proxy_instance_id
     )
@@ -773,8 +839,9 @@ def provision(
     """
     tenant_id = validate_tenant_id(spec.tenant_id)
     client = client or make_client()
-    proxy_name = spec.proxy_name_template.format(tenant_id=tenant_id)
-    dashboard_name = spec.dashboard_name_template.format(tenant_id=tenant_id)
+    slug = _basilica_slug(tenant_id)
+    proxy_name = spec.proxy_name_template.format(tenant_id=slug)
+    dashboard_name = spec.dashboard_name_template.format(tenant_id=slug)
 
     admin_key = _resolve_api_key(spec)
     proxy_spec, dashboard_spec = (spec.proxy, spec.dashboard)

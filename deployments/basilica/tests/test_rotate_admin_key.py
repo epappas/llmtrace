@@ -95,7 +95,10 @@ class RotateAdminKeyTests(unittest.TestCase):
             kwargs["env"]["LLMTRACE_AUTH_ADMIN_KEY"], "llmt_oldkey"
         )
         self.assertEqual(kwargs["env"]["LLMTRACE_AUTH_ENABLED"], "true")
-        self.assertEqual(kwargs["instance_name"], "llmtrace-proxy-acme")
+        # Post-#259 the friendly name is templated against the Basilica
+        # slug (deterministic from the tenant_id), not the raw tenant_id.
+        expected_slug = lifecycle._basilica_slug("acme")
+        self.assertEqual(kwargs["instance_name"], f"llmtrace-proxy-{expected_slug}")
         self.assertEqual(result.tenant_id, "acme")
         self.assertEqual(result.proxy.instance_id, new_proxy_id)
         self.assertEqual(result.admin_key, kwargs["env"]["LLMTRACE_AUTH_ADMIN_KEY"])
@@ -131,10 +134,14 @@ class RotateAdminKeyTests(unittest.TestCase):
         client.create_deployment.assert_not_called()
 
     def test_rotation_propagates_invalid_tenant_id(self) -> None:
+        # Post-#259 the validator accepts arbitrary user identifiers
+        # (uppercase, emails, UUIDs) and only rejects empty / whitespace /
+        # control-char input. We still want a ValueError to short-circuit
+        # the delete+recreate, so feed a value the validator rejects.
         client = MagicMock()
         with self.assertRaises(ValueError):
             lifecycle.rotate_admin_key(
-                tenant_id="UPPER",
+                tenant_id="has space",
                 proxy_instance_id="uuid-old",
                 proxy_spec=_proxy_spec(),
                 client=client,
@@ -155,7 +162,8 @@ class RotateAdminKeyTests(unittest.TestCase):
         )
 
         kwargs = client.create_deployment.call_args.kwargs
-        self.assertEqual(kwargs["instance_name"], "custom-acme-proxy")
+        expected_slug = lifecycle._basilica_slug("acme")
+        self.assertEqual(kwargs["instance_name"], f"custom-{expected_slug}-proxy")
 
 
 class ProvisionWithRotateAfterBootstrapTests(unittest.TestCase):
