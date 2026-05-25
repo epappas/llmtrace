@@ -210,4 +210,55 @@ test.describe("Dashboard Coverage Gaps", () => {
     await expect(page.getByRole("img", { name: "Overview screenshot" })).toBeVisible();
     await expect(page.getByRole("img", { name: "Settings screenshot" })).toBeVisible();
   });
+
+  test("Settings: API Connection should show the three backend URL rows", async ({ page }) => {
+    await page.route("**/api/proxy/config/live", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          config: {
+            upstream_url: "https://api.openai.com",
+            listen_addr: "0.0.0.0:8081",
+          },
+        }),
+      });
+    });
+
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: "API Connection", exact: true })).toBeVisible();
+
+    const proxyRow = page.getByTestId("proxy-public-url-row");
+    const dashRow = page.getByTestId("dashboard-proxy-url-row");
+    const upstreamRow = page.getByTestId("upstream-url-row");
+
+    await expect(proxyRow).toBeVisible();
+    await expect(dashRow).toBeVisible();
+    await expect(upstreamRow).toBeVisible();
+
+    // The misleading localhost:8080 placeholder must be gone.
+    await expect(page.locator("body")).not.toContainText("http://localhost:8080");
+
+    // Upstream URL row reflects the live config field.
+    await expect(upstreamRow.getByTestId("upstream-url-row-value")).toHaveText(
+      "https://api.openai.com",
+    );
+  });
+
+  test("Settings: Upstream row degrades to Unavailable when proxy is unreachable", async ({
+    page,
+  }) => {
+    await page.route("**/api/proxy/config/live", async (route) => {
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "Backend unavailable" } }),
+      });
+    });
+
+    await page.goto("/settings");
+    const upstreamRow = page.getByTestId("upstream-url-row");
+    await expect(upstreamRow).toBeVisible();
+    await expect(upstreamRow.getByTestId("upstream-url-row-value")).toHaveText("Unavailable");
+  });
 });
