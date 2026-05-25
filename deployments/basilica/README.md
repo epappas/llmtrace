@@ -601,6 +601,88 @@ By the time the CLI runs, every `${VAR}` reference in the tenant config
 resolves against the merged env (platform defaults overridden by
 tenant-supplied values).
 
+### Per-tenant upstream provider
+
+The two most common per-tenant overrides — which upstream LLM provider the
+proxy forwards `/v1/*` traffic to, and the bearer token used to call it —
+are first-class workflow inputs alongside `admin_username` /
+`admin_password`. They map onto the existing env-var substitution path,
+so the tenant YAML keeps using `${LLMTRACE_UPSTREAM_URL}` and
+`${OPENAI_API_KEY}` exactly as before.
+
+| Input | Becomes env var | Purpose |
+|---|---|---|
+| `upstream_url` | `LLMTRACE_UPSTREAM_URL` | Base URL the proxy forwards to (`https://api.openai.com`, `https://api.anthropic.com`, a vLLM endpoint, etc.) |
+| `upstream_api_key` | `OPENAI_API_KEY` | Bearer for the upstream provider. Masked in step logs at resolution time. |
+
+Precedence (most-explicit wins):
+
+1. Caller-supplied entries inside `tenant_secrets_json` (or
+   `client_payload.tenant_secrets`) under the same key still win — those are
+   the most-explicit form and the new inputs do not clobber them.
+2. The dedicated `upstream_url` / `upstream_api_key` workflow inputs.
+3. The repo-level `LLMTRACE_UPSTREAM_URL` / `OPENAI_API_KEY` secrets (job-
+   level `env:` defaults).
+
+#### Example: OpenAI
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id=acme \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f upstream_url="https://api.openai.com" \
+  -f upstream_api_key="sk-..."
+```
+
+#### Example: Anthropic
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id=acme \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f upstream_url="https://api.anthropic.com" \
+  -f upstream_api_key="sk-ant-..."
+```
+
+Note: Anthropic uses `x-api-key` server-side rather than
+`Authorization: Bearer`. The proxy forwards client headers transparently,
+so the `upstream_api_key` value lands in `OPENAI_API_KEY` for the proxy's
+internal use; Anthropic-specific routing is tracked separately (see the
+Provider examples section below).
+
+#### Example: self-hosted vLLM
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id=acme \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f upstream_url="https://vllm.internal.example/v1" \
+  -f upstream_api_key="dummy-or-real-token"
+```
+
+`repository_dispatch` accepts the same two keys inside `client_payload`:
+
+```json
+{
+  "event_type": "tenant-lifecycle",
+  "client_payload": {
+    "tenant_id": "acme",
+    "action": "provision",
+    "config_path": "deployments/basilica/configs/examples/pro.yaml",
+    "upstream_url": "https://api.openai.com",
+    "upstream_api_key": "sk-..."
+  }
+}
+```
+
+If you need to override an env-var name the dedicated inputs do not cover
+(e.g. `ANTHROPIC_API_KEY`, a custom header secret), keep using
+`tenant_secrets_json` / `client_payload.tenant_secrets` — those entries
+also remain authoritative when both paths set the same key.
+
 ### Security caveats
 
 - `workflow_dispatch` input *values* are stored in the run's metadata. The

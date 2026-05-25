@@ -70,6 +70,28 @@ on:
         required: false
         type: string
         default: ""
+      upstream_url:
+        description: >-
+          Upstream LLM provider base URL the proxy forwards `/v1/*`
+          traffic to (e.g. `https://api.openai.com`,
+          `https://api.anthropic.com`, a self-hosted vLLM endpoint).
+          Becomes `LLMTRACE_UPSTREAM_URL` at runtime. Per-tenant
+          override of the repo's `LLMTRACE_UPSTREAM_URL` secret.
+          Entries in `tenant_secrets_json` still win if both set
+          the same key.
+        required: false
+        type: string
+        default: ""
+      upstream_api_key:
+        description: >-
+          Upstream LLM provider API key (e.g. an OpenAI `sk-...`).
+          Becomes `OPENAI_API_KEY` at runtime. Masked in step logs.
+          Per-tenant override of the repo's `OPENAI_API_KEY` secret.
+          Entries in `tenant_secrets_json` still win if both set the
+          same key.
+        required: false
+        type: string
+        default: ""
       tenant_secrets_json:
         description: >-
           JSON object of per-tenant secrets to inject as env vars before the
@@ -135,6 +157,8 @@ jobs:
           WF_NEW_ADMIN_KEY: ${{ inputs.new_admin_key }}
           WF_ADMIN_USERNAME: ${{ inputs.admin_username }}
           WF_ADMIN_PASSWORD: ${{ inputs.admin_password }}
+          WF_UPSTREAM_URL: ${{ inputs.upstream_url }}
+          WF_UPSTREAM_API_KEY: ${{ inputs.upstream_api_key }}
           WF_SECRETS: ${{ inputs.tenant_secrets_json }}
           RD_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
@@ -153,6 +177,8 @@ jobs:
               new_admin_key = os.environ.get("WF_NEW_ADMIN_KEY", "")
               admin_username = os.environ.get("WF_ADMIN_USERNAME", "") or ""
               admin_password = os.environ.get("WF_ADMIN_PASSWORD", "") or ""
+              upstream_url = os.environ.get("WF_UPSTREAM_URL", "") or ""
+              upstream_api_key = os.environ.get("WF_UPSTREAM_API_KEY", "") or ""
               secrets_json = os.environ.get("WF_SECRETS", "{}") or "{}"
               try:
                   secrets = json.loads(secrets_json)
@@ -172,6 +198,8 @@ jobs:
               new_admin_key = payload.get("new_admin_key", "") or ""
               admin_username = payload.get("admin_username", "") or ""
               admin_password = payload.get("admin_password", "") or ""
+              upstream_url = payload.get("upstream_url", "") or ""
+              upstream_api_key = payload.get("upstream_api_key", "") or ""
               secrets   = payload.get("tenant_secrets", {}) or {}
           else:
               raise SystemExit(f"::error::unsupported event {event!r}")
@@ -187,6 +215,9 @@ jobs:
           # Same for the seeded admin password.
           if admin_password:
               print(f"::add-mask::{admin_password}")
+          # Same for the upstream provider API key.
+          if upstream_api_key:
+              print(f"::add-mask::{upstream_api_key}")
 
           # If admin_username / admin_password were supplied as workflow inputs
           # (the per-tenant ergonomic UX), overlay them onto the resolved
@@ -231,8 +262,18 @@ jobs:
               if cfg_json:
                   fh.write(f"CFG_JSON<<__LIFECYCLE_EOF__\n{cfg_json}\n__LIFECYCLE_EOF__\n")
 
+          # Overlay the dedicated upstream-provider inputs onto the secrets
+          # dict so the existing `Inject tenant secrets` step picks them up
+          # via the same proven masking + heredoc path. Caller-supplied
+          # entries in `tenant_secrets_json` / `client_payload.tenant_secrets`
+          # take precedence when both paths set the same key.
+          if upstream_url and "LLMTRACE_UPSTREAM_URL" not in secrets:
+              secrets["LLMTRACE_UPSTREAM_URL"] = upstream_url
+          if upstream_api_key and "OPENAI_API_KEY" not in secrets:
+              secrets["OPENAI_API_KEY"] = upstream_api_key
+
           pathlib.Path("/tmp/tenant_secrets.json").write_text(json.dumps(secrets))
-          print(f"resolved: tenant_id={tenant_id} action={action} secret_keys={sorted(secrets.keys())} admin_creds_supplied={bool(admin_username or admin_password)}")
+          print(f"resolved: tenant_id={tenant_id} action={action} secret_keys={sorted(secrets.keys())} admin_creds_supplied={bool(admin_username or admin_password)} upstream_url={upstream_url!r}")
           PY
 
       - name: Inject tenant secrets
