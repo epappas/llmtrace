@@ -42,6 +42,18 @@ permissions:
   contents: read
   packages: write
 
+# Serialise concurrent publish runs per ref so a slow / hung build doesn't
+# pile up behind itself. `cancel-in-progress: false` because each pushed
+# commit deserves its own `:sha-<x>` tag — we don't want to skip SHAs.
+# Combined with the per-job `timeout-minutes` below, a hung older build
+# fails fast and frees the slot for the next one within the timeout
+# window rather than blocking indefinitely (the old default was 360min
+# but real-world hangs in this workflow exceeded 9h before manual
+# cancellation in the 2026-05-25 incident).
+concurrency:
+  group: publish-images-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   OWNER: techlab-innov
@@ -50,6 +62,10 @@ jobs:
   proxy:
     name: Proxy image
     runs-on: ubuntu-latest
+    # Hard cap so a hung buildx / QEMU multi-arch step fails fast instead
+    # of holding the slot indefinitely. Historical good runs complete in
+    # well under 30 min. See incident notes in the concurrency block above.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -104,6 +120,8 @@ jobs:
   dashboard:
     name: Dashboard image
     runs-on: ubuntu-latest
+    # Same hard cap as the proxy job — see notes above.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
