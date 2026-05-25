@@ -39,6 +39,192 @@ The new lifecycle library + CLI + workflow are the multi-tenant path. The
 `deploy.py` / `deploy_dashboard.py` / `teardown.py` scripts predate this work
 and remain as a single-tenant operator escape hatch.
 
+## End-to-end provisioning journey
+
+This section is the app integrator's walkthrough. The downstream sections
+(`Architecture`, `Per-tenant API key auth`, `Per-tenant secret injection`,
+`Provider examples`, `Lifecycle operations in detail`, `Operational
+notes`, `Repo secrets reference`, `Troubleshooting`) remain as reference
+depth — read them when you need the rationale behind a specific knob.
+
+### The ten steps
+
+1. App holds a Basilica API key (`BASILICA_API_TOKEN`).
+2. App triggers `lifecycle.py` (direct CLI) OR dispatches
+   `tenant-lifecycle.yml` workflow.
+3. Required inputs:
+   - `tenant_id` — the app's user_id. Any non-empty string up to 256
+     chars with no whitespace or control characters; the library slugs
+     it internally for Basilica deployment naming (issue #259).
+   - `admin_username` + `admin_password` — dashboard sign-in
+     credentials. `admin_username` accepts either an email or a
+     username; the library does not validate format (issue #260).
+   - LLMTrace proxy config (feature flags / behaviour, YAML/JSON via
+     `config_path` / `config_json`).
+   - `upstream_url` + `upstream_api_key` — backend LLM provider URL
+     and key. First-class workflow_dispatch inputs that overlay onto
+     the secrets dict; caller-supplied entries in `tenant_secrets_json`
+     still win (issue #261).
+4. Lifecycle deploys + waits for ready.
+5. Output returned: first tenant operator token (`api_key`), admin key
+   (`admin_key`), `proxy_url`, `dashboard_url`, `admin_username`.
+6. User signs into the dashboard at `dashboard_url` with
+   `admin_username` + `admin_password`.
+7. From the dashboard the user can: create more API keys (admin /
+   operator / viewer roles), view traces, view audit log, view security
+   findings, view live proxy config.
+8. App passes `proxy_url` + `api_key` (operator token) into its chat /
+   agent runtime as the OpenAI-compatible base URL.
+9. Proxy traces, labels, and (when configured) blocks inference
+   traffic.
+10. App can query `proxy_url/metrics` with the operator API key to
+    scrape telemetry.
+
+### Workflow examples (`gh workflow run`)
+
+All three examples use only inputs defined on
+`.github/workflows/tenant-lifecycle.yml`: `tenant_id`, `action`,
+`config_path`, `admin_username`, `admin_password`, `upstream_url`,
+`upstream_api_key`.
+
+OpenAI upstream:
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id="user-uuid-550e8400-e29b-41d4-a716-446655440000" \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f admin_username="ops@acme.example" \
+  -f admin_password="llmt_<64-hex-of-your-choosing>" \
+  -f upstream_url="https://api.openai.com" \
+  -f upstream_api_key="sk-..."
+```
+
+Anthropic upstream:
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id="user-uuid-550e8400-e29b-41d4-a716-446655440000" \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f admin_username="ops@acme.example" \
+  -f admin_password="llmt_<64-hex-of-your-choosing>" \
+  -f upstream_url="https://api.anthropic.com" \
+  -f upstream_api_key="sk-ant-..."
+```
+
+Self-hosted vLLM upstream:
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id="user-uuid-550e8400-e29b-41d4-a716-446655440000" \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f admin_username="ops@acme.example" \
+  -f admin_password="llmt_<64-hex-of-your-choosing>" \
+  -f upstream_url="https://vllm.internal.example/v1" \
+  -f upstream_api_key="dummy-or-real-token"
+```
+
+### Direct library invocation (skip GitHub Actions)
+
+The CLI exposes the same lifecycle library that the workflow drives. Use
+this path when your app has its own worker / queue and wants to keep
+secrets out of GitHub Actions entirely (see "Embedding in your app"
+below for the full rationale).
+
+```bash
+BASILICA_API_TOKEN="$platform_token" \
+LLMTRACE_UPSTREAM_URL="https://api.openai.com" \
+OPENAI_API_KEY="$tenant_openai_key" \
+LLMTRACE_AUTH_ADMIN_KEY="llmt_<64-hex-of-your-choosing>" \
+python -m deployments.basilica.cli provision \
+  --tenant-id "user-uuid-550e8400-e29b-41d4-a716-446655440000" \
+  --config deployments/basilica/configs/examples/pro.yaml
+```
+
+The CLI emits result JSON to stdout (see next subsection). Exit codes:
+`0` success, `2` usage error, `3` lifecycle error. To pin
+`admin_username` from a config file, add `admin_username:
+"ops@acme.example"` at the top level of the YAML (the CLI's
+`_tenant_spec_from_config` reads it into `TenantSpec.admin_username`).
+
+### Expected result JSON
+
+```json
+{
+  "tenant_id": "user-uuid-550e8400-e29b-41d4-a716-446655440000",
+  "proxy_url": "https://<uuid>.deployments.basilica.ai",
+  "dashboard_url": "https://<uuid>.deployments.basilica.ai",
+  "api_key": "<masked: operator token, give to tenant apps>",
+  "admin_key": "<masked: admin key, retain in your app>",
+  "admin_username": "ops@acme.example"
+}
+```
+
+Both `api_key` and `admin_key` are emitted in plaintext exactly once.
+Persist them in your app's secret store immediately; the proxy stores
+only a hash, so re-fetching the plaintext later is impossible.
+
+### Role matrix
+
+What each role can do once the dashboard is up. Verified against
+`crates/llmtrace-proxy/src/auth.rs` and the route table in
+`crates/llmtrace-proxy/src/main.rs::build_router`.
+
+| Role | Dashboard sign-in | `/v1/*` traffic | `/api/v1/auth/keys` (admin) | `/metrics` | `/health` |
+| --- | --- | --- | --- | --- | --- |
+| Admin | Yes | Yes | Yes | Yes (authenticated)[^metrics] | Yes (no auth) |
+| Operator | Yes (read-only-ish) | Yes | 403 | Yes (authenticated)[^metrics] | Yes (no auth) |
+| Viewer | Yes (read-only) | See note[^viewer-v1] | 403 | Yes (authenticated)[^metrics] | Yes (no auth) |
+
+[^viewer-v1]: The user-facing spec calls for Viewer to be 403 on
+`/v1/*`. The current proxy code does not enforce that: the `/v1/*`
+fallback `proxy_handler` (see
+`crates/llmtrace-proxy/src/proxy.rs::proxy_handler`) does not call
+`require_role`, so any authenticated key — including Viewer — can
+forward inference traffic. Tightening the fallback to require Operator
+is tracked separately; until then, do not hand a Viewer key to a
+caller you do not also trust to forward traffic.
+
+[^metrics]: The `/metrics` route is registered before the auth
+middleware layer (see
+`crates/llmtrace-proxy/src/main.rs::build_router`). The middleware
+allow-list only exempts `/health`, `/swagger-ui`, and `/api-doc`, so
+with `auth.enabled = true` a Prometheus scraper must present a valid
+bearer (any role). The legacy "metrics needs no auth" comment in
+`metrics.rs` reflects the disabled-auth path; treat the table above as
+the live behaviour when auth is on.
+
+### Identifier vs deployment naming
+
+`tenant_id` is the human-readable identifier your app already uses
+(UUID, email, opaque string — anything `validate_tenant_id` accepts,
+see issue #259). The library does NOT use that string directly to name
+the Basilica deployment, because k8s requires
+`^[a-z0-9][a-z0-9-]{0,29}$`. Instead it derives a DNS-safe slug via
+`_basilica_slug(tenant_id) = <sanitised-prefix>-<6-char-blake2b-hex>`
+(see `deployments/basilica/lifecycle.py::_basilica_slug`).
+
+Consequence:
+
+- The Basilica deployment name and the resulting
+  `<slug>.deployments.basilica.ai` URL are built from the slug.
+- The proxy's tenant row `name` column (`POST /api/v1/tenants`) and
+  every downstream audit-log entry retain the **original**
+  `tenant_id` — the human-readable identifier the caller's users
+  actually see.
+
+The slug is deterministic, so re-running `update` / `status` /
+`deprovision` with the same original `tenant_id` re-derives the same
+Basilica deployment name without the caller having to remember the
+slug form.
+
+### Configuring feature flags from the dashboard UI
+
+Editing feature flags from the dashboard UI is tracked as issue #262
+(deferred).
+
 ## Architecture
 
 Three layers, each a thin wrapper around the next:
