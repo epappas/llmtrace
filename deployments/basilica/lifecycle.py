@@ -173,12 +173,13 @@ class TenantSpec:
     # Trade-off: adds one proxy re-roll (~30s) to provisioning. Opt-in
     # because most callers will not need it.
     rotate_admin_after_bootstrap: bool = False
-    # Display username for the dashboard login form. The dashboard's
-    # `/api/auth/login` route checks the submitted username matches
+    # Display identifier seeded into the dashboard login form. The
+    # dashboard's `/api/auth/login` route checks the submitted value matches
     # `LLMTRACE_DASHBOARD_ADMIN_USERNAME` (case-insensitive) AND that the
     # submitted password validates against the proxy as an admin key.
-    # Defaults to "admin"; override at provision time to seed a custom
-    # operator-visible identity ("alice@acme.example" etc.).
+    # Free string — the app decides whether to seed an email, a username,
+    # or any other identifier. The library does not validate format. The
+    # dashboard login form accepts whatever was seeded. Defaults to "admin".
     admin_username: str = "admin"
 
 

@@ -377,7 +377,7 @@ The dashboard now requires a sign-in. The login form takes two fields:
 
 | Field | Source | Notes |
 |---|---|---|
-| Username | `LLMTRACE_DASHBOARD_ADMIN_USERNAME` env on the dashboard pod (set by `_apply_dashboard_admin_username`). Defaults to `"admin"`. | Pre-filled from the public `/api/auth/identity` endpoint as a UX nicety. Case-insensitive match. |
+| Email or username | `LLMTRACE_DASHBOARD_ADMIN_USERNAME` env on the dashboard pod (set by `_apply_dashboard_admin_username`). Defaults to `"admin"`. | Free string — the app decides whether to seed an email, a username, or any other identifier. The lifecycle library does not validate format; the dashboard accepts whatever was seeded. Pre-filled from the public `/api/auth/identity` endpoint as a UX nicety. Case-insensitive match. |
 | Admin key | The `admin_key` returned from `provision()` (either auto-generated or pinned). | The actual secret; validated against the proxy's admin endpoint on each login. |
 
 To seed both at provision time, supply them on either dispatch path:

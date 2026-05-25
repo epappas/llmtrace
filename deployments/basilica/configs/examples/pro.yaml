@@ -64,6 +64,8 @@ dashboard:
 # rotate_admin_after_bootstrap: true
 
 # Dashboard login: the operator signs in with admin_username + the admin
-# key (pinned via `api_key:` above or auto-generated). Default is "admin";
-# override per tenant for a custom display identity.
+# key (pinned via `api_key:` above or auto-generated). `admin_username` is
+# a free string — either an email or a username is accepted. The lifecycle
+# library does not validate format; the dashboard accepts whatever was
+# seeded. Default is "admin"; override per tenant for a custom identity.
 # admin_username: "ops@acme.example"
