@@ -29,7 +29,7 @@ use bytes::Bytes;
 use chrono::Utc;
 use futures_util::StreamExt;
 use llmtrace_core::{
-    truncate_to_byte_limit, AgentAction, AnalysisContext, LLMProvider, ProxyConfig,
+    truncate_to_byte_limit, AgentAction, AnalysisContext, ApiKeyRole, LLMProvider, ProxyConfig,
     SecurityAnalyzer, SecurityFinding, Storage, TenantId, TraceEvent, TraceSpan,
 };
 use reqwest::Client;
@@ -633,6 +633,16 @@ pub async fn proxy_handler(
             TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
         }
     };
+
+    // RBAC: when auth is enabled, the catch-all forwarder (/v1/*) requires
+    // at least Operator role. Viewer keys are read-only and must not
+    // forward inference traffic. See issue #269.
+    if cfg.auth.enabled {
+        if let Some(err) = crate::auth::require_role(req.extensions(), ApiKeyRole::Operator) {
+            state.metrics.active_connections.dec();
+            return err;
+        }
+    }
 
     let _api_key = extract_api_key(&headers);
     let agent_id = extract_agent_id(&headers);

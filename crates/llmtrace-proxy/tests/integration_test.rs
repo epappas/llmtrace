@@ -1351,3 +1351,155 @@ async fn ml_pipeline_semaphore_rejects_excess_concurrent_requests() {
         "in-flight gauge must drain to zero after all admitted requests release their permit"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #269 — `/v1/*` forwarder must require at least Operator role.
+// ---------------------------------------------------------------------------
+
+/// Build an auth-enabled proxy app: bootstrap admin key + auth middleware
+/// wired around the proxy_handler fallback. Used by the RBAC tests below.
+async fn build_auth_enabled_proxy(upstream_url: &str, admin_key: &str) -> (Arc<AppState>, Router) {
+    let config = ProxyConfig {
+        upstream_url: upstream_url.to_string(),
+        listen_addr: "127.0.0.1:0".to_string(),
+        storage: StorageConfig {
+            profile: "memory".to_string(),
+            database_path: String::new(),
+            ..StorageConfig::default()
+        },
+        connection_timeout_ms: 2000,
+        timeout_ms: 5000,
+        enable_security_analysis: true,
+        enable_trace_storage: true,
+        enable_streaming: true,
+        auth: llmtrace_core::AuthConfig {
+            enabled: true,
+            admin_key: Some(admin_key.to_string()),
+        },
+        ..ProxyConfig::default()
+    };
+    let (state, _bare) = build_proxy_with_config(config).await;
+    let app = Router::new()
+        .route("/health", get(health_handler))
+        .fallback(axum::routing::any(proxy_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            llmtrace_proxy::auth::auth_middleware,
+        ))
+        .with_state(Arc::clone(&state));
+    (state, app)
+}
+
+/// Seed a tenant + a non-admin API key with the requested role. Returns
+/// the plaintext key value that callers send in `Authorization: Bearer`.
+async fn seed_role_key(state: &Arc<AppState>, role: llmtrace_core::ApiKeyRole) -> String {
+    let tenant = llmtrace_core::Tenant {
+        id: TenantId::new(),
+        name: format!("rbac-{role}"),
+        api_token: format!("token-{role}"),
+        plan: "free".to_string(),
+        created_at: chrono::Utc::now(),
+        config: serde_json::json!({}),
+    };
+    state.metadata().create_tenant(&tenant).await.unwrap();
+
+    let (plaintext, hash) = llmtrace_proxy::auth::generate_api_key();
+    let record = llmtrace_core::ApiKeyRecord {
+        id: uuid::Uuid::new_v4(),
+        tenant_id: tenant.id,
+        name: format!("rbac-{role}-key"),
+        key_hash: hash,
+        key_prefix: llmtrace_proxy::auth::key_prefix(&plaintext),
+        role,
+        created_at: chrono::Utc::now(),
+        revoked_at: None,
+    };
+    state.metadata().create_api_key(&record).await.unwrap();
+    plaintext
+}
+
+#[tokio::test]
+async fn test_v1_forward_admin_role_allowed() {
+    let (upstream_url, _h) = serve(mock_upstream()).await;
+    let (_state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+
+    let req = Request::post("/v1/chat/completions")
+        .header("authorization", "Bearer admin-bootstrap")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "admin key must be allowed to forward /v1/* traffic"
+    );
+}
+
+#[tokio::test]
+async fn test_v1_forward_operator_role_allowed() {
+    let (upstream_url, _h) = serve(mock_upstream()).await;
+    let (state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+    let operator_key = seed_role_key(&state, llmtrace_core::ApiKeyRole::Operator).await;
+
+    let req = Request::post("/v1/chat/completions")
+        .header("authorization", format!("Bearer {operator_key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "operator key must be allowed to forward /v1/* traffic"
+    );
+}
+
+#[tokio::test]
+async fn test_v1_forward_viewer_role_forbidden() {
+    let (upstream_url, _h) = serve(mock_upstream()).await;
+    let (state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+    let viewer_key = seed_role_key(&state, llmtrace_core::ApiKeyRole::Viewer).await;
+
+    let req = Request::post("/v1/chat/completions")
+        .header("authorization", format!("Bearer {viewer_key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "viewer key must be rejected by /v1/* forwarder (issue #269)"
+    );
+
+    let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body = String::from_utf8_lossy(&bytes);
+    assert!(
+        body.contains("requires operator role, have viewer"),
+        "403 body must surface the standard require_role message; got: {body}"
+    );
+}
