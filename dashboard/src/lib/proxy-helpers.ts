@@ -1,77 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fetchWithFallback } from "./backend";
+import { isAuthDisabled } from "./auth";
 
-const backendUrlCandidates = [
-  process.env.LLMTRACE_PROXY_URL,
-  process.env.LLMTRACE_BACKEND_URL,
-  "http://llmtrace-proxy:8080",
-  "http://llmtrace-proxy:8081",
-  "http://127.0.0.1:8080",
-  "http://127.0.0.1:8081",
-  "http://localhost:8080",
-  "http://localhost:8081",
-].filter((value, index, arr): value is string => Boolean(value) && arr.indexOf(value) === index);
+function buildHeaders(req: NextRequest, extra: Record<string, string> = {}): Record<string, string> | NextResponse {
+  const headers: Record<string, string> = { ...extra };
+  const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
+  if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
 
-async function fetchWithFallback(
-  backendPath: string,
-  init: RequestInit,
-): Promise<{ response: Response; backendUrl: string }> {
-  let lastError: unknown;
-  let lastResponse: Response | undefined;
-  const normalizedPath = backendPath.split("?")[0] ?? backendPath;
-  const retryOnNotFoundPaths = [
-    "/api/v1/config/live",
-    "/config/live",
-    "/swagger-ui",
-    "/swagger-ui/",
-    "/api-doc/openapi.json",
-  ];
-  const shouldRetryOnNotFound = retryOnNotFoundPaths.some((path) =>
-    normalizedPath.startsWith(path),
-  );
+  const authHeader = req.headers.get("authorization");
+  if (authHeader) {
+    headers["Authorization"] = authHeader;
+    return headers;
+  }
 
-  for (const backendUrl of backendUrlCandidates) {
-    const url = new URL(backendPath, backendUrl);
-    try {
-      const response = await fetch(url.toString(), init);
-      if (shouldRetryOnNotFound && response.status === 404) {
-        lastResponse = response;
-        continue;
-      }
-      return { response, backendUrl };
-    } catch (error) {
-      lastError = error;
+  // Local-dev escape hatch: when auth is disabled the dashboard mirrors the
+  // pre-#250 behaviour — inject the bootstrap admin key if one is configured,
+  // otherwise pass the request through unauthenticated (the local dev proxy
+  // also runs without an admin key, so no Authorization header is needed).
+  if (isAuthDisabled()) {
+    if (process.env.LLMTRACE_AUTH_ADMIN_KEY) {
+      headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
     }
+    return headers;
   }
 
-  if (lastResponse) {
-    return {
-      response: lastResponse,
-      backendUrl: "none",
-    };
-  }
-
-  throw lastError ?? new Error("No backend URL candidates configured");
+  return NextResponse.json(
+    { error: { message: "auth required", type: "auth_required" } },
+    { status: 401 },
+  );
 }
 
 /**
  * Proxy a GET request to the LLMTrace backend, forwarding query params
- * and relevant headers (tenant identification).
+ * and relevant headers (tenant identification, Authorization).
  */
 export async function proxyGet(
   req: NextRequest,
   backendPath: string,
 ): Promise<NextResponse> {
-  const headers: Record<string, string> = {};
-  const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
-  if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
-  
-  // Forward incoming auth, or inject bootstrap admin key
-  const authHeader = req.headers.get("authorization");
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  } else if (process.env.LLMTRACE_AUTH_ADMIN_KEY) {
-    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
-  }
+  const headers = buildHeaders(req);
+  if (headers instanceof NextResponse) return headers;
 
   try {
     const pathWithQuery = `${backendPath}${req.nextUrl.search}`;
@@ -102,19 +70,8 @@ export async function proxyMutate(
   backendPath: string,
   method: string,
 ): Promise<NextResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
-  if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
-
-  // Forward incoming auth, or inject bootstrap admin key
-  const authHeader = req.headers.get("authorization");
-  if (authHeader) {
-    headers["Authorization"] = authHeader;
-  } else if (process.env.LLMTRACE_AUTH_ADMIN_KEY) {
-    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
-  }
+  const headers = buildHeaders(req, { "Content-Type": "application/json" });
+  if (headers instanceof NextResponse) return headers;
 
   let bodyText: string | undefined;
   if (method !== "DELETE") {

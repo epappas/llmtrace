@@ -122,6 +122,10 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       # Listen on all interfaces
       HOSTNAME: "0.0.0.0"
+      # Local-dev escape hatch: skip the admin-key login gate when the
+      # upstream proxy is running without an admin key configured. See
+      # issue #250 — production deployments must NOT set this.
+      LLMTRACE_DASHBOARD_AUTH_DISABLED: "${LLMTRACE_DASHBOARD_AUTH_DISABLED:-1}"
     depends_on:
       - llmtrace-proxy
     restart: unless-stopped
