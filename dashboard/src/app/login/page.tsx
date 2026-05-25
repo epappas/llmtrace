@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Shield } from "lucide-react";
 
@@ -8,14 +8,37 @@ function LoginForm(): React.ReactElement {
   const router = useRouter();
   const search = useSearchParams();
   const next = search.get("next") || "/";
+  const [username, setUsername] = useState("");
   const [adminKey, setAdminKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  // Pre-fill the username field with the seeded value so operators don't
+  // have to guess. Username is a low-secrecy identifier (the admin key is
+  // the real secret), so exposing it via /api/auth/identity is acceptable
+  // and avoids friction. Field stays editable in case the operator wants
+  // to confirm by typing.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/identity", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body: { username?: string } | null) => {
+        if (cancelled || !body?.username) return;
+        setUsername(body.username);
+      })
+      .catch(() => {
+        // Identity hint is non-critical; on failure the operator just types
+        // the username manually.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
-    if (!adminKey) {
-      setError("Admin key is required");
+    if (!username || !adminKey) {
+      setError("Username and admin key are required");
       return;
     }
     setError(null);
@@ -24,7 +47,7 @@ function LoginForm(): React.ReactElement {
       const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ admin_key: adminKey }),
+        body: JSON.stringify({ username, admin_key: adminKey }),
       });
       if (res.ok) {
         router.replace(next);
@@ -48,7 +71,25 @@ function LoginForm(): React.ReactElement {
       <div className="flex flex-col items-center gap-2">
         <Shield className="h-8 w-8 text-primary" />
         <h1 className="text-xl font-semibold">LLMTrace Dashboard</h1>
-        <p className="text-sm text-muted-foreground">Sign in with your admin key</p>
+        <p className="text-sm text-muted-foreground">
+          Sign in with the credentials seeded at deployment time
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="username" className="text-sm font-medium">
+          Username
+        </label>
+        <input
+          id="username"
+          name="username"
+          type="text"
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          data-testid="login-username"
+        />
       </div>
 
       <div className="space-y-2">

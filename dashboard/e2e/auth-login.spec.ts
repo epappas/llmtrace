@@ -54,13 +54,22 @@ test.describe("Admin-key login (issue #250)", () => {
     expect(res.status()).toBe(200);
   });
 
-  test("login page renders the admin-key form", async ({ page }) => {
+  test("login page renders the credentials form", async ({ page }) => {
     await page.goto("/login");
+    await expect(page.getByTestId("login-username")).toBeVisible();
     await expect(page.getByTestId("login-admin-key")).toBeVisible();
     await expect(page.getByTestId("login-submit")).toBeVisible();
   });
 
-  test("login route rejects missing admin_key with 400", async ({ request }) => {
+  test("identity endpoint exposes expected username (default 'admin')", async ({ request }) => {
+    const res = await request.get("/api/auth/identity");
+    expect(res.status()).toBe(200);
+    const body = (await res.json()) as { username?: string };
+    expect(typeof body.username).toBe("string");
+    expect(body.username!.length).toBeGreaterThan(0);
+  });
+
+  test("login route rejects missing credentials with 400", async ({ request }) => {
     const res = await request.post("/api/auth/login", {
       data: {},
       headers: { "Content-Type": "application/json" },
@@ -68,12 +77,25 @@ test.describe("Admin-key login (issue #250)", () => {
     expect(res.status()).toBe(400);
   });
 
-  test("login route sets host-scoped session cookie on success", async ({ request, baseURL }) => {
-    // The CI proxy accepts any bearer (no admin_key configured), so any
-    // non-empty key will be validated successfully. The point of this test
-    // is to verify the route handler's cookie-set logic with a real upstream.
+  test("login route rejects wrong username with 401", async ({ request }) => {
     const res = await request.post("/api/auth/login", {
-      data: { admin_key: "test-key-for-ci-stack" },
+      data: { username: "definitely-not-the-seeded-user", admin_key: "test-key-for-ci-stack" },
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(res.status()).toBe(401);
+  });
+
+  test("login route sets host-scoped session cookie on success", async ({ request, baseURL }) => {
+    // Fetch the seeded username via the public identity endpoint so this test
+    // matches whatever the CI stack was provisioned with (defaults to "admin").
+    const identityRes = await request.get("/api/auth/identity");
+    const identity = (await identityRes.json()) as { username: string };
+
+    // The CI proxy accepts any bearer (no admin_key configured), so any
+    // non-empty key will validate successfully. This exercises the real
+    // username check + the real upstream proxy validation + cookie set.
+    const res = await request.post("/api/auth/login", {
+      data: { username: identity.username, admin_key: "test-key-for-ci-stack" },
       headers: { "Content-Type": "application/json" },
     });
     expect(res.status(), `login response: ${await res.text()}`).toBe(200);
