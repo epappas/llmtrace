@@ -1,23 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWithFallback } from "@/lib/backend";
-import { sessionCookieName, SESSION_TTL_SECONDS } from "@/lib/auth";
+import {
+  sessionCookieName,
+  SESSION_TTL_SECONDS,
+  expectedAdminUsername,
+  usernameMatches,
+} from "@/lib/auth";
 
 interface LoginBody {
+  username?: string;
   admin_key?: string;
 }
 
-async function readAdminKey(req: NextRequest): Promise<string | null> {
+interface SubmittedCredentials {
+  username: string | null;
+  adminKey: string | null;
+}
+
+async function readCredentials(req: NextRequest): Promise<SubmittedCredentials> {
   const ct = req.headers.get("content-type") ?? "";
   if (ct.includes("application/json")) {
     const body = (await req.json().catch(() => null)) as LoginBody | null;
-    return body?.admin_key?.trim() || null;
+    return {
+      username: body?.username?.trim() || null,
+      adminKey: body?.admin_key?.trim() || null,
+    };
   }
   if (ct.includes("application/x-www-form-urlencoded") || ct.includes("multipart/form-data")) {
     const form = await req.formData();
-    const v = form.get("admin_key");
-    return typeof v === "string" ? v.trim() || null : null;
+    const u = form.get("username");
+    const k = form.get("admin_key");
+    return {
+      username: typeof u === "string" && u.trim() ? u.trim() : null,
+      adminKey: typeof k === "string" && k.trim() ? k.trim() : null,
+    };
   }
-  return null;
+  return { username: null, adminKey: null };
 }
 
 async function validateAdminKey(adminKey: string): Promise<boolean> {
@@ -35,9 +53,18 @@ function isSecure(req: NextRequest): boolean {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const adminKey = await readAdminKey(req);
-  if (!adminKey) {
-    return NextResponse.json({ error: "admin_key is required" }, { status: 400 });
+  const { username, adminKey } = await readCredentials(req);
+  if (!username || !adminKey) {
+    return NextResponse.json(
+      { error: "username and admin_key are required" },
+      { status: 400 },
+    );
+  }
+
+  // Username check first (fast, no upstream call). On mismatch return the
+  // same 401 shape as a bad key so we don't leak which half was wrong.
+  if (!usernameMatches(username, expectedAdminUsername())) {
+    return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
   }
 
   let valid = false;
@@ -49,7 +76,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   if (!valid) {
-    return NextResponse.json({ error: "invalid admin key" }, { status: 401 });
+    return NextResponse.json({ error: "invalid credentials" }, { status: 401 });
   }
 
   const res = NextResponse.json({ ok: true });

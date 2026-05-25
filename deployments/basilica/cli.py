@@ -143,6 +143,7 @@ def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.T
         "enable_proxy_auth",
         "api_key",
         "rotate_admin_after_bootstrap",
+        "admin_username",
     ):
         if key in cfg:
             kwargs[key] = cfg[key]
@@ -170,6 +171,7 @@ def _serialise(instances: lifecycle.TenantInstances) -> dict[str, Any]:
         "dashboard_url": instances.dashboard.url if instances.dashboard else None,
         "api_key": instances.api_key,
         "admin_key": instances.admin_key,
+        "admin_username": instances.admin_username,
     }
 
 

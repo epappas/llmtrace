@@ -362,13 +362,72 @@ The CLI emits both in the result JSON:
   "proxy_url": "https://...basilica.ai",
   "dashboard_url": "https://...basilica.ai",
   "api_key": "llmt_op...",
-  "admin_key": "llmt_ad..."
+  "admin_key": "llmt_ad...",
+  "admin_username": "admin"
 }
 ```
 
 The workflow registers `::add-mask::` for BOTH keys before any `cat`
 operation, so neither appears in run logs — only in step outputs (which
 the calling app fetches via the Actions API).
+
+### Seeding dashboard credentials at provision time
+
+The dashboard now requires a sign-in. The login form takes two fields:
+
+| Field | Source | Notes |
+|---|---|---|
+| Username | `LLMTRACE_DASHBOARD_ADMIN_USERNAME` env on the dashboard pod (set by `_apply_dashboard_admin_username`). Defaults to `"admin"`. | Pre-filled from the public `/api/auth/identity` endpoint as a UX nicety. Case-insensitive match. |
+| Admin key | The `admin_key` returned from `provision()` (either auto-generated or pinned). | The actual secret; validated against the proxy's admin endpoint on each login. |
+
+To seed both at provision time, supply them on either dispatch path:
+
+**workflow_dispatch** — two new inputs (`admin_username`, `admin_password`)
+overlay onto the resolved config_json. `admin_password` is automatically
+masked in step logs:
+
+```bash
+gh workflow run tenant-lifecycle.yml -R techlab-innov/llmtrace \
+  -f tenant_id=acme \
+  -f action=provision \
+  -f config_path=deployments/basilica/configs/examples/pro.yaml \
+  -f admin_username="ops@acme.example" \
+  -f admin_password="llmt_<64-hex-of-your-choosing>"
+```
+
+**repository_dispatch** — same two fields inside `client_payload`:
+
+```json
+{
+  "event_type": "tenant-lifecycle",
+  "client_payload": {
+    "tenant_id": "acme",
+    "action": "provision",
+    "config_path": "deployments/basilica/configs/examples/pro.yaml",
+    "admin_username": "ops@acme.example",
+    "admin_password": "llmt_<64-hex-of-your-choosing>"
+  }
+}
+```
+
+**Direct library use** — set the same fields on `TenantSpec`:
+
+```python
+spec = TenantSpec(
+    tenant_id="acme",
+    proxy=...,
+    dashboard=...,
+    admin_username="ops@acme.example",
+    api_key="llmt_<64-hex-of-your-choosing>",  # becomes the dashboard password
+)
+```
+
+If `admin_username` is omitted, the default `"admin"` is used. If `api_key`
+(or `admin_password`) is omitted, the lifecycle library auto-generates an
+`llmt_<64-hex>` key and returns it in the result.
+
+The CLI subcommand's stdout always carries `admin_username` so a calling
+app can render "log in as `<username>`" instructions in its own portal.
 
 ### Tenant-side usage
 

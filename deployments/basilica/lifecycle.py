@@ -173,6 +173,13 @@ class TenantSpec:
     # Trade-off: adds one proxy re-roll (~30s) to provisioning. Opt-in
     # because most callers will not need it.
     rotate_admin_after_bootstrap: bool = False
+    # Display username for the dashboard login form. The dashboard's
+    # `/api/auth/login` route checks the submitted username matches
+    # `LLMTRACE_DASHBOARD_ADMIN_USERNAME` (case-insensitive) AND that the
+    # submitted password validates against the proxy as an admin key.
+    # Defaults to "admin"; override at provision time to seed a custom
+    # operator-visible identity ("alice@acme.example" etc.).
+    admin_username: str = "admin"
 
 
 @dataclass(frozen=True)
@@ -218,6 +225,10 @@ class TenantInstances:
     dashboard: Optional[InstanceInfo]
     api_key: Optional[str] = None
     admin_key: Optional[str] = None
+    # Display username seeded into the dashboard's login form (server-side
+    # checked against `LLMTRACE_DASHBOARD_ADMIN_USERNAME`). Defaults to
+    # "admin"; set per-tenant via `TenantSpec.admin_username`.
+    admin_username: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -474,6 +485,21 @@ def _apply_ml_preload_startup_floor(
         floor,
     )
     return dataclasses.replace(spec, startup_timeout_seconds=floor)
+
+
+def _apply_dashboard_admin_username(
+    dashboard_spec: ComponentSpec, username: str
+) -> ComponentSpec:
+    """Inject `LLMTRACE_DASHBOARD_ADMIN_USERNAME` into the dashboard env.
+
+    The dashboard's `/api/auth/login` route reads this env at request time
+    and requires the submitted username to match (case-insensitive) before
+    it even attempts to validate the password against the proxy. Caller-
+    supplied env entries with the same key are overwritten — `TenantSpec`
+    is the source of truth.
+    """
+    env = {**dashboard_spec.env, "LLMTRACE_DASHBOARD_ADMIN_USERNAME": username}
+    return dataclasses.replace(dashboard_spec, env=env)
 
 
 def _apply_rate_limit(
@@ -783,6 +809,10 @@ def provision(
         tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
 
+    dashboard_spec = _apply_dashboard_admin_username(
+        dashboard_spec, spec.admin_username
+    )
+
     if spec.inject_proxy_url_into_dashboard:
         merged_env = {**dashboard_spec.env, spec.proxy_url_env_var: proxy.url}
         dashboard_spec = dataclasses.replace(dashboard_spec, env=merged_env)
@@ -794,6 +824,7 @@ def provision(
         dashboard=dashboard,
         api_key=operator_key,
         admin_key=admin_key,
+        admin_username=spec.admin_username,
     )
 
 
@@ -891,6 +922,7 @@ def update(
             dashboard=dashboard,
             api_key=operator_key,
             admin_key=admin_key,
+            admin_username=spec.admin_username,
         )
 
     if strategy != "recreate":

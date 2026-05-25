@@ -50,6 +50,26 @@ on:
         required: false
         type: string
         default: ""
+      admin_username:
+        description: >-
+          Optional display username seeded into the dashboard login form
+          (LLMTRACE_DASHBOARD_ADMIN_USERNAME). The dashboard checks the
+          submitted username matches this case-insensitively before
+          validating the password. Defaults to "admin" when blank.
+        required: false
+        type: string
+        default: ""
+      admin_password:
+        description: >-
+          Optional pinned admin key — becomes both the proxy's
+          LLMTRACE_AUTH_ADMIN_KEY and the dashboard login password.
+          When blank, the lifecycle library auto-generates an
+          `llmt_<64-hex>` key and returns it in the result. Masked in
+          step logs but workflow_dispatch input VALUES are visible in
+          the run UI — use repository_dispatch for production.
+        required: false
+        type: string
+        default: ""
       tenant_secrets_json:
         description: >-
           JSON object of per-tenant secrets to inject as env vars before the
@@ -113,6 +133,8 @@ jobs:
           WF_DASHBOARD_ID: ${{ inputs.dashboard_instance_id }}
           WF_STRATEGY: ${{ inputs.strategy }}
           WF_NEW_ADMIN_KEY: ${{ inputs.new_admin_key }}
+          WF_ADMIN_USERNAME: ${{ inputs.admin_username }}
+          WF_ADMIN_PASSWORD: ${{ inputs.admin_password }}
           WF_SECRETS: ${{ inputs.tenant_secrets_json }}
           RD_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: |
@@ -129,6 +151,8 @@ jobs:
               dash_id   = os.environ.get("WF_DASHBOARD_ID", "")
               strategy  = os.environ.get("WF_STRATEGY", "")
               new_admin_key = os.environ.get("WF_NEW_ADMIN_KEY", "")
+              admin_username = os.environ.get("WF_ADMIN_USERNAME", "") or ""
+              admin_password = os.environ.get("WF_ADMIN_PASSWORD", "") or ""
               secrets_json = os.environ.get("WF_SECRETS", "{}") or "{}"
               try:
                   secrets = json.loads(secrets_json)
@@ -146,6 +170,8 @@ jobs:
               dash_id   = payload.get("dashboard_instance_id", "")
               strategy  = payload.get("strategy", "recreate")
               new_admin_key = payload.get("new_admin_key", "") or ""
+              admin_username = payload.get("admin_username", "") or ""
+              admin_password = payload.get("admin_password", "") or ""
               secrets   = payload.get("tenant_secrets", {}) or {}
           else:
               raise SystemExit(f"::error::unsupported event {event!r}")
@@ -158,6 +184,39 @@ jobs:
           # in subsequent log lines.
           if new_admin_key:
               print(f"::add-mask::{new_admin_key}")
+          # Same for the seeded admin password.
+          if admin_password:
+              print(f"::add-mask::{admin_password}")
+
+          # If admin_username / admin_password were supplied as workflow inputs
+          # (the per-tenant ergonomic UX), overlay them onto the resolved
+          # config JSON so the lifecycle library picks them up via the
+          # existing TenantSpec.admin_username / api_key fields. Caller-
+          # supplied values inside config_json still win when both paths set
+          # the same field (caller intent is most explicit there).
+          if (admin_username or admin_password) and (action in ("provision", "update")):
+              base_cfg: dict = {}
+              if cfg_json:
+                  try:
+                      base_cfg = json.loads(cfg_json)
+                  except json.JSONDecodeError as exc:
+                      raise SystemExit(f"::error::config_json is invalid JSON: {exc}")
+              elif cfg_path:
+                  # Read + parse the file so we can overlay the credentials.
+                  text = pathlib.Path(cfg_path).read_text()
+                  try:
+                      import yaml  # type: ignore[import-not-found]
+                      base_cfg = yaml.safe_load(text) or {}
+                  except ImportError:
+                      base_cfg = json.loads(text)
+                  cfg_path = ""  # the overlay supersedes the file
+              if not isinstance(base_cfg, dict):
+                  raise SystemExit("::error::resolved config must be a JSON object")
+              if admin_username and "admin_username" not in base_cfg:
+                  base_cfg["admin_username"] = admin_username
+              if admin_password and "api_key" not in base_cfg:
+                  base_cfg["api_key"] = admin_password
+              cfg_json = json.dumps(base_cfg)
 
           env_path = pathlib.Path(os.environ["GITHUB_ENV"])
           with env_path.open("a") as fh:
@@ -173,7 +232,7 @@ jobs:
                   fh.write(f"CFG_JSON<<__LIFECYCLE_EOF__\n{cfg_json}\n__LIFECYCLE_EOF__\n")
 
           pathlib.Path("/tmp/tenant_secrets.json").write_text(json.dumps(secrets))
-          print(f"resolved: tenant_id={tenant_id} action={action} secret_keys={sorted(secrets.keys())}")
+          print(f"resolved: tenant_id={tenant_id} action={action} secret_keys={sorted(secrets.keys())} admin_creds_supplied={bool(admin_username or admin_password)}")
           PY
 
       - name: Inject tenant secrets
@@ -327,6 +386,11 @@ jobs:
           # admin_key for the platform's own admin pages.
           print(f"api_key={data.get('api_key') or ''}")
           print(f"admin_key={data.get('admin_key') or ''}")
+          # Display username seeded into the dashboard login form. Not
+          # secret on its own — the password (admin_key) is what gates
+          # the dashboard — but emitted so the caller can show "log in
+          # as <username>" in their portal.
+          print(f"admin_username={data.get('admin_username') or ''}")
           PY
           if [[ "${code}" -ne 0 ]]; then
             exit "${code}"

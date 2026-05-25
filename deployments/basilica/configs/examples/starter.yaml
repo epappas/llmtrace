@@ -84,6 +84,11 @@ dashboard:
 # enable_proxy_auth: true
 # api_key: null
 
+# Dashboard login: the operator signs in to the dashboard with the
+# admin_username below + the admin key (api_key above, or auto-generated).
+# Default username is "admin"; override for a custom seeded identity:
+# admin_username: "alice@acme.example"
+
 # Optional per-tenant rate limit. When uncommented, the lifecycle library
 # injects `LLMTRACE_RATE_LIMIT_RPS` and `LLMTRACE_RATE_LIMIT_BURST` into the
 # proxy env at provision time. Both must be strictly positive. Omit the

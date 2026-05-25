@@ -35,3 +35,34 @@ export function sessionCookieName(host: string | null | undefined): string {
 
 /** Session cookie lifetime in seconds (24h). */
 export const SESSION_TTL_SECONDS = 24 * 60 * 60;
+
+const DEFAULT_ADMIN_USERNAME = "admin";
+
+/**
+ * Expected admin username for this dashboard, seeded at provision time via
+ * `LLMTRACE_DASHBOARD_ADMIN_USERNAME` (set by
+ * `deployments/basilica/lifecycle.py::_apply_dashboard_admin_username`).
+ * Defaults to "admin" when unset so local dev needs no extra setup.
+ */
+export function expectedAdminUsername(): string {
+  const raw = process.env.LLMTRACE_DASHBOARD_ADMIN_USERNAME;
+  if (typeof raw !== "string") return DEFAULT_ADMIN_USERNAME;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : DEFAULT_ADMIN_USERNAME;
+}
+
+/**
+ * Constant-time-ish username comparison (case-insensitive). Used by the
+ * login route so per-character early-exit timing cannot leak which prefix
+ * matched.
+ */
+export function usernameMatches(submitted: string, expected: string): boolean {
+  const a = submitted.trim().toLowerCase();
+  const b = expected.trim().toLowerCase();
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}

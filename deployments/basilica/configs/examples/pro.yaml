@@ -62,3 +62,8 @@ dashboard:
 # Rotate the admin key once the proxy is up. Adds ~30s and changes the
 # proxy instance_id + url; recommended for production. Opt-in.
 # rotate_admin_after_bootstrap: true
+
+# Dashboard login: the operator signs in with admin_username + the admin
+# key (pinned via `api_key:` above or auto-generated). Default is "admin";
+# override per tenant for a custom display identity.
+# admin_username: "ops@acme.example"
