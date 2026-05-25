@@ -13,11 +13,13 @@ function LoginForm(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  // Pre-fill the username field with the seeded value so operators don't
-  // have to guess. Username is a low-secrecy identifier (the admin key is
-  // the real secret), so exposing it via /api/auth/identity is acceptable
-  // and avoids friction. Field stays editable in case the operator wants
-  // to confirm by typing.
+  // Pre-fill the identifier field with the seeded value so operators don't
+  // have to guess. The seeded value is a free string — it may be an email,
+  // a username, or any other identifier the app chose to seed. The library
+  // does not validate format. Identifier is a low-secrecy field (the admin
+  // key is the real secret), so exposing it via /api/auth/identity is
+  // acceptable and avoids friction. Field stays editable in case the
+  // operator wants to confirm by typing.
   useEffect(() => {
     let cancelled = false;
     fetch("/api/auth/identity", { cache: "no-store" })
@@ -38,7 +40,7 @@ function LoginForm(): React.ReactElement {
   async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     if (!username || !adminKey) {
-      setError("Username and admin key are required");
+      setError("Email or username and admin key are required");
       return;
     }
     setError(null);
@@ -78,7 +80,7 @@ function LoginForm(): React.ReactElement {
 
       <div className="space-y-2">
         <label htmlFor="username" className="text-sm font-medium">
-          Username
+          Email or username
         </label>
         <input
           id="username"

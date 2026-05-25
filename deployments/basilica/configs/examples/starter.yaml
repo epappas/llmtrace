@@ -86,7 +86,9 @@ dashboard:
 
 # Dashboard login: the operator signs in to the dashboard with the
 # admin_username below + the admin key (api_key above, or auto-generated).
-# Default username is "admin"; override for a custom seeded identity:
+# `admin_username` is a free string — either an email or a username works.
+# The lifecycle library does not validate the format; the dashboard accepts
+# whatever was seeded. Default is "admin"; override for a custom identity:
 # admin_username: "alice@acme.example"
 
 # Optional per-tenant rate limit. When uncommented, the lifecycle library

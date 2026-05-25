@@ -52,10 +52,9 @@ on:
         default: ""
       admin_username:
         description: >-
-          Optional display username seeded into the dashboard login form
-          (LLMTRACE_DASHBOARD_ADMIN_USERNAME). The dashboard checks the
-          submitted username matches this case-insensitively before
-          validating the password. Defaults to "admin" when blank.
+          Display username (or email) seeded into the dashboard login form.
+          Free string — no validation. The app decides which identifier
+          shape to use.
         required: false
         type: string
         default: ""
