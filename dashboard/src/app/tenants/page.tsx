@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { DataTable } from "@/components/data-table";
+import { ProxyConnectionBanner } from "@/components/proxy-connection-banner";
 import {
   type Tenant,
   type MonitoringScope,
@@ -283,6 +284,8 @@ export default function TenantsPage() {
           </Button>
         </div>
       </div>
+
+      <ProxyConnectionBanner />
 
       {editingConfig && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
