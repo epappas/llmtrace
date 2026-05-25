@@ -1806,10 +1806,12 @@ impl Default for JudgePromotionConfig {
 /// Storage configuration section within [`ProxyConfig`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Storage profile: `"lite"` (SQLite), `"memory"` (in-memory), or `"production"` (ClickHouse + PostgreSQL + Redis).
+    /// Storage profile: `"lite"` or `"sqlite"` (SQLite, equivalent),
+    /// `"memory"` (in-memory), or `"production"` (ClickHouse +
+    /// PostgreSQL + Redis).
     #[serde(default = "default_storage_profile")]
     pub profile: String,
-    /// Database file path (used by the `"lite"` profile).
+    /// Database file path (used by the `"lite"` / `"sqlite"` profile).
     #[serde(default = "default_database_path")]
     pub database_path: String,
     /// ClickHouse HTTP URL (used by the `"production"` profile).

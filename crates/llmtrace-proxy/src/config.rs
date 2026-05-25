@@ -114,10 +114,14 @@ pub fn validate_config(config: &ProxyConfig) -> anyhow::Result<()> {
         errors.push("upstream_url must start with http:// or https://".to_string());
     }
 
+    // `sqlite` is accepted as a documented alias for `lite` because the
+    // basilica example configs default `LLMTRACE_STORAGE_PROFILE` to
+    // `sqlite` and tenants rely on that spelling. Keep both spellings
+    // wired here AND in the `StorageProfile` factory in `main.rs`.
     match config.storage.profile.as_str() {
-        "lite" | "memory" | "production" => {}
+        "lite" | "sqlite" | "memory" | "production" => {}
         other => errors.push(format!(
-            "storage.profile must be 'lite', 'memory', or 'production', got '{other}'"
+            "storage.profile must be 'lite', 'sqlite', 'memory', or 'production', got '{other}'"
         )),
     }
 
@@ -455,6 +459,26 @@ health_check:
         };
         let err = validate_config(&config).unwrap_err();
         assert!(err.to_string().contains("storage.profile"));
+    }
+
+    /// Regression test for issue #249: `LLMTRACE_STORAGE_PROFILE=sqlite`
+    /// must be accepted as a documented alias for `lite`. The basilica
+    /// `pro.yaml` example defaults to `sqlite`, so rejecting it caused
+    /// the proxy to crash-loop before `/health` ever bound, which the
+    /// platform reports as "stuck in starting".
+    #[test]
+    fn test_validate_config_accepts_sqlite_alias() {
+        for profile in ["lite", "sqlite", "memory"] {
+            let config = ProxyConfig {
+                storage: llmtrace_core::StorageConfig {
+                    profile: profile.to_string(),
+                    ..llmtrace_core::StorageConfig::default()
+                },
+                ..ProxyConfig::default()
+            };
+            validate_config(&config)
+                .unwrap_or_else(|e| panic!("profile {profile} must validate cleanly: {e}"));
+        }
     }
 
     #[test]
