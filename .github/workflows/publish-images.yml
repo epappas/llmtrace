@@ -108,7 +108,14 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          # linux/amd64 only. QEMU emulation of arm64 for the Rust release
+          # build hung repeatedly in the 2026-05-25 incident — three
+          # consecutive runs failed to complete the proxy image (one ran
+          # 9h before manual cancellation, two more 30-min cancellations
+          # after retry). Basilica's k8s nodes are amd64; arm64 is
+          # currently unused. Re-add `linux/arm64` only with a native
+          # arm64 runner — not via QEMU.
+          platforms: linux/amd64
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -163,7 +170,12 @@ jobs:
           context: ./dashboard
           file: ./dashboard/Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          # linux/amd64 only — for symmetry with the proxy image (see notes
+          # above). Dashboard Next.js builds completed fine on multi-arch
+          # (~23s), but a mixed-arch deployment is the worst of both worlds
+          # so we drop arm64 across the board until a native arm64 runner
+          # is available.
+          platforms: linux/amd64
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
