@@ -4,8 +4,11 @@
 //! (counters, histograms, gauges) and a handler that renders them in
 //! Prometheus exposition text format at `/metrics`.
 //!
-//! The endpoint is intentionally unauthenticated — this is the standard
-//! convention for Prometheus scraping endpoints.
+//! Auth gating: the route is registered behind the standard auth
+//! middleware (see `crate::auth::auth_middleware`). When
+//! `auth.enabled = true`, a valid bearer (any role) is required to
+//! scrape. With auth disabled, the endpoint is open — matching the
+//! traditional Prometheus convention only in trusted-network mode.
 
 use axum::body::Body;
 use axum::extract::State;

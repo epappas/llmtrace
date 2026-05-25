@@ -174,9 +174,9 @@ What each role can do once the dashboard is up. Verified against
 
 | Role | Dashboard sign-in | `/v1/*` traffic | `/api/v1/auth/keys` (admin) | `/metrics` | `/health` |
 | --- | --- | --- | --- | --- | --- |
-| Admin | Yes | Yes | Yes | Yes (authenticated)[^metrics] | Yes (no auth) |
-| Operator | Yes (read-only-ish) | Yes | 403 | Yes (authenticated)[^metrics] | Yes (no auth) |
-| Viewer | Yes (read-only) | See note[^viewer-v1] | 403 | Yes (authenticated)[^metrics] | Yes (no auth) |
+| Admin | Yes | Yes | Yes | Yes (authenticated) | Yes (no auth) |
+| Operator | Yes (read-only-ish) | Yes | 403 | Yes (authenticated) | Yes (no auth) |
+| Viewer | Yes (read-only) | See note[^viewer-v1] | 403 | Yes (authenticated) | Yes (no auth) |
 
 [^viewer-v1]: The user-facing spec calls for Viewer to be 403 on
 `/v1/*`. The current proxy code does not enforce that: the `/v1/*`
@@ -186,15 +186,6 @@ fallback `proxy_handler` (see
 forward inference traffic. Tightening the fallback to require Operator
 is tracked separately; until then, do not hand a Viewer key to a
 caller you do not also trust to forward traffic.
-
-[^metrics]: The `/metrics` route is registered before the auth
-middleware layer (see
-`crates/llmtrace-proxy/src/main.rs::build_router`). The middleware
-allow-list only exempts `/health`, `/swagger-ui`, and `/api-doc`, so
-with `auth.enabled = true` a Prometheus scraper must present a valid
-bearer (any role). The legacy "metrics needs no auth" comment in
-`metrics.rs` reflects the disabled-auth path; treat the table above as
-the live behaviour when auth is on.
 
 ### Identifier vs deployment naming
 
