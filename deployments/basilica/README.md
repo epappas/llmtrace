@@ -68,6 +68,35 @@ not in the lifecycle library. After `provision`, your app stores `(tenant_id,
 proxy_instance_id, dashboard_instance_id)` and passes the UUIDs back on every
 subsequent lifecycle call.
 
+### tenant_id is your user identifier; the library slugs it for Basilica
+
+`TenantSpec.tenant_id` is **whatever string your app already uses** to
+identify the user — a UUID, an email, an opaque internal id, etc.
+`validate_tenant_id` accepts any non-empty string up to 256 chars with no
+whitespace or control characters (issue #259).
+
+For Basilica deployment naming (which must match k8s' DNS-1123 rule
+`^[a-z0-9][a-z0-9-]{0,29}$`), the library derives an internal slug via
+`_basilica_slug(tenant_id)`:
+
+- Lowercases the input and rewrites every non-`[a-z0-9-]` character to
+  `-`, collapses dash runs, strips leading/trailing dashes.
+- Appends a 6-char blake2b hex suffix of the original `tenant_id` so two
+  inputs that sanitise to the same prefix (e.g. `alice@acme` and
+  `alice_acme`) get different slugs.
+- Caps the result at 30 chars; falls back to `tenant-<hash6>` if
+  sanitisation strips the input to empty.
+
+The slug is **deterministic** for a given input, so `update` / `status` /
+`deprovision` keep working when the caller passes the same original
+`tenant_id` — the library re-derives the same Basilica deployment name
+each time.
+
+The proxy's `name` column on `POST /api/v1/tenants` is set to the
+**original** `tenant_id` (not the slug) so dashboards / audit logs show
+the human-readable identifier the caller's users see. The slug is purely
+internal to Basilica's k8s namespace.
+
 ## Quick start
 
 ### 1. One-time platform setup
@@ -826,7 +855,7 @@ The library raises three exception classes that your worker should map:
 
 | Exception | Meaning | Recommended action |
 |---|---|---|
-| `ValueError` | Bad input (invalid `tenant_id` slug, unknown `strategy`, missing required spec field) | 4xx to caller; don't retry |
+| `ValueError` | Bad input (empty / whitespace-containing / oversized `tenant_id`, unknown `strategy`, missing required spec field) | 4xx to caller; don't retry |
 | `RuntimeError` | Basilica-side failure (deployment entered terminal `Failed` state, `BASILICA_API_TOKEN` missing, etc.) | 5xx + alert; retry with backoff if transient |
 | `TimeoutError` | `startup_timeout_seconds` elapsed without ready | 5xx; check Basilica's UI for stuck deployment; consider a manual `deprovision` to clean up |
 
