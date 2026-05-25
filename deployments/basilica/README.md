@@ -176,16 +176,7 @@ What each role can do once the dashboard is up. Verified against
 | --- | --- | --- | --- | --- | --- |
 | Admin | Yes | Yes | Yes | Yes (authenticated) | Yes (no auth) |
 | Operator | Yes (read-only-ish) | Yes | 403 | Yes (authenticated) | Yes (no auth) |
-| Viewer | Yes (read-only) | See note[^viewer-v1] | 403 | Yes (authenticated) | Yes (no auth) |
-
-[^viewer-v1]: The user-facing spec calls for Viewer to be 403 on
-`/v1/*`. The current proxy code does not enforce that: the `/v1/*`
-fallback `proxy_handler` (see
-`crates/llmtrace-proxy/src/proxy.rs::proxy_handler`) does not call
-`require_role`, so any authenticated key — including Viewer — can
-forward inference traffic. Tightening the fallback to require Operator
-is tracked separately; until then, do not hand a Viewer key to a
-caller you do not also trust to forward traffic.
+| Viewer | Yes (read-only) | 403 | 403 | Yes (authenticated) | Yes (no auth) |
 
 ### Identifier vs deployment naming
 
