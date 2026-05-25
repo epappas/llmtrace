@@ -204,7 +204,7 @@ async fn run_migrate(config: &ProxyConfig) -> anyhow::Result<()> {
     );
 
     match config.storage.profile.as_str() {
-        "lite" => {
+        "lite" | "sqlite" => {
             let url = format!("sqlite:{}", config.storage.database_path);
             let pool = llmtrace_storage::migration::open_sqlite_pool(&url).await?;
             llmtrace_storage::migration::run_sqlite_migrations(&pool).await?;
@@ -432,6 +432,9 @@ async fn build_app_state(
         .timeout(std::time::Duration::from_millis(config.timeout_ms))
         .build()?;
 
+    // Both `lite` and `sqlite` resolve to the same SQLite-backed profile;
+    // `sqlite` is documented in `validate_config` as an alias because the
+    // basilica example configs use that spelling.
     let profile =
         match config.storage.profile.as_str() {
             "memory" => StorageProfile::Memory,

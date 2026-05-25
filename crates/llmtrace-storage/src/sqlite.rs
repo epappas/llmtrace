@@ -1922,4 +1922,52 @@ mod tests {
         let repo = test_metadata().await;
         assert!(repo.health_check().await.is_ok());
     }
+
+    /// Regression for issue #249: on a freshly-provisioned SQLite database
+    /// (backed by a real tempfile, not `:memory:`), the proxy's startup
+    /// sequence must complete without hanging. Specifically:
+    ///
+    /// 1. Migrations must finish within a small bound, leaving the
+    ///    metadata schema (including `audit_events`) in place.
+    /// 2. `health_check()` — what `health_handler` polls before flipping
+    ///    `/health` to 200 — must return `Ok` within a short timeout.
+    /// 3. `query_audit_events()` — invoked by `GET /api/v1/audit` added
+    ///    in PR #248 — must return `Ok(vec![])` on an empty database
+    ///    rather than erroring or blocking.
+    ///
+    /// The 5-second tokio timeout is the hard cap: if the call ever
+    /// hangs we want the CI signal, not a stuck job.
+    #[tokio::test]
+    async fn test_sqlite_metadata_startup_on_fresh_tempfile() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("issue249.db");
+        let url = format!("sqlite:{}", db_path.to_string_lossy());
+
+        let repo = timeout(Duration::from_secs(5), SqliteMetadataRepository::new(&url))
+            .await
+            .expect("metadata repo construction must not hang on a fresh tempfile")
+            .expect("metadata repo construction must succeed on a fresh tempfile");
+
+        timeout(Duration::from_secs(5), repo.health_check())
+            .await
+            .expect("health_check must not hang on a fresh sqlite db")
+            .expect("health_check must succeed on a fresh sqlite db");
+
+        let tenant_id = TenantId::new();
+        let events = timeout(
+            Duration::from_secs(5),
+            repo.query_audit_events(&AuditQuery::new(tenant_id)),
+        )
+        .await
+        .expect("query_audit_events must not hang on a fresh sqlite db")
+        .expect("query_audit_events must succeed on a fresh sqlite db");
+        assert!(
+            events.is_empty(),
+            "audit_events on a fresh sqlite db must be empty, got {} rows",
+            events.len()
+        );
+    }
 }
