@@ -15,6 +15,7 @@ import {
   BookOpen,
   Gauge,
   ScrollText,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { listTenants, setStoredTenant, type Tenant, DEFAULT_TENANT_ID } from "@/lib/api";
@@ -68,6 +69,16 @@ export function Sidebar() {
     setStoredTenant(id);
     // Refresh the page to update all components with the new tenant ID
     window.location.reload();
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      console.error("Sign out failed:", e);
+    } finally {
+      window.location.assign("/login");
+    }
   };
 
   return (
@@ -128,8 +139,17 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="border-t p-4 text-xs text-muted-foreground">
-        LLMTrace Dashboard v0.1.0
+      <div className="border-t p-3 space-y-2">
+        <button
+          type="button"
+          onClick={handleSignOut}
+          data-testid="sign-out-button"
+          className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
+        </button>
+        <div className="px-3 text-xs text-muted-foreground">LLMTrace Dashboard v0.1.0</div>
       </div>
     </aside>
   );

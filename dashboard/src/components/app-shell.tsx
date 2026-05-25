@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import { ReconnectBanner } from "@/components/reconnect-banner";
+
+const UNCHROMED_PATHS: readonly string[] = ["/login"];
 
 type LifecyclePhase = "bootstrapping" | "ready" | "reconnecting";
 
@@ -65,6 +68,15 @@ function resolveProgress(payload: HealthPayload): number {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const unchromed = UNCHROMED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  if (unchromed) {
+    return <>{children}</>;
+  }
+  return <ChromedShell>{children}</ChromedShell>;
+}
+
+function ChromedShell({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<LifecyclePhase>("bootstrapping");
   const [bootProgress, setBootProgress] = useState(0);
   const [loadedModels, setLoadedModels] = useState<number | undefined>();

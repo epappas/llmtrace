@@ -191,10 +191,15 @@ async function apiFetch<T>(
     ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
   };
 
-  // Add bootstrap admin key if configured
-  const adminKey = process.env.LLMTRACE_AUTH_ADMIN_KEY;
-  if (adminKey) {
-    headers["Authorization"] = `Bearer ${adminKey}`;
+  // Local-dev escape hatch only: when explicitly disabled, fall back to the
+  // bootstrap admin key (server-side only). All other paths rely on the
+  // session cookie -> middleware -> upstream Authorization header flow.
+  if (
+    typeof window === "undefined" &&
+    process.env.LLMTRACE_DASHBOARD_AUTH_DISABLED === "1" &&
+    process.env.LLMTRACE_AUTH_ADMIN_KEY
+  ) {
+    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
   }
 
   try {
@@ -322,9 +327,12 @@ export async function getCurrentCosts(
     ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
   };
 
-  const adminKey = process.env.LLMTRACE_AUTH_ADMIN_KEY;
-  if (adminKey) {
-    headers["Authorization"] = `Bearer ${adminKey}`;
+  if (
+    typeof window === "undefined" &&
+    process.env.LLMTRACE_DASHBOARD_AUTH_DISABLED === "1" &&
+    process.env.LLMTRACE_AUTH_ADMIN_KEY
+  ) {
+    headers["Authorization"] = `Bearer ${process.env.LLMTRACE_AUTH_ADMIN_KEY}`;
   }
 
   const res = await fetch(url, {
