@@ -29,6 +29,14 @@ function mapProxyPath(path: string[]): string {
   if (first === "health" || first === "metrics") {
     return "/" + path.join("/");
   }
+  // `/v1/*` is the OpenAI-compatible inference surface on the proxy (no
+  // `/api/v1/` prefix). Required so client code like the /playground panel
+  // can POST through `/api/proxy/v1/chat/completions` and have it land at
+  // the proxy's `/v1/chat/completions`. Without this branch the catch-all
+  // remapped to `/api/v1/v1/...` and produced 404.
+  if (first === "v1") {
+    return "/" + path.join("/");
+  }
   return "/api/v1/" + path.join("/");
 }
 
