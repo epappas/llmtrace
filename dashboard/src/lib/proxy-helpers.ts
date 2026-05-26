@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWithFallback } from "./backend";
 import { isAuthDisabled } from "./auth";
+import { isUpstreamPublic } from "./public-paths";
 
-function buildHeaders(req: NextRequest, extra: Record<string, string> = {}): Record<string, string> | NextResponse {
+function buildHeaders(
+  req: NextRequest,
+  backendPath: string,
+  extra: Record<string, string> = {},
+): Record<string, string> | NextResponse {
   const headers: Record<string, string> = { ...extra };
   const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
   if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
@@ -10,6 +15,14 @@ function buildHeaders(req: NextRequest, extra: Record<string, string> = {}): Rec
   const authHeader = req.headers.get("authorization");
   if (authHeader) {
     headers["Authorization"] = authHeader;
+    return headers;
+  }
+
+  // Genuinely-public upstream paths: skip the dashboard auth gate so the
+  // proxy can serve them on its own allow-list. The middleware also
+  // declares these public, so an iframe / scraper can fetch them
+  // without first signing into the dashboard.
+  if (isUpstreamPublic(backendPath)) {
     return headers;
   }
 
@@ -38,7 +51,7 @@ export async function proxyGet(
   req: NextRequest,
   backendPath: string,
 ): Promise<NextResponse> {
-  const headers = buildHeaders(req);
+  const headers = buildHeaders(req, backendPath);
   if (headers instanceof NextResponse) return headers;
 
   try {
@@ -70,7 +83,7 @@ export async function proxyMutate(
   backendPath: string,
   method: string,
 ): Promise<NextResponse> {
-  const headers = buildHeaders(req, { "Content-Type": "application/json" });
+  const headers = buildHeaders(req, backendPath, { "Content-Type": "application/json" });
   if (headers instanceof NextResponse) return headers;
 
   let bodyText: string | undefined;
