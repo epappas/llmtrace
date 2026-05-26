@@ -6,24 +6,14 @@ import PlaygroundClient from "./_client";
 export const dynamic = "force-dynamic";
 
 /**
- * Server component wrapper for /playground (issue #284).
+ * Server component wrapper for /playground.
  *
- * The interactive chat panel lives in the `_client` module; this server
- * shell renders the lead copy and embeds it. No data is fetched here —
- * the client component drives the whole conversation in memory.
+ * The interactive chat experience (header, transcript, composer, settings
+ * drawer, per-message LLMTrace metadata) lives entirely in `_client`.
+ * This shell exists only to mark the route dynamic and embed the client.
+ * Issue #287 moved the heading + lead copy into the chat header so the
+ * conversation surface can occupy the full viewport.
  */
 export default function PlaygroundPage(): ReactElement {
-  return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold">Playground</h1>
-        <p className="text-sm text-muted-foreground">
-          Send chat-style requests through your proxy URL. Useful for quick
-          smoke tests and verifying upstream provider auth. Traces and findings
-          show up in the Traces / Security / Audit pages as usual.
-        </p>
-      </div>
-      <PlaygroundClient />
-    </div>
-  );
+  return <PlaygroundClient />;
 }
