@@ -86,6 +86,16 @@ ML_PRELOAD_STARTUP_FLOOR_SECONDS = 1500
 # truthiness rules in `crates/llmtrace-proxy/src/config.rs::env_flag`.
 _ML_FLAG_TRUTHY: frozenset[str] = frozenset({"1", "true", "yes"})
 
+# Storage profiles that hold metadata on pod-local disk. Replicas using one
+# of these profiles cannot share state across Basilica pods (no shared
+# volume); `replicas > 1` will round-robin to diverging files. Empty string
+# means "profile not set" which falls through to the sqlite default in the
+# proxy's `StorageConfig::from_env`. See README "Replica count and metadata
+# storage" for the live-reproduced symptom + the postgres-backed fix.
+_UNSHARED_STORAGE_PROFILES: frozenset[str] = frozenset(
+    {"", "sqlite", "lite", "memory"}
+)
+
 # Proxy admin API endpoints (see `crates/llmtrace-proxy/src/main.rs` routing).
 TENANTS_PATH = "/api/v1/tenants"
 AUTH_KEYS_PATH = "/api/v1/auth/keys"
@@ -554,6 +564,39 @@ def _apply_ml_preload_startup_floor(
     return dataclasses.replace(spec, startup_timeout_seconds=floor)
 
 
+def _warn_on_unsharable_replicas(
+    proxy_spec: ComponentSpec, tenant_id: str
+) -> None:
+    """Emit a warning when replicas > 1 with a non-shared metadata profile.
+
+    The proxy's sqlite/memory backends store metadata on the pod's local
+    filesystem. Basilica does not share volumes between replicas, so
+    `replicas > 1` with one of these profiles produces diverging state:
+    bootstrap writes land on one pod, subsequent admin reads round-robin
+    and return stale results from the replicas that never saw the write.
+    See README "Replica count and metadata storage" for the live-repro
+    evidence + the postgres-backed fix.
+
+    Not an error: operators running with `LLMTRACE_STORAGE_PROFILE=postgres`
+    + `LLMTRACE_POSTGRES_URL` legitimately want replicas > 1. The check is
+    a guard rail for the default-sqlite case.
+    """
+    if proxy_spec.replicas <= 1:
+        return
+    profile = proxy_spec.env.get("LLMTRACE_STORAGE_PROFILE", "").strip().lower()
+    if profile not in _UNSHARED_STORAGE_PROFILES:
+        return
+    LOGGER.warning(
+        "tenant=%s proxy.replicas=%d with LLMTRACE_STORAGE_PROFILE=%r — "
+        "replicas WILL diverge because this profile is per-pod. Either "
+        "set replicas=1 or switch to a shared backend (postgres) via "
+        "LLMTRACE_STORAGE_PROFILE + LLMTRACE_POSTGRES_URL.",
+        tenant_id,
+        proxy_spec.replicas,
+        profile or "sqlite (default)",
+    )
+
+
 def _apply_dashboard_admin_username(
     dashboard_spec: ComponentSpec, username: str
 ) -> ComponentSpec:
@@ -852,6 +895,7 @@ def provision(
     if spec.rate_limit is not None:
         proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
     proxy_spec = _apply_ml_preload_startup_floor(proxy_spec, tenant_id=tenant_id)
+    _warn_on_unsharable_replicas(proxy_spec, tenant_id)
 
     proxy = _create_component(client, proxy_name, proxy_spec)
 
