@@ -30,6 +30,11 @@ proxy:
   port: 8080
   cpu: "2"
   memory: 4Gi
+  # sqlite metadata is per-pod on Basilica — replicas DO NOT share state.
+  # To run replicas > 1, switch LLMTRACE_STORAGE_PROFILE to postgres and
+  # set LLMTRACE_POSTGRES_URL via tenant_secrets_json. Until then,
+  # replicas: 1 is the only correct setting; replicas > 1 will round-robin
+  # to different sqlite files and produce intermittent stale reads.
   replicas: 1
   health_check_path: /health
   # ML preload (LLMTRACE_ML_ENABLED=1 + LLMTRACE_ML_PRELOAD=1) loads the

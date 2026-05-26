@@ -1336,6 +1336,44 @@ matters more than first-request latency.
 **Silence the WARN**: set `startup_timeout_seconds: 1500` (or higher)
 explicitly in your config. Both example configs already do this.
 
+### Replica count and metadata storage
+
+The proxy's metadata store (tenant rows, API keys, audit log) is held in
+a sqlite file on the pod's local filesystem when `LLMTRACE_STORAGE_PROFILE`
+resolves to `sqlite`, `lite`, or `memory` (the default for both example
+configs). Basilica deployments **do not share volumes between replicas**:
+each replica gets its own pod-local sqlite file. Setting
+`proxy.replicas > 1` therefore makes the replicas diverge — bootstrap
+writes (`POST /api/v1/tenants`, `POST /api/v1/auth/keys`) land on one
+random pod; subsequent admin reads round-robin between pods and return
+stale results from the replicas that never saw the write.
+
+**Live-reproduced 2026-05-26 against `:sha-ecf142e` with `pro.yaml`
+(then `replicas: 2`, sqlite metadata).** 10 rapid `/api/v1/tenants`
+calls returned `tenant count=0` on 3/10 hits — a 30% empty rate matching
+the routing odds for one of two replicas holding the data. The dashboard
+`/tenants` page intermittently rendered empty, and `/api/v1/auth/keys`
++ `/api/v1/stats` showed the same symptom.
+
+**Default**: both `starter.yaml` and `pro.yaml` ship `replicas: 1`. This
+is the only correct setting for a per-pod metadata profile.
+
+**Running replicas > 1**: switch to a shared backend.
+
+1. Set `LLMTRACE_STORAGE_PROFILE: postgres` in `proxy.env`.
+2. Supply `LLMTRACE_POSTGRES_URL` via `tenant_secrets_json` /
+   `client_payload.tenant_secrets` (so the bearer doesn't end up in
+   the YAML file).
+3. Bump `proxy.replicas` to the desired count.
+
+**Safety net**: `lifecycle.provision()` emits a `LOGGER.warning(...)`
+when it sees `replicas > 1` combined with a non-shared
+`LLMTRACE_STORAGE_PROFILE` (`""`, `sqlite`, `lite`, `memory`). The
+warning calls out the diverging-replicas failure mode and points at the
+postgres path. It is a warning, not an error — an operator running a
+postgres-backed deployment with `LLMTRACE_STORAGE_PROFILE` explicitly
+set to `postgres` will not see it.
+
 ### Cleanup of orphans
 
 The library only deletes UUIDs the caller hands back. If your app loses the
