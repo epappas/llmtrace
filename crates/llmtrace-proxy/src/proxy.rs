@@ -587,6 +587,97 @@ fn build_upstream_url(config: &ProxyConfig, path: &str, query: Option<&str>) -> 
     }
 }
 
+/// Env-var name for the OpenAI upstream provider key.
+pub(crate) const OPENAI_UPSTREAM_API_KEY_ENV: &str = "OPENAI_API_KEY";
+/// Env-var name for the Anthropic upstream provider key.
+pub(crate) const ANTHROPIC_UPSTREAM_API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+/// Pinned Anthropic Messages API version sent alongside `x-api-key`.
+pub(crate) const ANTHROPIC_VERSION_HEADER_VALUE: &str = "2023-06-01";
+
+/// Extra headers (beyond the primary credential) to inject on the upstream
+/// request. Used today for provider-specific protocol headers such as
+/// Anthropic's mandatory `anthropic-version`.
+pub(crate) fn upstream_extra_headers(
+    provider: &LLMProvider,
+) -> Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> {
+    match provider {
+        LLMProvider::Anthropic => vec![(
+            reqwest::header::HeaderName::from_static("anthropic-version"),
+            reqwest::header::HeaderValue::from_static(ANTHROPIC_VERSION_HEADER_VALUE),
+        )],
+        _ => Vec::new(),
+    }
+}
+
+/// Resolve the upstream credential header for the detected provider.
+///
+/// Returns `Some((header_name, header_value))` when the matching env var is
+/// set; returns `None` (with a `tracing::warn!`) when the var is missing/empty
+/// or when the provider has no known credential convention. The caller is
+/// expected to skip inserting any `Authorization` header in the `None` case so
+/// the upstream surfaces its own 401.
+pub(crate) fn upstream_auth_for(
+    provider: &LLMProvider,
+) -> Option<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> {
+    let (env_var, header_name, value_fmt): (&str, reqwest::header::HeaderName, fn(&str) -> String) =
+        match provider {
+            LLMProvider::OpenAI
+            | LLMProvider::AzureOpenAI
+            | LLMProvider::VLLm
+            | LLMProvider::SGLang
+            | LLMProvider::TGI => (
+                OPENAI_UPSTREAM_API_KEY_ENV,
+                reqwest::header::AUTHORIZATION,
+                |k: &str| format!("Bearer {k}"),
+            ),
+            LLMProvider::Anthropic => (
+                ANTHROPIC_UPSTREAM_API_KEY_ENV,
+                reqwest::header::HeaderName::from_static("x-api-key"),
+                |k: &str| k.to_string(),
+            ),
+            LLMProvider::Ollama => {
+                // Ollama is unauthenticated by default; forward with no creds.
+                return None;
+            }
+            LLMProvider::Bedrock => {
+                // AWS SigV4 — out of scope for env-var substitution.
+                warn!(
+                    "no upstream credential substitution implemented for Bedrock; \
+                     forwarding without Authorization (upstream will reject)"
+                );
+                return None;
+            }
+            LLMProvider::Custom(name) => {
+                warn!(
+                    provider = %name,
+                    "no upstream credential substitution implemented for custom provider; \
+                     forwarding without Authorization (upstream will reject)"
+                );
+                return None;
+            }
+        };
+
+    match std::env::var(env_var) {
+        Ok(raw) if !raw.is_empty() => {
+            match reqwest::header::HeaderValue::from_str(&value_fmt(&raw)) {
+                Ok(hv) => Some((header_name, hv)),
+                Err(e) => {
+                    warn!(env = env_var, error = %e, "upstream credential is not a valid HTTP header value; forwarding without Authorization");
+                    None
+                }
+            }
+        }
+        _ => {
+            warn!(
+                env = env_var,
+                "upstream provider API key env var is unset or empty; \
+                 forwarding without Authorization (upstream will reject)"
+            );
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Main proxy handler
 // ---------------------------------------------------------------------------
@@ -1065,9 +1156,14 @@ pub async fn proxy_handler(
     // trace capture; reqwest does not enable auto-decompression).
     // When boundary defense is active, also strip `Content-Length` because the
     // body size has changed; reqwest will set it from the new body.
+    //
+    // Security (issue #274): always strip the incoming `Authorization` header
+    // here. It was the tenant-facing LLMTrace bearer (e.g. `llmt_…`) and must
+    // NEVER reach the upstream provider. The correct provider credential is
+    // injected below from `upstream_auth_for(&detected_provider)`.
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
     for (name, value) in headers.iter() {
-        if name == "host" || name == "accept-encoding" {
+        if name == "host" || name == "accept-encoding" || name == "authorization" {
             continue;
         }
         if body_was_rewritten && name == "content-length" {
@@ -1079,6 +1175,18 @@ pub async fn proxy_handler(
             }
         }
     }
+
+    // Substitute the configured upstream provider credential. When the env
+    // var is unset we deliberately forward with NO Authorization header so
+    // the upstream returns its own 401, which surfaces the gap as an
+    // operator-actionable signal rather than a silent 5xx.
+    if let Some((auth_name, auth_value)) = upstream_auth_for(&detected_provider) {
+        forwarded_headers.insert(auth_name, auth_value);
+    }
+    for (extra_name, extra_value) in upstream_extra_headers(&detected_provider) {
+        forwarded_headers.insert(extra_name, extra_value);
+    }
+
     upstream_req = upstream_req.headers(forwarded_headers);
 
     // Forward the modified body whenever any defence in the chain
