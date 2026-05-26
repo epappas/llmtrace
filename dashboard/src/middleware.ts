@@ -1,22 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionCookieName, isAuthDisabled } from "./lib/auth";
+import { UPSTREAM_PUBLIC_PATHS } from "./lib/public-paths";
 
-// Paths that bypass the auth gate entirely. `/health` MUST stay open because
-// Basilica's k8s readiness probe hits it; `/login` and `/api/auth/*` are how
-// the user obtains a session in the first place; `/_next/*` and the standard
-// static asset paths must be reachable so the login page itself can render.
-const PUBLIC_PREFIXES: readonly string[] = [
+// Dashboard-only public prefixes (login flow, Next.js internals, static
+// crawler endpoints). These have no upstream counterpart and stay hand-
+// maintained here.
+const DASHBOARD_PUBLIC_PREFIXES: readonly string[] = [
   "/login",
   "/api/auth/",
-  "/health",
-  "/metrics",
   "/_next/",
-  "/api-doc",
-  "/api/proxy/swagger-ui",
-  "/api/proxy/api-doc",
   "/favicon.ico",
   "/robots.txt",
   "/sitemap.xml",
+];
+
+// Upstream-related public prefixes are derived from the single source of
+// truth so the middleware and `proxy-helpers.ts::buildHeaders` cannot
+// disagree (see issue #276). For each upstream public path we expose:
+//   - the dashboard-side mount (`<path>` — e.g. `/health`, `/metrics`)
+//   - the `/api/proxy/*` mount used by the catch-all proxy route
+const UPSTREAM_PUBLIC_PREFIXES: readonly string[] = UPSTREAM_PUBLIC_PATHS.flatMap(
+  (p) => [p, `/api/proxy${p}`],
+);
+
+const PUBLIC_PREFIXES: readonly string[] = [
+  ...DASHBOARD_PUBLIC_PREFIXES,
+  ...UPSTREAM_PUBLIC_PREFIXES,
 ];
 
 const STATIC_FILE_RE = /\.(?:png|jpg|jpeg|gif|svg|ico|webp|avif|css|js|map|woff|woff2|ttf|otf|eot|json|txt)$/i;
