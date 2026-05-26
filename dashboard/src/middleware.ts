@@ -16,9 +16,11 @@ const DASHBOARD_PUBLIC_PREFIXES: readonly string[] = [
 
 // Upstream-related public prefixes are derived from the single source of
 // truth so the middleware and `proxy-helpers.ts::buildHeaders` cannot
-// disagree (see issue #276). For each upstream public path we expose:
-//   - the dashboard-side mount (`<path>` — e.g. `/health`, `/metrics`)
+// disagree (see issues #276, #280). For each upstream public path we expose:
+//   - the dashboard-side mount (`<path>` — e.g. `/health`, `/api-doc`)
 //   - the `/api/proxy/*` mount used by the catch-all proxy route
+// Note: `/metrics` is intentionally NOT public — per R10 it requires a
+// tenant/operator bearer. The session cookie is injected as Bearer below.
 const UPSTREAM_PUBLIC_PREFIXES: readonly string[] = UPSTREAM_PUBLIC_PATHS.flatMap(
   (p) => [p, `/api/proxy${p}`],
 );

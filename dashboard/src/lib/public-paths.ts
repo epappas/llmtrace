@@ -7,7 +7,6 @@
 export const UPSTREAM_PUBLIC_PATHS: readonly string[] = [
   "/api-doc",
   "/swagger-ui",
-  "/metrics",
   "/health",
 ];
 
