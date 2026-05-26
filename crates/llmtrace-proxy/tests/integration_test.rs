@@ -1503,3 +1503,299 @@ async fn test_v1_forward_viewer_role_forbidden() {
         "403 body must surface the standard require_role message; got: {body}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #274 — proxy MUST substitute the upstream provider credential and
+// MUST NEVER forward the tenant's `llmt_…` bearer to the upstream.
+// ---------------------------------------------------------------------------
+
+/// Snapshot of inbound headers captured by the credential-substitution mock
+/// upstream. Tests assert directly on this shape.
+#[derive(Debug, Clone, Default)]
+struct CapturedRequest {
+    authorization: Option<String>,
+    x_api_key: Option<String>,
+    anthropic_version: Option<String>,
+}
+
+/// Record the relevant inbound headers and return a canned OpenAI-shaped 200.
+/// Pulled out of `credential_capture_upstream` so two route handlers can
+/// share it without juggling closure-clonability.
+async fn capture_and_respond(
+    store: Arc<Mutex<Vec<CapturedRequest>>>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response<Body> {
+    let snapshot = CapturedRequest {
+        authorization: headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string),
+        x_api_key: headers
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string),
+        anthropic_version: headers
+            .get("anthropic-version")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string),
+    };
+    store.lock().await.push(snapshot);
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "model": "gpt-4",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            }))
+            .unwrap(),
+        ))
+        .unwrap()
+}
+
+/// Mock upstream that records the inbound `Authorization`, `x-api-key`, and
+/// `anthropic-version` headers on each request, then returns a generic
+/// OpenAI-shaped 200 (the body content is not under test here — only the
+/// inbound auth surface is).
+async fn credential_capture_upstream() -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+    let captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+    let store = Arc::clone(&captured);
+
+    let store_a = Arc::clone(&store);
+    let handler_a = move |headers: axum::http::HeaderMap, _body: axum::body::Bytes| {
+        let store = Arc::clone(&store_a);
+        capture_and_respond(store, headers)
+    };
+    let store_b = Arc::clone(&store);
+    let handler_b = move |headers: axum::http::HeaderMap, _body: axum::body::Bytes| {
+        let store = Arc::clone(&store_b);
+        capture_and_respond(store, headers)
+    };
+
+    let app = Router::new()
+        .route("/v1/chat/completions", post(handler_a))
+        .route("/v1/messages", post(handler_b));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let _handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.ok();
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (format!("http://{addr}"), captured)
+}
+
+/// Serializes env-var mutation across the credential-substitution tests so
+/// they do not race when `cargo test` runs them in parallel.
+fn env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
+/// RAII guard that snapshots and restores a list of env vars. Holds the
+/// global env lock for its entire lifetime so concurrent tests cannot
+/// observe interleaved mutations. Passing `None` for a value removes the
+/// var.
+struct EnvVarGuard {
+    prev: Vec<(&'static str, Option<String>)>,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl EnvVarGuard {
+    fn set(entries: &[(&'static str, Option<&str>)]) -> Self {
+        let lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let mut prev = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            prev.push((*key, std::env::var(key).ok()));
+            // SAFETY: env mutation is serialized by `env_lock`.
+            unsafe {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+        Self { prev, _lock: lock }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        for (key, prior) in &self.prev {
+            // SAFETY: still holding `env_lock`; restore prior state.
+            unsafe {
+                match prior {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_upstream_credential_substitution_openai() {
+    let _env = EnvVarGuard::set(&[
+        ("OPENAI_API_KEY", Some("sk-fake-openai")),
+        ("ANTHROPIC_API_KEY", None),
+    ]);
+
+    let (upstream_url, captured) = credential_capture_upstream().await;
+    let (state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+    let operator_key = seed_role_key(&state, llmtrace_core::ApiKeyRole::Operator).await;
+
+    let req = Request::post("/v1/chat/completions")
+        .header("authorization", format!("Bearer {operator_key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "operator-authenticated /v1/chat/completions must round-trip 200"
+    );
+
+    let recorded = captured.lock().await;
+    assert_eq!(
+        recorded.len(),
+        1,
+        "mock upstream must have received exactly one forwarded request"
+    );
+    let inbound = &recorded[0];
+
+    assert_eq!(
+        inbound.authorization.as_deref(),
+        Some("Bearer sk-fake-openai"),
+        "upstream must see the OpenAI provider key, not the tenant bearer"
+    );
+    let auth = inbound.authorization.clone().unwrap_or_default();
+    assert!(
+        !auth.contains("llmt_"),
+        "tenant `llmt_*` key must NEVER leak to upstream; got: {auth}"
+    );
+    assert!(
+        !auth.contains(&operator_key),
+        "tenant operator key must NEVER leak to upstream; got: {auth}"
+    );
+}
+
+#[tokio::test]
+async fn test_upstream_credential_substitution_anthropic() {
+    let _env = EnvVarGuard::set(&[
+        ("ANTHROPIC_API_KEY", Some("sk-ant-fake")),
+        ("OPENAI_API_KEY", None),
+    ]);
+
+    let (upstream_url, captured) = credential_capture_upstream().await;
+    // Build with an Anthropic-looking upstream so detect_provider routes to
+    // Anthropic via path (/v1/messages). The hostname in `upstream_url` is
+    // 127.0.0.1 — detect_provider's path rule at /v1/messages still fires.
+    let (state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+    let operator_key = seed_role_key(&state, llmtrace_core::ApiKeyRole::Operator).await;
+
+    let req = Request::post("/v1/messages")
+        .header("authorization", format!("Bearer {operator_key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "claude-3-sonnet",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "operator-authenticated /v1/messages must round-trip 200"
+    );
+
+    let recorded = captured.lock().await;
+    assert_eq!(
+        recorded.len(),
+        1,
+        "mock upstream must have captured one request"
+    );
+    let inbound = &recorded[0];
+
+    assert_eq!(
+        inbound.x_api_key.as_deref(),
+        Some("sk-ant-fake"),
+        "Anthropic upstream must see x-api-key set to the configured key"
+    );
+    assert_eq!(
+        inbound.anthropic_version.as_deref(),
+        Some("2023-06-01"),
+        "Anthropic upstream must see the pinned anthropic-version header"
+    );
+    assert!(
+        inbound.authorization.is_none(),
+        "Anthropic upstream must NOT receive any Authorization header; got: {:?}",
+        inbound.authorization
+    );
+}
+
+#[tokio::test]
+async fn test_upstream_no_credential_when_env_missing() {
+    let _env = EnvVarGuard::set(&[("OPENAI_API_KEY", None), ("ANTHROPIC_API_KEY", None)]);
+
+    let (upstream_url, captured) = credential_capture_upstream().await;
+    let (state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
+    let operator_key = seed_role_key(&state, llmtrace_core::ApiKeyRole::Operator).await;
+
+    let req = Request::post("/v1/chat/completions")
+        .header("authorization", format!("Bearer {operator_key}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hi"}]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "missing OPENAI_API_KEY must still produce a 2xx (mock returns 200); \
+         the proxy must NOT 5xx when env var is unset"
+    );
+
+    let recorded = captured.lock().await;
+    assert_eq!(
+        recorded.len(),
+        1,
+        "mock upstream must have captured one request"
+    );
+    let inbound = &recorded[0];
+
+    assert!(
+        inbound.authorization.is_none(),
+        "with no upstream credential configured, mock MUST see no Authorization; got: {:?}",
+        inbound.authorization
+    );
+    assert!(
+        inbound.x_api_key.is_none(),
+        "with no upstream credential configured, mock MUST see no x-api-key; got: {:?}",
+        inbound.x_api_key
+    );
+}
