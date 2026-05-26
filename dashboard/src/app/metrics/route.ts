@@ -1,27 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchWithFallback } from "@/lib/backend";
+import { proxyGet } from "@/lib/proxy-helpers";
 
-// `/metrics` is exposed unauthenticated by design so scrapers (Prometheus,
-// k8s discovery) can pull it without holding a dashboard session. The
-// upstream proxy enforces network-level ACLs on its metrics port.
-export async function GET(_req: NextRequest): Promise<NextResponse> {
-  try {
-    const { response } = await fetchWithFallback("/metrics", {
-      method: "GET",
-      cache: "no-store",
-    });
-    const body = await response.text();
-    return new NextResponse(body, {
-      status: response.status,
-      headers: {
-        "Content-Type": response.headers.get("Content-Type") ?? "text/plain",
-      },
-    });
-  } catch (e) {
-    console.error("[metrics] proxy error:", e);
-    return NextResponse.json(
-      { error: { message: "Backend unavailable", type: "proxy_error" } },
-      { status: 502 },
-    );
-  }
+// `/metrics` is authenticated by design (issue #280, R10): the upstream
+// proxy's auth middleware does NOT allow-list this path, so the dashboard
+// must forward the operator's session as a bearer. We route through
+// `proxyGet` so the middleware-injected `Authorization` header (or the
+// auth-disabled escape hatch) reaches the proxy. The previous direct
+// `fetchWithFallback` call sent the request unauthenticated and the
+// proxy correctly returned 401 — see #280 for the regression history.
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  return proxyGet(req, "/metrics");
 }
