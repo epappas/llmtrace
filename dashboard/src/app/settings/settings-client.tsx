@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, CheckCircle, XCircle, ExternalLink, Copy, Check } from "lucide-react";
+import Link from "next/link";
+import { RefreshCw, CheckCircle, XCircle, Copy, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -215,8 +216,6 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
   const [upstream, setUpstream] = useState<UpstreamUrlState>({ status: "loading" });
   const [loading, setLoading] = useState(false);
   const [configLoading, setConfigLoading] = useState(false);
-  const swaggerUiUrl = "/api/proxy/swagger-ui/";
-  const openApiJsonUrl = "/api/proxy/api-doc/openapi.json";
 
   async function checkHealth(): Promise<void> {
     console.log("[Settings] Checking health via API helper...");
@@ -374,42 +373,14 @@ export default function SettingsClient({ proxyUrl }: SettingsClientProps) {
         </CardContent>
       </Card>
 
-      {/* API Endpoints Reference */}
+      {/* API Endpoints moved to /api-docs */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">API Endpoints</CardTitle>
-          <CardDescription>
-            Interactive Swagger UI served by the LLMTrace proxy.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a href={swaggerUiUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Open Swagger UI
-                </a>
-              </Button>
-              <Button asChild variant="outline" size="sm">
-                <a href={openApiJsonUrl} target="_blank" rel="noreferrer">
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Open OpenAPI JSON
-                </a>
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                Served via dashboard proxy routes
-              </span>
-            </div>
-
-            <div className="rounded-md border">
-              <iframe
-                title="LLMTrace Swagger UI"
-                src={swaggerUiUrl}
-                className="h-[70vh] w-full rounded-md"
-              />
-            </div>
-          </div>
+        <CardContent className="py-4 text-sm">
+          API endpoints reference moved to{" "}
+          <Link href="/api-docs" className="underline">
+            /api-docs
+          </Link>
+          .
         </CardContent>
       </Card>
     </div>

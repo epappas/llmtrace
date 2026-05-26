@@ -15,6 +15,7 @@ import {
   BookOpen,
   Gauge,
   ScrollText,
+  Code,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ const navItems = [
   { href: "/tenants", label: "Tenants", icon: Users },
   { href: "/compliance", label: "Compliance", icon: FileCheck },
   { href: "/status", label: "Status", icon: Gauge },
+  { href: "/api-docs", label: "API Docs", icon: Code },
   { href: "/guide", label: "Guide", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
