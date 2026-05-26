@@ -16,6 +16,7 @@ import {
   Gauge,
   ScrollText,
   Code,
+  MessageSquare,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,7 @@ const navItems = [
   { href: "/traces", label: "Traces", icon: FileSearch },
   { href: "/security", label: "Security", icon: Shield },
   { href: "/audit", label: "Audit", icon: ScrollText },
+  { href: "/playground", label: "Playground", icon: MessageSquare },
   { href: "/costs", label: "Costs", icon: DollarSign },
   { href: "/tenants", label: "Tenants", icon: Users },
   { href: "/compliance", label: "Compliance", icon: FileCheck },
