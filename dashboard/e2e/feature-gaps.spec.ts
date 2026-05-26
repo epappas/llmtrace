@@ -30,9 +30,18 @@ test.describe("Dashboard Coverage Gaps", () => {
     createdTenantIds = [];
   });
 
-  test("Settings: should embed Swagger UI and expose API doc links", async ({ page }) => {
+  test("API Docs: dedicated page embeds Swagger UI and exposes API doc links", async ({ page }) => {
+    // Issue #281 moved the Swagger UI surface from /settings to its own
+    // /api-docs page. The /settings page now only cross-links to it.
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.locator('iframe[title="LLMTrace Swagger UI"]')).toHaveCount(0);
+    const crossLink = page.locator("main").getByRole("link", { name: "/api-docs" });
+    await expect(crossLink).toBeVisible();
+    await expect(crossLink).toHaveAttribute("href", "/api-docs");
+
+    await page.goto("/api-docs");
+    await expect(page.getByRole("heading", { name: "API Endpoints", exact: true })).toBeVisible();
 
     const swaggerLink = page.getByRole("link", { name: "Open Swagger UI" });
     const openApiLink = page.getByRole("link", { name: "Open OpenAPI JSON" });
