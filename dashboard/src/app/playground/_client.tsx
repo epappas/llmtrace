@@ -16,6 +16,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  Download,
   Loader2,
   MessageSquarePlus,
   Settings2,
@@ -309,6 +310,94 @@ function prettyJson(text: string | null): string {
   }
 }
 
+function tryParseJson(text: string | null): unknown {
+  if (text == null) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+// Schema version for the exported audit-trail file. Bump on any
+// breaking change to the JSON shape so downstream tools / agents can
+// gate on it.
+const AUDIT_EXPORT_SCHEMA = "llmtrace.playground.audit/v1";
+
+type AuditExport = {
+  schema: typeof AUDIT_EXPORT_SCHEMA;
+  exported_at: string;
+  source: "llmtrace-playground";
+  settings: {
+    model: string;
+    custom_model: string;
+    temperature: number;
+    system_prompt: string;
+    effective_model: string;
+  };
+  conversation: Array<{
+    id: string;
+    turn_index: number;
+    role: "user" | "assistant";
+    content: string;
+    model: string | null;
+    created_at: string;
+    llmtrace: {
+      trace_id: string | null;
+      action: MsgAction;
+      blocked: boolean;
+      blocked_reason: string | null;
+      security_score: number | null;
+      latency_ms: number | null;
+      prompt_tokens: number | null;
+      completion_tokens: number | null;
+      findings: MsgFinding[];
+    };
+    raw_request: unknown;
+    raw_response: unknown;
+  }>;
+};
+
+function buildAuditExport(
+  messages: readonly ChatMessage[],
+  settings: Settings,
+  effectiveModel: string,
+): AuditExport {
+  return {
+    schema: AUDIT_EXPORT_SCHEMA,
+    exported_at: new Date().toISOString(),
+    source: "llmtrace-playground",
+    settings: {
+      model: settings.model,
+      custom_model: settings.customModel,
+      temperature: settings.temperature,
+      system_prompt: settings.systemPrompt,
+      effective_model: effectiveModel,
+    },
+    conversation: messages.map((m, i) => ({
+      id: m.id,
+      turn_index: i,
+      role: m.role,
+      content: m.content,
+      model: m.model,
+      created_at: new Date(m.createdAt).toISOString(),
+      llmtrace: {
+        trace_id: m.metadata.traceId,
+        action: m.metadata.action,
+        blocked: m.metadata.blocked,
+        blocked_reason: m.metadata.blockedReason,
+        security_score: m.metadata.securityScore,
+        latency_ms: m.metadata.latencyMs,
+        prompt_tokens: m.metadata.promptTokens,
+        completion_tokens: m.metadata.completionTokens,
+        findings: m.metadata.findings,
+      },
+      raw_request: tryParseJson(m.rawRequest),
+      raw_response: tryParseJson(m.rawResponse),
+    })),
+  };
+}
+
 // Severity rank used to escalate the bubble status overlay above the
 // proxy-reported action. The proxy can be configured in log-only
 // enforcement mode (`enforcement_mode: log`) in which case every
@@ -467,14 +556,31 @@ async function postChat(requestBody: string): Promise<SendResult> {
   }
 }
 
+// Retry schedule for the trace lookup. Proxy persistence can race the
+// chat-completion response: analyzers + DB write happen after the upstream
+// returns, so an immediate GET /traces/{id} may 404 briefly. Without a
+// retry, the bubble stays stuck at action=unknown with blank metadata
+// (see Turn 3 incident on 2026-05-27). Total budget ≈3.75s.
+const TRACE_FETCH_RETRIES: readonly number[] = [250, 500, 1000, 2000];
+
 async function fetchTrace(traceId: string): Promise<RawTrace | null> {
-  try {
-    const res = await fetch(`/api/proxy/traces/${traceId}`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as RawTrace;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt <= TRACE_FETCH_RETRIES.length; attempt++) {
+    try {
+      const res = await fetch(`/api/proxy/traces/${traceId}`, { cache: "no-store" });
+      if (res.ok) {
+        return (await res.json()) as RawTrace;
+      }
+      // 404 during the persistence race is the expected transient — fall
+      // through to the backoff and retry. Other 4xx/5xx also retry; if
+      // the issue is permanent the loop exits after the final attempt.
+    } catch {
+      // Network error — retry.
+    }
+    const delayMs = TRACE_FETCH_RETRIES[attempt];
+    if (delayMs == null) break;
+    await new Promise<void>((r) => setTimeout(r, delayMs));
   }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -649,6 +755,23 @@ export default function PlaygroundClient(): ReactElement {
     setError(null);
   }, []);
 
+  const exportAuditTrail = useCallback((): void => {
+    if (messages.length === 0) return;
+    const payload = buildAuditExport(messages, settings, effectiveModel);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `llmtrace-playground-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [messages, settings, effectiveModel]);
+
   const onActionChip = useCallback(
     (chip: ActionChip): void => {
       void sendContent(chip.payload);
@@ -662,7 +785,9 @@ export default function PlaygroundClient(): ReactElement {
         model={effectiveModel}
         onClear={clear}
         onOpenSettings={() => setSettingsOpen(true)}
+        onExport={exportAuditTrail}
         canClear={messages.length > 0 && !pending}
+        canExport={messages.length > 0 && !pending}
       />
       <div className="flex-1 overflow-y-auto" data-testid="playground-scroll">
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
@@ -711,7 +836,9 @@ function PlaygroundHeader(props: {
   model: string;
   onClear: () => void;
   onOpenSettings: () => void;
+  onExport: () => void;
   canClear: boolean;
+  canExport: boolean;
 }): ReactElement {
   return (
     <div className="flex items-center justify-between border-b bg-background/80 px-4 py-3 backdrop-blur">
@@ -722,6 +849,18 @@ function PlaygroundHeader(props: {
         </Badge>
       </div>
       <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={props.onExport}
+          disabled={!props.canExport}
+          data-testid="playground-export"
+          title="Download the conversation + full LLMTrace audit trail as JSON"
+        >
+          <Download className="mr-1.5 h-3.5 w-3.5" />
+          Export
+        </Button>
         <Button
           type="button"
           variant="ghost"
@@ -990,7 +1129,9 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
             <dd className="text-red-700 dark:text-red-300">{meta.blockedReason}</dd>
           </>
         )}
-        <dt className="text-muted-foreground">Findings</dt>
+        <dt className="text-muted-foreground" title="Analyzers run on the whole conversation each turn, not just the latest user message. A finding here may correspond to an earlier turn's content.">
+          Findings <span className="text-[9px] opacity-70">(whole conversation)</span>
+        </dt>
         <dd data-testid="playground-details-findings">
           {meta.findings.length === 0 ? (
             <span className="text-muted-foreground">none</span>
