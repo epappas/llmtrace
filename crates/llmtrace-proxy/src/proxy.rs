@@ -1,8 +1,13 @@
 //! Core proxy request handler.
 //!
 //! Receives incoming HTTP requests, extracts LLM metadata, forwards them to
-//! the upstream, captures the response, and spawns async background tasks for
-//! trace storage and security analysis.
+//! the upstream, and captures the response. For non-streaming responses the
+//! full post-response security analysis runs INLINE inside the response
+//! task so the [`llmtrace`] envelope on the wire reflects the same findings
+//! that get persisted to the trace store. Trace storage, anomaly detection,
+//! async enforcement actions, and metrics still run in a background task.
+//! Streaming responses keep the legacy behaviour: chunks are forwarded to the
+//! client as they arrive and the post-stream analysis runs asynchronously.
 //!
 //! ## ML pipeline concurrency cap
 //!
@@ -1602,10 +1607,15 @@ pub async fn proxy_handler(
     let provider_bg = detected_provider;
     let agent_id_bg = agent_id;
     let scope_bg = monitoring_scope;
-    let envelope_findings_bg: Vec<SecurityFinding> = flagged_findings.clone();
+    // The envelope `findings` and `security_score` are no longer pre-computed
+    // from the sync pre-flight here; they are derived from the inline full
+    // analysis inside the spawned task below, so the envelope reflects the
+    // EXACT same findings as the persisted trace span. `envelope_action_bg`
+    // stays sourced from the sync pre-flight enforcement decision and
+    // `advisory_injected_bg` is pinned to whatever the pre-flight decided
+    // (the advisory system message is inserted before the upstream request).
     let envelope_action_bg = envelope_action;
     let envelope_policy_mode_bg = envelope_policy_mode;
-    let envelope_security_score_bg = envelope_security_score;
     let advisory_injected_bg = advisory_injected;
     let task_guard = state.shutdown.track_task();
     tokio::spawn(async move {
@@ -1741,24 +1751,27 @@ pub async fn proxy_handler(
                 }
             }
         }
-        // Non-streaming path: inject the `llmtrace` envelope into the
-        // upstream JSON body (passthrough if it isn't a JSON object) and
-        // emit as a single chunk. This is the moment Feature C lands on
-        // the wire -- everything before this point left bytes alone.
-        if inject_envelope {
-            let envelope = build_llmtrace_envelope(
-                trace_id,
-                envelope_action_bg,
-                envelope_policy_mode_bg,
-                envelope_security_score_bg,
-                &envelope_findings_bg,
-                advisory_injected_bg,
-            );
-            let rewritten = inject_envelope_into_response(&client_buffer, envelope);
-            let _ = body_sender.send(Ok(Bytes::from(rewritten))).await;
+        // Wrap `body_sender` in an Option so the streaming path can drop it
+        // early (EOF immediately after the last chunk) while the
+        // non-streaming path retains it across the inline security analysis
+        // and uses it to deliver the envelope chunk further down.
+        let mut body_sender_opt = Some(body_sender);
+
+        // Streaming clients have already received their chunks above; drop
+        // the sender now so they see EOF immediately, without waiting on the
+        // post-stream security analysis. Non-streaming clients are still
+        // blocked here -- the envelope chunk is emitted further down, AFTER
+        // the inline full security analysis has populated `findings` and
+        // `security_score`.
+        //
+        // TODO(envelope-streaming): the streaming envelope reflects only the
+        // sync pre-flight findings (via the `x-llmtrace-*` response headers).
+        // Full-fidelity envelope matching the persisted trace would require a
+        // trailing SSE event after the upstream `[DONE]` sentinel. Out of
+        // scope on this change.
+        if is_streaming {
+            drop(body_sender_opt.take());
         }
-        // body_sender is dropped here, closing the stream to the client.
-        drop(body_sender);
 
         // Run one final streaming analysis on any remaining content that
         // didn't cross a token-interval boundary.
@@ -1898,6 +1911,43 @@ pub async fn proxy_handler(
         // These have already been alerted on mid-stream; now we persist them
         // alongside the full post-stream analysis findings.
         security_findings.extend(streaming_findings);
+
+        // --- Non-streaming envelope emission (was previously above, before
+        // analysis ran) ---
+        //
+        // Now that `security_findings` reflects the FULL post-response
+        // analysis (regex + ML ensemble + output safety), inject the
+        // `llmtrace` envelope into the buffered JSON body and emit it as a
+        // single chunk. The client has been blocked on `body_sender` since
+        // the upstream finished sending bytes; this is the moment the
+        // envelope lands on the wire with the same findings that will be
+        // persisted to the trace.
+        //
+        // - `findings` and `security_score` come from the inline analysis.
+        // - `action` keeps the sync pre-flight mapping (`envelope_action_bg`)
+        //   because the enforcement decision was already taken upstream-side
+        //   (Block returned early; Flag/Allow both collapse to "allow" here).
+        // - `advisory_injected` reflects the pre-flight decision since the
+        //   advisory system message was inserted before forwarding the
+        //   request; we do NOT re-inject post-forwarding.
+        if !is_streaming {
+            if let Some(sender) = body_sender_opt.take() {
+                if inject_envelope {
+                    let envelope_score = compute_security_score(&security_findings);
+                    let envelope = build_llmtrace_envelope(
+                        trace_id,
+                        envelope_action_bg,
+                        envelope_policy_mode_bg,
+                        envelope_score,
+                        &security_findings,
+                        advisory_injected_bg,
+                    );
+                    let rewritten = inject_envelope_into_response(&client_buffer, envelope);
+                    let _ = sender.send(Ok(Bytes::from(rewritten))).await;
+                }
+                // `sender` dropped here -- client sees EOF.
+            }
+        }
 
         // --- Anomaly detection (async, non-blocking) ---
         if let Some(ref detector) = state_bg.anomaly_detector {
