@@ -309,9 +309,31 @@ function prettyJson(text: string | null): string {
   }
 }
 
-// Visual classifier for the status overlay on every bubble. Maps the
-// metadata's action + loading state to an icon, tone class for the
-// circular badge background, and an accessible label.
+// Severity rank used to escalate the bubble status overlay above the
+// proxy-reported action. The proxy can be configured in log-only
+// enforcement mode (`enforcement_mode: log`) in which case every
+// request returns action="allow" regardless of findings; without this
+// escalation the bubble would show a green tick despite Critical
+// findings (e.g. ml_prompt_injection, data_exfiltration) being detected
+// on the request. Higher number = more severe.
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1,
+  info: 0,
+};
+
+function findingsMaxRank(findings: readonly MsgFinding[]): number {
+  return findings.reduce(
+    (acc, f) => Math.max(acc, SEVERITY_RANK[f.severity.toLowerCase()] ?? 0),
+    0,
+  );
+}
+
+// Visual classifier for the status overlay on every bubble. Encodes the
+// WORST of (proxy enforcement action, finding severity) so the icon
+// never reads "safe" while elevated-severity findings exist.
 type StatusVisual = {
   icon: typeof ShieldCheck;
   tone: string;
@@ -334,6 +356,32 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
       tone: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
       label: "Blocked",
       testId: "block",
+    };
+  }
+  const sevRank = findingsMaxRank(meta.findings);
+  // Critical findings always escalate to a red warning even if the
+  // proxy allowed the request through (log-only enforcement mode).
+  // Labels reflect the truth: detected risks weren't enforced.
+  if (sevRank >= SEVERITY_RANK.critical) {
+    return {
+      icon: ShieldOff,
+      tone: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
+      label:
+        meta.action === "allow"
+          ? "Critical findings (allowed by policy)"
+          : "Critical findings",
+      testId: "critical-findings",
+    };
+  }
+  if (sevRank >= SEVERITY_RANK.high) {
+    return {
+      icon: ShieldAlert,
+      tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40",
+      label:
+        meta.action === "allow"
+          ? "High-severity findings (allowed by policy)"
+          : "High-severity findings",
+      testId: "high-findings",
     };
   }
   if (meta.action === "redact") {
@@ -905,6 +953,9 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
   const score = meta.securityScore;
   const pct = score == null ? null : Math.round(score * 100);
   const actionLabel = meta.blocked ? "block" : meta.action;
+  const sevRank = findingsMaxRank(meta.findings);
+  const isEscalated =
+    !meta.blocked && meta.action === "allow" && sevRank >= SEVERITY_RANK.high;
   return (
     <div className="space-y-1.5">
       <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -912,7 +963,17 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
       </div>
       <dl className="grid grid-cols-[max-content,1fr] gap-x-3 gap-y-1">
         <dt className="text-muted-foreground">Action</dt>
-        <dd data-testid="playground-details-action">{actionLabel}</dd>
+        <dd data-testid="playground-details-action">
+          {actionLabel}
+          {isEscalated && (
+            <span
+              data-testid="playground-details-action-warning"
+              className="ml-2 text-[10px] text-red-700 dark:text-red-300"
+            >
+              (allowed by policy — see Findings)
+            </span>
+          )}
+        </dd>
         <dt className="text-muted-foreground">Security score</dt>
         <dd data-testid="playground-details-score">{pct == null ? "—" : `${pct}/100`}</dd>
         <dt className="text-muted-foreground">Latency</dt>
