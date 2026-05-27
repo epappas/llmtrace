@@ -3,15 +3,16 @@ import { fetchWithFallback } from "./backend";
 import { isAuthDisabled } from "./auth";
 import { isUpstreamPublic } from "./public-paths";
 
-// Upstream response headers the browser needs to see. The proxy emits these
-// on every traced response; the /playground UI reads `x-llmtrace-trace-id`
-// to attach per-message metadata via /traces/{id}. Without forwarding, the
-// metadata pills never populate.
-const FORWARDED_RESPONSE_HEADERS: readonly string[] = [
-  "x-llmtrace-trace-id",
-  "x-llmtrace-tenant-id",
-  "x-request-id",
-];
+// Allow-list prefixes for upstream response headers that the browser
+// needs to see. The proxy emits `x-llmtrace-*` for every traced response
+// (trace-id, action, score, policy-mode, findings, etc.) plus
+// `x-request-id` for cross-system correlation. A prefix match means new
+// `x-llmtrace-*` headers added on the proxy side flow through without
+// further dashboard changes — see incident on 2026-05-27 where #297's
+// new x-llmtrace-action / x-llmtrace-score / x-llmtrace-policy-mode
+// headers were silently stripped by an earlier hardcoded name list.
+const FORWARDED_RESPONSE_HEADER_PREFIXES: readonly string[] = ["x-llmtrace-"];
+const FORWARDED_RESPONSE_HEADER_NAMES: readonly string[] = ["x-request-id"];
 
 function buildHeaders(
   req: NextRequest,
@@ -67,10 +68,19 @@ function buildResponseHeaders(res: Response): Record<string, string> {
   const out: Record<string, string> = {
     "Content-Type": res.headers.get("Content-Type") ?? "application/json",
   };
-  for (const name of FORWARDED_RESPONSE_HEADERS) {
-    const value = res.headers.get(name);
-    if (value) out[name] = value;
-  }
+  res.headers.forEach((value, name) => {
+    const lower = name.toLowerCase();
+    if (FORWARDED_RESPONSE_HEADER_NAMES.includes(lower)) {
+      out[lower] = value;
+      return;
+    }
+    for (const prefix of FORWARDED_RESPONSE_HEADER_PREFIXES) {
+      if (lower.startsWith(prefix)) {
+        out[lower] = value;
+        return;
+      }
+    }
+  });
   return out;
 }
 
