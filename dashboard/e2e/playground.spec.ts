@@ -123,6 +123,51 @@ async function mockTraceAmberAllow(page: Page): Promise<void> {
   });
 }
 
+// Trace where the proxy returned action=allow (log-only enforcement
+// mode) but recorded Critical-severity findings on the span. The bubble
+// status overlay must escalate to red here — green would mislead the
+// user into thinking the request was safe when it wasn't.
+async function mockTraceCriticalAllow(page: Page): Promise<void> {
+  await page.route(`**/api/proxy/traces/${FIXTURE_TRACE_ID}`, async (route) => {
+    const trace = {
+      trace_id: FIXTURE_TRACE_ID,
+      tenant_id: "tenant-fixture",
+      created_at: new Date().toISOString(),
+      spans: [
+        {
+          span_id: "span-1",
+          trace_id: FIXTURE_TRACE_ID,
+          tenant_id: "tenant-fixture",
+          operation_name: "chat.completion",
+          provider: "openai",
+          model_name: "gpt-4o-mini",
+          duration_ms: 1234,
+          security_score: 80,
+          // No enforcement_action tag => deriveAction falls back to
+          // "allow" on a 2xx response. The Critical findings are
+          // independent of that decision.
+          security_findings: [
+            {
+              finding_type: "ml_prompt_injection",
+              severity: "Critical",
+              confidence: 0.91,
+            },
+            { finding_type: "pii_detected", severity: "Medium", confidence: 0.7 },
+            { finding_type: "data_exfiltration", severity: "Medium", confidence: 0.6 },
+          ],
+          agent_actions: [],
+          tags: {},
+        },
+      ],
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(trace),
+    });
+  });
+}
+
 test.describe("Playground page (issues #284, #287, #289)", () => {
   test.beforeAll(async ({ request }, testInfo) => {
     testInfo.setTimeout(120_000);
@@ -286,5 +331,52 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
 
     // No assistant bubble must be appended when the request was blocked.
     await expect(page.getByTestId("playground-msg-assistant")).toHaveCount(0);
+  });
+
+  test("Critical findings escalate the bubble overlay to red even when action=allow", async ({
+    page,
+  }) => {
+    // Proxy returns 200 + action=allow (log-only enforcement) but the
+    // trace span carries Critical findings. The bubble must NOT show
+    // green — that would mislead the user into thinking the request
+    // was safe when LLMTrace flagged Critical risks.
+    await mockChatOk(page);
+    await mockTraceCriticalAllow(page);
+
+    await page.goto("/playground");
+    await page.getByTestId("playground-input").fill("payload with critical findings");
+    await page.getByTestId("playground-send").click();
+
+    await expect(page.getByTestId("playground-msg-assistant")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Wait for the trace fetch to resolve and the overlay to escalate.
+    const escalated = page.getByTestId("playground-status-critical-findings");
+    await expect(escalated.first()).toBeVisible({ timeout: 10_000 });
+    await expect(escalated).toHaveCount(2);
+
+    // Escalated overlay must carry the red tone.
+    const cls = (await escalated.first().getAttribute("class")) ?? "";
+    expect(cls).toContain("red");
+
+    // No green "allow" overlay should be present on either bubble — it
+    // would directly contradict the escalation.
+    await expect(page.getByTestId("playground-status-allow")).toHaveCount(0);
+
+    // The accessible label calls out the contradiction.
+    await expect(escalated.first()).toHaveAttribute(
+      "aria-label",
+      /Critical findings.*allowed by policy/,
+    );
+
+    // The Details drawer also exposes the warning next to the action.
+    await page
+      .getByTestId("playground-msg-user")
+      .getByTestId("playground-toggle-details")
+      .click();
+    await expect(
+      page.getByTestId("playground-details-action-warning").first(),
+    ).toBeVisible();
   });
 });
