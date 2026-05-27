@@ -920,6 +920,8 @@ def provision(
 
         tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
+    else:
+        tenant_uuid = None
 
     dashboard_spec = _apply_dashboard_admin_username(
         dashboard_spec, spec.admin_username
@@ -928,6 +930,22 @@ def provision(
     if spec.inject_proxy_url_into_dashboard:
         merged_env = {**dashboard_spec.env, spec.proxy_url_env_var: proxy.url}
         dashboard_spec = dataclasses.replace(dashboard_spec, env=merged_env)
+
+    # Pin the dashboard's upstream calls to the provisioned tenant. Without
+    # this, admin-key calls (the dashboard's only auth path today) cause the
+    # proxy to attribute each request to a new "phantom" tenant — see the
+    # /traces emptiness incident: traces persist correctly but scatter across
+    # 16+ tenants per day, making the dashboard's tenant-filtered views
+    # appear empty. The proxy honours `X-LLMTrace-Tenant-ID` when supplied
+    # alongside an admin key; the dashboard injects this env value as that
+    # header in `proxy-helpers.ts::buildHeaders`.
+    if tenant_uuid:
+        merged_env = {
+            **dashboard_spec.env,
+            "LLMTRACE_DASHBOARD_TENANT_ID": tenant_uuid,
+        }
+        dashboard_spec = dataclasses.replace(dashboard_spec, env=merged_env)
+
     dashboard = _create_component(client, dashboard_name, dashboard_spec)
 
     return TenantInstances(

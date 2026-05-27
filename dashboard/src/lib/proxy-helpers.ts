@@ -3,13 +3,33 @@ import { fetchWithFallback } from "./backend";
 import { isAuthDisabled } from "./auth";
 import { isUpstreamPublic } from "./public-paths";
 
+// Upstream response headers the browser needs to see. The proxy emits these
+// on every traced response; the /playground UI reads `x-llmtrace-trace-id`
+// to attach per-message metadata via /traces/{id}. Without forwarding, the
+// metadata pills never populate.
+const FORWARDED_RESPONSE_HEADERS: readonly string[] = [
+  "x-llmtrace-trace-id",
+  "x-llmtrace-tenant-id",
+  "x-request-id",
+];
+
 function buildHeaders(
   req: NextRequest,
   backendPath: string,
   extra: Record<string, string> = {},
 ): Record<string, string> | NextResponse {
   const headers: Record<string, string> = { ...extra };
-  const tenantHeader = req.headers.get("x-llmtrace-tenant-id");
+
+  // Tenant header resolution: prefer an explicit incoming header (used by
+  // dashboard pages that drive a tenant picker, e.g. /traces). Fall back to
+  // the deployment-pinned tenant set at provisioning time so that
+  // dashboard-originated traffic (e.g. /playground chat completions) is
+  // attributed to the real provisioned tenant instead of spawning a
+  // throwaway tenant per call on the proxy.
+  const tenantHeader =
+    req.headers.get("x-llmtrace-tenant-id") ??
+    process.env.LLMTRACE_DASHBOARD_TENANT_ID ??
+    null;
   if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
 
   const authHeader = req.headers.get("authorization");
@@ -43,6 +63,17 @@ function buildHeaders(
   );
 }
 
+function buildResponseHeaders(res: Response): Record<string, string> {
+  const out: Record<string, string> = {
+    "Content-Type": res.headers.get("Content-Type") ?? "application/json",
+  };
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = res.headers.get(name);
+    if (value) out[name] = value;
+  }
+  return out;
+}
+
 /**
  * Proxy a GET request to the LLMTrace backend, forwarding query params
  * and relevant headers (tenant identification, Authorization).
@@ -64,7 +95,7 @@ export async function proxyGet(
     const body = await res.text();
     return new NextResponse(body, {
       status: res.status,
-      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+      headers: buildResponseHeaders(res),
     });
   } catch (e) {
     console.error("Proxy error:", e);
@@ -101,7 +132,7 @@ export async function proxyMutate(
     const body = await res.text();
     return new NextResponse(body, {
       status: res.status,
-      headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/json" },
+      headers: buildResponseHeaders(res),
     });
   } catch (e) {
     console.error("Proxy error:", e);

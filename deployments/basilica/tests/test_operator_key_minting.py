@@ -503,6 +503,10 @@ def test_provision_returns_operator_key_as_api_key_and_admin_key_separately(
     dash_create = next(c for c in fake_client.creates if "dashboard" in c["instance_name"])
     assert dash_create["env"]["LLMTRACE_AUTH_ADMIN_KEY"] == ADMIN_KEY
     assert "LLMTRACE_AUTH_RUNTIME_KEY" not in dash_create["env"]
+    # Dashboard env pins upstream calls to the provisioned tenant so the
+    # proxy attributes admin-key traffic (the dashboard's only auth path)
+    # to the real tenant instead of spawning a phantom tenant per call.
+    assert dash_create["env"]["LLMTRACE_DASHBOARD_TENANT_ID"] == TENANT_UUID
 
 
 def test_provision_skips_key_flow_when_proxy_auth_disabled(fake_proxy: Any) -> None:
@@ -526,3 +530,7 @@ def test_provision_skips_key_flow_when_proxy_auth_disabled(fake_proxy: Any) -> N
     assert result.admin_key is None
     # No HTTP calls were made (no recorded requests because the fake never received any).
     assert proxy.recorded == []
+    # No tenant UUID is materialised when auth is disabled, so the dashboard
+    # env must not carry a stale LLMTRACE_DASHBOARD_TENANT_ID either.
+    dash_create = next(c for c in fake_client.creates if "dashboard" in c["instance_name"])
+    assert "LLMTRACE_DASHBOARD_TENANT_ID" not in dash_create["env"]
