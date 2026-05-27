@@ -64,6 +64,11 @@ pub struct FeatureFlags {
     /// `JudgeConfig` struct carries backend selection and tuning
     /// knobs.
     pub llm_judge_enabled: bool,
+    /// When true and pre-request enforcement produced findings, the
+    /// proxy injects a synthetic system message at the head of the
+    /// outgoing chat-completions request describing the detections.
+    /// Non-streaming OpenAI-compat path only on this first cut.
+    pub llm_advisory_injection_enabled: bool,
 }
 
 /// Canonical identifier for every flag exposed on [`FeatureFlags`].
@@ -86,6 +91,7 @@ pub enum FeatureId {
     OperatingPoint,
     OverDefence,
     LlmJudgeEnabled,
+    LlmAdvisoryInjectionEnabled,
 }
 
 /// Kind of value a feature flag accepts.
@@ -111,6 +117,7 @@ impl FeatureId {
         FeatureId::OperatingPoint,
         FeatureId::OverDefence,
         FeatureId::LlmJudgeEnabled,
+        FeatureId::LlmAdvisoryInjectionEnabled,
     ];
 
     /// Wire name as it appears in URLs, JSON, and Prometheus labels.
@@ -129,6 +136,7 @@ impl FeatureId {
             Self::OperatingPoint => "operating_point",
             Self::OverDefence => "over_defence",
             Self::LlmJudgeEnabled => "llm_judge_enabled",
+            Self::LlmAdvisoryInjectionEnabled => "llm_advisory_injection_enabled",
         }
     }
 
@@ -171,6 +179,9 @@ impl FeatureId {
             Self::OperatingPoint => FeatureValue::String(flags.operating_point.clone()),
             Self::OverDefence => FeatureValue::Bool(flags.over_defence),
             Self::LlmJudgeEnabled => FeatureValue::Bool(flags.llm_judge_enabled),
+            Self::LlmAdvisoryInjectionEnabled => {
+                FeatureValue::Bool(flags.llm_advisory_injection_enabled)
+            }
         }
     }
 }
@@ -325,6 +336,7 @@ impl FeatureFlags {
                 .to_string(),
             over_defence: config.security_analysis.over_defence,
             llm_judge_enabled: config.judge.enabled,
+            llm_advisory_injection_enabled: config.llm_advisory_injection_enabled,
         }
     }
 
@@ -349,6 +361,7 @@ impl FeatureFlags {
         config.security_analysis.operating_point = point;
         config.security_analysis.over_defence = self.over_defence;
         config.judge.enabled = self.llm_judge_enabled;
+        config.llm_advisory_injection_enabled = self.llm_advisory_injection_enabled;
         Ok(())
     }
 }
@@ -421,6 +434,9 @@ fn apply_feature_id(
         }
         FeatureId::LlmJudgeEnabled => {
             config.judge.enabled = require_bool(name, &value)?;
+        }
+        FeatureId::LlmAdvisoryInjectionEnabled => {
+            config.llm_advisory_injection_enabled = require_bool(name, &value)?;
         }
     }
     Ok(())
