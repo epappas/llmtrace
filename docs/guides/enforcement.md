@@ -62,7 +62,7 @@ enforcement:
 
 Runs regex-only analysis. Near-zero added latency (microseconds). Catches known patterns but misses novel attacks.
 
-### `full`
+### `full` (default)
 
 Runs the full ensemble (regex + ML models). Adds ML inference latency (typically 50-200ms depending on model count and hardware). Better detection coverage.
 
@@ -71,7 +71,7 @@ enforcement:
   analysis_depth: "full"
 ```
 
-Use `full` when you need ML-quality detection for blocking decisions. Use `fast` when latency is critical and regex coverage is sufficient.
+`full` is the default (issue #300) so the response envelope's `findings[]`, the `security_score`, and the LLM-facing advisory injection see the same analyzer set that the async post-response pipeline persists onto the trace. Set `analysis_depth: "fast"` explicitly to opt into regex-only when latency is critical and regex coverage is sufficient.
 
 ## Severity and Confidence Gates
 
@@ -95,10 +95,10 @@ If enforcement analysis exceeds `timeout_ms`, the request is **forwarded without
 
 ```yaml
 enforcement:
-  timeout_ms: 2000  # 2 seconds, then fail-open
+  timeout_ms: 5000  # 5 seconds, then fail-open
 ```
 
-Default: 2000ms. This prevents enforcement from becoming a reliability bottleneck.
+Default: 5000ms (matches the async background analysis timeout so the sync `full` ensemble has the same budget the async path does). This prevents enforcement from becoming a reliability bottleneck.
 
 ## Per-Category Overrides
 

@@ -2860,13 +2860,32 @@ pub enum EnforcementMode {
 }
 
 /// Analysis depth for enforcement.
+///
+/// Defaults to [`AnalysisDepth::Full`] (issue #300) so the synchronous
+/// pre-request path uses the same ML ensemble that the async post-
+/// response pipeline does. The previous `Fast` default left the
+/// response envelope and the LLM-facing advisory empty for textbook
+/// ML-detectable injections (regex-only sync path missed them, while
+/// the async path persisted the findings on the trace). Operators
+/// running latency-critical deployments can still opt back into
+/// regex-only by setting `analysis_depth: "fast"` explicitly.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnalysisDepth {
     /// Regex-only analysis. Near-zero added latency.
-    #[default]
+    ///
+    /// Available as an explicit opt-in for latency-critical deployments
+    /// where regex-only coverage is acceptable. Not the default; see
+    /// [`AnalysisDepth::Full`].
     Fast,
-    /// Full ensemble analysis (regex + ML). Adds ML inference latency.
+    /// Full ensemble analysis (regex + ML). Adds ML inference latency
+    /// (typically ~100-500 ms; the enforcement `timeout_ms` bounds it).
+    ///
+    /// This is the default so the response envelope `findings[]` and
+    /// the advisory system message injected into the upstream request
+    /// (when enabled) reflect the same analyzer set the persisted
+    /// trace sees.
+    #[default]
     Full,
 }
 
@@ -2888,7 +2907,7 @@ fn default_enforcement_min_confidence() -> f64 {
 }
 
 fn default_enforcement_timeout_ms() -> u64 {
-    2000
+    5000
 }
 
 /// Security enforcement configuration.
@@ -2900,7 +2919,17 @@ pub struct EnforcementConfig {
     /// Default enforcement mode.
     #[serde(default)]
     pub mode: EnforcementMode,
-    /// Analysis depth: "fast" (regex only) or "full" (regex + ML ensemble).
+    /// Analysis depth: "fast" (regex only) or "full" (regex + ML
+    /// ensemble).
+    ///
+    /// Defaults to `Full` (issue #300). The response envelope's
+    /// `findings[]`, the `security_score` field, and the LLM-facing
+    /// advisory injection are all built from the synchronous
+    /// enforcement output. With `Fast` they would only ever surface
+    /// regex hits, even when the async pipeline persisted ML findings
+    /// on the same `trace_id` — so the proxy now defaults to the full
+    /// ensemble here. Set to `"fast"` explicitly to opt out for
+    /// latency-critical deployments.
     #[serde(default)]
     pub analysis_depth: AnalysisDepth,
     /// Minimum severity level to enforce on.
@@ -2921,7 +2950,12 @@ impl Default for EnforcementConfig {
     fn default() -> Self {
         Self {
             mode: EnforcementMode::Log,
-            analysis_depth: AnalysisDepth::Fast,
+            // Issue #300: default to Full so the response envelope and
+            // advisory injection see the ML ensemble. `mode: Log` still
+            // short-circuits the analyzer call when no per-category
+            // overrides are set, so this does not add latency to log-
+            // only deployments.
+            analysis_depth: AnalysisDepth::Full,
             min_severity: default_enforcement_min_severity(),
             min_confidence: default_enforcement_min_confidence(),
             timeout_ms: default_enforcement_timeout_ms(),
