@@ -379,4 +379,111 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
       page.getByTestId("playground-details-action-warning").first(),
     ).toBeVisible();
   });
+
+  test("trace fetch retries through the proxy-persistence race", async ({ page }) => {
+    // First two GETs to /api/proxy/traces/<id> return 404 (simulates the
+    // proxy still persisting the trace asynchronously after returning the
+    // chat completion). The third GET returns the real trace with
+    // findings — fetchTrace must keep retrying through the backoff
+    // window rather than giving up and leaving the bubble at
+    // action=unknown.
+    await mockChatOk(page);
+    let traceCalls = 0;
+    await page.route(`**/api/proxy/traces/${FIXTURE_TRACE_ID}`, async (route) => {
+      traceCalls += 1;
+      if (traceCalls <= 2) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { message: "Trace not found" } }),
+        });
+        return;
+      }
+      const trace = {
+        trace_id: FIXTURE_TRACE_ID,
+        tenant_id: "tenant-fixture",
+        spans: [
+          {
+            trace_id: FIXTURE_TRACE_ID,
+            tenant_id: "tenant-fixture",
+            operation_name: "chat_completion",
+            provider: "OpenAI",
+            model_name: "gpt-4o-mini",
+            duration_ms: 1234,
+            security_score: 50,
+            security_findings: [],
+            agent_actions: [],
+            tags: {},
+          },
+        ],
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(trace),
+      });
+    });
+
+    await page.goto("/playground");
+    await page.getByTestId("playground-input").fill("retry-me");
+    await page.getByTestId("playground-send").click();
+    // Despite 2× 404s, the eventual 200 wins and the overlay flips to
+    // allow within the retry budget (~3.75s upper bound, plus jitter).
+    await expect(page.getByTestId("playground-status-allow").first()).toBeVisible({
+      timeout: 8_000,
+    });
+    expect(traceCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  test("Export downloads a JSON audit trail of the conversation", async ({ page }) => {
+    await mockChatOk(page);
+    await mockTraceAmberAllow(page);
+    await page.goto("/playground");
+
+    // Export button is disabled while the conversation is empty.
+    const exportBtn = page.getByTestId("playground-export");
+    await expect(exportBtn).toBeDisabled();
+
+    await page.getByTestId("playground-input").fill("hello");
+    await page.getByTestId("playground-send").click();
+    await expect(page.getByTestId("playground-msg-assistant")).toBeVisible({
+      timeout: 10_000,
+    });
+    // Wait for trace metadata to settle so the export carries findings.
+    await expect(page.getByTestId("playground-status-allow").first()).toBeVisible({
+      timeout: 10_000,
+    });
+
+    await expect(exportBtn).toBeEnabled();
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      exportBtn.click(),
+    ]);
+    expect(download.suggestedFilename()).toMatch(/^llmtrace-playground-.*\.json$/);
+
+    const path = await download.path();
+    const fs = await import("node:fs/promises");
+    const raw = await fs.readFile(path, "utf8");
+    const audit = JSON.parse(raw) as {
+      schema: string;
+      conversation: Array<{
+        role: string;
+        content: string;
+        llmtrace: { action: string; trace_id: string | null; findings: unknown[] };
+        raw_request: unknown;
+        raw_response: unknown;
+      }>;
+    };
+    expect(audit.schema).toBe("llmtrace.playground.audit/v1");
+    expect(audit.conversation.length).toBe(2);
+    expect(audit.conversation[0].role).toBe("user");
+    expect(audit.conversation[0].content).toBe("hello");
+    expect(audit.conversation[0].llmtrace.trace_id).toBe(FIXTURE_TRACE_ID);
+    expect(audit.conversation[0].llmtrace.action).toBe("allow");
+    expect(audit.conversation[1].role).toBe("assistant");
+    expect(audit.conversation[1].llmtrace.trace_id).toBe(FIXTURE_TRACE_ID);
+    // Raw bodies are present and parsed back into structured JSON.
+    expect(audit.conversation[0].raw_request).toMatchObject({ model: "gpt-4o-mini" });
+    expect(audit.conversation[1].raw_response).toMatchObject({ id: "chatcmpl-test-fixture" });
+  });
 });
