@@ -268,7 +268,8 @@ fn feature_is_effective(
         | BoundaryDefenseEnabled
         | BoundaryDefenseShadowMode
         | RateLimitingEnabled
-        | CostCapsEnabled => true,
+        | CostCapsEnabled
+        | LlmAdvisoryInjectionEnabled => true,
     }
 }
 
@@ -592,7 +593,8 @@ fn apply_runtime_effects(state: &AppState, prev: &FeatureFlags, next: &FeatureFl
             | FeatureId::BoundaryDefenseShadowMode
             | FeatureId::RateLimitingEnabled
             | FeatureId::CostCapsEnabled
-            | FeatureId::LlmJudgeEnabled => {}
+            | FeatureId::LlmJudgeEnabled
+            | FeatureId::LlmAdvisoryInjectionEnabled => {}
         }
     }
 }

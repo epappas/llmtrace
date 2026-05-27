@@ -1249,6 +1249,13 @@ pub struct ProxyConfig {
     /// running ML inference. Tunable via `LLMTRACE_ML_MAX_CONCURRENT`.
     #[serde(default)]
     pub ml_pipeline: MlPipelineConfig,
+    /// When true and pre-request enforcement produced at least one
+    /// finding, prepend a synthetic system message describing the
+    /// findings to the messages array forwarded upstream. Non-streaming
+    /// chat completions only on this first cut; streaming requests are
+    /// left bytes-exact.
+    #[serde(default = "default_true")]
+    pub llm_advisory_injection_enabled: bool,
 }
 
 impl Default for ProxyConfig {
@@ -1292,6 +1299,7 @@ impl Default for ProxyConfig {
             judge: JudgeConfig::default(),
             server: ServerConfig::default(),
             ml_pipeline: MlPipelineConfig::default(),
+            llm_advisory_injection_enabled: true,
         }
     }
 }
@@ -4173,6 +4181,7 @@ mod tests {
             judge: JudgeConfig::default(),
             server: ServerConfig::default(),
             ml_pipeline: MlPipelineConfig::default(),
+            llm_advisory_injection_enabled: true,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
