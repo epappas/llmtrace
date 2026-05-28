@@ -353,11 +353,36 @@ jobs:
           cache: 'npm'
           cache-dependency-path: dashboard/package-lock.json
 
-      - name: Install Playwright
+      # Pull the official Playwright image and copy its pre-baked
+      # browser binaries to the runner's playwright cache instead of
+      # downloading from cdn.playwright.dev. The CDN has hung mid-
+      # install repeatedly (#303); the mcr.microsoft.com image is
+      # versioned with `@playwright/test` and reliably pull-able from
+      # GitHub Azure runners. apt-deps still come via
+      # `playwright install-deps` (system libs only, no CDN).
+      # Pin the image tag in lock-step with `@playwright/test` in
+      # dashboard/package.json — bump both together.
+      - name: Install npm dependencies
+        run: cd dashboard && npm ci
+
+      - name: Install Playwright browsers (from mcr image)
+        timeout-minutes: 8
+        env:
+          PW_IMAGE: mcr.microsoft.com/playwright:v1.58.2-noble
         run: |
-          cd dashboard
-          npm ci
-          npx playwright install --with-deps
+          set -euo pipefail
+          docker pull "$PW_IMAGE"
+          mkdir -p "$HOME/.cache/ms-playwright"
+          # Create a throwaway container to lift the browser directory
+          # off the image. `docker create` does NOT start it, so this
+          # costs only the fs-copy time.
+          cid=$(docker create "$PW_IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/ms-playwright/." "$HOME/.cache/ms-playwright/"
+          # System deps (apt only, no CDN). Required so the host-side
+          # browser launch finds its shared libraries even though the
+          # binaries themselves came from the image.
+          cd dashboard && npx playwright install-deps
 
       - name: Build and Start Stack
         env:
