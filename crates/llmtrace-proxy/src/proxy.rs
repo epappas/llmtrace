@@ -272,9 +272,13 @@ pub(crate) struct LLMRequestBody {
     pub model: String,
     #[serde(default)]
     pub messages: Vec<ChatMessage>,
-    #[serde(default)]
+    /// Legacy `/v1/completions` field. Skip on serialize when absent so
+    /// the proxy round-trip (advisory injection / envelope) does NOT
+    /// emit `"prompt": null` on chat-completions bodies — OpenAI rejects
+    /// unrecognized fields with HTTP 400.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
     /// Anthropic top-level system parameter (not in messages array).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3423,6 +3427,57 @@ mod tests {
         assert!(
             content.contains("Policy mode: log (the proxy did NOT modify this request"),
             "log-mode suffix must be present with leading space; got: {content}"
+        );
+    }
+
+    // Regression: advisory injection re-serializes through
+    // `LLMRequestBody`. When the original request omitted the legacy
+    // `prompt` field (any modern chat-completions call), the round-trip
+    // MUST NOT emit `"prompt": null` — OpenAI rejects unrecognized
+    // fields on `/v1/chat/completions` with HTTP 400. Same for `stream`.
+    #[test]
+    fn test_advisory_round_trip_omits_null_prompt_and_stream() {
+        let original = br#"{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}"#;
+        let advisory = ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String("notice".to_string()),
+            extra: serde_json::Map::new(),
+        };
+        let rewritten = inject_advisory_into_body(original, advisory).expect("body must rewrite");
+        let v: serde_json::Value = serde_json::from_slice(&rewritten).expect("valid JSON");
+        let obj = v.as_object().expect("object");
+        assert!(
+            !obj.contains_key("prompt"),
+            "round-trip must NOT emit `prompt` key when input had none; got: {v}"
+        );
+        assert!(
+            !obj.contains_key("stream"),
+            "round-trip must NOT emit `stream` key when input had none; got: {v}"
+        );
+        assert_eq!(
+            v["messages"].as_array().map(|a| a.len()),
+            Some(2),
+            "messages must include advisory + original; got: {v}"
+        );
+    }
+
+    // Conversely: when the original request DID set `stream: true`,
+    // the round-trip must preserve it.
+    #[test]
+    fn test_advisory_round_trip_preserves_explicit_stream() {
+        let original =
+            br#"{"model":"gpt-4o-mini","stream":true,"messages":[{"role":"user","content":"hi"}]}"#;
+        let advisory = ChatMessage {
+            role: "system".to_string(),
+            content: serde_json::Value::String("notice".to_string()),
+            extra: serde_json::Map::new(),
+        };
+        let rewritten = inject_advisory_into_body(original, advisory).expect("body must rewrite");
+        let v: serde_json::Value = serde_json::from_slice(&rewritten).expect("valid JSON");
+        assert_eq!(
+            v["stream"].as_bool(),
+            Some(true),
+            "explicit stream:true must survive round-trip; got: {v}"
         );
     }
 }
