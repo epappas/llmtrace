@@ -34,8 +34,45 @@ const PROXY_BASE = process.env.LLMTRACE_PROXY_URL ?? "http://127.0.0.1:8081";
 
 const FIXTURE_TRACE_ID = "trace-fixture-1";
 
-async function mockChatOk(page: Page, traceId: string = FIXTURE_TRACE_ID): Promise<void> {
-  await page.route("**/api/proxy/v1/chat/completions", async (route) => {
+// `findings` lets a test inject envelope-side findings to validate
+// per-finding `count` rendering. Pass an explicit `forwardedMessages`
+// when a test wants to assert the Forwarded request drawer body — the
+// helper defaults it to the original `messages` so the existing
+// non-streaming envelope contract is exercised.
+type MockChatOkOptions = {
+  findings?: Array<{
+    type: string;
+    severity: string;
+    confidence?: number;
+    description?: string;
+    count?: number;
+  }>;
+  forwardedMessages?: Array<{ role: string; content: string }> | null;
+};
+
+async function mockChatOk(
+  page: Page,
+  traceId: string = FIXTURE_TRACE_ID,
+  options: MockChatOkOptions = {},
+): Promise<void> {
+  await page.route("**/api/proxy/v1/chat/completions", async (route, request) => {
+    let forwarded: { messages: Array<{ role: string; content: string }> } | null;
+    if (options.forwardedMessages === null) {
+      forwarded = null;
+    } else if (options.forwardedMessages) {
+      forwarded = { messages: options.forwardedMessages };
+    } else {
+      try {
+        const inbound = JSON.parse(request.postData() ?? "{}") as {
+          messages?: Array<{ role: string; content: string }>;
+        };
+        forwarded = Array.isArray(inbound.messages)
+          ? { messages: inbound.messages }
+          : null;
+      } catch {
+        forwarded = null;
+      }
+    }
     const fakeOpenAi = {
       id: "chatcmpl-test-fixture",
       object: "chat.completion",
@@ -49,6 +86,19 @@ async function mockChatOk(page: Page, traceId: string = FIXTURE_TRACE_ID): Promi
         },
       ],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      // Mimic the non-streaming envelope the proxy stamps on real
+      // chat-completion responses so the dashboard can exercise its
+      // envelope-derived UI (forwarded request, finding count chips,
+      // etc.) without needing a live proxy.
+      llmtrace: {
+        trace_id: traceId,
+        action: "allow",
+        policy_mode: "monitor",
+        security_score: null,
+        findings: options.findings ?? [],
+        advisory_injected: false,
+        forwarded_request: forwarded,
+      },
     };
     await route.fulfill({
       status: 200,
@@ -474,7 +524,7 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
         raw_response: unknown;
       }>;
     };
-    expect(audit.schema).toBe("llmtrace.playground.audit/v1");
+    expect(audit.schema).toBe("llmtrace.playground.audit/v2");
     expect(audit.conversation.length).toBe(2);
     expect(audit.conversation[0].role).toBe("user");
     expect(audit.conversation[0].content).toBe("hello");
@@ -485,5 +535,90 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
     // Raw bodies are present and parsed back into structured JSON.
     expect(audit.conversation[0].raw_request).toMatchObject({ model: "gpt-4o-mini" });
     expect(audit.conversation[1].raw_response).toMatchObject({ id: "chatcmpl-test-fixture" });
+  });
+
+  test("Details drawer shows the forwarded request block", async ({ page }) => {
+    // The proxy stamps the messages it actually forwarded upstream in
+    // `llmtrace.forwarded_request.messages` so dashboard users can see
+    // how datamarking / boundary / zone / advisory injection mutated
+    // the original prompt. The block must always render.
+    await mockChatOk(page, FIXTURE_TRACE_ID, {
+      forwardedMessages: [
+        {
+          role: "system",
+          content: "LLMTrace advisory: prompt-injection signal flagged.",
+        },
+        { role: "user", content: "hello" },
+      ],
+    });
+    await mockTraceAmberAllow(page);
+
+    await page.goto("/playground");
+    await page.getByTestId("playground-input").fill("hello");
+    await page.getByTestId("playground-send").click();
+    await expect(page.getByTestId("playground-msg-assistant")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Expand the user bubble's Details drawer.
+    await page
+      .getByTestId("playground-msg-user")
+      .getByTestId("playground-toggle-details")
+      .click();
+
+    const forwarded = page
+      .getByTestId("playground-msg-user")
+      .getByTestId("playground-details-forwarded-request");
+    await expect(forwarded).toBeVisible();
+    // Forwarded block must carry the post-mutation system advisory
+    // that the proxy injected.
+    await expect(forwarded).toContainText("LLMTrace advisory");
+    await expect(forwarded).toContainText('"role": "system"');
+  });
+
+  test("Findings list renders an xN chip when the envelope reports duplicates", async ({
+    page,
+  }) => {
+    // Reuse the trace mock that fires ml_prompt_injection + pii +
+    // data_exfiltration; we inject an envelope finding with `count: 2`
+    // matching the trace's ml_prompt_injection so deriveMetadata
+    // attaches the chip.
+    await mockChatOk(page, FIXTURE_TRACE_ID, {
+      findings: [
+        {
+          type: "ml_prompt_injection",
+          severity: "Critical",
+          confidence: 0.9993,
+          // Empty description: matches the trace mock's finding,
+          // which has no description field either.
+          description: "",
+          count: 2,
+        },
+      ],
+    });
+    await mockTraceCriticalAllow(page);
+
+    await page.goto("/playground");
+    await page.getByTestId("playground-input").fill("payload");
+    await page.getByTestId("playground-send").click();
+    await expect(page.getByTestId("playground-msg-assistant")).toBeVisible({
+      timeout: 10_000,
+    });
+
+    // Wait for the trace fetch to settle before checking the chip.
+    await expect(
+      page.getByTestId("playground-status-critical-findings").first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    await page
+      .getByTestId("playground-msg-user")
+      .getByTestId("playground-toggle-details")
+      .click();
+    const chip = page
+      .getByTestId("playground-msg-user")
+      .getByTestId("playground-details-finding-count")
+      .first();
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText("x2");
   });
 });

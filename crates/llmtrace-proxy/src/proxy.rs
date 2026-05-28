@@ -857,29 +857,89 @@ fn inject_advisory_into_body(body: &[u8], advisory: ChatMessage) -> Option<Vec<u
     serde_json::to_vec(&parsed).ok()
 }
 
-/// Serialise a single [`SecurityFinding`] to the `llmtrace.findings[]`
-/// envelope shape.
-fn finding_to_envelope_json(f: &SecurityFinding) -> serde_json::Value {
-    let conf = if f.confidence_score.is_finite() {
-        serde_json::Value::from(f.confidence_score)
-    } else {
-        serde_json::Value::Null
-    };
-    let desc = if f.description.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::from(f.description.clone())
-    };
-    serde_json::json!({
-        "type": f.finding_type,
-        "severity": format!("{}", f.severity),
-        "confidence": conf,
-        "description": desc,
-    })
+/// Collapse identical findings within a single envelope.
+///
+/// Today the analyzer can fire the same rule multiple times on the
+/// whole-conversation analysis (e.g. `ml_prompt_injection` flagged on
+/// every assistant turn that quotes the original user prompt). Each
+/// repetition is the SAME logical signal — for the on-the-wire
+/// envelope we keep one entry per unique `(type, severity, description)`
+/// triple, surface the max `confidence` seen across duplicates, and
+/// record a `count` so the dashboard can render `×N` next to the rule
+/// name.
+///
+/// This is a presentation-layer concern: the persisted trace's
+/// `security_findings` are NOT touched — storage keeps raw fidelity
+/// for audit replay. Only the envelope payload is collapsed.
+fn dedupe_envelope_findings(findings: &[SecurityFinding]) -> Vec<serde_json::Value> {
+    // Stable order: first-seen wins. Group key is
+    // `(finding_type, severity, description)` — confidence is folded
+    // into the max, count is the cardinality.
+    type GroupKey = (String, String, String);
+    let mut order: Vec<GroupKey> = Vec::new();
+    let mut groups: std::collections::HashMap<GroupKey, (f64, usize)> =
+        std::collections::HashMap::new();
+    for f in findings {
+        let key: GroupKey = (
+            f.finding_type.clone(),
+            format!("{}", f.severity),
+            f.description.clone(),
+        );
+        match groups.get_mut(&key) {
+            Some((conf, count)) => {
+                if f.confidence_score.is_finite() && f.confidence_score > *conf {
+                    *conf = f.confidence_score;
+                }
+                *count += 1;
+            }
+            None => {
+                let starting_conf = if f.confidence_score.is_finite() {
+                    f.confidence_score
+                } else {
+                    f64::NEG_INFINITY
+                };
+                groups.insert(key.clone(), (starting_conf, 1));
+                order.push(key);
+            }
+        }
+    }
+    order
+        .into_iter()
+        .map(|key| {
+            let (conf, count) = groups[&key];
+            let conf_json = if conf.is_finite() {
+                serde_json::Value::from(conf)
+            } else {
+                serde_json::Value::Null
+            };
+            let desc_json = if key.2.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::from(key.2)
+            };
+            serde_json::json!({
+                "type": key.0,
+                "severity": key.1,
+                "confidence": conf_json,
+                "description": desc_json,
+                "count": count,
+            })
+        })
+        .collect()
 }
 
 /// Build the `llmtrace` envelope object inserted into non-streaming
 /// JSON responses (Feature C).
+///
+/// `forwarded_request` carries the `messages` array (and only that)
+/// as it appeared in the bytes the proxy actually sent upstream —
+/// AFTER zone-strip, boundary defense, datamarking, and advisory
+/// injection. Passed as `Some(json!({"messages": [...]})) when the
+/// forwarded body parsed as an OpenAI-compatible chat-completions
+/// shape; `None` otherwise (Anthropic `/v1/messages`, non-JSON bodies,
+/// etc.). The field is ALWAYS present in the envelope so dashboard
+/// consumers can rely on its shape — the value is either an object or
+/// `null`.
 fn build_llmtrace_envelope(
     trace_id: Uuid,
     action: &str,
@@ -887,13 +947,14 @@ fn build_llmtrace_envelope(
     security_score: Option<u8>,
     findings: &[SecurityFinding],
     advisory_injected: bool,
+    forwarded_request: Option<serde_json::Value>,
 ) -> serde_json::Value {
-    let findings_json: Vec<serde_json::Value> =
-        findings.iter().map(finding_to_envelope_json).collect();
+    let findings_json = dedupe_envelope_findings(findings);
     let score_json = match security_score {
         Some(s) => serde_json::Value::from(s),
         None => serde_json::Value::Null,
     };
+    let forwarded_json = forwarded_request.unwrap_or(serde_json::Value::Null);
     serde_json::json!({
         "trace_id": trace_id.to_string(),
         "action": action,
@@ -901,7 +962,22 @@ fn build_llmtrace_envelope(
         "security_score": score_json,
         "findings": findings_json,
         "advisory_injected": advisory_injected,
+        "forwarded_request": forwarded_json,
     })
+}
+
+/// Extract the `messages` array from the bytes the proxy will (or did)
+/// forward upstream and wrap it as `{"messages": [...]}` for the
+/// envelope. Returns `None` when the body is not valid JSON or has no
+/// `messages` field — the caller stamps `forwarded_request: null` in
+/// that case.
+fn forwarded_request_from_body(body: &[u8]) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let messages = parsed.get("messages")?;
+    if !messages.is_array() {
+        return None;
+    }
+    Some(serde_json::json!({ "messages": messages.clone() }))
 }
 
 /// Insert the `llmtrace` envelope into a non-streaming upstream JSON
@@ -1539,6 +1615,13 @@ pub async fn proxy_handler(
             );
         }
     }
+    // Snapshot the `messages` array as it will hit upstream — AFTER
+    // every defense pipeline AND the optional advisory injection.
+    // Stored as `Option<Value>`; the spawned envelope-emitting task
+    // consumes it and stamps `forwarded_request` on the envelope.
+    let forwarded_request_value: Option<serde_json::Value> =
+        forwarded_request_from_body(&forward_body);
+
     upstream_req = upstream_req.headers(forwarded_headers);
     upstream_req = upstream_req.body(forward_body);
 
@@ -1617,6 +1700,7 @@ pub async fn proxy_handler(
     let envelope_action_bg = envelope_action;
     let envelope_policy_mode_bg = envelope_policy_mode;
     let advisory_injected_bg = advisory_injected;
+    let forwarded_request_bg = forwarded_request_value;
     let task_guard = state.shutdown.track_task();
     tokio::spawn(async move {
         // Hold the task guard for the lifetime of this background task so the
@@ -1941,6 +2025,7 @@ pub async fn proxy_handler(
                         envelope_score,
                         &security_findings,
                         advisory_injected_bg,
+                        forwarded_request_bg,
                     );
                     let rewritten = inject_envelope_into_response(&client_buffer, envelope);
                     let _ = sender.send(Ok(Bytes::from(rewritten))).await;
@@ -2612,6 +2697,7 @@ fn error_response(status: StatusCode, message: &str, trace_id: Uuid) -> Response
 #[cfg(test)]
 mod tests {
     use super::*;
+    use llmtrace_core::SecuritySeverity;
 
     // Issue #79: judge health predicate.
 
@@ -2895,5 +2981,142 @@ mod tests {
         );
         let id = extract_or_generate_trace_id(&headers);
         assert!(!id.is_nil());
+    }
+
+    // -----------------------------------------------------------------
+    // Envelope: forwarded_request extraction + finding dedupe (issue #83).
+    // Pure-function tests; integration coverage lives in
+    // tests/integration_test.rs.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn forwarded_request_extracts_messages_when_present() {
+        let body = br#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#;
+        let got = forwarded_request_from_body(body).expect("should extract");
+        assert_eq!(got["messages"][0]["role"], "user");
+        assert_eq!(got["messages"][0]["content"], "hi");
+    }
+
+    #[test]
+    fn forwarded_request_none_when_no_messages_field() {
+        // Anthropic-style top-level system + no `messages` is intentionally
+        // out-of-scope for the chat-completions envelope.
+        let body = br#"{"system":"be helpful","prompt":"hi"}"#;
+        assert!(forwarded_request_from_body(body).is_none());
+    }
+
+    #[test]
+    fn forwarded_request_none_on_invalid_json() {
+        assert!(forwarded_request_from_body(b"not json").is_none());
+    }
+
+    #[test]
+    fn forwarded_request_none_when_messages_not_array() {
+        let body = br#"{"messages":"oops"}"#;
+        assert!(forwarded_request_from_body(body).is_none());
+    }
+
+    fn finding(ftype: &str, sev: SecuritySeverity, desc: &str, conf: f64) -> SecurityFinding {
+        SecurityFinding::new(sev, ftype.to_string(), desc.to_string(), conf)
+    }
+
+    #[test]
+    fn envelope_dedup_collapses_duplicates_and_records_count() {
+        let findings = vec![
+            finding(
+                "ml_prompt_injection",
+                SecuritySeverity::Critical,
+                "ML model detected potential prompt injection",
+                0.91,
+            ),
+            // Duplicate of the first — higher confidence wins.
+            finding(
+                "ml_prompt_injection",
+                SecuritySeverity::Critical,
+                "ML model detected potential prompt injection",
+                0.9993,
+            ),
+            // A third duplicate with even lower confidence — must not
+            // displace the max.
+            finding(
+                "ml_prompt_injection",
+                SecuritySeverity::Critical,
+                "ML model detected potential prompt injection",
+                0.5,
+            ),
+            // Different finding type — must NOT be merged with the
+            // first three.
+            finding("pii_leak", SecuritySeverity::Medium, "email detected", 0.7),
+        ];
+
+        let envelope = dedupe_envelope_findings(&findings);
+        assert_eq!(
+            envelope.len(),
+            2,
+            "expected two unique entries, got {envelope:?}"
+        );
+
+        // Order is first-seen — ml_prompt_injection first.
+        assert_eq!(envelope[0]["type"], "ml_prompt_injection");
+        assert_eq!(envelope[0]["severity"], "Critical");
+        assert_eq!(envelope[0]["count"], 3);
+        let conf = envelope[0]["confidence"].as_f64().unwrap();
+        assert!(
+            (conf - 0.9993).abs() < 1e-9,
+            "max confidence must win; got {conf}"
+        );
+
+        assert_eq!(envelope[1]["type"], "pii_leak");
+        assert_eq!(envelope[1]["count"], 1);
+    }
+
+    #[test]
+    fn envelope_dedup_does_not_merge_when_descriptions_differ() {
+        // Same type+severity but DIFFERENT descriptions stay separate —
+        // descriptions are part of the grouping key.
+        let findings = vec![
+            finding("prompt_injection", SecuritySeverity::High, "pattern A", 0.8),
+            finding("prompt_injection", SecuritySeverity::High, "pattern B", 0.9),
+        ];
+        let envelope = dedupe_envelope_findings(&findings);
+        assert_eq!(envelope.len(), 2);
+        assert_eq!(envelope[0]["count"], 1);
+        assert_eq!(envelope[1]["count"], 1);
+    }
+
+    #[test]
+    fn envelope_dedup_singleton_gets_count_one() {
+        let findings = vec![finding(
+            "jailbreak",
+            SecuritySeverity::High,
+            "role-play jailbreak",
+            0.65,
+        )];
+        let envelope = dedupe_envelope_findings(&findings);
+        assert_eq!(envelope.len(), 1);
+        assert_eq!(envelope[0]["count"], 1);
+    }
+
+    #[test]
+    fn envelope_carries_forwarded_request_field_even_when_null() {
+        // forwarded_request: None must serialise as a JSON `null` value
+        // on the envelope so dashboards see a stable shape.
+        let env = build_llmtrace_envelope(Uuid::nil(), "allow", "monitor", None, &[], false, None);
+        assert!(env["forwarded_request"].is_null());
+    }
+
+    #[test]
+    fn envelope_carries_forwarded_request_when_some() {
+        let payload = serde_json::json!({"messages": [{"role": "user", "content": "ping"}]});
+        let env = build_llmtrace_envelope(
+            Uuid::nil(),
+            "allow",
+            "monitor",
+            None,
+            &[],
+            false,
+            Some(payload.clone()),
+        );
+        assert_eq!(env["forwarded_request"], payload);
     }
 }
