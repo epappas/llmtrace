@@ -43,6 +43,13 @@ type MsgFinding = {
   rule: string;
   severity: string;
   confidence?: number;
+  // Number of times this finding fired on the same trace. Sourced from
+  // the response envelope's `llmtrace.findings[].count` field. The
+  // proxy collapses identical findings within a single envelope (same
+  // type + severity + description) and stamps the cardinality here so
+  // the dashboard can render `xN` next to the rule without lying about
+  // the underlying signal count.
+  count?: number;
 };
 
 type MsgMetadata = {
@@ -56,6 +63,14 @@ type MsgMetadata = {
   completionTokens: number | null;
   blocked: boolean;
   blockedReason: string | null;
+  // Pretty-printed `llmtrace.forwarded_request.messages` from the
+  // response envelope — the messages array as the proxy actually
+  // forwarded it upstream (AFTER datamarking / boundary / zone /
+  // advisory injection). `null` when the proxy reported the field as
+  // null (e.g. non-OpenAI-compatible request shape) or when no
+  // envelope was returned. Surfaced in the Details drawer so
+  // developers can see how LLMTrace transformed the prompt.
+  forwardedRequest: string | null;
 };
 
 type ChatMessage = {
@@ -171,6 +186,36 @@ type RawTrace = {
   spans?: RawSpan[];
 };
 
+// Subset of the `llmtrace` envelope the dashboard reads from a non-
+// streaming chat-completion response. Mirrors the Rust-side
+// `build_llmtrace_envelope` payload — see
+// crates/llmtrace-proxy/src/proxy.rs.
+type RawEnvelopeFinding = {
+  type?: string;
+  severity?: string;
+  confidence?: number | null;
+  description?: string | null;
+  // `count` is added by the proxy when it collapses duplicate findings
+  // (same type+severity+description) inside a single envelope. Always
+  // present in the new wire shape; `?:` here keeps the parser tolerant
+  // of older proxies that haven't shipped the dedupe path yet.
+  count?: number;
+};
+
+type RawEnvelope = {
+  trace_id?: string;
+  action?: string;
+  policy_mode?: string;
+  security_score?: number | null;
+  findings?: RawEnvelopeFinding[];
+  advisory_injected?: boolean;
+  // `forwarded_request` is always present on the wire — value is
+  // either `null` (proxy could not extract messages, e.g. Anthropic
+  // top-level system shape) or `{ messages: [...] }`. Older proxies
+  // omit it entirely, hence the optional `?:`.
+  forwarded_request?: { messages?: unknown[] } | null;
+};
+
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
@@ -187,6 +232,7 @@ function emptyMetadata(traceId: string | null): MsgMetadata {
     completionTokens: null,
     blocked: false,
     blockedReason: null,
+    forwardedRequest: null,
   };
 }
 
@@ -205,17 +251,81 @@ function deriveAction(_score: number, findings: RawFinding[], spanTags: Record<s
   return "allow";
 }
 
-function deriveMetadata(raw: RawTrace, traceId: string): MsgMetadata {
+// Pull the `llmtrace` envelope from a chat-completions response body.
+// Returns `null` when the body isn't JSON, has no envelope, or the
+// envelope isn't an object (older proxies, error shapes, streaming).
+function parseEnvelope(rawResponse: string | null): RawEnvelope | null {
+  if (!rawResponse) return null;
+  try {
+    const parsed = JSON.parse(rawResponse) as { llmtrace?: unknown };
+    const env = parsed.llmtrace;
+    if (env == null || typeof env !== "object" || Array.isArray(env)) return null;
+    return env as RawEnvelope;
+  } catch {
+    return null;
+  }
+}
+
+// Index envelope findings by the (type, severity, description) key
+// the proxy used to dedupe them so we can attach a `count` to each
+// trace-derived finding without losing fidelity. Description is the
+// most stable distinguishing field for findings that share a type.
+function envelopeCountByKey(envelope: RawEnvelope | null): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!envelope) return map;
+  for (const f of envelope.findings ?? []) {
+    if (typeof f.type !== "string") continue;
+    const key = `${f.type} ${f.severity ?? ""} ${f.description ?? ""}`;
+    const c = typeof f.count === "number" && f.count > 0 ? f.count : 1;
+    map.set(key, c);
+  }
+  return map;
+}
+
+// Pretty-print the `forwarded_request.messages` array as a stable
+// JSON string. Returns `null` when the envelope didn't carry an
+// object with a `messages` array — the Details drawer renders a
+// sentinel for that case instead of silently dropping the block.
+function extractForwardedRequest(envelope: RawEnvelope | null): string | null {
+  if (!envelope) return null;
+  const fr = envelope.forwarded_request;
+  if (fr == null) return null;
+  const messages = fr.messages;
+  if (!Array.isArray(messages)) return null;
+  try {
+    return JSON.stringify({ messages }, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+function deriveMetadata(
+  raw: RawTrace,
+  traceId: string,
+  envelope: RawEnvelope | null,
+): MsgMetadata {
   const spans = raw.spans ?? [];
   const scoresU8 = spans.map((s) => s.security_score ?? 0);
   const maxU8 = scoresU8.length > 0 ? Math.max(...scoresU8) : 0;
   const normScore = Math.max(0, Math.min(1, maxU8 / 100));
   const findingsRaw: RawFinding[] = spans.flatMap((s) => s.security_findings ?? []);
-  const findings: MsgFinding[] = findingsRaw.map((f) => ({
-    rule: f.finding_type ?? "unknown",
-    severity: f.severity ?? "info",
-    confidence: f.confidence,
-  }));
+  // Annotate trace-side findings with the envelope's `count` so the
+  // dashboard's "fired Nx" chip stays in sync with what the proxy
+  // declared. The lookup falls back to 1 when no matching envelope
+  // entry exists (e.g. older proxies that didn't ship the dedupe
+  // field, or anomaly findings that don't ride the envelope path).
+  const countByKey = envelopeCountByKey(envelope);
+  const findings: MsgFinding[] = findingsRaw.map((f) => {
+    const key = `${f.finding_type ?? "unknown"} ${f.severity ?? ""} ${
+      f.description ?? ""
+    }`;
+    return {
+      rule: f.finding_type ?? "unknown",
+      severity: f.severity ?? "info",
+      confidence: f.confidence,
+      count: countByKey.get(key) ?? 1,
+    };
+  });
   const mergedTags: Record<string, string> = spans.reduce<Record<string, string>>(
     (acc, s) => ({ ...acc, ...(s.tags ?? {}) }),
     {},
@@ -244,6 +354,7 @@ function deriveMetadata(raw: RawTrace, traceId: string): MsgMetadata {
     completionTokens,
     blocked: false,
     blockedReason: null,
+    forwardedRequest: extractForwardedRequest(envelope),
   };
 }
 
@@ -263,6 +374,7 @@ function blockedMetadata(
     completionTokens: null,
     blocked: true,
     blockedReason: reason,
+    forwardedRequest: null,
   };
 }
 
@@ -322,7 +434,13 @@ function tryParseJson(text: string | null): unknown {
 // Schema version for the exported audit-trail file. Bump on any
 // breaking change to the JSON shape so downstream tools / agents can
 // gate on it.
-const AUDIT_EXPORT_SCHEMA = "llmtrace.playground.audit/v1";
+//
+// v2 (2026-05-27): findings carry `count` (envelope dedup output);
+// `llmtrace.forwarded_request` holds the JSON-stringified messages
+// array as the proxy forwarded it upstream (after datamarking /
+// boundary / zone / advisory injection). Null when the proxy could
+// not extract the field.
+const AUDIT_EXPORT_SCHEMA = "llmtrace.playground.audit/v2";
 
 type AuditExport = {
   schema: typeof AUDIT_EXPORT_SCHEMA;
@@ -352,6 +470,11 @@ type AuditExport = {
       prompt_tokens: number | null;
       completion_tokens: number | null;
       findings: MsgFinding[];
+      // v2: pretty-printed `{ messages: [...] }` block from the
+      // envelope's `forwarded_request`, parsed back into a JSON
+      // value for export readability. Null when the proxy did not
+      // emit the field (e.g. Anthropic top-level system shape).
+      forwarded_request: unknown;
     };
     raw_request: unknown;
     raw_response: unknown;
@@ -391,6 +514,7 @@ function buildAuditExport(
         prompt_tokens: m.metadata.promptTokens,
         completion_tokens: m.metadata.completionTokens,
         findings: m.metadata.findings,
+        forwarded_request: tryParseJson(m.metadata.forwardedRequest),
       },
       raw_request: tryParseJson(m.rawRequest),
       raw_response: tryParseJson(m.rawResponse),
@@ -631,22 +755,34 @@ export default function PlaygroundClient(): ReactElement {
     });
   }, []);
 
-  const attachTraceMeta = useCallback((messageIds: string[], traceId: string): void => {
-    void fetchTrace(traceId).then((raw) => {
-      if (!raw) {
+  const attachTraceMeta = useCallback(
+    (messageIds: string[], traceId: string, envelope: RawEnvelope | null): void => {
+      void fetchTrace(traceId).then((raw) => {
+        if (!raw) {
+          // Even without a trace fetch (404 race or transport error)
+          // we still want the envelope-derived fields (count chips,
+          // forwarded request block) to show up. Apply just those.
+          const forwardedRequest = extractForwardedRequest(envelope);
+          setMessages((prev) =>
+            prev.map((m) =>
+              messageIds.includes(m.id)
+                ? {
+                    ...m,
+                    metadata: { ...m.metadata, loading: false, forwardedRequest },
+                  }
+                : m,
+            ),
+          );
+          return;
+        }
+        const derived = deriveMetadata(raw, traceId, envelope);
         setMessages((prev) =>
-          prev.map((m) =>
-            messageIds.includes(m.id) ? { ...m, metadata: { ...m.metadata, loading: false } } : m,
-          ),
+          prev.map((m) => (messageIds.includes(m.id) ? { ...m, metadata: derived } : m)),
         );
-        return;
-      }
-      const derived = deriveMetadata(raw, traceId);
-      setMessages((prev) =>
-        prev.map((m) => (messageIds.includes(m.id) ? { ...m, metadata: derived } : m)),
-      );
-    });
-  }, []);
+      });
+    },
+    [],
+  );
 
   const handleResult = useCallback(
     (userId: string, model: string, result: SendResult): void => {
@@ -671,25 +807,34 @@ export default function PlaygroundClient(): ReactElement {
         return;
       }
       const assistantId = newMessageId();
+      // Pull the envelope from the raw response once so the user +
+      // assistant bubbles see a consistent `forwardedRequest` and per-
+      // finding `count` even before the (slower) trace fetch lands.
+      const envelope = parseEnvelope(result.raw);
+      const forwardedRequest = extractForwardedRequest(envelope);
+      const seedMeta: MsgMetadata = {
+        ...emptyMetadata(result.traceId),
+        forwardedRequest,
+      };
       const assistant: ChatMessage = {
         id: assistantId,
         role: "assistant",
         content: result.assistant,
         model,
         createdAt: Date.now(),
-        metadata: emptyMetadata(result.traceId),
+        metadata: seedMeta,
         rawRequest: null,
         rawResponse: result.raw,
       };
       setMessages((prev) => [
         ...prev.map((m) =>
           m.id === userId
-            ? { ...m, metadata: emptyMetadata(result.traceId), rawResponse: result.raw }
+            ? { ...m, metadata: seedMeta, rawResponse: result.raw }
             : m,
         ),
         assistant,
       ]);
-      if (result.traceId) attachTraceMeta([userId, assistantId], result.traceId);
+      if (result.traceId) attachTraceMeta([userId, assistantId], result.traceId, envelope);
     },
     [attachTraceMeta],
   );
@@ -1069,6 +1214,13 @@ function MetaRow(props: {
 function DetailsPanel(props: { msg: ChatMessage }): ReactElement {
   const { msg } = props;
   const meta = msg.metadata;
+  // Per design: always render the Forwarded request block. When the
+  // proxy could not produce it (older proxy, non-OpenAI shape) show a
+  // sentinel — never hide.
+  const forwardedBody =
+    meta.forwardedRequest != null && meta.forwardedRequest.length > 0
+      ? meta.forwardedRequest
+      : "(no forwarded request)";
   return (
     <div
       data-testid="playground-details"
@@ -1079,6 +1231,11 @@ function DetailsPanel(props: { msg: ChatMessage }): ReactElement {
         {msg.rawRequest != null && (
           <RawBlock label="Request" body={msg.rawRequest} testId="playground-details-request" />
         )}
+        <RawBlock
+          label="Forwarded request"
+          body={forwardedBody}
+          testId="playground-details-forwarded-request"
+        />
         {msg.rawResponse != null && (
           <RawBlock label="Response" body={msg.rawResponse} testId="playground-details-response" />
         )}
@@ -1140,6 +1297,15 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
               {meta.findings.map((f, i) => (
                 <li key={i}>
                   <span className="font-medium">{f.severity}</span> · {f.rule}
+                  {f.count != null && f.count > 1 && (
+                    <Badge
+                      variant="outline"
+                      data-testid="playground-details-finding-count"
+                      className="ml-1.5 px-1 py-0 text-[9px] leading-tight"
+                    >
+                      x{f.count}
+                    </Badge>
+                  )}
                   {f.confidence != null ? ` (${Math.round((f.confidence ?? 0) * 100)}%)` : ""}
                 </li>
               ))}
