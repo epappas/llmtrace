@@ -378,12 +378,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
 
-      # Bail out after 5 minutes. A hung install is always a flake — failing
-      # fast keeps re-runs cheap rather than burning a runner for 20-30 min
-      # waiting on a stuck download (#303). GitHub Actions has no built-in
-      # step-level retry; mitigations are the timeout + the cache above.
+      # Bail out after 10 minutes. The cold-cache install pulls three
+      # browser engines (chromium + firefox + webkit, ~500MB) so 5 min was
+      # too tight and produced false failures (#308 first run). Hits on
+      # the cache complete in <30s; a true hang shows as >>10 min.
       - name: Install Playwright browsers
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           cd dashboard
           if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
