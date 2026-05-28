@@ -353,11 +353,46 @@ jobs:
           cache: 'npm'
           cache-dependency-path: dashboard/package-lock.json
 
-      - name: Install Playwright
+      - name: Install npm dependencies
+        run: cd dashboard && npm ci
+
+      # Cache Playwright browser binaries keyed on the pinned @playwright/test
+      # version in dashboard/package.json. On a cache hit, `playwright install`
+      # detects the existing binaries under ~/.cache/ms-playwright and exits
+      # almost immediately, avoiding the slow/flaky CDN download path that has
+      # been hanging this step (#303). actions/cache pinned to v5 per repo
+      # SHA-pinning policy (PR #185); v4 was requested in the issue but v5 is
+      # the established convention in this workflow.
+      - name: Resolve Playwright version
+        id: pw-version
+        run: |
+          version=$(node -p "require('./dashboard/package.json').devDependencies['@playwright/test'] || require('./dashboard/package.json').dependencies['@playwright/test']")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw-version.outputs.version }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      # Bail out after 5 minutes. A hung install is always a flake — failing
+      # fast keeps re-runs cheap rather than burning a runner for 20-30 min
+      # waiting on a stuck download (#303). GitHub Actions has no built-in
+      # step-level retry; mitigations are the timeout + the cache above.
+      - name: Install Playwright browsers
+        timeout-minutes: 5
         run: |
           cd dashboard
-          npm ci
-          npx playwright install --with-deps
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            # Cache hit: only install system deps via apt; browser binaries
+            # are already on disk.
+            npx playwright install-deps
+          else
+            npx playwright install --with-deps
+          fi
 
       - name: Build and Start Stack
         env:
