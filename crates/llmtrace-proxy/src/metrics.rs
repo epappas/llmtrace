@@ -236,6 +236,16 @@ pub struct Metrics {
     /// was already saturated. Each increment corresponds to one client
     /// 503 response with `Retry-After: 1`.
     pub ml_rejected_total: IntCounter,
+
+    /// Total post-response security analysis attempts that were dropped
+    /// without producing findings, by reason (issue #298). Stable reason
+    /// labels: `disabled`, `circuit_breaker_open`, `analyzer_error`,
+    /// `analyzer_timeout`. A non-zero rate on `circuit_breaker_open` is
+    /// the canonical signal that traces are persisting with
+    /// `security_score: null` because a prior failure tripped the
+    /// breaker — every increment correlates with one trace span tagged
+    /// `pipeline_dropped=true`.
+    pub analyzer_dropped_total: IntCounterVec,
 }
 
 impl Metrics {
@@ -851,6 +861,31 @@ impl Metrics {
             .register(Box::new(ml_rejected_total.clone()))
             .expect("register ml_rejected_total");
 
+        let analyzer_dropped_total = IntCounterVec::new(
+            Opts::new(
+                "llmtrace_analyzer_dropped_total",
+                "Post-response security analysis attempts dropped without producing findings, by reason (issue #298)",
+            ),
+            &["reason"],
+        )
+        .expect("metric: analyzer_dropped_total");
+        registry
+            .register(Box::new(analyzer_dropped_total.clone()))
+            .expect("register analyzer_dropped_total");
+        // Pre-initialise the stable reason labels so dashboards do not
+        // stay blank until the first drop (matches the pattern used by
+        // `judge_dropped_total`).
+        for reason in &[
+            "disabled",
+            "circuit_breaker_open",
+            "analyzer_error",
+            "analyzer_timeout",
+        ] {
+            analyzer_dropped_total
+                .with_label_values(&[reason])
+                .inc_by(0);
+        }
+
         // Initialise circuit breaker gauges to their startup state (closed).
         for subsystem in &["storage", "security"] {
             for state in &["closed", "open", "half_open"] {
@@ -913,6 +948,7 @@ impl Metrics {
             judge_golden_set_false_positive_rate,
             ml_inflight_requests,
             ml_rejected_total,
+            analyzer_dropped_total,
         }
     }
 
@@ -988,6 +1024,18 @@ impl Metrics {
                 .with_label_values(&[&severity, &f.finding_type])
                 .inc();
         }
+    }
+
+    /// Record one post-response security analysis attempt that was
+    /// dropped without producing findings (issue #298). `reason` must
+    /// be one of the pre-initialised stable labels: `disabled`,
+    /// `circuit_breaker_open`, `analyzer_error`, `analyzer_timeout`.
+    /// Each increment correlates with one trace span tagged
+    /// `pipeline_dropped=true`.
+    pub fn record_analyzer_dropped(&self, reason: &str) {
+        self.analyzer_dropped_total
+            .with_label_values(&[reason])
+            .inc();
     }
 
     /// Update the circuit breaker state gauge for a subsystem.

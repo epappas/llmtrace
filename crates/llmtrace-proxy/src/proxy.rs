@@ -1985,11 +1985,13 @@ pub async fn proxy_handler(
 
         // --- Security analysis first, so findings can be persisted with the trace ---
         let security_start = std::time::Instant::now();
-        let mut security_findings = run_security_analysis(&state_bg, &captured).await;
+        let analysis_outcome = run_security_analysis(&state_bg, &captured).await;
         let security_ms = security_start.elapsed().as_millis() as u64;
         state_bg
             .metrics
             .record_detector_latency("ensemble", security_ms);
+        let analyzer_drop_reason = analysis_outcome.dropped;
+        let mut security_findings = analysis_outcome.findings;
 
         // Merge in any findings detected during streaming (early warning layer).
         // These have already been alerted on mid-stream; now we persist them
@@ -2096,7 +2098,18 @@ pub async fn proxy_handler(
         }
 
         // --- Trace capture with enriched security findings ---
-        run_trace_capture(&state_bg, &captured, &security_findings).await;
+        // `analyzer_drop_reason` is `Some(_)` only when the post-response
+        // analyzer skipped end-to-end execution (issue #298); the trace
+        // capture stamps `pipeline_dropped=true` + `pipeline_drop_reason`
+        // on the span so the dashboard does not render the trace as
+        // "clean".
+        run_trace_capture(
+            &state_bg,
+            &captured,
+            &security_findings,
+            analyzer_drop_reason,
+        )
+        .await;
 
         // --- Prometheus metrics instrumentation ---
         {
@@ -2221,23 +2234,103 @@ struct CapturedInteraction {
     monitoring_scope: llmtrace_core::MonitoringScope,
 }
 
-/// Run security analysis and return findings.
+/// Stable, operator-facing reason for a silent analyzer skip (issue
+/// #298). When the post-response security analyzer cannot produce
+/// findings for a request that was otherwise observed end-to-end, the
+/// caller stamps `pipeline_dropped=true` + `pipeline_drop_reason=<reason>`
+/// on the trace span AND increments
+/// `llmtrace_analyzer_dropped_total{reason}`. This guarantees that
+/// every traced request either has a real attempt at analyzer
+/// execution OR a recorded reason why it did not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalyzerDropReason {
+    /// `enable_security_analysis = false` in the live config. Operator
+    /// opted out; emit a tag so the dashboard does not silently render
+    /// a null score as "clean".
+    Disabled,
+    /// The security circuit breaker is open. A prior burst of failures
+    /// tripped it; subsequent traces persist with no findings until the
+    /// breaker probes back closed. This is the root cause of issue
+    /// #298 in production.
+    CircuitBreakerOpen,
+    /// `SecurityAnalyzer::analyze_interaction` returned `Err(_)`.
+    AnalyzerError,
+    /// `tokio::time::timeout` elapsed before the analyzer returned.
+    AnalyzerTimeout,
+}
+
+impl AnalyzerDropReason {
+    /// Stable string used both for the Prometheus label value and the
+    /// `pipeline_drop_reason` trace-span tag.
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::CircuitBreakerOpen => "circuit_breaker_open",
+            Self::AnalyzerError => "analyzer_error",
+            Self::AnalyzerTimeout => "analyzer_timeout",
+        }
+    }
+}
+
+/// Outcome of [`run_security_analysis`].
 ///
-/// Called inline within the background task so findings can be attached to
-/// the trace span before storage. Returns an empty vec when analysis is
-/// disabled, the circuit breaker is open, or analysis fails.
+/// `findings` is the union of ensemble + output-safety findings. It is
+/// always returned (possibly empty) so existing call sites can keep
+/// extending the vec without ceremony. `dropped` carries the reason
+/// when the analyzer did NOT actually run end-to-end — that case is
+/// what makes the resulting trace look "clean" on the dashboard even
+/// when the user input is hostile (issue #298). When `dropped` is
+/// `Some`, callers MUST tag the span and emit the
+/// `llmtrace_analyzer_dropped_total{reason}` counter.
+pub(crate) struct SecurityAnalysisOutcome {
+    pub findings: Vec<SecurityFinding>,
+    pub dropped: Option<AnalyzerDropReason>,
+}
+
+/// Run post-response security analysis and return the outcome.
+///
+/// Called inline within the background task so findings can be
+/// attached to the trace span before storage. The return type carries
+/// both the findings vec AND, when the analyzer was skipped, a stable
+/// reason — see [`SecurityAnalysisOutcome`].
+///
+/// Silent skips are now FORBIDDEN per issue #298: every path that
+/// previously returned `Vec::new()` without running the analyzer now
+/// sets `dropped` so the caller can stamp the trace span and increment
+/// `llmtrace_analyzer_dropped_total{reason}`.
 async fn run_security_analysis(
     state: &Arc<AppState>,
     captured: &CapturedInteraction,
-) -> Vec<SecurityFinding> {
+) -> SecurityAnalysisOutcome {
     let cfg = state.config_handle.snapshot();
     if !cfg.enable_security_analysis {
-        return Vec::new();
+        warn!(
+            trace_id = %captured.trace_id,
+            reason = AnalyzerDropReason::Disabled.as_str(),
+            "Post-response security analysis skipped"
+        );
+        state
+            .metrics
+            .record_analyzer_dropped(AnalyzerDropReason::Disabled.as_str());
+        return SecurityAnalysisOutcome {
+            findings: Vec::new(),
+            dropped: Some(AnalyzerDropReason::Disabled),
+        };
     }
     if !state.security_breaker.allow().await {
-        debug!(trace_id = %captured.trace_id, "Security circuit breaker open — skipping analysis");
+        warn!(
+            trace_id = %captured.trace_id,
+            reason = AnalyzerDropReason::CircuitBreakerOpen.as_str(),
+            "Post-response security analysis skipped (circuit breaker open)"
+        );
         state.metrics.set_circuit_breaker_state("security", "open");
-        return Vec::new();
+        state
+            .metrics
+            .record_analyzer_dropped(AnalyzerDropReason::CircuitBreakerOpen.as_str());
+        return SecurityAnalysisOutcome {
+            findings: Vec::new(),
+            dropped: Some(AnalyzerDropReason::CircuitBreakerOpen),
+        };
     }
 
     let context = AnalysisContext {
@@ -2271,7 +2364,7 @@ async fn run_security_analysis(
     )
     .await;
 
-    let mut all_findings = match analysis_result {
+    let (mut all_findings, ensemble_drop) = match analysis_result {
         Ok(Ok(findings)) => {
             state.security_breaker.record_success().await;
             let cb_state = state.security_breaker.state().await;
@@ -2287,7 +2380,7 @@ async fn run_security_analysis(
                     "Security findings detected"
                 );
             }
-            findings
+            (findings, None)
         }
         Ok(Err(e)) => {
             state.security_breaker.record_failure().await;
@@ -2295,8 +2388,16 @@ async fn run_security_analysis(
             state
                 .metrics
                 .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
-            error!(trace_id = %captured.trace_id, "Security analysis failed: {}", e);
-            Vec::new()
+            warn!(
+                trace_id = %captured.trace_id,
+                reason = AnalyzerDropReason::AnalyzerError.as_str(),
+                error = %e,
+                "Security analysis failed"
+            );
+            state
+                .metrics
+                .record_analyzer_dropped(AnalyzerDropReason::AnalyzerError.as_str());
+            (Vec::new(), Some(AnalyzerDropReason::AnalyzerError))
         }
         Err(_elapsed) => {
             state.security_breaker.record_failure().await;
@@ -2306,10 +2407,14 @@ async fn run_security_analysis(
                 .set_circuit_breaker_state("security", circuit_breaker_state_label(cb_state));
             warn!(
                 trace_id = %captured.trace_id,
+                reason = AnalyzerDropReason::AnalyzerTimeout.as_str(),
                 timeout_ms = cfg.security_analysis_timeout_ms,
                 "Security analysis timed out"
             );
-            Vec::new()
+            state
+                .metrics
+                .record_analyzer_dropped(AnalyzerDropReason::AnalyzerTimeout.as_str());
+            (Vec::new(), Some(AnalyzerDropReason::AnalyzerTimeout))
         }
     };
 
@@ -2333,17 +2438,27 @@ async fn run_security_analysis(
         }
     }
 
-    all_findings
+    SecurityAnalysisOutcome {
+        findings: all_findings,
+        dropped: ensemble_drop,
+    }
 }
 
 /// Store a trace event enriched with security findings.
 ///
-/// Called inline within the background task after security analysis completes,
-/// ensuring findings are persisted alongside the trace span.
+/// Called inline within the background task after security analysis
+/// completes, ensuring findings are persisted alongside the trace
+/// span. When `analyzer_drop_reason` is `Some(_)`, the post-response
+/// analyzer did not produce findings for legitimate reasons (issue
+/// #298) and we stamp `pipeline_dropped=true` +
+/// `pipeline_drop_reason=<reason>` on the span tags so the dashboard
+/// can render the trace correctly instead of as a clean / null-score
+/// row.
 async fn run_trace_capture(
     state: &Arc<AppState>,
     captured: &CapturedInteraction,
     security_findings: &[SecurityFinding],
+    analyzer_drop_reason: Option<AnalyzerDropReason>,
 ) {
     if !state.config_handle.load().enable_trace_storage {
         return;
@@ -2369,6 +2484,17 @@ async fn run_trace_capture(
         captured.prompt_text.clone(),
     )
     .finish_with_response(captured.response_text.clone());
+
+    // Stamp the silent-drop tag BEFORE attaching findings so it sticks
+    // even when findings is empty (the canonical issue #298 case).
+    if let Some(reason) = analyzer_drop_reason {
+        span.tags
+            .insert("pipeline_dropped".to_string(), "true".to_string());
+        span.tags.insert(
+            "pipeline_drop_reason".to_string(),
+            reason.as_str().to_string(),
+        );
+    }
 
     span.status_code = Some(captured.status_code);
     span.prompt_tokens = captured.prompt_tokens;
