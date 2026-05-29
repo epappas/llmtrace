@@ -30,7 +30,7 @@ const ENDPOINTS: Array<Pick<EndpointCheck, "path" | "label">> = [
 
 function statusBadge(item: EndpointCheck) {
   if (item.status === "ok") {
-    return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Healthy</Badge>;
+    return <Badge className="bg-success/15 text-success border border-success/30 hover:bg-success/20">Healthy</Badge>;
   }
   if (item.status === "error") {
     return <Badge variant="destructive">Error</Badge>;
@@ -80,7 +80,7 @@ function parseMetricSamples(preview: string): MetricSample[] {
 function renderEndpointBody(item: EndpointCheck) {
   if (item.error) {
     return (
-      <pre className="max-h-56 overflow-auto rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+      <pre className="max-h-56 overflow-auto rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
         {item.error}
       </pre>
     );

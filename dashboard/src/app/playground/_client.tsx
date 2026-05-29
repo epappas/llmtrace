@@ -594,7 +594,7 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
   if (meta.blocked || meta.action === "block") {
     return {
       icon: ShieldOff,
-      tone: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
+      tone: "bg-severity-critical/15 text-severity-critical border-severity-critical/40",
       label: "Blocked",
       testId: "block",
     };
@@ -606,7 +606,7 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
   if (sevRank >= SEVERITY_RANK.critical) {
     return {
       icon: ShieldOff,
-      tone: "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/40",
+      tone: "bg-severity-critical/15 text-severity-critical border-severity-critical/40",
       label:
         meta.action === "allow"
           ? "Critical findings (allowed by policy)"
@@ -617,7 +617,7 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
   if (sevRank >= SEVERITY_RANK.high) {
     return {
       icon: ShieldAlert,
-      tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40",
+      tone: "bg-severity-high/15 text-severity-high border-severity-high/40",
       label:
         meta.action === "allow"
           ? "High-severity findings (allowed by policy)"
@@ -628,7 +628,7 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
   if (meta.action === "redact") {
     return {
       icon: ShieldAlert,
-      tone: "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40",
+      tone: "bg-warning/15 text-warning border-warning/40",
       label: "Redacted",
       testId: "redact",
     };
@@ -636,7 +636,7 @@ function statusVisual(meta: MsgMetadata): StatusVisual {
   if (meta.action === "allow") {
     return {
       icon: ShieldCheck,
-      tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40",
+      tone: "bg-success/15 text-success border-success/40",
       label: "Allowed",
       testId: "allow",
     };
@@ -1302,7 +1302,7 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
           {isEscalated && (
             <span
               data-testid="playground-details-action-warning"
-              className="ml-2 text-[10px] text-red-700 dark:text-red-300"
+              className="ml-2 text-[10px] text-severity-critical"
             >
               (allowed by policy — see Findings)
             </span>
@@ -1321,7 +1321,7 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
         {meta.blockedReason && (
           <>
             <dt className="text-muted-foreground">Reason</dt>
-            <dd className="text-red-700 dark:text-red-300">{meta.blockedReason}</dd>
+            <dd className="text-severity-critical">{meta.blockedReason}</dd>
           </>
         )}
         <dt className="text-muted-foreground" title="Analyzers run on the whole conversation each turn, not just the latest user message. A finding here may correspond to an earlier turn's content.">
@@ -1392,7 +1392,7 @@ function RawBlock(props: {
       </div>
       <pre
         data-testid={props.testId}
-        className="max-h-64 overflow-auto rounded-md border bg-background px-2 py-1.5 text-[10px] leading-snug"
+        className="max-h-64 overflow-auto rounded-md border border-border bg-card text-foreground px-2 py-1.5 text-[10px] leading-snug"
       >
         {prettyJson(props.body)}
       </pre>
