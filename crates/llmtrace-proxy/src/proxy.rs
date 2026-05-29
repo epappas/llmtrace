@@ -724,12 +724,19 @@ fn decision_action_str(decision: &crate::enforcement::EnforcementDecision) -> &'
 
 /// Compute a coarse 0..=100 security_score from the flagged findings.
 ///
-/// Mirrors `TraceSpan::add_security_finding` in `llmtrace-core` so the
-/// header value matches what eventually lands on the span. Returns
-/// `None` when there are no findings — callers omit the header rather
-/// than guess.
+/// Accurately mirrors `TraceSpan::add_security_finding` in `llmtrace-core`
+/// so the envelope header value matches what gets persisted on the span.
+/// Returns `None` when there are no findings — callers omit the header
+/// rather than guess.
+///
+/// Cap logic (must stay in sync with `TraceSpan::add_security_finding`):
+/// 1. Auxiliary finding types are capped at 30.
+/// 2. Single-detector findings (no majority vote) are capped at Medium (60).
 fn compute_security_score(findings: &[SecurityFinding]) -> Option<u8> {
-    use llmtrace_core::{is_auxiliary_finding_type, SecuritySeverity};
+    // Keep imports in sync with TraceSpan::add_security_finding in llmtrace-core.
+    use llmtrace_core::{
+        is_auxiliary_finding_type, SecuritySeverity, VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR,
+    };
     if findings.is_empty() {
         return None;
     }
@@ -743,11 +750,18 @@ fn compute_security_score(findings: &[SecurityFinding]) -> Option<u8> {
                 SecuritySeverity::Low => 30,
                 SecuritySeverity::Info => 10,
             };
+            // Mirror cap 1: auxiliary findings (TraceSpan::add_security_finding).
             if is_auxiliary_finding_type(&f.finding_type) {
-                base.min(30)
-            } else {
-                base
+                return base.min(30);
             }
+            // Mirror cap 2: single-detector findings (TraceSpan::add_security_finding).
+            if f.metadata
+                .get(VOTING_RESULT_KEY)
+                .is_some_and(|v| v == VOTING_SINGLE_DETECTOR)
+            {
+                return base.min(60);
+            }
+            base
         })
         .max()
         .unwrap_or(0);
@@ -3505,6 +3519,95 @@ mod tests {
             v["stream"].as_bool(),
             Some(true),
             "explicit stream:true must survive round-trip; got: {v}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_security_score: single-detector cap parity with
+    // TraceSpan::add_security_finding (issue: 60 vs 95 discrepancy).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_compute_security_score_caps_single_detector_critical_at_medium() {
+        use llmtrace_core::{VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR};
+        let finding = SecurityFinding::new(
+            SecuritySeverity::Critical,
+            "ml_prompt_injection".to_string(),
+            "ML model detected potential prompt injection".to_string(),
+            0.95,
+        )
+        .with_metadata(
+            VOTING_RESULT_KEY.to_string(),
+            VOTING_SINGLE_DETECTOR.to_string(),
+        );
+        assert_eq!(compute_security_score(&[finding]), Some(60));
+    }
+
+    #[test]
+    fn test_compute_security_score_uncapped_when_voting_majority() {
+        use llmtrace_core::{VOTING_MAJORITY, VOTING_RESULT_KEY};
+        let finding = SecurityFinding::new(
+            SecuritySeverity::Critical,
+            "ml_prompt_injection".to_string(),
+            "ML model detected potential prompt injection".to_string(),
+            0.95,
+        )
+        .with_metadata(VOTING_RESULT_KEY.to_string(), VOTING_MAJORITY.to_string());
+        assert_eq!(compute_security_score(&[finding]), Some(95));
+    }
+
+    #[test]
+    fn test_compute_security_score_mirrors_add_security_finding_on_mixed_set() {
+        use llmtrace_core::{
+            TraceSpan, VOTING_MAJORITY, VOTING_RESULT_KEY, VOTING_SINGLE_DETECTOR,
+        };
+
+        let findings = vec![
+            // Critical + single-detector: capped at 60.
+            SecurityFinding::new(
+                SecuritySeverity::Critical,
+                "ml_prompt_injection".to_string(),
+                "single detector critical".to_string(),
+                0.91,
+            )
+            .with_metadata(
+                VOTING_RESULT_KEY.to_string(),
+                VOTING_SINGLE_DETECTOR.to_string(),
+            ),
+            // High + majority: uncapped 80.
+            SecurityFinding::new(
+                SecuritySeverity::High,
+                "prompt_injection".to_string(),
+                "majority high".to_string(),
+                0.85,
+            )
+            .with_metadata(VOTING_RESULT_KEY.to_string(), VOTING_MAJORITY.to_string()),
+            // Medium + no voting metadata: uncapped 60.
+            SecurityFinding::new(
+                SecuritySeverity::Medium,
+                "pii_leak".to_string(),
+                "pii detected".to_string(),
+                0.7,
+            ),
+        ];
+
+        // Build a real TraceSpan and feed the same findings into add_security_finding.
+        let mut span = TraceSpan::new(
+            Uuid::nil(),
+            TenantId::default(),
+            "test-op".to_string(),
+            llmtrace_core::LLMProvider::OpenAI,
+            "gpt-4o".to_string(),
+            "test prompt".to_string(),
+        );
+        for f in &findings {
+            span.add_security_finding(f.clone());
+        }
+
+        assert_eq!(
+            compute_security_score(&findings),
+            span.security_score,
+            "compute_security_score diverged from TraceSpan::add_security_finding"
         );
     }
 }
