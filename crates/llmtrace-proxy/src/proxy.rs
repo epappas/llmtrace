@@ -588,11 +588,48 @@ fn render_zone_ranges(per_message: &[Vec<std::ops::Range<usize>>]) -> String {
 }
 
 /// Build the upstream URL for a given request path.
-fn build_upstream_url(config: &ProxyConfig, path: &str, query: Option<&str>) -> String {
-    let base = config.upstream_url.trim_end_matches('/');
+///
+/// `base_url` is the resolved upstream base — a per-tenant override when set,
+/// otherwise the global `config.upstream_url`.
+fn build_upstream_url(base_url: &str, path: &str, query: Option<&str>) -> String {
+    let base = base_url.trim_end_matches('/');
     match query {
         Some(q) => format!("{base}{path}?{q}"),
         None => format!("{base}{path}"),
+    }
+}
+
+/// Resolve the upstream base URL for a request: the tenant override when
+/// present and non-empty, otherwise the global configured `upstream_url`.
+fn resolve_upstream_base<'a>(config: &'a ProxyConfig, tenant_upstream: Option<&'a str>) -> &'a str {
+    match tenant_upstream {
+        Some(url) if !url.trim().is_empty() => url,
+        _ => &config.upstream_url,
+    }
+}
+
+/// Decrypt a tenant's stored upstream provider key, if present.
+///
+/// Returns `None` when the tenant has no stored ciphertext, when the master
+/// key (`LLMTRACE_SECRET_ENCRYPTION_KEY`) is unset/invalid, or when decryption
+/// fails — in every such case the caller falls back to the global env-based
+/// credential. A decryption failure is logged because it usually signals a
+/// rotated/incorrect master key.
+fn decrypt_tenant_upstream_key(tenant: Option<&llmtrace_core::Tenant>) -> Option<String> {
+    let ciphertext = tenant?.upstream_api_key_ciphertext.as_deref()?;
+    let secret_box = match crate::secretbox::SecretBox::from_env() {
+        Ok(sb) => sb,
+        Err(e) => {
+            warn!(error = %e, "tenant has an encrypted upstream key but the master key is unavailable; falling back to global credential");
+            return None;
+        }
+    };
+    match secret_box.decrypt(ciphertext) {
+        Ok(bytes) => String::from_utf8(bytes).ok(),
+        Err(e) => {
+            warn!(error = %e, "failed to decrypt per-tenant upstream key; falling back to global credential");
+            None
+        }
     }
 }
 
@@ -618,15 +655,19 @@ pub(crate) fn upstream_extra_headers(
     }
 }
 
-/// Resolve the upstream credential header for the detected provider.
+/// Resolve the upstream credential header for the detected provider, preferring
+/// an explicit per-tenant key when supplied.
 ///
-/// Returns `Some((header_name, header_value))` when the matching env var is
-/// set; returns `None` (with a `tracing::warn!`) when the var is missing/empty
+/// When `tenant_key` is `Some(non-empty)`, it is used as the credential for the
+/// provider's auth scheme. Otherwise this falls back to the global env-var
+/// convention: returns `Some((header_name, header_value))` when the matching env
+/// var is set; returns `None` (with a `tracing::warn!`) when it is missing/empty
 /// or when the provider has no known credential convention. The caller is
 /// expected to skip inserting any `Authorization` header in the `None` case so
 /// the upstream surfaces its own 401.
-pub(crate) fn upstream_auth_for(
+pub(crate) fn upstream_auth_for_with_key(
     provider: &LLMProvider,
+    tenant_key: Option<&str>,
 ) -> Option<(reqwest::header::HeaderName, reqwest::header::HeaderValue)> {
     let (env_var, header_name, value_fmt): (&str, reqwest::header::HeaderName, fn(&str) -> String) =
         match provider {
@@ -665,6 +706,19 @@ pub(crate) fn upstream_auth_for(
                 return None;
             }
         };
+
+    // Prefer the explicit per-tenant key when provided and non-empty.
+    if let Some(key) = tenant_key {
+        if !key.is_empty() {
+            return match reqwest::header::HeaderValue::from_str(&value_fmt(key)) {
+                Ok(hv) => Some((header_name, hv)),
+                Err(e) => {
+                    warn!(error = %e, "per-tenant upstream credential is not a valid HTTP header value; forwarding without Authorization");
+                    None
+                }
+            };
+        }
+    }
 
     match std::env::var(env_var) {
         Ok(raw) if !raw.is_empty() => {
@@ -1117,25 +1171,34 @@ pub async fn proxy_handler(
     let query = uri.query().map(|q| q.to_string());
     let headers = req.headers().clone();
 
-    // Use authenticated tenant if available, otherwise fall back to header resolution
+    // Use authenticated tenant if available, otherwise fall back to header resolution.
     let (tenant_id_opt, _) = crate::auth::resolve_authenticated_tenant(&headers, req.extensions());
 
-    // Resolve tenant ID. If auth is enabled, we MUST have a tenant ID from resolve_authenticated_tenant.
-    let tenant_id = match tenant_id_opt {
-        Some(id) if !id.0.is_nil() => id,
-        _ => {
-            if cfg.auth.enabled {
-                // This shouldn't be reached if auth_middleware is working correctly
-                warn!(%trace_id, "Missing authenticated tenant when auth is enabled");
-                return error_response(
-                    StatusCode::UNAUTHORIZED,
-                    "Authentication required",
-                    trace_id,
-                );
-            }
-            // Fallback for when auth is disabled: use deterministic "Unknown" tenant
-            TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"Unknown"))
-        }
+    // Resolve the tenant for this request. Phantom-tenant guard (issue #292):
+    // we NEVER auto-create a tenant per call. Resolution order:
+    //   1. A concrete (non-nil) tenant resolved from auth / header / key.
+    //   2. The explicit `default_tenant_id` for header-less traffic.
+    //   3. Auth ENABLED with neither => reject 401 (do not invent a tenant).
+    //   4. Auth DISABLED with neither => stamp a deterministic, stable
+    //      "anonymous" tenant id so dev/test traffic still has a home, WITHOUT
+    //      provisioning a DB row (no phantom creation).
+    let tenant_explicitly_identified = matches!(tenant_id_opt, Some(id) if !id.0.is_nil());
+    let tenant_id = if tenant_explicitly_identified {
+        tenant_id_opt.expect("checked above")
+    } else if let Some(default_id) = cfg.default_tenant_id {
+        default_id
+    } else if cfg.auth.enabled {
+        state.metrics.active_connections.dec();
+        warn!(%trace_id, "No tenant resolved and auth is enabled; rejecting (phantom-tenant guard)");
+        return error_response(
+            StatusCode::UNAUTHORIZED,
+            "Authentication required: no tenant resolved from header or key",
+            trace_id,
+        );
+    } else {
+        // Auth disabled, no header, no default: deterministic anonymous tenant.
+        // Stamped only — never auto-created.
+        TenantId(Uuid::new_v5(&Uuid::NAMESPACE_OID, b"llmtrace-anonymous"))
     };
 
     // RBAC: when auth is enabled, the catch-all forwarder (/v1/*) requires
@@ -1176,22 +1239,27 @@ pub async fn proxy_handler(
         .map(|c| c.monitoring_scope)
         .unwrap_or(llmtrace_core::MonitoringScope::Hybrid);
 
-    // Auto-create tenant on first request (best-effort, non-blocking).
-    // If auth is enabled, only create if we have an authenticated tenant.
-    // If auth is disabled, we still auto-create the "Unknown" tenant.
-    if !cfg.auth.enabled || tenant_id_opt.is_some() {
+    // Fetch the tenant record to resolve per-tenant upstream routing overrides
+    // (base URL + encrypted provider key). Best-effort: on miss/error we fall
+    // back to the global upstream_url and env-based credential.
+    let tenant_record = state.metadata().get_tenant(tenant_id).await.ok().flatten();
+    let tenant_upstream_url = tenant_record.as_ref().and_then(|t| t.upstream_url.clone());
+    let tenant_upstream_key = decrypt_tenant_upstream_key(tenant_record.as_ref());
+
+    // Provision the tenant on first request ONLY when it was explicitly
+    // identified (header / API key / authenticated context). Header-less
+    // traffic that fell back to `default_tenant_id` is provisioned
+    // out-of-band, and we never create a phantom "Unknown" tenant per call
+    // (issue #292). `ensure_tenant_exists` is idempotent on the stable id.
+    if tenant_explicitly_identified {
         let state_ac = Arc::clone(&state);
-        let name = if tenant_id_opt.is_some() {
-            _api_key
-                .as_deref()
-                .map(|k| {
-                    let prefix_len = k.len().min(8);
-                    format!("key-{}", &k[..prefix_len])
-                })
-                .unwrap_or_else(|| format!("tenant-{}", tenant_id.0))
-        } else {
-            "Unknown".to_string()
-        };
+        let name = _api_key
+            .as_deref()
+            .map(|k| {
+                let prefix_len = k.len().min(8);
+                format!("key-{}", &k[..prefix_len])
+            })
+            .unwrap_or_else(|| format!("tenant-{}", tenant_id.0));
         tokio::spawn(async move {
             crate::tenant_api::ensure_tenant_exists(&state_ac, tenant_id, &name).await;
         });
@@ -1599,8 +1667,10 @@ pub async fn proxy_handler(
         && datamarking_outcome.body_rewritten;
     let body_was_rewritten = body_was_rewritten || datamarking_active;
 
-    // Build the upstream request
-    let upstream_url = build_upstream_url(&cfg, &path, query.as_deref());
+    // Build the upstream request. Resolve the base URL from the tenant override
+    // (when set) or the global config.
+    let upstream_base = resolve_upstream_base(&cfg, tenant_upstream_url.as_deref());
+    let upstream_url = build_upstream_url(upstream_base, &path, query.as_deref());
 
     let mut upstream_req = state.client.request(
         reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::POST),
@@ -1616,7 +1686,7 @@ pub async fn proxy_handler(
     // Security (issue #274): always strip the incoming `Authorization` header
     // here. It was the tenant-facing LLMTrace bearer (e.g. `llmt_…`) and must
     // NEVER reach the upstream provider. The correct provider credential is
-    // injected below from `upstream_auth_for(&detected_provider)`.
+    // injected below from `upstream_auth_for_with_key(&detected_provider, ...)`.
     let mut forwarded_headers = reqwest::header::HeaderMap::new();
     for (name, value) in headers.iter() {
         if name == "host" || name == "accept-encoding" || name == "authorization" {
@@ -1636,7 +1706,9 @@ pub async fn proxy_handler(
     // var is unset we deliberately forward with NO Authorization header so
     // the upstream returns its own 401, which surfaces the gap as an
     // operator-actionable signal rather than a silent 5xx.
-    if let Some((auth_name, auth_value)) = upstream_auth_for(&detected_provider) {
+    if let Some((auth_name, auth_value)) =
+        upstream_auth_for_with_key(&detected_provider, tenant_upstream_key.as_deref())
+    {
         forwarded_headers.insert(auth_name, auth_value);
     }
     for (extra_name, extra_value) in upstream_extra_headers(&detected_provider) {
@@ -3044,8 +3116,9 @@ mod tests {
             upstream_url: "http://localhost:11434".to_string(),
             ..ProxyConfig::default()
         };
+        let base = resolve_upstream_base(&config, None);
         assert_eq!(
-            build_upstream_url(&config, "/v1/chat/completions", None),
+            build_upstream_url(base, "/v1/chat/completions", None),
             "http://localhost:11434/v1/chat/completions"
         );
     }
@@ -3056,9 +3129,56 @@ mod tests {
             upstream_url: "http://localhost:11434/".to_string(),
             ..ProxyConfig::default()
         };
+        let base = resolve_upstream_base(&config, None);
         assert_eq!(
-            build_upstream_url(&config, "/v1/models", Some("format=json")),
+            build_upstream_url(base, "/v1/models", Some("format=json")),
             "http://localhost:11434/v1/models?format=json"
+        );
+    }
+
+    #[test]
+    fn test_resolve_upstream_base_prefers_tenant_override() {
+        let config = ProxyConfig {
+            upstream_url: "https://global.example.com".to_string(),
+            ..ProxyConfig::default()
+        };
+        // Tenant override wins when present and non-empty.
+        assert_eq!(
+            resolve_upstream_base(&config, Some("https://tenant.example.com")),
+            "https://tenant.example.com"
+        );
+        // Empty/whitespace override falls back to the global URL.
+        assert_eq!(
+            resolve_upstream_base(&config, Some("   ")),
+            "https://global.example.com"
+        );
+        assert_eq!(
+            resolve_upstream_base(&config, None),
+            "https://global.example.com"
+        );
+    }
+
+    #[test]
+    fn test_upstream_auth_for_with_key_prefers_tenant_key() {
+        // Explicit per-tenant key is used for the OpenAI Bearer scheme,
+        // regardless of any env var.
+        let (name, value) =
+            upstream_auth_for_with_key(&llmtrace_core::LLMProvider::OpenAI, Some("sk-tenant-key"))
+                .expect("tenant key must produce an Authorization header");
+        assert_eq!(name, reqwest::header::AUTHORIZATION);
+        assert_eq!(value.to_str().unwrap(), "Bearer sk-tenant-key");
+    }
+
+    #[test]
+    fn test_build_upstream_url_uses_tenant_base() {
+        let config = ProxyConfig {
+            upstream_url: "https://global.example.com".to_string(),
+            ..ProxyConfig::default()
+        };
+        let base = resolve_upstream_base(&config, Some("https://tenant.example.com/"));
+        assert_eq!(
+            build_upstream_url(base, "/v1/chat/completions", None),
+            "https://tenant.example.com/v1/chat/completions"
         );
     }
 
@@ -3632,6 +3752,248 @@ mod tests {
             compute_security_score(&findings),
             span.security_score,
             "compute_security_score diverged from TraceSpan::add_security_finding"
+        );
+    }
+}
+
+// ===========================================================================
+// Phantom-tenant guard + per-tenant upstream routing tests (issues #292, #316)
+// ===========================================================================
+#[cfg(test)]
+mod tenant_routing_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+    use llmtrace_core::{
+        AuthConfig, ProxyConfig, SecurityAnalyzer, StorageConfig, Tenant, TenantId,
+    };
+    use llmtrace_security::RegexSecurityAnalyzer;
+    use llmtrace_storage::StorageProfile;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    /// Build an [`AppState`] with the given config, backed by in-memory storage.
+    async fn state_with(config: ProxyConfig) -> Arc<AppState> {
+        let storage = StorageProfile::Memory.build().await.unwrap();
+        let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
+        let client = reqwest::Client::new();
+        let storage_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let security_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+        Arc::new(AppState {
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
+            client,
+            storage,
+            fast_analyzer: security.clone(),
+            security,
+            #[cfg(feature = "ml")]
+            security_ensemble: None,
+            ensemble_runtime: Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+            storage_breaker,
+            security_breaker,
+            cost_estimator,
+            alert_engine: None,
+            cost_tracker,
+            anomaly_detector: None,
+            action_router: crate::action_router::ActionRouter::new(
+                &llmtrace_core::ActionRouterConfig::default(),
+                llmtrace_core::JudgePromotionConfig::default(),
+                llmtrace_core::JudgeWorkerConfig::default().max_analysis_text_bytes,
+                None,
+                reqwest::Client::new(),
+            ),
+            report_store: crate::compliance::new_report_store(),
+            rate_limiter,
+            ml_status: crate::proxy::MlModelStatus::Disabled,
+            judge_worker_spawned: false,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
+            shutdown: crate::shutdown::ShutdownCoordinator::new(30),
+            metrics: crate::metrics::Metrics::new(),
+            ml_pipeline_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
+            ready: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
+    }
+
+    /// Start a mock upstream that returns 200 and records the requested URI.
+    async fn mock_upstream() -> (String, Arc<tokio::sync::Mutex<Vec<String>>>) {
+        let seen: Arc<tokio::sync::Mutex<Vec<String>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let store = Arc::clone(&seen);
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |req: Request<Body>| {
+                let store = Arc::clone(&store);
+                async move {
+                    store.lock().await.push(req.uri().to_string());
+                    axum::response::Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "application/json")
+                        .body(Body::from("{\"ok\":true}"))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        (format!("http://{addr}"), seen)
+    }
+
+    fn chat_body() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .unwrap()
+    }
+
+    fn router(state: Arc<AppState>) -> Router {
+        Router::new()
+            .fallback(axum::routing::any(proxy_handler))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_header_less_with_default_tenant_is_stamped() {
+        let (upstream, _seen) = mock_upstream().await;
+        let default_id = TenantId::new();
+        let config = ProxyConfig {
+            upstream_url: upstream.clone(),
+            listen_addr: "127.0.0.1:0".to_string(),
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..StorageConfig::default()
+            },
+            auth: AuthConfig {
+                enabled: false,
+                admin_key: None,
+            },
+            default_tenant_id: Some(default_id),
+            ..ProxyConfig::default()
+        };
+        let state = state_with(config).await;
+        let app = router(Arc::clone(&state));
+
+        let req = Request::post("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(chat_body()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        // Forwarded upstream (no 4xx from the guard) — the default tenant was stamped.
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // The default tenant must NOT be auto-created (provisioned out-of-band).
+        // Give the spawned tasks a moment; there must be no tenant rows.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let tenants = state.metadata().list_tenants().await.unwrap();
+        assert!(
+            tenants.is_empty(),
+            "header-less default-tenant traffic must not create phantom tenants"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_header_less_no_default_auth_enabled_is_unauthorized() {
+        let (upstream, _seen) = mock_upstream().await;
+        let config = ProxyConfig {
+            upstream_url: upstream,
+            listen_addr: "127.0.0.1:0".to_string(),
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..StorageConfig::default()
+            },
+            auth: AuthConfig {
+                enabled: true,
+                admin_key: Some("admin-secret".to_string()),
+            },
+            default_tenant_id: None,
+            ..ProxyConfig::default()
+        };
+        let state = state_with(config).await;
+        // Bypass the auth middleware (none mounted) to exercise the in-handler
+        // guard directly: no AuthContext + auth enabled + no default => 401.
+        let app = router(Arc::clone(&state));
+        let req = Request::post("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .body(Body::from(chat_body()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let tenants = state.metadata().list_tenants().await.unwrap();
+        assert!(
+            tenants.is_empty(),
+            "rejected traffic must not create a phantom tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tenant_upstream_override_is_used() {
+        // Global upstream points nowhere useful; the tenant override points at
+        // the live mock. A successful 200 proves the override was honoured.
+        let (tenant_upstream, seen) = mock_upstream().await;
+        let tenant_id = TenantId::new();
+        let config = ProxyConfig {
+            upstream_url: "http://127.0.0.1:1/unreachable".to_string(),
+            listen_addr: "127.0.0.1:0".to_string(),
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..StorageConfig::default()
+            },
+            auth: AuthConfig {
+                enabled: false,
+                admin_key: None,
+            },
+            default_tenant_id: Some(tenant_id),
+            ..ProxyConfig::default()
+        };
+        let state = state_with(config).await;
+        // Provision the tenant WITH an upstream override.
+        let tenant = Tenant {
+            id: tenant_id,
+            name: "Routed".to_string(),
+            api_token: "tok".to_string(),
+            plan: "pro".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: Some(tenant_upstream.clone()),
+            upstream_api_key_ciphertext: None,
+        };
+        state.metadata().create_tenant(&tenant).await.unwrap();
+
+        let app = router(Arc::clone(&state));
+        let req = Request::post("/v1/chat/completions")
+            .header("content-type", "application/json")
+            .header("x-llmtrace-tenant-id", tenant_id.0.to_string())
+            .body(Body::from(chat_body()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "tenant override upstream must be reached"
+        );
+        let hits = seen.lock().await;
+        assert_eq!(
+            hits.len(),
+            1,
+            "the tenant override upstream must receive the request"
         );
     }
 }

@@ -12,7 +12,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
-use llmtrace_core::{ApiKeyRecord, ApiKeyRole, AuthContext, TenantId};
+use llmtrace_core::{ApiKeyRecord, ApiKeyRole, AuthContext, TenantId, TenantScope};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -97,13 +97,22 @@ pub async fn auth_middleware(
     // When auth is disabled, inject a permissive AuthContext using the legacy
     // tenant resolution so downstream handlers can always rely on extensions.
     if !cfg.auth.enabled {
+        // Auth disabled grants a permissive Admin context. Honour an explicit
+        // `X-LLMTrace-Tenant-Scope: all` for cross-tenant reads; otherwise scope
+        // to the resolved single tenant.
         let tenant_id = crate::proxy::resolve_tenant(req.headers()).unwrap_or_default();
+        let scope = if wants_all_tenants(req.headers()) {
+            TenantScope::All
+        } else {
+            TenantScope::Single(tenant_id)
+        };
         let ctx = AuthContext {
             tenant_id,
             role: ApiKeyRole::Admin,
             key_id: None,
         };
         req.extensions_mut().insert(ctx);
+        req.extensions_mut().insert(scope);
         return next.run(req).await;
     }
 
@@ -125,12 +134,21 @@ pub async fn auth_middleware(
     {
         match state.metadata().get_tenant_by_token(token).await {
             Ok(Some(tenant)) => {
+                // Operator tokens are single-tenant only; an explicit
+                // cross-tenant scope request is forbidden for non-admins.
+                if wants_all_tenants(req.headers()) {
+                    return auth_error(
+                        StatusCode::FORBIDDEN,
+                        "Cross-tenant scope (X-LLMTrace-Tenant-Scope: all) requires admin role",
+                    );
+                }
                 let ctx = AuthContext {
                     tenant_id: tenant.id,
                     role: ApiKeyRole::Operator, // Token grants operator access for traffic
                     key_id: None,
                 };
                 req.extensions_mut().insert(ctx);
+                req.extensions_mut().insert(TenantScope::Single(tenant.id));
                 return next.run(req).await;
             }
             Ok(None) => {
@@ -154,14 +172,31 @@ pub async fn auth_middleware(
         // Check bootstrap admin key first
         if let Some(ref admin_key) = cfg.auth.admin_key {
             if token == admin_key.as_str() {
-                // Admin key uses tenant from X-LLMTrace-Tenant-ID header, or a default
-                let tenant_id = resolve_tenant_from_header(headers).unwrap_or_default();
+                // CONTRACT 2 scope resolution for the bootstrap admin key:
+                //   * X-LLMTrace-Tenant-ID present       => Single(that id)
+                //   * X-LLMTrace-Tenant-Scope: all       => All (cross-tenant)
+                //   * neither                            => no scope inserted;
+                //     tenant_id stays nil and tenant-scoped reads reject 400.
+                let header_tenant = resolve_tenant_from_header(headers);
+                // No header => explicit NIL tenant (NOT a random default) so
+                // tenant-scoped reads detect the "admin, no scope" case and
+                // reject 400 rather than silently using a phantom tenant.
+                let tenant_id = header_tenant.unwrap_or(TenantId(Uuid::nil()));
+                // Compute the scope (owned) BEFORE taking a mutable borrow of req.
+                let scope = match header_tenant {
+                    Some(id) => Some(TenantScope::Single(id)),
+                    None if wants_all_tenants(headers) => Some(TenantScope::All),
+                    None => None,
+                };
                 let ctx = AuthContext {
                     tenant_id,
                     role: ApiKeyRole::Admin,
                     key_id: None,
                 };
                 req.extensions_mut().insert(ctx);
+                if let Some(scope) = scope {
+                    req.extensions_mut().insert(scope);
+                }
                 return next.run(req).await;
             }
         }
@@ -170,12 +205,26 @@ pub async fn auth_middleware(
         let key_hash = hash_api_key(token);
         match state.metadata().get_api_key_by_hash(&key_hash).await {
             Ok(Some(record)) => {
+                let asked_all = wants_all_tenants(req.headers());
+                let is_admin = record.role.has_permission(ApiKeyRole::Admin);
+                if asked_all && !is_admin {
+                    return auth_error(
+                        StatusCode::FORBIDDEN,
+                        "Cross-tenant scope (X-LLMTrace-Tenant-Scope: all) requires admin role",
+                    );
+                }
+                let scope = if asked_all && is_admin {
+                    TenantScope::All
+                } else {
+                    TenantScope::Single(record.tenant_id)
+                };
                 let ctx = AuthContext {
                     tenant_id: record.tenant_id,
                     role: record.role,
                     key_id: Some(record.id),
                 };
                 req.extensions_mut().insert(ctx);
+                req.extensions_mut().insert(scope);
                 return next.run(req).await;
             }
             Ok(None) => return auth_error(StatusCode::UNAUTHORIZED, "Invalid API key"),
@@ -494,6 +543,38 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.strip_prefix("Bearer "))
 }
 
+/// True when the caller requested cross-tenant scope via
+/// `X-LLMTrace-Tenant-Scope: all` (case-insensitive).
+fn wants_all_tenants(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-llmtrace-tenant-scope")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().eq_ignore_ascii_case("all"))
+        .unwrap_or(false)
+}
+
+/// Resolve the effective [`TenantScope`] for a request from its extensions.
+///
+/// Returns:
+///   * `Some(scope)` when the auth middleware established a concrete scope.
+///   * `None` when an admin presented neither `X-LLMTrace-Tenant-ID` nor
+///     `X-LLMTrace-Tenant-Scope: all` — tenant-scoped read handlers MUST treat
+///     this as a `400 Bad Request` (per CONTRACT 2) rather than defaulting to a
+///     nil tenant.
+#[must_use]
+pub fn resolve_request_scope(extensions: &axum::http::Extensions) -> Option<TenantScope> {
+    if let Some(scope) = extensions.get::<TenantScope>() {
+        return Some(*scope);
+    }
+    // No explicit scope was inserted. Fall back to the AuthContext tenant when
+    // it is a concrete (non-nil) tenant so non-admin flows keep working even if
+    // a future caller forgets to insert a scope; a nil admin tenant yields None.
+    extensions
+        .get::<AuthContext>()
+        .filter(|ctx| !ctx.tenant_id.0.is_nil())
+        .map(|ctx| TenantScope::Single(ctx.tenant_id))
+}
+
 /// Extract tenant ID from the `X-LLMTrace-Tenant-ID` header.
 fn resolve_tenant_from_header(headers: &HeaderMap) -> Option<TenantId> {
     if let Some(raw) = headers.get("x-llmtrace-tenant-id") {
@@ -796,8 +877,12 @@ mod tests {
         let state = auth_state("admin-secret").await;
         let app = auth_router(state);
 
+        // The admin bootstrap key is accepted. Under CONTRACT 2 a tenant-scoped
+        // read also needs an explicit tenant id (or scope=all); we supply a
+        // single-tenant id here to prove the admin key grants access.
         let req = Request::get("/api/v1/traces")
             .header("authorization", "Bearer admin-secret")
+            .header("x-llmtrace-tenant-id", TenantId::new().0.to_string())
             .body(Body::empty())
             .unwrap();
 
@@ -817,6 +902,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -864,6 +951,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -904,6 +993,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -960,6 +1051,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         let t2 = Tenant {
             id: TenantId::new(),
@@ -968,6 +1061,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&t1).await.unwrap();
         state.metadata().create_tenant(&t2).await.unwrap();
@@ -1046,6 +1141,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1082,5 +1179,132 @@ mod tests {
         for key_json in keys {
             assert!(key_json.get("key_hash").is_none());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Admin tenant scoping (CONTRACT 2 / P0 isolation)
+    // -----------------------------------------------------------------------
+
+    /// Seed one trace for each of two tenants and return their ids.
+    async fn seed_two_tenants(state: &Arc<AppState>) -> (TenantId, TenantId) {
+        let t1 = TenantId::new();
+        let t2 = TenantId::new();
+        for tid in [t1, t2] {
+            let trace_id = Uuid::new_v4();
+            let trace = llmtrace_core::TraceEvent {
+                trace_id,
+                tenant_id: tid,
+                spans: vec![llmtrace_core::TraceSpan::new(
+                    trace_id,
+                    tid,
+                    "chat_completion".to_string(),
+                    llmtrace_core::LLMProvider::OpenAI,
+                    "gpt-4".to_string(),
+                    "hello".to_string(),
+                )],
+                created_at: Utc::now(),
+            };
+            state.storage.traces.store_trace(&trace).await.unwrap();
+        }
+        (t1, t2)
+    }
+
+    #[tokio::test]
+    async fn test_admin_scope_all_aggregates_across_tenants() {
+        let state = auth_state("admin-secret").await;
+        seed_two_tenants(&state).await;
+
+        let app = auth_router(state);
+        let req = Request::get("/api/v1/traces")
+            .header("authorization", "Bearer admin-secret")
+            .header("x-llmtrace-tenant-scope", "all")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_body(resp).await;
+        assert_eq!(
+            body["total"], 2,
+            "all-tenants scope must aggregate both tenants"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_single_tenant_filters() {
+        let state = auth_state("admin-secret").await;
+        let (t1, _t2) = seed_two_tenants(&state).await;
+
+        let app = auth_router(state);
+        let req = Request::get("/api/v1/traces")
+            .header("authorization", "Bearer admin-secret")
+            .header("x-llmtrace-tenant-id", t1.0.to_string())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = json_body(resp).await;
+        assert_eq!(
+            body["total"], 1,
+            "single-tenant scope must filter to one tenant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_admin_no_tenant_no_scope_is_bad_request() {
+        let state = auth_state("admin-secret").await;
+        seed_two_tenants(&state).await;
+
+        let app = auth_router(state);
+        let req = Request::get("/api/v1/traces")
+            .header("authorization", "Bearer admin-secret")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "admin with neither tenant id nor scope=all must be rejected 400"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_admin_scope_all_is_forbidden() {
+        let state = auth_state("admin-secret").await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Viewer Org".to_string(),
+            api_token: "token-scope".to_string(),
+            plan: "free".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
+        };
+        state.metadata().create_tenant(&tenant).await.unwrap();
+        let (plaintext, hash) = generate_api_key();
+        let rec = ApiKeyRecord {
+            id: Uuid::new_v4(),
+            tenant_id: tenant.id,
+            name: "viewer".to_string(),
+            key_hash: hash,
+            key_prefix: key_prefix(&plaintext),
+            role: ApiKeyRole::Viewer,
+            created_at: Utc::now(),
+            revoked_at: None,
+        };
+        state.metadata().create_api_key(&rec).await.unwrap();
+
+        let app = auth_router(state);
+        let req = Request::get("/api/v1/traces")
+            .header("authorization", format!("Bearer {plaintext}"))
+            .header("x-llmtrace-tenant-scope", "all")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "non-admin requesting scope=all must be 403"
+        );
     }
 }

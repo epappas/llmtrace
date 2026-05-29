@@ -266,6 +266,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 

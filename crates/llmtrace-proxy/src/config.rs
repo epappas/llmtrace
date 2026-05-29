@@ -35,6 +35,10 @@ pub fn load_config(path: &Path) -> anyhow::Result<ProxyConfig> {
 /// - `LLMTRACE_RATE_LIMIT_RPS` → `rate_limiting.requests_per_second`
 /// - `LLMTRACE_RATE_LIMIT_BURST` → `rate_limiting.burst_size`
 /// - `LLMTRACE_ML_MAX_CONCURRENT` → `ml_pipeline.max_concurrent_requests`
+/// - `LLMTRACE_DATAMARKING_ENABLED` → `boundary_defense.datamarking.enabled`
+/// - `LLMTRACE_DATAMARKING_SHADOW_MODE` → `boundary_defense.datamarking.shadow_mode`
+/// - `LLMTRACE_ZONE_DETECTION_ENABLED` → `security_analysis.zone_detection.enabled`
+/// - `LLMTRACE_DEFAULT_TENANT_ID` → `default_tenant_id`
 ///
 /// Rate-limit overrides only take effect when the parsed value is `> 0`
 /// (a `u32`). Invalid or non-positive values are ignored, leaving the
@@ -76,6 +80,29 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
     }
     if let Some(burst) = parse_positive_u32("LLMTRACE_RATE_LIMIT_BURST") {
         config.rate_limiting.burst_size = burst;
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_DATAMARKING_ENABLED") {
+        let val = val.to_lowercase();
+        config.boundary_defense.datamarking.enabled = val == "1" || val == "true" || val == "yes";
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_DATAMARKING_SHADOW_MODE") {
+        let val = val.to_lowercase();
+        config.boundary_defense.datamarking.shadow_mode =
+            val == "1" || val == "true" || val == "yes";
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_ZONE_DETECTION_ENABLED") {
+        let val = val.to_lowercase();
+        config.security_analysis.zone_detection.enabled =
+            val == "1" || val == "true" || val == "yes";
+    }
+    if let Ok(val) = std::env::var("LLMTRACE_DEFAULT_TENANT_ID") {
+        match uuid::Uuid::parse_str(val.trim()) {
+            Ok(uuid) => config.default_tenant_id = Some(llmtrace_core::TenantId(uuid)),
+            Err(_) => tracing::warn!(
+                value = %val,
+                "LLMTRACE_DEFAULT_TENANT_ID must be a valid UUID; ignoring"
+            ),
+        }
     }
     if let Ok(val) = std::env::var("LLMTRACE_ML_MAX_CONCURRENT") {
         match val.parse::<usize>() {
@@ -407,6 +434,47 @@ health_check:
             config.rate_limiting.burst_size,
             baseline.rate_limiting.burst_size
         );
+    }
+
+    #[test]
+    fn test_apply_env_overrides_datamarking_and_zone() {
+        let mut config = ProxyConfig::default();
+        // Defaults: datamarking disabled, shadow_mode true, zone detection off.
+        assert!(!config.boundary_defense.datamarking.enabled);
+        assert!(config.boundary_defense.datamarking.shadow_mode);
+        assert!(!config.security_analysis.zone_detection.enabled);
+
+        std::env::set_var("LLMTRACE_DATAMARKING_ENABLED", "true");
+        std::env::set_var("LLMTRACE_DATAMARKING_SHADOW_MODE", "false");
+        std::env::set_var("LLMTRACE_ZONE_DETECTION_ENABLED", "1");
+        apply_env_overrides(&mut config);
+        std::env::remove_var("LLMTRACE_DATAMARKING_ENABLED");
+        std::env::remove_var("LLMTRACE_DATAMARKING_SHADOW_MODE");
+        std::env::remove_var("LLMTRACE_ZONE_DETECTION_ENABLED");
+
+        assert!(config.boundary_defense.datamarking.enabled);
+        assert!(!config.boundary_defense.datamarking.shadow_mode);
+        assert!(config.security_analysis.zone_detection.enabled);
+    }
+
+    #[test]
+    fn test_apply_env_overrides_default_tenant_id() {
+        let mut config = ProxyConfig::default();
+        assert!(config.default_tenant_id.is_none());
+        let id = uuid::Uuid::new_v4();
+        std::env::set_var("LLMTRACE_DEFAULT_TENANT_ID", id.to_string());
+        apply_env_overrides(&mut config);
+        std::env::remove_var("LLMTRACE_DEFAULT_TENANT_ID");
+        assert_eq!(config.default_tenant_id.map(|t| t.0), Some(id));
+    }
+
+    #[test]
+    fn test_apply_env_overrides_default_tenant_id_invalid_ignored() {
+        let mut config = ProxyConfig::default();
+        std::env::set_var("LLMTRACE_DEFAULT_TENANT_ID", "not-a-uuid");
+        apply_env_overrides(&mut config);
+        std::env::remove_var("LLMTRACE_DEFAULT_TENANT_ID");
+        assert!(config.default_tenant_id.is_none());
     }
 
     #[test]

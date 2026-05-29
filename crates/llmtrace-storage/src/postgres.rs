@@ -111,6 +111,8 @@ impl MetadataRepository for PostgresMetadataRepository {
             plan: row.get("plan"),
             created_at: row.get("created_at"),
             config: row.get("config"),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         }))
     }
 
@@ -135,6 +137,8 @@ impl MetadataRepository for PostgresMetadataRepository {
             plan: row.get("plan"),
             created_at: row.get("created_at"),
             config: row.get("config"),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         }))
     }
 
@@ -178,6 +182,8 @@ impl MetadataRepository for PostgresMetadataRepository {
                 plan: row.get("plan"),
                 created_at: row.get("created_at"),
                 config: row.get("config"),
+                upstream_url: None,
+                upstream_api_key_ciphertext: None,
             })
             .collect())
     }
@@ -614,6 +620,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces_per_day": 10000}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         }
     }
 

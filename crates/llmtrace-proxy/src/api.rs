@@ -12,7 +12,8 @@ use axum::Extension;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use llmtrace_core::{
-    AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, MonitoringScope, TraceQuery,
+    AgentAction, AgentActionType, ApiKeyRole, AuthContext, LLMProvider, MonitoringScope,
+    TenantScope, TraceQuery,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -202,6 +203,15 @@ fn require_role_operator(auth: &AuthContext) -> Option<Response> {
     }
 }
 
+/// The `400` response for a tenant-scoped read when an admin supplied neither a
+/// tenant id nor `scope=all` (CONTRACT 2).
+fn scope_required_error() -> Response {
+    api_error(
+        StatusCode::BAD_REQUEST,
+        "Missing tenant scope: provide X-LLMTrace-Tenant-ID or X-LLMTrace-Tenant-Scope: all",
+    )
+}
+
 /// Build a JSON error response.
 fn api_error(status: StatusCode, message: &str) -> Response {
     let body = ApiError {
@@ -287,16 +297,22 @@ fn is_sensitive_config_key(key: &str) -> bool {
 pub async fn list_traces(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
+    extensions: axum::http::Extensions,
     Query(params): Query<ListTracesParams>,
 ) -> Response {
     if let Some(err) = require_role_viewer(&auth) {
         return err;
     }
-    let tenant_id = auth.tenant_id;
+    let scope = match crate::auth::resolve_request_scope(&extensions) {
+        Some(s) => s,
+        None => return scope_required_error(),
+    };
     let limit = clamp_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
 
-    let mut query = TraceQuery::new(tenant_id);
+    // Tenant id only matters for single-tenant scope; the all-tenants path
+    // ignores it but `TraceQuery` still requires a value.
+    let mut query = TraceQuery::new(scope.single().unwrap_or(auth.tenant_id));
     query.start_time = params.start_time;
     query.end_time = params.end_time;
     if let Some(ref provider_str) = params.provider {
@@ -304,8 +320,13 @@ pub async fn list_traces(
     }
     query.model_name = params.model;
 
+    let traces_result = match scope {
+        TenantScope::All => state.storage.traces.query_traces_all_tenants(&query).await,
+        TenantScope::Single(_) => state.storage.traces.query_traces(&query).await,
+    };
+
     // Query without pagination to get total count, then paginate here.
-    match state.storage.traces.query_traces(&query).await {
+    match traces_result {
         Ok(all) => {
             let total = all.len() as u64;
             let data: Vec<_> = all
@@ -345,14 +366,23 @@ pub async fn list_traces(
 pub async fn get_trace(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
+    extensions: axum::http::Extensions,
     Path(trace_id): Path<Uuid>,
 ) -> Response {
     if let Some(err) = require_role_viewer(&auth) {
         return err;
     }
-    let tenant_id = auth.tenant_id;
+    let scope = match crate::auth::resolve_request_scope(&extensions) {
+        Some(s) => s,
+        None => return scope_required_error(),
+    };
 
-    match state.storage.traces.get_trace(tenant_id, trace_id).await {
+    let trace_result = match scope {
+        TenantScope::All => state.storage.traces.get_trace_any_tenant(trace_id).await,
+        TenantScope::Single(id) => state.storage.traces.get_trace(id, trace_id).await,
+    };
+
+    match trace_result {
         Ok(Some(trace)) => Json(trace).into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Trace not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
@@ -499,13 +529,22 @@ pub async fn get_span(
 pub async fn get_stats(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
+    extensions: axum::http::Extensions,
 ) -> Response {
     if let Some(err) = require_role_viewer(&auth) {
         return err;
     }
-    let tenant_id = auth.tenant_id;
+    let scope = match crate::auth::resolve_request_scope(&extensions) {
+        Some(s) => s,
+        None => return scope_required_error(),
+    };
 
-    match state.storage.traces.get_stats(tenant_id).await {
+    let stats_result = match scope {
+        TenantScope::All => state.storage.traces.get_global_stats().await,
+        TenantScope::Single(id) => state.storage.traces.get_stats(id).await,
+    };
+
+    match stats_result {
         Ok(stats) => Json(stats).into_response(),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }

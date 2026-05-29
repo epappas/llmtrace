@@ -181,6 +181,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         storage.metadata.create_tenant(&t).await.unwrap();
         let retrieved = storage.metadata.get_tenant(tenant).await.unwrap();
@@ -229,6 +231,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         storage.metadata.create_tenant(&t).await.unwrap();
         let retrieved = storage.metadata.get_tenant(tenant).await.unwrap().unwrap();
@@ -296,6 +300,8 @@ mod tests {
             plan: "enterprise".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         storage.metadata.create_tenant(&t).await.unwrap();
         let retrieved = storage.metadata.get_tenant(tenant).await.unwrap().unwrap();

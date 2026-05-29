@@ -61,6 +61,11 @@ pub fn sqlite_migrations() -> Vec<Migration> {
             description: "add_monitoring_scope".to_string(),
             sql: include_str!("../migrations/sqlite/006_add_monitoring_scope.sql"),
         },
+        Migration {
+            version: 7,
+            description: "add_tenant_upstream".to_string(),
+            sql: include_str!("../migrations/sqlite/007_add_tenant_upstream.sql"),
+        },
     ]
 }
 
