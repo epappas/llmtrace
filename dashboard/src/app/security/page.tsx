@@ -196,7 +196,7 @@ export default function SecurityPage() {
             {attackPatterns.length > 0 ? (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={attackPatterns} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
                   <XAxis type="number" className="text-xs" />
                   <YAxis dataKey="name" type="category" width={150} className="text-xs" />
                   <Tooltip />
