@@ -151,6 +151,7 @@ nav:
       - LangChain: guides/integration-langchain.md
       - curl / HTTP: guides/integration-curl.md
       - Custom Policies: guides/custom-policies.md
+      - Proxy Configuration Catalogue: guides/proxy-config.md
       - Pre-Request Enforcement: guides/enforcement.md
       - LLM Judge Setup: guides/llm-judge.md
       - Auth & Multi-Tenancy: guides/auth-tenancy.md
