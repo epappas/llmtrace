@@ -27,11 +27,19 @@ import {
 } from "@/lib/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
-  Critical: "#dc2626",
-  High: "#ea580c",
-  Medium: "#ca8a04",
-  Low: "#2563eb",
-  Info: "#6b7280",
+  Critical: "hsl(var(--severity-critical))",
+  High: "hsl(var(--severity-high))",
+  Medium: "hsl(var(--severity-medium))",
+  Low: "hsl(var(--severity-low))",
+  Info: "hsl(var(--severity-info))",
+};
+
+const SEVERITY_CHIP_CLASSES: Record<string, string> = {
+  critical: "bg-severity-critical/15 text-severity-critical border-severity-critical/30",
+  high: "bg-severity-high/15 text-severity-high border-severity-high/30",
+  medium: "bg-severity-medium/15 text-severity-medium border-severity-medium/30",
+  low: "bg-severity-low/15 text-severity-low border-severity-low/30",
+  info: "bg-severity-info/15 text-severity-info border-severity-info/30",
 };
 
 export default function SecurityPage() {
@@ -94,11 +102,17 @@ export default function SecurityPage() {
     {
       header: "Findings",
       accessor: (s: TraceSpan) =>
-        s.security_findings?.map((f) => (
-          <Badge key={f.id} variant="outline" className="mr-1">
-            {f.severity}: {f.finding_type}
-          </Badge>
-        )),
+        s.security_findings?.map((f) => {
+          const chipClass = SEVERITY_CHIP_CLASSES[f.severity.toLowerCase()] ?? SEVERITY_CHIP_CLASSES.info;
+          return (
+            <span
+              key={f.id}
+              className={`mr-1 inline-flex items-center rounded border px-2 py-0.5 text-[10px] ${chipClass}`}
+            >
+              {f.severity}: {f.finding_type}
+            </span>
+          );
+        }),
     },
     {
       header: "Description",
@@ -186,7 +200,7 @@ export default function SecurityPage() {
                   <XAxis type="number" className="text-xs" />
                   <YAxis dataKey="name" type="category" width={150} className="text-xs" />
                   <Tooltip />
-                  <Bar dataKey="count" fill="#ea580c" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="count" fill="hsl(var(--severity-high))" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (

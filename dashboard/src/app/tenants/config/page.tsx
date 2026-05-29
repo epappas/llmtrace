@@ -100,7 +100,7 @@ function ConfigContent() {
       </div>
 
       {success && (
-        <div className="bg-green-500/10 border border-green-500/20 text-green-600 p-3 rounded-md text-sm">
+        <div className="bg-success/10 border border-success/30 text-success p-3 rounded-md text-sm">
           Configuration saved successfully
         </div>
       )}

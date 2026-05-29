@@ -166,11 +166,11 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
 
   return (
     <div className="print:p-0">
-      <Card className="border-green-600 bg-green-500/5 shadow-md print:border-none print:bg-white print:shadow-none">
+      <Card className="border-success/40 bg-success/5 shadow-md print:border-none print:bg-white print:shadow-none">
         <CardHeader className="flex flex-row items-center justify-between pb-4 border-b">
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 text-2xl">
-              <CheckCircle className="h-6 w-6 text-green-600 print:text-black" />
+              <CheckCircle className="h-6 w-6 text-success print:text-foreground" />
               {report.report_type.toUpperCase()} Compliance Audit
             </CardTitle>
             <CardDescription className="text-sm font-medium">
@@ -225,10 +225,10 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
                 </button>
                 
                 {showRaw && (
-                  <div className="mt-4 rounded-xl border bg-slate-950 p-4 shadow-inner">
+                  <div className="mt-4 rounded-xl border bg-card p-4 shadow-inner">
                     <pre
                       data-testid="report-raw-content"
-                      className="text-[10px] leading-relaxed text-slate-300 overflow-auto max-h-[300px] scrollbar-thin scrollbar-thumb-slate-700"
+                      className="text-[10px] leading-relaxed text-foreground overflow-auto max-h-[300px] scrollbar-thin scrollbar-thumb-muted"
                     >
                       {JSON.stringify(report.content, null, 2)}
                     </pre>
@@ -396,7 +396,7 @@ export default function CompliancePage() {
         <div className="space-y-4 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center justify-between print:hidden">
             <h2 data-testid="active-report-viewer" className="text-xl font-bold flex items-center gap-2">
-              <div className="w-1.5 h-6 bg-green-600 rounded-full" />
+              <div className="w-1.5 h-6 bg-success rounded-full" />
               Active Viewer
             </h2>
             <Button

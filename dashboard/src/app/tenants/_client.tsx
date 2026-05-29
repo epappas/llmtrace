@@ -298,7 +298,7 @@ export default function TenantsClient() {
             </CardHeader>
             <CardContent className="space-y-6 pt-6">
               {configSuccess && (
-                <div className="bg-green-500/10 border border-green-500/20 text-green-600 p-3 rounded-md text-sm">
+                <div className="bg-success/10 border border-success/30 text-success p-3 rounded-md text-sm">
                   Configuration saved successfully
                 </div>
               )}
@@ -415,11 +415,11 @@ export default function TenantsClient() {
                     data-testid="copy-proxy-token-button"
                     onClick={() => copyToClipboard(activeTenantKeys.apiToken ?? "")}
                   >
-                    {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                    {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
                   </Button>
                 </div>
               ) : (
-                <div className="text-sm text-yellow-600 bg-yellow-500/10 p-2 rounded-md border border-yellow-500/20 flex items-center gap-2">
+                <div className="text-sm text-warning bg-warning/10 p-2 rounded-md border border-warning/30 flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4" />
                   No proxy token set. Click Reset to generate one.
                 </div>
@@ -473,9 +473,9 @@ export default function TenantsClient() {
       )}
 
       {generatedKey && (
-        <Card className="border-green-600 bg-green-500/5">
+        <Card className="border-success/40 bg-success/5">
           <CardHeader>
-            <CardTitle className="text-base text-green-600 flex items-center gap-2" data-testid="new-token-title">
+            <CardTitle className="text-base text-success flex items-center gap-2" data-testid="new-token-title">
               <Check className="h-4 w-4" /> New Token Generated
             </CardTitle>
           </CardHeader>
@@ -492,7 +492,7 @@ export default function TenantsClient() {
                 variant="ghost"
                 onClick={() => copyToClipboard(generatedKey.key ?? "")}
               >
-                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
             <Button variant="outline" size="sm" onClick={() => setGeneratedKey(null)}>

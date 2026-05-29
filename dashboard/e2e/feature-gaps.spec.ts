@@ -100,7 +100,7 @@ test.describe("Dashboard Coverage Gaps", () => {
 
     await expect(page.locator("span.font-mono", { hasText: "Enabled" }).first()).toBeVisible();
     await expect(
-      page.locator("span.font-mono.text-amber-700", { hasText: "Redacted" }).first(),
+      page.locator("span.font-mono.text-warning", { hasText: "Redacted" }).first(),
     ).toBeVisible();
     await expect(page.locator("span.text-muted-foreground", { hasText: "None" }).first()).toBeVisible();
   });

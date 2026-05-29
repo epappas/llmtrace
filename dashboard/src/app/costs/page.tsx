@@ -149,7 +149,7 @@ export default function CostsPage() {
                         w.utilization_pct >= 80
                           ? "bg-destructive"
                           : w.utilization_pct >= 50
-                            ? "bg-yellow-500"
+                            ? "bg-warning"
                             : "bg-primary"
                       }`}
                       style={{ width: `${Math.min(100, w.utilization_pct)}%` }}
@@ -186,11 +186,11 @@ export default function CostsPage() {
                 <XAxis dataKey="name" className="text-xs" />
                 <YAxis className="text-xs" />
                 <Tooltip formatter={(value: number) => `$${value.toFixed(4)}`} />
-                <Bar dataKey="spent" name="Spent" fill="#ea580c" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="spent" name="Spent" fill="hsl(var(--destructive))" radius={[4, 4, 0, 0]} />
                 <Bar
                   dataKey="remaining"
                   name="Remaining"
-                  fill="hsl(210 40% 96.1%)"
+                  fill="hsl(var(--muted))"
                   radius={[4, 4, 0, 0]}
                 />
               </BarChart>

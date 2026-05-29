@@ -31,14 +31,20 @@ import {
 } from "@/lib/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
-  Critical: "#dc2626",
-  High: "#ea580c",
-  Medium: "#ca8a04",
-  Low: "#2563eb",
-  Info: "#6b7280",
+  Critical: "hsl(var(--severity-critical))",
+  High: "hsl(var(--severity-high))",
+  Medium: "hsl(var(--severity-medium))",
+  Low: "hsl(var(--severity-low))",
+  Info: "hsl(var(--severity-info))",
 };
 
-const PIE_COLORS = ["#dc2626", "#ea580c", "#ca8a04", "#2563eb", "#6b7280"];
+const PIE_COLORS = [
+  "hsl(var(--severity-critical))",
+  "hsl(var(--severity-high))",
+  "hsl(var(--severity-medium))",
+  "hsl(var(--severity-low))",
+  "hsl(var(--severity-info))",
+];
 
 export default function OverviewPage() {
   const [stats, setStats] = useState<StorageStats | null>(null);
@@ -210,7 +216,7 @@ export default function OverviewPage() {
                 <XAxis dataKey="hour" className="text-xs" />
                 <YAxis className="text-xs" />
                 <Tooltip />
-                <Bar dataKey="traces" fill="hsl(222.2 47.4% 11.2%)" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="traces" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>

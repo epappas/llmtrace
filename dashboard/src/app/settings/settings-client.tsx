@@ -51,7 +51,7 @@ function renderConfigValue(value: unknown, depth = 0) {
     const text = formatPrimitive(value);
     const isRedacted = text === "***redacted***";
     return (
-      <span className={isRedacted ? "font-mono text-amber-700" : "font-mono"}>
+      <span className={isRedacted ? "font-mono text-warning" : "font-mono"}>
         {isRedacted ? "Redacted" : text}
       </span>
     );
@@ -152,7 +152,7 @@ interface UrlRowProps {
 function UrlRow({ label, value, emptyLabel, emptyTone, note, testId, copyable }: UrlRowProps) {
   const hasValue = value !== null && value.trim().length > 0;
   const emptyClass =
-    emptyTone === "warning" ? "text-amber-700 font-medium" : "text-muted-foreground";
+    emptyTone === "warning" ? "text-warning font-medium" : "text-muted-foreground";
 
   return (
     <div className="flex items-start gap-3" data-testid={testId}>
@@ -189,8 +189,8 @@ function ConnectionStatusBadge({ health, loading, onCheck }: ConnectionStatusBad
         <div className="flex items-center gap-2">
           {isHealthy ? (
             <>
-              <CheckCircle className="h-4 w-4 text-green-500" />
-              <Badge variant="secondary" className="bg-green-100 text-green-800">
+              <CheckCircle className="h-4 w-4 text-success" />
+              <Badge variant="secondary" className="bg-success/15 text-success border border-success/30">
                 Connected
               </Badge>
             </>
