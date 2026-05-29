@@ -935,28 +935,45 @@ mod tests {
         }
     }
 
-    async fn simple_mock(path: &str) -> (String, Arc<AsyncMutex<Vec<serde_json::Value>>>) {
+    /// Mock webhook server.
+    ///
+    /// Returns the URL, the shared store of received payloads, and an mpsc
+    /// receiver that the handler signals on each received payload so callers
+    /// can synchronize on delivery instead of sleeping.
+    async fn simple_mock(
+        path: &str,
+    ) -> (
+        String,
+        Arc<AsyncMutex<Vec<serde_json::Value>>>,
+        mpsc::Receiver<()>,
+    ) {
         let received: Arc<AsyncMutex<Vec<serde_json::Value>>> =
             Arc::new(AsyncMutex::new(Vec::new()));
         let store = Arc::clone(&received);
+        let (tx, rx) = mpsc::channel::<()>(8);
         let app = Router::new().route(
             path,
             post(move |axum::Json(body): axum::Json<serde_json::Value>| {
                 let store = Arc::clone(&store);
+                let tx = tx.clone();
                 async move {
                     store.lock().await.push(body);
+                    // Signal delivery; ignore if the receiver is gone.
+                    let _ = tx.send(()).await;
                     axum::http::StatusCode::OK
                 }
             }),
         );
 
+        // Bind synchronously before spawning serve so the socket is already
+        // accepting connections by the time the URL is handed back.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
 
-        (format!("http://{addr}{path}"), received)
+        (format!("http://{addr}{path}"), received, rx)
     }
 
     #[tokio::test]
@@ -1205,7 +1222,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_webhook_action_delivers_payload() {
-        let (url, received) = simple_mock("/action-webhook").await;
+        let (url, received, mut delivered) = simple_mock("/action-webhook").await;
         let action = WebhookAction {
             url,
             timeout_ms: 500,
@@ -1217,7 +1234,12 @@ mod tests {
         let outcome = action.execute(&ctx).await.unwrap();
         assert!(matches!(outcome, ActionOutcome::Completed { .. }));
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for the mock handler to signal it received the payload, with a
+        // bounded timeout that fails loudly rather than racing on a sleep.
+        tokio::time::timeout(Duration::from_secs(5), delivered.recv())
+            .await
+            .expect("webhook payload was not delivered within 5s")
+            .expect("mock handler signal channel closed before delivery");
         let payloads = received.lock().await;
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0]["tenant_id"], ctx.tenant_id.0.to_string());
