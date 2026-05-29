@@ -173,7 +173,7 @@ export default function SecurityPage() {
                     {severityData.map((entry) => (
                       <Cell
                         key={entry.name}
-                        fill={SEVERITY_COLORS[entry.name] ?? "#6b7280"}
+                        fill={SEVERITY_COLORS[entry.name] ?? "hsl(var(--severity-info))"}
                       />
                     ))}
                   </Pie>
