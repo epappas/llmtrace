@@ -219,21 +219,26 @@ cost_estimation:
 # ---------------------------------------------------------------------------
 
 cost_caps:
-  # Enable cost cap enforcement. When enabled, requests are checked against
-  # budget limits (USD) and per-request token caps before being forwarded.
-  enabled: false
+  # Cost TRACKING is on by default so the dashboard costs page works out of the
+  # box. With no budget caps configured below, this is tracking-only: spend is
+  # recorded but NO request is ever blocked. Add caps to default_budget_caps (or
+  # per-tenant/per-agent) to turn on ENFORCEMENT — over-budget requests then get
+  # rejected with HTTP 429.
+  enabled: true
 
-  # Default budget caps applied to all tenants/agents unless overridden.
-  # Each cap specifies a time window and a hard limit. Requests that would
-  # push spend above the hard limit are rejected with HTTP 429.
-  # Soft limits trigger an alert but still allow the request through.
-  default_budget_caps:
-    - window: hourly
-      hard_limit_usd: 10.0
-      soft_limit_usd: 8.0
-    - window: daily
-      hard_limit_usd: 100.0
-      # soft_limit_usd: 80.0
+  # Default budget caps applied to all tenants/agents unless overridden. Empty =
+  # no enforcement (tracking only). Each cap specifies a time window and a hard
+  # limit; requests that would push spend above the hard limit are rejected with
+  # HTTP 429. Soft limits trigger an alert but still allow the request through.
+  # Example (uncomment to enforce $10/hr soft-$8 and $100/day):
+  # default_budget_caps:
+  #   - window: hourly
+  #     hard_limit_usd: 10.0
+  #     soft_limit_usd: 8.0
+  #   - window: daily
+  #     hard_limit_usd: 100.0
+  #     # soft_limit_usd: 80.0
+  default_budget_caps: []
 
   # Default per-request token caps (applied before the request is forwarded).
   # default_token_cap:
