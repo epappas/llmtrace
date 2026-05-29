@@ -21,17 +21,28 @@ function buildHeaders(
 ): Record<string, string> | NextResponse {
   const headers: Record<string, string> = { ...extra };
 
-  // Tenant header resolution: prefer an explicit incoming header (used by
-  // dashboard pages that drive a tenant picker, e.g. /traces). Fall back to
-  // the deployment-pinned tenant set at provisioning time so that
-  // dashboard-originated traffic (e.g. /playground chat completions) is
-  // attributed to the real provisioned tenant instead of spawning a
-  // throwaway tenant per call on the proxy.
-  const tenantHeader =
-    req.headers.get("x-llmtrace-tenant-id") ??
-    process.env.LLMTRACE_DASHBOARD_TENANT_ID ??
-    null;
-  if (tenantHeader) headers["X-LLMTrace-Tenant-ID"] = tenantHeader;
+  // Tenant scoping. The browser is authoritative: the dashboard attaches the
+  // operator's sidebar selection to every user-driven call as either
+  //   - X-LLMTrace-Tenant-ID: <uuid>      (a specific tenant), or
+  //   - X-LLMTrace-Tenant-Scope: all      (admin "all tenants" reads).
+  // We forward whichever the browser sent, UNCHANGED, and never let the two
+  // coexist (CONTRACT 2: scope=all must omit the tenant-id header).
+  //
+  // The provisioned-tenant env fallback (LLMTRACE_DASHBOARD_TENANT_ID) is a
+  // last resort for genuinely tenant-agnostic system calls that arrive with
+  // NEITHER header. It must NOT override a header the browser sent — doing
+  // so silently mis-attributed user traffic (notably /playground chat
+  // completions that generate traces) to the single provisioned tenant,
+  // ignoring the sidebar selection (PR #291 regression).
+  const incomingScope = req.headers.get("x-llmtrace-tenant-scope");
+  const incomingTenant = req.headers.get("x-llmtrace-tenant-id");
+  if (incomingScope) {
+    headers["X-LLMTrace-Tenant-Scope"] = incomingScope;
+  } else if (incomingTenant) {
+    headers["X-LLMTrace-Tenant-ID"] = incomingTenant;
+  } else if (process.env.LLMTRACE_DASHBOARD_TENANT_ID) {
+    headers["X-LLMTrace-Tenant-ID"] = process.env.LLMTRACE_DASHBOARD_TENANT_ID;
+  }
 
   const authHeader = req.headers.get("authorization");
   if (authHeader) {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Users, Key, Copy, Check, AlertTriangle, Settings, Shield, Activity, DollarSign, Save, X } from "lucide-react";
+import { Plus, Trash2, Users, Key, Copy, Check, AlertTriangle, Settings, Shield, Activity, DollarSign, Save, X, Server, KeyRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11,6 +11,7 @@ import {
   type Tenant,
   type MonitoringScope,
   type TenantConfig,
+  type UpstreamCredsInput,
   listTenants,
   getTenant,
   createTenant,
@@ -20,8 +21,24 @@ import {
   listApiKeys,
   revokeApiKey,
   updateTenant,
+  notifyTenantsChanged,
   type ApiKey,
 } from "@/lib/api";
+
+/**
+ * Build the optional per-tenant upstream override fields for a create/update
+ * request (CONTRACT 1). Both fields are write-only on the wire:
+ *  - `url`: a blank string clears the override (`null` => inherit global);
+ *    a non-blank value sets it.
+ *  - `key`: only sent when the operator entered a new value. A blank field
+ *    means "leave unchanged" (the existing secret is never echoed back, so
+ *    we must not send null and accidentally wipe a configured key on edit).
+ */
+function upstreamCredsPayload(url: string, key: string): UpstreamCredsInput {
+  const payload: UpstreamCredsInput = { upstream_url: url.trim() === "" ? null : url.trim() };
+  if (key.trim() !== "") payload.upstream_api_key = key.trim();
+  return payload;
+}
 
 export default function TenantsClient() {
   const router = useRouter();
@@ -31,6 +48,8 @@ export default function TenantsClient() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPlan, setNewPlan] = useState("default");
+  const [newUpstreamUrl, setNewUpstreamUrl] = useState("");
+  const [newUpstreamKey, setNewUpstreamKey] = useState("");
   const [newKeyRole, setNewKeyRole] = useState<"admin" | "operator" | "viewer">("operator");
   const [generatedKey, setGeneratedKey] = useState<ApiKey | null>(null);
   const [activeTenantKeys, setActiveTenantKeys] = useState<{tenantId: string, tenantName: string, keys: ApiKey[], apiToken?: string} | null>(null);
@@ -43,6 +62,9 @@ export default function TenantsClient() {
   const [configScope, setConfigScope] = useState<MonitoringScope>("hybrid");
   const [configRateLimit, setConfigRateLimit] = useState("");
   const [configBudget, setConfigBudget] = useState("");
+  const [configUpstreamUrl, setConfigUpstreamUrl] = useState("");
+  const [configUpstreamKey, setConfigUpstreamKey] = useState("");
+  const [configUpstreamKeySet, setConfigUpstreamKeySet] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [configSuccess, setConfigSuccess] = useState(false);
 
@@ -68,7 +90,11 @@ export default function TenantsClient() {
   async function handleCreate() {
     if (!newName.trim()) return;
     try {
-      const res = await createTenant({ name: newName, plan: newPlan });
+      const res = await createTenant({
+        name: newName,
+        plan: newPlan,
+        ...upstreamCredsPayload(newUpstreamUrl, newUpstreamKey),
+      });
       if (res.api_key) {
         setGeneratedKey({
           id: "new",
@@ -83,8 +109,13 @@ export default function TenantsClient() {
       }
       setNewName("");
       setNewPlan("default");
+      setNewUpstreamUrl("");
+      setNewUpstreamKey("");
       setShowCreate(false);
       await loadTenants();
+      // Refresh the sidebar selector so the new tenant is immediately
+      // selectable without a full page reload (issue 7).
+      notifyTenantsChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create tenant");
     }
@@ -161,7 +192,20 @@ export default function TenantsClient() {
     setConfigScope(tenant.config.monitoring_scope || "hybrid");
     setConfigRateLimit(tenant.config.rate_limit_rpm?.toString() || "");
     setConfigBudget(tenant.config.monthly_budget?.toString() || "");
+    setConfigUpstreamUrl(tenant.upstream_url ?? "");
+    setConfigUpstreamKey("");
+    setConfigUpstreamKeySet(tenant.upstream_api_key_set ?? false);
     setConfigSuccess(false);
+    // The list payload may omit the upstream fields — fetch the full tenant
+    // for the authoritative URL + "key set" flag (the secret is never
+    // returned, only `upstream_api_key_set`).
+    try {
+      const full = await getTenant(tenant.id);
+      setConfigUpstreamUrl(full.upstream_url ?? "");
+      setConfigUpstreamKeySet(full.upstream_api_key_set ?? false);
+    } catch {
+      // Keep the list-derived values; the GET is a best-effort enrichment.
+    }
   }
 
   async function handleSaveConfig() {
@@ -176,8 +220,13 @@ export default function TenantsClient() {
       await updateTenant(editingConfig.id, {
         name: configName,
         plan: configPlan,
-        config: update
+        config: update,
+        ...upstreamCredsPayload(configUpstreamUrl, configUpstreamKey),
       });
+      // Reflect a freshly entered key in the "key set" indicator without a
+      // round-trip; the secret itself is intentionally never read back.
+      if (configUpstreamKey.trim() !== "") setConfigUpstreamKeySet(true);
+      setConfigUpstreamKey("");
       setConfigSuccess(true);
       setTimeout(() => {
         setConfigSuccess(false);
@@ -285,7 +334,7 @@ export default function TenantsClient() {
       </div>
 
       {editingConfig && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
               <div>
@@ -360,6 +409,53 @@ export default function TenantsClient() {
                       onChange={(e) => setConfigBudget(e.target.value)}
                       className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                     />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 border-t pt-6">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Server className="h-3 w-3" /> Upstream Provider
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Optional per-tenant upstream override. Leave blank to inherit the global default.
+                </p>
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <Server className="h-3 w-3" /> Upstream URL
+                    </label>
+                    <input
+                      type="text"
+                      name="upstream_url"
+                      placeholder="Inherit global default"
+                      value={configUpstreamUrl}
+                      onChange={(e) => setConfigUpstreamUrl(e.target.value)}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium flex items-center gap-2">
+                      <KeyRound className="h-3 w-3" /> Upstream API Key
+                      <span
+                        data-testid="upstream-key-status"
+                        className={`ml-auto text-[10px] font-normal ${configUpstreamKeySet ? "text-success" : "text-muted-foreground"}`}
+                      >
+                        {configUpstreamKeySet ? "key set" : "no key"}
+                      </span>
+                    </label>
+                    <input
+                      type="password"
+                      name="upstream_api_key"
+                      autoComplete="new-password"
+                      placeholder={configUpstreamKeySet ? "Enter a new key to replace" : "Inherit global default"}
+                      value={configUpstreamKey}
+                      onChange={(e) => setConfigUpstreamKey(e.target.value)}
+                      className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Write-only. The stored secret is never displayed. Leave blank to keep the current key.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -507,7 +603,7 @@ export default function TenantsClient() {
           <CardHeader>
             <CardTitle className="text-base">Create Tenant</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="flex gap-4">
               <input
                 type="text"
@@ -528,6 +624,38 @@ export default function TenantsClient() {
               </select>
               <Button onClick={handleCreate}>Create</Button>
             </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-xs font-medium flex items-center gap-2 text-muted-foreground">
+                  <Server className="h-3 w-3" /> Upstream URL (optional)
+                </label>
+                <input
+                  type="text"
+                  name="upstream_url"
+                  placeholder="Inherit global default"
+                  value={newUpstreamUrl}
+                  onChange={(e) => setNewUpstreamUrl(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium flex items-center gap-2 text-muted-foreground">
+                  <KeyRound className="h-3 w-3" /> Upstream API Key (optional)
+                </label>
+                <input
+                  type="password"
+                  name="upstream_api_key"
+                  autoComplete="new-password"
+                  placeholder="Inherit global default"
+                  value={newUpstreamKey}
+                  onChange={(e) => setNewUpstreamKey(e.target.value)}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Leave both blank to inherit the global upstream provider. The API key is write-only and never displayed after saving.
+            </p>
           </CardContent>
         </Card>
       )}

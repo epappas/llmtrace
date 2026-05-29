@@ -11,6 +11,45 @@ const API_BASE = "";
 /** Default tenant ID used as a fallback for the "default" tenant. */
 export const DEFAULT_TENANT_ID = "6ae1ab34-02d8-5b68-ad6f-132bf4de8408";
 
+/** localStorage key holding the operator's current tenant selection. */
+export const STORED_TENANT_KEY = "llmtrace_tenant_id";
+
+/**
+ * Sentinel selection value meaning "all tenants" (admin-only read scope).
+ * Distinct from any real tenant UUID. When this is the stored selection,
+ * user-scoped reads send `X-LLMTrace-Tenant-Scope: all` and OMIT the
+ * tenant-id header (see CONTRACT 2 / proxy enforcement).
+ */
+export const ALL_TENANTS_SCOPE = "__all__";
+
+/** Request header names the proxy uses to scope a tenant-aware call. */
+const TENANT_ID_HEADER = "X-LLMTrace-Tenant-ID";
+const TENANT_SCOPE_HEADER = "X-LLMTrace-Tenant-Scope";
+
+/**
+ * Resolve the tenant-scoping request headers for a user-driven call from
+ * the stored sidebar selection. CONTRACT 2:
+ *  - specific tenant id  -> { "X-LLMTrace-Tenant-ID": <id> }
+ *  - "all tenants"       -> { "X-LLMTrace-Tenant-Scope": "all" }
+ *  - nothing stored      -> {} (caller / proxy decide)
+ *
+ * An explicit `tenantId` argument always wins and forces the id header,
+ * letting callers (e.g. per-tenant token/stat fan-out) target a concrete
+ * tenant regardless of the sidebar selection.
+ */
+function tenantScopeHeaders(tenantId?: string): Record<string, string> {
+  if (tenantId === ALL_TENANTS_SCOPE) return { [TENANT_SCOPE_HEADER]: "all" };
+  if (tenantId) return { [TENANT_ID_HEADER]: tenantId };
+  // Browser-side default: read the operator's stored sidebar selection so
+  // every user-scoped call carries the authoritative tenant/scope without
+  // each caller having to thread it through explicitly.
+  if (typeof window === "undefined") return {};
+  const stored = localStorage.getItem(STORED_TENANT_KEY);
+  if (stored === ALL_TENANTS_SCOPE) return { [TENANT_SCOPE_HEADER]: "all" };
+  if (stored) return { [TENANT_ID_HEADER]: stored };
+  return {};
+}
+
 // ---------------------------------------------------------------------------
 // Core types (mirror Rust API responses)
 // ---------------------------------------------------------------------------
@@ -109,6 +148,11 @@ export interface Tenant {
   created_at: string;
   config: TenantConfig;
   api_key?: string; // Present only immediately after creation
+  // Per-tenant upstream override (CONTRACT 1). `upstream_url` echoes the
+  // configured URL (null => inherit the global default). The secret is
+  // never returned — only a boolean flag indicating whether one is set.
+  upstream_url?: string | null;
+  upstream_api_key_set?: boolean;
 }
 
 export interface ApiKey {
@@ -184,11 +228,16 @@ async function apiFetch<T>(
   tenantId?: string,
 ): Promise<T> {
   const url = `${API_BASE}${path}`;
-  console.log(`[API] Fetching: ${url}${tenantId ? ` (Tenant: ${tenantId})` : ""}`);
+  const scopeHeaders = tenantScopeHeaders(tenantId);
+  console.log(
+    `[API] Fetching: ${url}${
+      Object.keys(scopeHeaders).length > 0 ? ` (${JSON.stringify(scopeHeaders)})` : ""
+    }`,
+  );
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
+    ...scopeHeaders,
   };
 
   // Local-dev escape hatch only: when explicitly disabled, fall back to the
@@ -293,10 +342,18 @@ export async function getStats(tenantId?: string): Promise<StorageStats> {
   return apiFetch("/api/v1/stats", undefined, tenantId);
 }
 
-/** Get global storage stats across all tenants. */
+/**
+ * Get global storage stats across ALL tenants. This is an admin aggregate
+ * (Overview page) so it always sends `X-LLMTrace-Tenant-Scope: all` rather
+ * than scoping to the current sidebar selection — the proxy returns 400 on
+ * a tenant-scoped read that carries neither a tenant-id nor a scope header.
+ */
 export async function getGlobalStats(): Promise<StorageStats> {
   try {
-    const res = await fetch("/api/v1/stats", { cache: "no-store" });
+    const res = await fetch("/api/v1/stats", {
+      cache: "no-store",
+      headers: { [TENANT_SCOPE_HEADER]: "all" },
+    });
     if (!res.ok) {
       return { total_traces: 0, total_spans: 0, total_cost_usd: 0 };
     }
@@ -324,7 +381,7 @@ export async function getCurrentCosts(
   const url = `/api/v1/costs/current${q}`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(tenantId ? { "X-LLMTrace-Tenant-ID": tenantId } : {}),
+    ...tenantScopeHeaders(tenantId),
   };
 
   if (
@@ -384,9 +441,25 @@ export async function resetTenantToken(tenantId: string): Promise<{ api_token: s
   return apiFetch(`/api/v1/tenants/${tenantId}/token/reset`, { method: "POST" });
 }
 
+/**
+ * Per-tenant upstream override fields (CONTRACT 1). Both optional and
+ * write-only on the wire: `upstream_api_key` is sent on create/update but
+ * never returned (the GET response exposes `upstream_api_key_set` instead).
+ * A `null` (or omitted) value clears the override so the tenant inherits
+ * the global default.
+ */
+export interface UpstreamCredsInput {
+  upstream_url?: string | null;
+  upstream_api_key?: string | null;
+}
+
 /** Create a new tenant. */
 export async function createTenant(
-  body: { name: string; plan?: string; config?: Record<string, unknown> },
+  body: {
+    name: string;
+    plan?: string;
+    config?: Record<string, unknown>;
+  } & UpstreamCredsInput,
 ): Promise<Tenant> {
   return apiFetch("/api/v1/tenants", {
     method: "POST",
@@ -397,7 +470,11 @@ export async function createTenant(
 /** Update tenant. */
 export async function updateTenant(
   id: string,
-  body: { name?: string; plan?: string; config?: Partial<TenantConfig> },
+  body: {
+    name?: string;
+    plan?: string;
+    config?: Partial<TenantConfig>;
+  } & UpstreamCredsInput,
 ): Promise<Tenant> {
   return apiFetch(`/api/v1/tenants/${id}`, {
     method: "PUT",
@@ -440,9 +517,16 @@ export async function healthCheck(): Promise<{ status: string }> {
 /** Helper: Find the tenant with the most recent activity. */
 export async function findActiveTenant(): Promise<string | undefined> {
   try {
+    // An explicit "all tenants" selection is authoritative — honour it
+    // before touching the tenant list so read pages can scope=all.
+    if (typeof window !== "undefined" &&
+        localStorage.getItem(STORED_TENANT_KEY) === ALL_TENANTS_SCOPE) {
+      return ALL_TENANTS_SCOPE;
+    }
+
     const tenants = await listTenants();
     console.log(`[API] findActiveTenant: Found ${tenants.length} tenants`);
-    
+
     if (tenants.length === 0) {
       console.warn("[API] No tenants found in the database.");
       setStoredTenant(undefined);
@@ -451,7 +535,7 @@ export async function findActiveTenant(): Promise<string | undefined> {
 
     // Check localStorage first and verify it still exists
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("llmtrace_tenant_id");
+      const stored = localStorage.getItem(STORED_TENANT_KEY);
       if (stored && tenants.some(t => t.id === stored)) {
         console.log(`[API] Using stored tenant ID: ${stored}`);
         return stored;
@@ -478,7 +562,7 @@ export async function findActiveTenant(): Promise<string | undefined> {
     console.log(`[API] Identified most active tenant: ${activeId}`);
 
     // Only set stored tenant if none is currently selected
-    if (activeId && typeof window !== "undefined" && !localStorage.getItem("llmtrace_tenant_id")) {
+    if (activeId && typeof window !== "undefined" && !localStorage.getItem(STORED_TENANT_KEY)) {
       setStoredTenant(activeId);
     }
     return activeId;
@@ -488,14 +572,37 @@ export async function findActiveTenant(): Promise<string | undefined> {
   }
 }
 
-/** Helper: Store the selected tenant ID in localStorage. */
+/** Helper: read the stored tenant selection (id or the all-tenants sentinel). */
+export function getStoredTenant(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(STORED_TENANT_KEY);
+}
+
+/**
+ * Helper: Store the selected tenant ID (or the "all tenants" sentinel) in
+ * localStorage. Pass `undefined` to clear the selection.
+ */
 export function setStoredTenant(tenantId: string | undefined): void {
   if (typeof window === "undefined") return;
   if (tenantId) {
-    localStorage.setItem("llmtrace_tenant_id", tenantId);
+    localStorage.setItem(STORED_TENANT_KEY, tenantId);
   } else {
-    localStorage.removeItem("llmtrace_tenant_id");
+    localStorage.removeItem(STORED_TENANT_KEY);
   }
+}
+
+/** Event name dispatched on the window when the tenant registry changes. */
+export const TENANTS_CHANGED_EVENT = "llmtrace:tenants-changed";
+
+/**
+ * Notify listeners (e.g. the sidebar selector) that the tenant registry
+ * changed so they can refresh without a full page reload. No-op on the
+ * server. See issue 7 — the sidebar previously loaded tenants once on
+ * mount and went stale after a create on the /tenants page.
+ */
+export function notifyTenantsChanged(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(TENANTS_CHANGED_EVENT));
 }
 
 // -- Compliance reporting ---------------------------------------------------
