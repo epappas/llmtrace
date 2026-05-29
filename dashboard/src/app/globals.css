@@ -22,26 +22,64 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
+
+    --success: 142 71% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --info: 199 89% 42%;
+    --info-foreground: 0 0% 100%;
+
+    --severity-critical: 0 84% 50%;
+    --severity-critical-foreground: 0 0% 100%;
+    --severity-high: 25 95% 45%;
+    --severity-high-foreground: 0 0% 100%;
+    --severity-medium: 38 92% 45%;
+    --severity-medium-foreground: 0 0% 100%;
+    --severity-low: 199 89% 42%;
+    --severity-low-foreground: 0 0% 100%;
+    --severity-info: 220 9% 46%;
+    --severity-info-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --background: 220 13% 9%;
+    --foreground: 210 20% 98%;
+    --card: 220 13% 12%;
+    --card-foreground: 210 20% 98%;
+    --popover: 220 13% 12%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 210 40% 96%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 220 13% 16%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 220 13% 16%;
+    --muted-foreground: 220 9% 65%;
+    --accent: 220 13% 18%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 220 13% 18%;
+    --input: 220 13% 18%;
+    --ring: 220 13% 30%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --severity-critical: 0 84% 60%;
+    --severity-critical-foreground: 0 0% 100%;
+    --severity-high: 25 95% 53%;
+    --severity-high-foreground: 0 0% 100%;
+    --severity-medium: 38 92% 50%;
+    --severity-medium-foreground: 0 0% 0%;
+    --severity-low: 199 89% 48%;
+    --severity-low-foreground: 0 0% 100%;
+    --severity-info: 220 9% 46%;
+    --severity-info-foreground: 0 0% 100%;
   }
 }
 
