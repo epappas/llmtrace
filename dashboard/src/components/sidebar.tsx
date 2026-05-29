@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   LayoutDashboard,
   FileSearch,
@@ -20,7 +20,15 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { listTenants, setStoredTenant, type Tenant, DEFAULT_TENANT_ID } from "@/lib/api";
+import {
+  listTenants,
+  setStoredTenant,
+  type Tenant,
+  DEFAULT_TENANT_ID,
+  ALL_TENANTS_SCOPE,
+  STORED_TENANT_KEY,
+  TENANTS_CHANGED_EVENT,
+} from "@/lib/api";
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -42,36 +50,49 @@ export function Sidebar() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [selectedTenant, setSelectedTenant] = useState<string>(DEFAULT_TENANT_ID);
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await listTenants();
-        setTenants(data);
-        const stored = localStorage.getItem("llmtrace_tenant_id");
+  const loadTenants = useCallback(async () => {
+    try {
+      const data = await listTenants();
+      setTenants(data);
+      const stored = localStorage.getItem(STORED_TENANT_KEY);
 
-        if (stored && (stored === DEFAULT_TENANT_ID || data.some((t) => t.id === stored))) {
-          setSelectedTenant(stored);
-        } else if (data.length > 0) {
-          // If we have tenants but none stored, pick the first one from DB
-          setSelectedTenant(data[0].id);
-          if (!stored) setStoredTenant(data[0].id);
-        } else {
-          // Fallback to nil tenant if no tenants exist in DB
-          setSelectedTenant(DEFAULT_TENANT_ID);
-          if (!stored) setStoredTenant(DEFAULT_TENANT_ID);
-        }
-      } catch (e) {
-        console.error("Failed to load tenants in sidebar", e);
+      if (
+        stored &&
+        (stored === ALL_TENANTS_SCOPE ||
+          stored === DEFAULT_TENANT_ID ||
+          data.some((t) => t.id === stored))
+      ) {
+        setSelectedTenant(stored);
+      } else if (data.length > 0) {
+        // If we have tenants but none stored, pick the first one from DB
+        setSelectedTenant(data[0].id);
+        if (!stored) setStoredTenant(data[0].id);
+      } else {
+        // Fallback to nil tenant if no tenants exist in DB
         setSelectedTenant(DEFAULT_TENANT_ID);
+        if (!stored) setStoredTenant(DEFAULT_TENANT_ID);
       }
+    } catch (e) {
+      console.error("Failed to load tenants in sidebar", e);
+      setSelectedTenant(DEFAULT_TENANT_ID);
     }
-    load();
   }, []);
+
+  useEffect(() => {
+    void loadTenants();
+    // Re-run when the tenant registry changes (e.g. a tenant was created on
+    // the /tenants page) so the selector picks up new tenants without a full
+    // page reload. See issue 7.
+    const onChanged = () => void loadTenants();
+    window.addEventListener(TENANTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(TENANTS_CHANGED_EVENT, onChanged);
+  }, [loadTenants]);
 
   const handleTenantChange = (id: string) => {
     setSelectedTenant(id);
     setStoredTenant(id);
-    // Refresh the page to update all components with the new tenant ID
+    // Refresh the page so every page re-resolves its tenant/scope from the
+    // new selection (read pages call findActiveTenant on mount).
     window.location.reload();
   };
 
@@ -102,8 +123,11 @@ export function Sidebar() {
           <select
             value={selectedTenant}
             onChange={(e) => handleTenantChange(e.target.value)}
+            data-testid="tenant-selector"
             className="w-full bg-background border rounded-md px-3 py-2 text-sm appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
           >
+            {/* Admin-only aggregate view: reads scope to every tenant. */}
+            <option value={ALL_TENANTS_SCOPE}>All tenants</option>
             {/* Always include the Default/Nil tenant if it's the only one or currently selected */}
             {(tenants.length === 0 || selectedTenant === DEFAULT_TENANT_ID) && (
               <option value={DEFAULT_TENANT_ID}>Default Tenant</option>

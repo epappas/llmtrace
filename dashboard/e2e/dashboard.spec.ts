@@ -310,20 +310,25 @@ test.describe('LLMTrace Dashboard', () => {
 
       await page.reload();
       await page.waitForLoadState('domcontentloaded');
-      // Wait for 2 real tenant options (ignore placeholder/empty option).
+      // Wait for 2 real tenant options. Ignore the placeholder/empty option
+      // AND the "__all__" all-tenants sentinel (admin scope, not a tenant).
       await page.waitForFunction(() => {
         const opts = Array.from(document.querySelectorAll('aside select option'));
-        const real = opts.filter((o) => (o as HTMLOptionElement).value && (o as HTMLOptionElement).value.trim() !== '');
+        const real = opts.filter((o) => {
+          const v = (o as HTMLOptionElement).value;
+          return v && v.trim() !== '' && v !== '__all__';
+        });
         return real.length >= 2;
       });
     }
 
-    // 2. Select the second real tenant option (ignore placeholder option with empty value).
+    // 2. Select the second real tenant option (ignore the empty placeholder
+    // and the "__all__" all-tenants sentinel).
     const optionValues = await selector.evaluate((el) => {
       const opts = Array.from((el as HTMLSelectElement).querySelectorAll('option'));
       return opts
         .map((o) => (o as HTMLOptionElement).value)
-        .filter((v) => v && v.trim() !== '');
+        .filter((v) => v && v.trim() !== '' && v !== '__all__');
     });
 
     if (optionValues.length < 2) {
@@ -334,15 +339,35 @@ test.describe('LLMTrace Dashboard', () => {
     if (!targetId) {
       throw new Error('Second tenant option had no value attribute');
     }
-    
+
     // 3. Select the second tenant and wait until it is persisted in localStorage
     await selector.selectOption(targetId);
     await page.waitForFunction((id) => localStorage.getItem("llmtrace_tenant_id") === id, targetId);
-    
+
     // 4. Verify it persists after a hard reload (sidebar must re-read localStorage).
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
     await expect(page.locator('aside select')).toHaveValue(targetId, { timeout: 15000 });
+  });
+
+  test('Sidebar: "All tenants" selection persists the all-tenants scope', async ({ page }) => {
+    // Selecting the admin "All tenants" option must store the "__all__"
+    // sentinel so user-scoped reads send X-LLMTrace-Tenant-Scope: all
+    // (CONTRACT 2) instead of a concrete tenant id.
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+
+    const selector = page.getByTestId('tenant-selector');
+    await expect(selector).toBeVisible();
+
+    await selector.selectOption('__all__');
+    await page.waitForFunction(
+      () => localStorage.getItem('llmtrace_tenant_id') === '__all__',
+    );
+
+    await page.reload();
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.getByTestId('tenant-selector')).toHaveValue('__all__', { timeout: 15000 });
   });
 
 });
