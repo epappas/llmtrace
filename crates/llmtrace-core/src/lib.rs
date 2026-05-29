@@ -2175,10 +2175,15 @@ pub struct AgentCostCap {
 }
 
 /// Top-level cost cap configuration section within [`ProxyConfig`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `enabled` defaults to `true` so spend TRACKING is on out of the box.
+/// This does NOT enforce or block any traffic: enforcement only happens when
+/// explicit budget/token caps are configured. With the empty defaults below,
+/// every cap check returns `Allowed`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostCapConfig {
-    /// Enable cost cap enforcement.
-    #[serde(default)]
+    /// Enable cost tracking (and cap enforcement when caps are configured).
+    #[serde(default = "default_cost_caps_enabled")]
     pub enabled: bool,
     /// Default budget caps applied to all tenants/agents unless overridden.
     #[serde(default)]
@@ -2189,6 +2194,22 @@ pub struct CostCapConfig {
     /// Per-agent overrides.
     #[serde(default)]
     pub agents: Vec<AgentCostCap>,
+}
+
+/// Serde default for [`CostCapConfig::enabled`]: tracking on by default.
+fn default_cost_caps_enabled() -> bool {
+    true
+}
+
+impl Default for CostCapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_budget_caps: Vec::new(),
+            default_token_cap: None,
+            agents: Vec::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4673,7 +4694,9 @@ mod tests {
     #[test]
     fn test_cost_cap_config_default() {
         let config = CostCapConfig::default();
-        assert!(!config.enabled);
+        // Tracking is on by default; enforcement stays off because the
+        // default caps are empty (every cap check returns Allowed).
+        assert!(config.enabled);
         assert!(config.default_budget_caps.is_empty());
         assert!(config.default_token_cap.is_none());
         assert!(config.agents.is_empty());
@@ -4713,9 +4736,30 @@ mod tests {
     }
 
     #[test]
+    fn test_cost_cap_config_enabled_defaults_true_when_section_omits_enabled() {
+        // A cost_caps section present but without an explicit `enabled`
+        // must default to true (tracking on) via default_cost_caps_enabled.
+        let config: CostCapConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.enabled);
+        assert!(config.default_budget_caps.is_empty());
+        assert!(config.default_token_cap.is_none());
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn test_cost_cap_config_explicit_false_is_honored() {
+        // An explicit `enabled: false` in config must still be honored;
+        // serde only applies the default for an ABSENT field.
+        let config: CostCapConfig = serde_json::from_str(r#"{"enabled": false}"#).unwrap();
+        assert!(!config.enabled);
+    }
+
+    #[test]
     fn test_proxy_config_default_includes_cost_caps() {
         let config = ProxyConfig::default();
-        assert!(!config.cost_caps.enabled);
+        // Tracking on by default; enforcement still off because the default
+        // budget caps are empty.
+        assert!(config.cost_caps.enabled);
         assert!(config.cost_caps.default_budget_caps.is_empty());
     }
 
