@@ -817,7 +817,7 @@ fn build_advisory_system_message(findings: &[SecurityFinding], policy_mode: &str
         .take(ADVISORY_MAX_UNIQUE_FINDING_TYPES)
         .map(|key| {
             let (sev, conf, count) = groups[&key].clone();
-            let pct = (conf.clamp(0.0, 1.0) * 100.0).round() as u32;
+            let pct = (conf.clamp(0.0, 1.0) * 100.0).floor() as u32;
             let (ftype, desc) = key;
             let suffix = if count > 1 {
                 format!(" [x{count}]")
@@ -3403,6 +3403,30 @@ mod tests {
         assert!(
             content.contains("<<END_LLMTRACE_SECURITY_NOTICE>>"),
             "advisory must include the end marker; got: {content}"
+        );
+    }
+
+    #[test]
+    fn test_advisory_template_floors_confidence_does_not_round_up_to_100() {
+        // 0.9962989687919617 * 100 = 99.62...; round() would yield 100, floor() must yield 99.
+        let findings = vec![finding(
+            "prompt_injection",
+            SecuritySeverity::High,
+            "near-certain injection",
+            0.996_298_968_791_961_7,
+        )];
+        let msg = build_advisory_system_message(&findings, "enforce");
+        let content = match &msg.content {
+            serde_json::Value::String(s) => s.clone(),
+            other => panic!("advisory content must be a string; got {other:?}"),
+        };
+        assert!(
+            content.contains("confidence 99%"),
+            "floor must yield 99%, not 100%; got: {content}"
+        );
+        assert!(
+            !content.contains("confidence 100%"),
+            "floor must not round up to 100%; got: {content}"
         );
     }
 

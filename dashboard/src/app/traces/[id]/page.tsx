@@ -196,7 +196,7 @@ export default function TraceDetailPage(props: {
                         </Badge>
                         <span className="text-sm font-medium">{f.finding_type}</span>
                         <span className="ml-auto text-xs text-muted-foreground">
-                          Confidence: {(f.confidence_score * 100).toFixed(0)}%
+                          Confidence: {Math.floor(f.confidence_score * 100)}%
                         </span>
                       </div>
                       <Separator className="my-2" />
