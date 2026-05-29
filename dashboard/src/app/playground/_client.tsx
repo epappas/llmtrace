@@ -422,6 +422,34 @@ function prettyJson(text: string | null): string {
   }
 }
 
+// Strip `llmtrace.forwarded_request` from the response JSON when it is
+// already rendered in the standalone "Forwarded request" block. Returns
+// the sanitised pretty-printed string plus a boolean indicating whether
+// the field was present and removed.
+function responseBodyWithoutForwardedRequest(rawResponse: string | null): {
+  body: string;
+  omitted: boolean;
+} {
+  if (!rawResponse) return { body: "", omitted: false };
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(rawResponse) as Record<string, unknown>;
+  } catch {
+    return { body: rawResponse, omitted: false };
+  }
+  const env = parsed.llmtrace;
+  if (env == null || typeof env !== "object" || Array.isArray(env)) {
+    return { body: JSON.stringify(parsed, null, 2), omitted: false };
+  }
+  const envObj = env as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(envObj, "forwarded_request")) {
+    return { body: JSON.stringify(parsed, null, 2), omitted: false };
+  }
+  const { forwarded_request: _omit, ...restEnv } = envObj;
+  const sanitised = { ...parsed, llmtrace: restEnv };
+  return { body: JSON.stringify(sanitised, null, 2), omitted: true };
+}
+
 function tryParseJson(text: string | null): unknown {
   if (text == null) return null;
   try {
@@ -1221,6 +1249,11 @@ function DetailsPanel(props: { msg: ChatMessage }): ReactElement {
     meta.forwardedRequest != null && meta.forwardedRequest.length > 0
       ? meta.forwardedRequest
       : "(no forwarded request)";
+  // Strip `llmtrace.forwarded_request` from the Response JSON to avoid
+  // rendering the same payload twice. The standalone block above is the
+  // operator's primary view; the Response block shows everything else.
+  const { body: responseBody, omitted: responseForwardedOmitted } =
+    responseBodyWithoutForwardedRequest(msg.rawResponse);
   return (
     <div
       data-testid="playground-details"
@@ -1237,7 +1270,12 @@ function DetailsPanel(props: { msg: ChatMessage }): ReactElement {
           testId="playground-details-forwarded-request"
         />
         {msg.rawResponse != null && (
-          <RawBlock label="Response" body={msg.rawResponse} testId="playground-details-response" />
+          <RawBlock
+            label="Response"
+            body={responseBody}
+            testId="playground-details-response"
+            omittedNote={responseForwardedOmitted ? "forwarded_request omitted — shown above" : undefined}
+          />
         )}
       </div>
     </div>
@@ -1331,11 +1369,26 @@ function LabelingBlock(props: { meta: MsgMetadata }): ReactElement {
   );
 }
 
-function RawBlock(props: { label: string; body: string; testId: string }): ReactElement {
+function RawBlock(props: {
+  label: string;
+  body: string;
+  testId: string;
+  omittedNote?: string;
+}): ReactElement {
   return (
     <div className="space-y-1">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {props.label}
+      <div className="flex items-center gap-2">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {props.label}
+        </div>
+        {props.omittedNote && (
+          <span
+            data-testid={`${props.testId}-omitted-note`}
+            className="text-xs text-muted-foreground"
+          >
+            {props.omittedNote}
+          </span>
+        )}
       </div>
       <pre
         data-testid={props.testId}
