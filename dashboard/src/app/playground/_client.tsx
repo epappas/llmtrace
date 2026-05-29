@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { STORED_TENANT_KEY, ALL_TENANTS_SCOPE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -157,6 +158,33 @@ const ACTION_CHIPS: readonly ActionChip[] = [
 
 const TEXTAREA_LINE_PX = 24;
 const TEXTAREA_MAX_LINES = 6;
+
+// ---------------------------------------------------------------------------
+// Tenant scoping — playground traffic must carry the operator's sidebar
+// selection so generated traces are attributed to the selected tenant and
+// reads stay consistently scoped. Without this, the raw proxy fetch sends
+// no tenant header and the proxy mis-attributes every trace to its default
+// tenant (the reported cross-tenant contamination P0).
+// ---------------------------------------------------------------------------
+
+/** Read the operator's current sidebar tenant selection from localStorage. */
+function selectedTenant(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(STORED_TENANT_KEY);
+}
+
+/**
+ * Tenant-scoping headers for READS. "All tenants" is a valid read scope:
+ *  - "all tenants"     -> { "X-LLMTrace-Tenant-Scope": "all" }
+ *  - concrete tenant   -> { "X-LLMTrace-Tenant-ID": <id> }
+ *  - nothing selected  -> {} (proxy applies its own default)
+ */
+function tenantReadHeaders(): Record<string, string> {
+  const sel = selectedTenant();
+  if (sel === ALL_TENANTS_SCOPE) return { "X-LLMTrace-Tenant-Scope": "all" };
+  if (sel) return { "X-LLMTrace-Tenant-ID": sel };
+  return {};
+}
 
 // ---------------------------------------------------------------------------
 // Backend shapes (subset we touch). The real TraceEvent lives in `lib/api.ts`
@@ -680,9 +708,26 @@ type SendResult =
   | { kind: "err"; error: string; traceId: string | null; raw: string };
 
 async function postChat(requestBody: string): Promise<SendResult> {
+  const sel = selectedTenant();
+  // WRITE GUARD: "all tenants" is a read-only aggregate scope — there is no
+  // single tenant to write the generated trace to. Refuse to send. This is
+  // the authoritative backstop for the composer's disabled affordance.
+  if (sel === ALL_TENANTS_SCOPE) {
+    return {
+      kind: "err",
+      error: "Select a specific tenant to send traffic — the playground cannot send to 'All tenants'.",
+      traceId: null,
+      raw: "",
+    };
+  }
   const res = await fetch("/api/proxy/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // Concrete selection -> attribute the trace to that tenant. No
+      // selection -> send no header and let the proxy apply its default.
+      ...(sel ? { "X-LLMTrace-Tenant-ID": sel } : {}),
+    },
     body: requestBody,
   });
   const traceId = res.headers.get("x-llmtrace-trace-id");
@@ -718,7 +763,10 @@ const TRACE_FETCH_RETRIES: readonly number[] = [250, 500, 1000, 2000];
 async function fetchTrace(traceId: string): Promise<RawTrace | null> {
   for (let attempt = 0; attempt <= TRACE_FETCH_RETRIES.length; attempt++) {
     try {
-      const res = await fetch(`/api/proxy/traces/${traceId}`, { cache: "no-store" });
+      const res = await fetch(`/api/proxy/traces/${traceId}`, {
+        cache: "no-store",
+        headers: tenantReadHeaders(),
+      });
       if (res.ok) {
         return (await res.json()) as RawTrace;
       }
@@ -762,6 +810,15 @@ export default function PlaygroundClient(): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(new Set());
+  // Whether the "All tenants" aggregate scope is the active selection. Reads
+  // are allowed in that scope, but writes (sending traffic) are not — there is
+  // no single tenant to attribute the generated trace to. Read once on mount;
+  // the sidebar reloads the page on any selection change, so this stays
+  // authoritative for the session. SSR-safe (localStorage is client-only).
+  const [allTenantsScope, setAllTenantsScope] = useState<boolean>(false);
+  useEffect(() => {
+    setAllTenantsScope(selectedTenant() === ALL_TENANTS_SCOPE);
+  }, []);
   const [settings, setSettings] = useState<Settings>({
     model: "gpt-4o-mini",
     customModel: "",
@@ -965,7 +1022,7 @@ export default function PlaygroundClient(): ReactElement {
       <div className="flex-1 overflow-y-auto" data-testid="playground-scroll">
         <div className="mx-auto w-full max-w-3xl px-4 py-6">
           {messages.length === 0 ? (
-            <EmptyState onPick={onActionChip} disabled={pending} />
+            <EmptyState onPick={onActionChip} disabled={pending || allTenantsScope} />
           ) : (
             <Transcript
               messages={messages}
@@ -989,6 +1046,7 @@ export default function PlaygroundClient(): ReactElement {
         onKeyDown={onKeyDown}
         onSend={() => void send()}
         pending={pending}
+        allTenantsScope={allTenantsScope}
       />
       <SettingsDrawer
         open={settingsOpen}
@@ -1410,11 +1468,24 @@ function Composer(props: {
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onSend: () => void;
   pending: boolean;
+  allTenantsScope: boolean;
 }): ReactElement {
   const ref = useAutoGrow(props.draft);
-  const disabled = props.pending || props.draft.trim() === "";
+  // Sending writes a trace, which "All tenants" cannot do — block it here so
+  // the user gets immediate feedback; postChat enforces the same guard.
+  const disabled =
+    props.pending || props.allTenantsScope || props.draft.trim() === "";
   return (
     <div className="border-t bg-background/80 px-4 py-3 backdrop-blur">
+      {props.allTenantsScope && (
+        <p
+          className="mx-auto mb-2 w-full max-w-3xl text-xs text-muted-foreground"
+          data-testid="playground-all-tenants-hint"
+        >
+          Select a specific tenant to send — the playground cannot send to
+          &ldquo;All tenants&rdquo;.
+        </p>
+      )}
       <div className="mx-auto flex w-full max-w-3xl items-end gap-2 rounded-2xl border bg-card px-3 py-2 focus-within:ring-2 focus-within:ring-primary/30">
         <textarea
           ref={ref}
@@ -1422,7 +1493,7 @@ function Composer(props: {
           value={props.draft}
           onChange={(e) => props.setDraft(e.target.value)}
           onKeyDown={props.onKeyDown}
-          disabled={props.pending}
+          disabled={props.pending || props.allTenantsScope}
           rows={1}
           placeholder="Send a message. Cmd/Ctrl+Enter to send, Enter for newline."
           className="flex-1 resize-none border-0 bg-transparent px-1 py-1.5 text-sm leading-6 focus:outline-none disabled:cursor-not-allowed"
