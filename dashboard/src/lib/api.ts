@@ -61,7 +61,7 @@ export interface SecurityFinding {
   severity: string;
   finding_type: string;
   description: string;
-  confidence: number;
+  confidence_score: number;
   detected_at: string;
 }
 
