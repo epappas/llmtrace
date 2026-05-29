@@ -32,12 +32,13 @@
 #      restart 404s on a freshly-provisioned deployment until its k8s CR
 #      materialises. Treat as a stopgap, not a guarantee.
 #
-# tenant_uuid: the STABLE internal tenant id reused across redeploys. When
-# set, the lifecycle library sends it as the `id` on POST /api/v1/tenants so
-# the proxy keeps the SAME tenant id every recreate (requires the proxy to
-# honour an explicit id on create — idempotent create). Use a deterministic
-# value derived from your app's tenant key, e.g.:
-# tenant_uuid: "user-uuid-550e8400-e29b-41d4-a716-446655440000"
+# tenant_uuid: the STABLE internal tenant id reused across redeploys. The
+# lifecycle library sends it as the `id` on POST /api/v1/tenants so the proxy
+# keeps the SAME tenant id every recreate (the proxy honours an explicit id on
+# create — idempotent create). MUST be a valid UUID. Override via the
+# LLMTRACE_TENANT_UUID env var; the default below is the dashboard's canonical
+# default tenant id so the bootstrapped tenant and the dashboard fallback align.
+tenant_uuid: "${LLMTRACE_TENANT_UUID:-6ae1ab34-02d8-5b68-ad6f-132bf4de8408}"
 
 proxy:
   image: "ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}"
@@ -92,6 +93,15 @@ proxy:
     LLMTRACE_DATAMARKING_ENABLED: "true"
     LLMTRACE_DATAMARKING_SHADOW_MODE: "false"
     LLMTRACE_ZONE_DETECTION_ENABLED: "true"
+    # Explicit default tenant for header-less /v1 traffic (issue #292): the
+    # proxy stamps this id instead of creating a phantom tenant per call.
+    # Matches `tenant_uuid` above so the default path stays consistent.
+    LLMTRACE_DEFAULT_TENANT_ID: "${LLMTRACE_DEFAULT_TENANT_ID:-6ae1ab34-02d8-5b68-ad6f-132bf4de8408}"
+    # Master key (32 bytes; 64-char hex or base64) used to encrypt per-tenant
+    # upstream API keys at rest. MUST be stable across recreates or stored
+    # ciphertext becomes undecryptable. Unset => per-tenant key writes fail
+    # closed (proxy still boots; the global upstream key is still used).
+    LLMTRACE_SECRET_ENCRYPTION_KEY: "${LLMTRACE_SECRET_ENCRYPTION_KEY:-}"
     RUST_LOG: info
     OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
