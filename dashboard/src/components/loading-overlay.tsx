@@ -19,8 +19,8 @@ export function LoadingOverlay({
       <div className="w-full max-w-lg rounded-xl border bg-card p-8 shadow-xl">
         <div className="mb-4 flex items-center gap-3">
           <div className="relative rounded-lg bg-muted p-2">
-            <Shield className="h-6 w-6 text-emerald-600" />
-            <Loader2 className="absolute -right-2 -top-2 h-4 w-4 animate-spin text-emerald-600" />
+            <Shield className="h-6 w-6 text-success" />
+            <Loader2 className="absolute -right-2 -top-2 h-4 w-4 animate-spin text-success" />
           </div>
           <div>
             <h2 className="text-lg font-semibold">Bootstrapping Security Engines</h2>
@@ -32,7 +32,7 @@ export function LoadingOverlay({
 
         <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-muted">
           <div
-            className="h-full rounded-full bg-emerald-600 transition-all duration-500"
+            className="h-full rounded-full bg-success transition-all duration-500"
             style={{ width: `${clamped}%` }}
           />
         </div>
