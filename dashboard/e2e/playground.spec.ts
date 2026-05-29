@@ -370,7 +370,9 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
     const blockOverlay = userMsg.getByTestId("playground-status-block");
     await expect(blockOverlay).toBeVisible();
     const overlayCls = (await blockOverlay.getAttribute("class")) ?? "";
-    expect(overlayCls).toContain("red");
+    // After the dark-mode token migration the block tone uses the
+    // semantic severity-critical token (red-family in both themes).
+    expect(overlayCls).toContain("severity-critical");
 
     // Expanding details exposes the block reason.
     await userMsg.getByTestId("playground-toggle-details").click();
@@ -406,9 +408,10 @@ test.describe("Playground page (issues #284, #287, #289)", () => {
     await expect(escalated.first()).toBeVisible({ timeout: 10_000 });
     await expect(escalated).toHaveCount(2);
 
-    // Escalated overlay must carry the red tone.
+    // Escalated overlay must carry the critical (red-family) tone via
+    // the semantic severity-critical token.
     const cls = (await escalated.first().getAttribute("class")) ?? "";
-    expect(cls).toContain("red");
+    expect(cls).toContain("severity-critical");
 
     // No green "allow" overlay should be present on either bubble — it
     // would directly contradict the escalation.
