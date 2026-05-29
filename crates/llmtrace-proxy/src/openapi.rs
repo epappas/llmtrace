@@ -36,6 +36,7 @@ impl Modify for SecurityAddon {
         crate::api::list_spans,
         crate::api::get_span,
         crate::api::get_stats,
+        crate::api::get_global_stats,
         crate::api::list_security_findings,
         crate::api::get_current_costs,
         crate::api::report_action,
