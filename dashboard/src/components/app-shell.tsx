@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import { ReconnectBanner } from "@/components/reconnect-banner";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const UNCHROMED_PATHS: readonly string[] = ["/login"];
 
@@ -228,7 +229,10 @@ function ChromedShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex flex-col flex-1 overflow-y-auto">
+        <header className="flex items-center justify-end px-4 py-2 border-b border-border">
+          <ThemeToggle />
+        </header>
         {showReconnectBanner && (
           <ReconnectBanner
             attempt={retryAttempt > 0 ? retryAttempt : undefined}

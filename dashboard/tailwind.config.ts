@@ -41,6 +41,38 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
+        "severity-critical": {
+          DEFAULT: "hsl(var(--severity-critical))",
+          foreground: "hsl(var(--severity-critical-foreground))",
+        },
+        "severity-high": {
+          DEFAULT: "hsl(var(--severity-high))",
+          foreground: "hsl(var(--severity-high-foreground))",
+        },
+        "severity-medium": {
+          DEFAULT: "hsl(var(--severity-medium))",
+          foreground: "hsl(var(--severity-medium-foreground))",
+        },
+        "severity-low": {
+          DEFAULT: "hsl(var(--severity-low))",
+          foreground: "hsl(var(--severity-low-foreground))",
+        },
+        "severity-info": {
+          DEFAULT: "hsl(var(--severity-info))",
+          foreground: "hsl(var(--severity-info-foreground))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
