@@ -428,11 +428,28 @@ mod tests {
 
     // -- constructor -------------------------------------------------------
 
+    fn disabled_config() -> CostCapConfig {
+        CostCapConfig {
+            enabled: false,
+            ..CostCapConfig::default()
+        }
+    }
+
     #[test]
     fn test_disabled_config_tracker_reports_disabled() {
         let cache = make_cache();
-        let tracker = CostTracker::new(&CostCapConfig::default(), cache);
+        // CostCapConfig::default() now enables tracking, so construct an
+        // explicitly-disabled config to exercise the disabled path.
+        let tracker = CostTracker::new(&disabled_config(), cache);
         assert!(!tracker.is_enabled());
+    }
+
+    #[test]
+    fn test_default_config_tracker_reports_enabled() {
+        let cache = make_cache();
+        // Tracking is on by default (CostCapConfig::default().enabled == true).
+        let tracker = CostTracker::new(&CostCapConfig::default(), cache);
+        assert!(tracker.is_enabled());
     }
 
     #[test]
@@ -816,5 +833,35 @@ mod tests {
         let tid = TenantId::new();
         let result = tracker.check_budget_caps(tid, None).await;
         assert!(matches!(result, CapCheckResult::Allowed));
+    }
+
+    // -- default-on never enforces -----------------------------------------
+
+    #[tokio::test]
+    async fn test_cost_caps_enabled_by_default_does_not_enforce() {
+        // The default CostCapConfig has enabled=true (tracking on) but no
+        // configured caps, so every cap check must return Allowed: enabling
+        // tracking by default never blocks traffic. Enforcement requires
+        // explicitly-configured caps.
+        let config = CostCapConfig::default();
+        assert!(config.enabled);
+        assert!(config.default_budget_caps.is_empty());
+        assert!(config.default_token_cap.is_none());
+        assert!(config.agents.is_empty());
+
+        let tracker = CostTracker::new(&config, make_cache());
+        let tid = TenantId::new();
+
+        // No token cap configured -> token check always Allowed, even for
+        // absurdly large token counts.
+        let token_result =
+            tracker.check_token_caps(None, Some(u32::MAX), Some(u32::MAX), Some(u32::MAX));
+        assert!(matches!(token_result, CapCheckResult::Allowed));
+
+        // No budget caps configured -> budget check always Allowed, even
+        // after recording spend (which is a no-op without caps).
+        tracker.record_spend(tid, None, 1_000_000.0).await;
+        let budget_result = tracker.check_budget_caps(tid, None).await;
+        assert!(matches!(budget_result, CapCheckResult::Allowed));
     }
 }

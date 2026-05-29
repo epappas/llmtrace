@@ -1905,7 +1905,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_costs_disabled_returns_not_found() {
-        let state = test_state().await; // cost_tracker = None
+        // cost_caps tracking is on by default now, so explicitly disable it
+        // through the live config to exercise the disabled -> 404 branch.
+        let state = test_state().await;
+        state
+            .config_handle
+            .update::<_, std::convert::Infallible>(|cfg| {
+                cfg.cost_caps.enabled = false;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!state.config_handle.load().cost_caps.enabled);
         let (_, hdr) = tenant_header();
 
         let app = api_router(state);

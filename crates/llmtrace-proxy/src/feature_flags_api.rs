@@ -1362,7 +1362,9 @@ mod tests {
     async fn put_bulk_bumps_counter_once_per_changed_field() {
         let state = test_state().await;
         let mut flags = FeatureFlags::from_config(&state.config_handle.snapshot());
-        flags.cost_caps_enabled = true;
+        // cost_caps_enabled defaults to true now, so toggle it OFF to make a
+        // genuine, counted diff (a no-op same-value PUT would not bump).
+        flags.cost_caps_enabled = false;
         flags.over_defence = true;
         flags.enforcement_mode = "flag".to_string();
         let app = admin_router(state.clone());
@@ -1434,19 +1436,21 @@ mod tests {
             &state,
             &FeatureFlags::from_config(&state.config_handle.snapshot()),
         );
+        // cost_caps_enabled is on by default, so the gauge starts at 1.
         assert_eq!(
             state
                 .metrics
                 .feature_flag_bool_state
                 .with_label_values(&["cost_caps_enabled"])
                 .get(),
-            0
+            1
         );
         let app = admin_router(state.clone());
+        // Toggle OFF and confirm the gauge tracks the live flag down to 0.
         let _ = app
             .oneshot(admin_put(
                 "/api/v1/config/features/cost_caps_enabled",
-                serde_json::json!({"value": true}),
+                serde_json::json!({"value": false}),
             ))
             .await
             .unwrap();
@@ -1456,7 +1460,7 @@ mod tests {
                 .feature_flag_bool_state
                 .with_label_values(&["cost_caps_enabled"])
                 .get(),
-            1
+            0
         );
     }
 
