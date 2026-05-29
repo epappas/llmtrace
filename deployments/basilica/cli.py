@@ -107,7 +107,39 @@ def _component_from_dict(data: dict[str, Any], label: str) -> lifecycle.Componen
     for key, caster in optional.items():
         if key in data:
             kwargs[key] = caster(data[key])
+    if "persistent_volume" in data and data["persistent_volume"] is not None:
+        kwargs["persistent_volume"] = _persistent_volume_from_dict(
+            data["persistent_volume"], label
+        )
     return lifecycle.ComponentSpec(**kwargs)
+
+
+def _persistent_volume_from_dict(
+    data: dict[str, Any], label: str
+) -> lifecycle.PersistentVolumeSpec:
+    if not isinstance(data, dict):
+        raise SystemExit(
+            f"component {label!r}: 'persistent_volume' must be a mapping"
+        )
+    required = {"bucket", "credentials_secret"}
+    missing = required - data.keys()
+    if missing:
+        raise SystemExit(
+            f"component {label!r}: persistent_volume is missing required "
+            f"keys: {sorted(missing)}"
+        )
+    kwargs: dict[str, Any] = {
+        "bucket": str(data["bucket"]),
+        "credentials_secret": str(data["credentials_secret"]),
+    }
+    optional_str = ("mount_path", "backend", "region", "endpoint", "db_filename")
+    for key in optional_str:
+        if key in data and data[key] is not None:
+            kwargs[key] = str(data[key])
+    for key in ("sync_interval_ms", "cache_size_mb"):
+        if key in data and data[key] is not None:
+            kwargs[key] = int(data[key])
+    return lifecycle.PersistentVolumeSpec(**kwargs)
 
 
 def _rate_limit_from_dict(data: dict[str, Any]) -> lifecycle.RateLimitSpec:
@@ -136,6 +168,7 @@ def _tenant_spec_from_config(tenant_id: str, cfg: dict[str, Any]) -> lifecycle.T
         "dashboard": dashboard,
     }
     for key in (
+        "tenant_uuid",
         "proxy_name_template",
         "dashboard_name_template",
         "inject_proxy_url_into_dashboard",
