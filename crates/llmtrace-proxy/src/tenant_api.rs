@@ -24,6 +24,13 @@ use crate::proxy::AppState;
 /// Request body for `POST /api/v1/tenants`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateTenantRequest {
+    /// Optional caller-supplied tenant id. Absent => a fresh id is generated.
+    /// The Basilica deployment bootstrap supplies a stable id so the SAME
+    /// tenant persists across `--strategy recreate` (issue 9). When a tenant
+    /// with this id already exists, create is idempotent and returns it
+    /// unchanged.
+    #[serde(default)]
+    pub id: Option<TenantId>,
     /// Human-readable tenant name.
     pub name: String,
     /// Subscription plan (e.g., "free", "pro", "enterprise").
@@ -281,6 +288,21 @@ pub async fn create_tenant(
         return api_error(StatusCode::BAD_REQUEST, "Tenant name must not be empty");
     }
 
+    // Resolve the tenant id. A caller-supplied id makes create idempotent so the
+    // SAME tenant persists across `--strategy recreate` (issue 9): if a tenant
+    // with this id already exists, return it unchanged (mirroring the
+    // get-or-create semantics of `ensure_tenant_exists`). Absent => fresh id.
+    let tenant_id = match body.id {
+        Some(id) => match state.metadata().get_tenant(id).await {
+            Ok(Some(existing)) => {
+                return Json(TenantView::from(existing)).into_response();
+            }
+            Ok(None) => id,
+            Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        },
+        None => TenantId::new(),
+    };
+
     let (api_token, _) = crate::auth::generate_api_key(); // Reusing the same generator for tokens
 
     // Encrypt the optional per-tenant upstream key (fail-closed via 400).
@@ -300,7 +322,7 @@ pub async fn create_tenant(
         .map(str::to_string);
 
     let tenant = Tenant {
-        id: TenantId::new(),
+        id: tenant_id,
         name: body.name.clone(),
         api_token: api_token.clone(),
         plan: body.plan.clone(),
@@ -938,6 +960,81 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_honors_explicit_id() {
+        let state = test_state().await;
+        let app = tenant_router(Arc::clone(&state));
+
+        // A fixed, caller-supplied tenant id (Basilica bootstrap supplies a
+        // stable id so the SAME tenant persists across redeploy — issue 9).
+        let explicit_id = "550e8400-e29b-41d4-a716-446655440000";
+        let body = serde_json::json!({ "id": explicit_id, "name": "Stable Org", "plan": "pro" });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let json = json_body(resp).await;
+        // The response id must equal the caller-supplied id, not a random one.
+        assert_eq!(json["id"], explicit_id);
+        // Fresh creation still surfaces the one-time plaintext api_key.
+        assert!(json["api_key"].as_str().unwrap().starts_with("llmt_"));
+
+        // A row with exactly that id must exist in the metadata store.
+        let expected = TenantId(Uuid::parse_str(explicit_id).unwrap());
+        let stored = state
+            .metadata()
+            .get_tenant(expected)
+            .await
+            .unwrap()
+            .expect("tenant with explicit id must exist");
+        assert_eq!(stored.id, expected);
+        assert_eq!(stored.name, "Stable Org");
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_idempotent_on_explicit_id() {
+        let state = test_state().await;
+        let explicit_id = "550e8400-e29b-41d4-a716-446655440000";
+        let expected = TenantId(Uuid::parse_str(explicit_id).unwrap());
+
+        // First create with the explicit id.
+        let app1 = tenant_router(Arc::clone(&state));
+        let body = serde_json::json!({ "id": explicit_id, "name": "First", "plan": "pro" });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp1 = app1.oneshot(req).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::CREATED);
+        let json1 = json_body(resp1).await;
+        assert_eq!(json1["id"], explicit_id);
+
+        // Second create with the SAME explicit id (e.g. after `recreate`).
+        let app2 = tenant_router(Arc::clone(&state));
+        let body2 =
+            serde_json::json!({ "id": explicit_id, "name": "Second", "plan": "enterprise" });
+        let req2 = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+            .unwrap();
+        let resp2 = app2.oneshot(req2).await.unwrap();
+        // Idempotent: returns 200 with the existing tenant unchanged.
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let json2 = json_body(resp2).await;
+        assert_eq!(json2["id"], explicit_id);
+        // The existing record is returned unchanged (original name kept).
+        assert_eq!(json2["name"], "First");
+
+        // Exactly ONE tenant row exists for that id — no duplicate minted.
+        let all = state.metadata().list_tenants().await.unwrap();
+        let matching: Vec<_> = all.iter().filter(|t| t.id == expected).collect();
+        assert_eq!(matching.len(), 1, "must not create a duplicate tenant");
     }
 
     // -- GET /api/v1/tenants ------------------------------------------------
