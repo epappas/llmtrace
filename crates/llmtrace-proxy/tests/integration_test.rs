@@ -1400,6 +1400,8 @@ async fn seed_role_key(state: &Arc<AppState>, role: llmtrace_core::ApiKeyRole) -
         plan: "free".to_string(),
         created_at: chrono::Utc::now(),
         config: serde_json::json!({}),
+        upstream_url: None,
+        upstream_api_key_ciphertext: None,
     };
     state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1423,8 +1425,11 @@ async fn test_v1_forward_admin_role_allowed() {
     let (upstream_url, _h) = serve(mock_upstream()).await;
     let (_state, app) = build_auth_enabled_proxy(&upstream_url, "admin-bootstrap").await;
 
+    // Phantom-tenant guard: when auth is enabled the admin must identify the
+    // tenant the forwarded traffic belongs to (no auto-invented tenant).
     let req = Request::post("/v1/chat/completions")
         .header("authorization", "Bearer admin-bootstrap")
+        .header("x-llmtrace-tenant-id", uuid::Uuid::new_v4().to_string())
         .header("content-type", "application/json")
         .body(Body::from(
             serde_json::to_vec(&json!({

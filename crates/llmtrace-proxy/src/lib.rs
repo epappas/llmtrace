@@ -30,6 +30,7 @@ pub mod otel;
 pub mod provider;
 pub mod proxy;
 pub mod rate_limit;
+pub mod secretbox;
 pub mod shutdown;
 pub mod streaming;
 pub mod tenant_api;

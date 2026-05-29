@@ -24,6 +24,13 @@ use crate::proxy::AppState;
 /// Request body for `POST /api/v1/tenants`.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateTenantRequest {
+    /// Optional caller-supplied tenant id. Absent => a fresh id is generated.
+    /// The Basilica deployment bootstrap supplies a stable id so the SAME
+    /// tenant persists across `--strategy recreate` (issue 9). When a tenant
+    /// with this id already exists, create is idempotent and returns it
+    /// unchanged.
+    #[serde(default)]
+    pub id: Option<TenantId>,
     /// Human-readable tenant name.
     pub name: String,
     /// Subscription plan (e.g., "free", "pro", "enterprise").
@@ -32,14 +39,65 @@ pub struct CreateTenantRequest {
     /// Optional arbitrary tenant-level configuration.
     #[serde(default = "default_config")]
     pub config: serde_json::Value,
+    /// Optional per-tenant upstream base URL override. `null`/absent => inherit
+    /// the global `upstream_url`.
+    #[serde(default)]
+    pub upstream_url: Option<String>,
+    /// Optional per-tenant upstream provider API key (write-only). When present
+    /// and non-empty it is AEAD-encrypted before storage; `null`/empty clears
+    /// it (inherit the global env-based credential). NEVER returned.
+    #[serde(default)]
+    pub upstream_api_key: Option<String>,
+}
+
+/// Public, secret-safe view of a tenant returned by GET/LIST/CREATE/UPDATE.
+///
+/// Mirrors [`Tenant`] but NEVER exposes the encrypted upstream key. Instead it
+/// surfaces `upstream_api_key_set: bool` (CONTRACT 1).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct TenantView {
+    /// Unique tenant identifier.
+    pub id: TenantId,
+    /// Human-readable tenant name.
+    pub name: String,
+    /// Unique API token for proxy traffic.
+    pub api_token: String,
+    /// Subscription plan.
+    pub plan: String,
+    /// When the tenant was created.
+    #[schema(value_type = String, format = "date-time")]
+    pub created_at: chrono::DateTime<Utc>,
+    /// Arbitrary tenant-level configuration.
+    #[schema(value_type = Object)]
+    pub config: serde_json::Value,
+    /// Per-tenant upstream base URL override, or `null` to inherit global.
+    pub upstream_url: Option<String>,
+    /// Whether a per-tenant upstream API key is set. The secret is never
+    /// returned.
+    pub upstream_api_key_set: bool,
+}
+
+impl From<Tenant> for TenantView {
+    fn from(t: Tenant) -> Self {
+        Self {
+            id: t.id,
+            name: t.name,
+            api_token: t.api_token,
+            plan: t.plan,
+            created_at: t.created_at,
+            config: t.config,
+            upstream_url: t.upstream_url,
+            upstream_api_key_set: t.upstream_api_key_ciphertext.is_some(),
+        }
+    }
 }
 
 /// Response body for `POST /api/v1/tenants`.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CreateTenantResponse {
-    /// The created tenant metadata.
+    /// The created tenant metadata (secret-safe view).
     #[serde(flatten)]
-    pub tenant: Tenant,
+    pub tenant: TenantView,
     /// The plaintext API key (only returned once on creation).
     pub api_key: Option<String>,
 }
@@ -53,6 +111,29 @@ pub struct UpdateTenantRequest {
     pub plan: Option<String>,
     /// Updated configuration (optional).
     pub config: Option<serde_json::Value>,
+    /// Updated per-tenant upstream base URL. Present-with-value sets it;
+    /// present-and-null/empty clears it (inherit global); absent leaves it
+    /// unchanged.
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub upstream_url: Option<Option<String>>,
+    /// Updated per-tenant upstream API key (write-only). Present-with-value
+    /// encrypts + stores it; present-and-null/empty clears it; absent leaves it
+    /// unchanged. NEVER returned.
+    #[serde(default, deserialize_with = "deserialize_optional_field")]
+    pub upstream_api_key: Option<Option<String>>,
+}
+
+/// Deserialize a JSON field that may be absent, null, or a value, into a
+/// double-`Option`: outer `None` = absent (leave unchanged), inner `None` =
+/// explicit null (clear), `Some(v)` = set.
+fn deserialize_optional_field<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(deserializer)?))
 }
 
 /// API error response body.
@@ -87,6 +168,32 @@ fn default_config() -> serde_json::Value {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Encrypt a plaintext per-tenant upstream key, failing closed.
+///
+/// Returns `Ok(Some(ciphertext))` on success, `Ok(None)` when `plaintext` is
+/// empty (caller should clear the stored key), or `Err(SecretBoxError)` when the
+/// master key is unavailable/invalid (CONTRACT 1 fail-closed). Callers map the
+/// error to a `400 Bad Request` via [`upstream_key_error`].
+fn encrypt_upstream_key(
+    plaintext: &str,
+) -> std::result::Result<Option<String>, crate::secretbox::SecretBoxError> {
+    if plaintext.is_empty() {
+        return Ok(None);
+    }
+    let secret_box = crate::secretbox::SecretBox::from_env()?;
+    let ciphertext = secret_box.encrypt(plaintext.as_bytes())?;
+    Ok(Some(ciphertext))
+}
+
+/// Build the `400` response for an upstream-key encryption failure
+/// (CONTRACT 1 fail-closed).
+fn upstream_key_error(e: &crate::secretbox::SecretBoxError) -> Response {
+    api_error(
+        StatusCode::BAD_REQUEST,
+        &format!("Cannot store upstream_api_key: {e}"),
+    )
+}
 
 /// Build a JSON error response.
 fn api_error(status: StatusCode, message: &str) -> Response {
@@ -181,15 +288,48 @@ pub async fn create_tenant(
         return api_error(StatusCode::BAD_REQUEST, "Tenant name must not be empty");
     }
 
+    // Resolve the tenant id. A caller-supplied id makes create idempotent so the
+    // SAME tenant persists across `--strategy recreate` (issue 9): if a tenant
+    // with this id already exists, return it unchanged (mirroring the
+    // get-or-create semantics of `ensure_tenant_exists`). Absent => fresh id.
+    let tenant_id = match body.id {
+        Some(id) => match state.metadata().get_tenant(id).await {
+            Ok(Some(existing)) => {
+                return Json(TenantView::from(existing)).into_response();
+            }
+            Ok(None) => id,
+            Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+        },
+        None => TenantId::new(),
+    };
+
     let (api_token, _) = crate::auth::generate_api_key(); // Reusing the same generator for tokens
 
+    // Encrypt the optional per-tenant upstream key (fail-closed via 400).
+    let upstream_api_key_ciphertext = match body.upstream_api_key.as_deref() {
+        Some(key) => match encrypt_upstream_key(key) {
+            Ok(ct) => ct,
+            Err(e) => return upstream_key_error(&e),
+        },
+        None => None,
+    };
+    // Normalise upstream_url: empty/whitespace => inherit (None).
+    let upstream_url = body
+        .upstream_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let tenant = Tenant {
-        id: TenantId::new(),
+        id: tenant_id,
         name: body.name.clone(),
         api_token: api_token.clone(),
         plan: body.plan.clone(),
         created_at: Utc::now(),
         config: body.config.clone(),
+        upstream_url,
+        upstream_api_key_ciphertext,
     };
 
     match state.metadata().create_tenant(&tenant).await {
@@ -221,7 +361,7 @@ pub async fn create_tenant(
                 tracing::error!(tenant_id = %tenant.id, "Failed to auto-generate API key: {e}");
                 // Return tenant without key if key generation fails
                 let resp = CreateTenantResponse {
-                    tenant,
+                    tenant: TenantView::from(tenant),
                     api_key: None,
                 };
                 (StatusCode::CREATED, Json(resp)).into_response()
@@ -241,7 +381,7 @@ pub async fn create_tenant(
                 .await;
 
                 let resp = CreateTenantResponse {
-                    tenant,
+                    tenant: TenantView::from(tenant),
                     api_key: Some(plaintext),
                 };
                 (StatusCode::CREATED, Json(resp)).into_response()
@@ -256,7 +396,7 @@ pub async fn create_tenant(
     get,
     path = "/api/v1/tenants",
     responses(
-        (status = 200, description = "Tenants", body = [Tenant]),
+        (status = 200, description = "Tenants", body = [TenantView]),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "Forbidden", body = ApiError),
         (status = 500, description = "Internal server error", body = ApiError),
@@ -272,7 +412,10 @@ pub async fn list_tenants(
         return err;
     }
     match state.metadata().list_tenants().await {
-        Ok(tenants) => Json(tenants).into_response(),
+        Ok(tenants) => {
+            let views: Vec<TenantView> = tenants.into_iter().map(TenantView::from).collect();
+            Json(views).into_response()
+        }
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
 }
@@ -285,7 +428,7 @@ pub async fn list_tenants(
         ("id" = String, Path, description = "Tenant ID"),
     ),
     responses(
-        (status = 200, description = "Tenant", body = Tenant),
+        (status = 200, description = "Tenant", body = TenantView),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "Forbidden", body = ApiError),
         (status = 404, description = "Tenant not found", body = ApiError),
@@ -304,7 +447,7 @@ pub async fn get_tenant(
     }
     let tenant_id = TenantId(id);
     match state.metadata().get_tenant(tenant_id).await {
-        Ok(Some(tenant)) => Json(tenant).into_response(),
+        Ok(Some(tenant)) => Json(TenantView::from(tenant)).into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "Tenant not found"),
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -319,7 +462,7 @@ pub async fn get_tenant(
     ),
     request_body = UpdateTenantRequest,
     responses(
-        (status = 200, description = "Updated tenant", body = Tenant),
+        (status = 200, description = "Updated tenant", body = TenantView),
         (status = 400, description = "Bad request", body = ApiError),
         (status = 401, description = "Unauthorized", body = ApiError),
         (status = 403, description = "Forbidden", body = ApiError),
@@ -347,6 +490,29 @@ pub async fn update_tenant(
         Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     };
 
+    // Resolve upstream_url: absent => keep; present null/empty => clear; set.
+    let upstream_url = match body.upstream_url {
+        None => existing.upstream_url,
+        Some(opt) => opt
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    };
+
+    // Resolve upstream_api_key: absent => keep ciphertext; present null/empty =>
+    // clear; set => encrypt (fail-closed via 400).
+    let upstream_api_key_ciphertext = match body.upstream_api_key {
+        None => existing.upstream_api_key_ciphertext,
+        Some(opt) => match opt.as_deref().unwrap_or("") {
+            "" => None,
+            key => match encrypt_upstream_key(key) {
+                Ok(ct) => ct,
+                Err(e) => return upstream_key_error(&e),
+            },
+        },
+    };
+
     let updated = Tenant {
         id: existing.id,
         name: body.name.unwrap_or(existing.name),
@@ -354,6 +520,8 @@ pub async fn update_tenant(
         plan: body.plan.unwrap_or(existing.plan),
         created_at: existing.created_at,
         config: body.config.unwrap_or(existing.config),
+        upstream_url,
+        upstream_api_key_ciphertext,
     };
 
     match state.metadata().update_tenant(&updated).await {
@@ -366,7 +534,7 @@ pub async fn update_tenant(
                 serde_json::json!({ "name": updated.name, "plan": updated.plan }),
             )
             .await;
-            Json(updated).into_response()
+            Json(TenantView::from(updated)).into_response()
         }
         Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
@@ -590,6 +758,8 @@ pub async fn ensure_tenant_exists(state: &Arc<AppState>, tenant_id: TenantId, na
         plan: "default".to_string(),
         created_at: Utc::now(),
         config: serde_json::json!({}),
+        upstream_url: None,
+        upstream_api_key_ciphertext: None,
     };
 
     match state.metadata().create_tenant(&tenant).await {
@@ -792,6 +962,81 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[tokio::test]
+    async fn test_create_tenant_honors_explicit_id() {
+        let state = test_state().await;
+        let app = tenant_router(Arc::clone(&state));
+
+        // A fixed, caller-supplied tenant id (Basilica bootstrap supplies a
+        // stable id so the SAME tenant persists across redeploy — issue 9).
+        let explicit_id = "550e8400-e29b-41d4-a716-446655440000";
+        let body = serde_json::json!({ "id": explicit_id, "name": "Stable Org", "plan": "pro" });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let json = json_body(resp).await;
+        // The response id must equal the caller-supplied id, not a random one.
+        assert_eq!(json["id"], explicit_id);
+        // Fresh creation still surfaces the one-time plaintext api_key.
+        assert!(json["api_key"].as_str().unwrap().starts_with("llmt_"));
+
+        // A row with exactly that id must exist in the metadata store.
+        let expected = TenantId(Uuid::parse_str(explicit_id).unwrap());
+        let stored = state
+            .metadata()
+            .get_tenant(expected)
+            .await
+            .unwrap()
+            .expect("tenant with explicit id must exist");
+        assert_eq!(stored.id, expected);
+        assert_eq!(stored.name, "Stable Org");
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_idempotent_on_explicit_id() {
+        let state = test_state().await;
+        let explicit_id = "550e8400-e29b-41d4-a716-446655440000";
+        let expected = TenantId(Uuid::parse_str(explicit_id).unwrap());
+
+        // First create with the explicit id.
+        let app1 = tenant_router(Arc::clone(&state));
+        let body = serde_json::json!({ "id": explicit_id, "name": "First", "plan": "pro" });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp1 = app1.oneshot(req).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::CREATED);
+        let json1 = json_body(resp1).await;
+        assert_eq!(json1["id"], explicit_id);
+
+        // Second create with the SAME explicit id (e.g. after `recreate`).
+        let app2 = tenant_router(Arc::clone(&state));
+        let body2 =
+            serde_json::json!({ "id": explicit_id, "name": "Second", "plan": "enterprise" });
+        let req2 = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body2).unwrap()))
+            .unwrap();
+        let resp2 = app2.oneshot(req2).await.unwrap();
+        // Idempotent: returns 200 with the existing tenant unchanged.
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let json2 = json_body(resp2).await;
+        assert_eq!(json2["id"], explicit_id);
+        // The existing record is returned unchanged (original name kept).
+        assert_eq!(json2["name"], "First");
+
+        // Exactly ONE tenant row exists for that id — no duplicate minted.
+        let all = state.metadata().list_tenants().await.unwrap();
+        let matching: Vec<_> = all.iter().filter(|t| t.id == expected).collect();
+        assert_eq!(matching.len(), 1, "must not create a duplicate tenant");
+    }
+
     // -- GET /api/v1/tenants ------------------------------------------------
 
     #[tokio::test]
@@ -820,6 +1065,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         let t2 = Tenant {
             id: TenantId::new(),
@@ -828,6 +1075,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&t1).await.unwrap();
         state.metadata().create_tenant(&t2).await.unwrap();
@@ -854,6 +1103,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -894,6 +1145,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -922,6 +1175,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -971,6 +1226,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1044,6 +1301,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1077,6 +1336,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1145,6 +1406,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         state.metadata().create_tenant(&tenant).await.unwrap();
 
@@ -1159,5 +1422,208 @@ mod tests {
             .unwrap();
         assert_eq!(after.name, "Already Here"); // not overwritten
         assert_eq!(after.plan, "pro"); // not changed to "default"
+    }
+
+    // -- Idempotent bootstrap (issue 9) ------------------------------------
+
+    #[tokio::test]
+    async fn test_ensure_tenant_exists_is_idempotent_on_stable_id() {
+        let state = test_state().await;
+        // A stable, externally-provided tenant id (e.g. user-uuid-...).
+        let stable_id = TenantId(Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap());
+
+        ensure_tenant_exists(&state, stable_id, "first-call").await;
+        let first = state
+            .metadata()
+            .get_tenant(stable_id)
+            .await
+            .unwrap()
+            .expect("tenant created");
+
+        // Re-provision after a notional redeploy with the SAME id.
+        ensure_tenant_exists(&state, stable_id, "second-call").await;
+
+        let all = state.metadata().list_tenants().await.unwrap();
+        let matching: Vec<_> = all.iter().filter(|t| t.id == stable_id).collect();
+        assert_eq!(matching.len(), 1, "must not mint a duplicate tenant row");
+
+        let second = state
+            .metadata()
+            .get_tenant(stable_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            second.id, stable_id,
+            "tenant id must be stable across calls"
+        );
+        assert_eq!(second.id, first.id);
+        // Existing record is returned unchanged (name not overwritten).
+        assert_eq!(second.name, "first-call");
+        assert_eq!(second.api_token, first.api_token);
+    }
+
+    // -- Per-tenant upstream creds (CONTRACT 1) ----------------------------
+
+    /// A valid 32-byte master key in hex used to exercise encryption paths.
+    const TEST_MASTER_KEY: &str =
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    /// Serialises tests that mutate the master-key env var. A tokio mutex is
+    /// used so the guard can be safely held across `.await` points.
+    static MASTER_KEY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn test_create_tenant_with_upstream_creds_contract() {
+        let _guard = MASTER_KEY_LOCK.lock().await;
+        std::env::set_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV, TEST_MASTER_KEY);
+        let state = test_state().await;
+        let app = tenant_router(Arc::clone(&state));
+
+        let body = serde_json::json!({
+            "name": "Routed Org",
+            "upstream_url": "https://tenant.example.com",
+            "upstream_api_key": "sk-tenant-secret"
+        });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        std::env::remove_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV);
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        let json = json_body(resp).await;
+        // CONTRACT 1: response surfaces upstream_url + upstream_api_key_set,
+        // and NEVER the secret/ciphertext.
+        assert_eq!(json["upstream_url"], "https://tenant.example.com");
+        assert_eq!(json["upstream_api_key_set"], true);
+        assert!(json.get("upstream_api_key").is_none());
+        assert!(json.get("upstream_api_key_ciphertext").is_none());
+
+        // The stored ciphertext must NOT contain the plaintext secret.
+        let tid = TenantId(Uuid::parse_str(json["id"].as_str().unwrap()).unwrap());
+        let stored = state.metadata().get_tenant(tid).await.unwrap().unwrap();
+        let ct = stored
+            .upstream_api_key_ciphertext
+            .expect("ciphertext stored");
+        assert!(
+            !ct.contains("sk-tenant-secret"),
+            "secret must be encrypted at rest"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_upstream_key_fails_closed_without_master_key() {
+        let _guard = MASTER_KEY_LOCK.lock().await;
+        std::env::remove_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV);
+        let state = test_state().await;
+        let app = tenant_router(state);
+
+        let body = serde_json::json!({
+            "name": "No Key Org",
+            "upstream_api_key": "sk-should-fail"
+        });
+        let req = Request::post("/api/v1/tenants")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "setting a per-tenant key without a master key must fail closed (400)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_tenant_clears_upstream_key_on_null() {
+        let _guard = MASTER_KEY_LOCK.lock().await;
+        std::env::set_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV, TEST_MASTER_KEY);
+        let secret_box = crate::secretbox::SecretBox::from_env().unwrap();
+        let ct = secret_box.encrypt(b"sk-existing").unwrap();
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Has Key".to_string(),
+            api_token: "token-haskey".to_string(),
+            plan: "pro".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: Some("https://old.example.com".to_string()),
+            upstream_api_key_ciphertext: Some(ct),
+        };
+        let state = test_state().await;
+        state.metadata().create_tenant(&tenant).await.unwrap();
+
+        let app = tenant_router(Arc::clone(&state));
+        // Explicit null clears the key and the url (inherit global).
+        let body = serde_json::json!({ "upstream_api_key": null, "upstream_url": null });
+        let req = Request::put(format!("/api/v1/tenants/{}", tenant.id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        std::env::remove_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV);
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let json = json_body(resp).await;
+        assert_eq!(json["upstream_api_key_set"], false);
+        assert!(json["upstream_url"].is_null());
+
+        let after = state
+            .metadata()
+            .get_tenant(tenant.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(after.upstream_api_key_ciphertext.is_none());
+        assert!(after.upstream_url.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_tenant_absent_upstream_fields_unchanged() {
+        let _guard = MASTER_KEY_LOCK.lock().await;
+        std::env::set_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV, TEST_MASTER_KEY);
+        let secret_box = crate::secretbox::SecretBox::from_env().unwrap();
+        let ct = secret_box.encrypt(b"sk-keep").unwrap();
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Keep Key".to_string(),
+            api_token: "token-keep".to_string(),
+            plan: "pro".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: Some("https://keep.example.com".to_string()),
+            upstream_api_key_ciphertext: Some(ct.clone()),
+        };
+        let state = test_state().await;
+        state.metadata().create_tenant(&tenant).await.unwrap();
+
+        let app = tenant_router(Arc::clone(&state));
+        // Only updating the name; upstream fields are absent => unchanged.
+        let body = serde_json::json!({ "name": "Renamed" });
+        let req = Request::put(format!("/api/v1/tenants/{}", tenant.id.0))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        std::env::remove_var(crate::secretbox::SECRET_ENCRYPTION_KEY_ENV);
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let after = state
+            .metadata()
+            .get_tenant(tenant.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.upstream_api_key_ciphertext.as_deref(),
+            Some(ct.as_str())
+        );
+        assert_eq!(
+            after.upstream_url.as_deref(),
+            Some("https://keep.example.com")
+        );
+        assert_eq!(after.name, "Renamed");
     }
 }

@@ -184,6 +184,69 @@ impl TraceRepository for InMemoryTraceRepository {
         Ok(results)
     }
 
+    async fn query_traces_all_tenants(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
+        let traces = self.traces.read().await;
+        let standalone = self.standalone_spans.read().await;
+
+        // Collect every span (all tenants) and the trace ids matching the
+        // non-tenant filters in the query.
+        let mut all_spans: Vec<TraceSpan> = traces
+            .iter()
+            .flat_map(|t| t.spans.iter().cloned())
+            .collect();
+        all_spans.extend(standalone.iter().cloned());
+
+        let mut matching_trace_ids: Vec<Uuid> = all_spans
+            .iter()
+            .filter(|s| Self::span_matches(s, query))
+            .map(|s| s.trace_id)
+            .collect();
+        matching_trace_ids.sort();
+        matching_trace_ids.dedup();
+
+        let mut results: Vec<TraceEvent> = Vec::new();
+        for tid in &matching_trace_ids {
+            if let Some(t) = traces.iter().find(|t| t.trace_id == *tid) {
+                results.push(t.clone());
+            } else {
+                let spans: Vec<TraceSpan> = standalone
+                    .iter()
+                    .filter(|s| s.trace_id == *tid)
+                    .cloned()
+                    .collect();
+                if let Some(first) = spans.first() {
+                    let created_at = spans
+                        .iter()
+                        .map(|s| s.start_time)
+                        .min()
+                        .unwrap_or_else(Utc::now);
+                    results.push(TraceEvent {
+                        trace_id: *tid,
+                        tenant_id: first.tenant_id,
+                        spans,
+                        created_at,
+                    });
+                }
+            }
+        }
+
+        results.sort_by_key(|x| std::cmp::Reverse(x.created_at));
+
+        if let Some(offset) = query.offset {
+            let offset = offset as usize;
+            if offset < results.len() {
+                results = results.split_off(offset);
+            } else {
+                results.clear();
+            }
+        }
+        if let Some(limit) = query.limit {
+            results.truncate(limit as usize);
+        }
+
+        Ok(results)
+    }
+
     async fn query_spans(&self, query: &TraceQuery) -> Result<Vec<TraceSpan>> {
         let mut all = self.all_spans_for_tenant(query.tenant_id).await;
         all.retain(|s| Self::span_matches(s, query));
@@ -211,6 +274,11 @@ impl TraceRepository for InMemoryTraceRepository {
             .find(|t| t.tenant_id == tenant_id && t.trace_id == trace_id)
             .cloned();
         Ok(trace)
+    }
+
+    async fn get_trace_any_tenant(&self, trace_id: Uuid) -> Result<Option<TraceEvent>> {
+        let traces = self.traces.read().await;
+        Ok(traces.iter().find(|t| t.trace_id == trace_id).cloned())
     }
 
     async fn get_span(&self, tenant_id: TenantId, span_id: Uuid) -> Result<Option<TraceSpan>> {
@@ -668,6 +736,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
 
         repo.create_tenant(&tenant).await.unwrap();

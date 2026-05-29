@@ -439,6 +439,115 @@ impl SqliteTraceRepository {
 
         qb
     }
+
+    /// Build a trace-id query across ALL tenants (admin cross-tenant scope).
+    ///
+    /// Identical to [`Self::build_trace_id_query`] but without the
+    /// `tenant_id` predicate. Every other filter still applies.
+    fn build_trace_id_query_all_tenants<'args>(
+        &self,
+        query: &TraceQuery,
+    ) -> QueryBuilder<'args, Sqlite> {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT DISTINCT s.trace_id FROM spans s              JOIN traces t ON s.trace_id = t.trace_id AND s.tenant_id = t.tenant_id              WHERE 1 = 1",
+        );
+
+        if let Some(ref trace_id) = query.trace_id {
+            qb.push(" AND s.trace_id = ");
+            qb.push_bind(trace_id.to_string());
+        }
+        if let Some(ref start) = query.start_time {
+            qb.push(" AND s.start_time >= ");
+            qb.push_bind(start.to_rfc3339());
+        }
+        if let Some(ref end) = query.end_time {
+            qb.push(" AND s.start_time <= ");
+            qb.push_bind(end.to_rfc3339());
+        }
+        if let Some(ref provider) = query.provider {
+            qb.push(" AND s.provider = ");
+            qb.push_bind(serialize_provider(provider));
+        }
+        if let Some(ref model) = query.model_name {
+            qb.push(" AND s.model_name = ");
+            qb.push_bind(model.clone());
+        }
+        if let Some(ref op) = query.operation_name {
+            qb.push(" AND s.operation_name = ");
+            qb.push_bind(op.clone());
+        }
+        if let Some(min) = query.min_security_score {
+            qb.push(" AND s.security_score >= ");
+            qb.push_bind(min as i64);
+        }
+        if let Some(max) = query.max_security_score {
+            qb.push(" AND s.security_score <= ");
+            qb.push_bind(max as i64);
+        }
+
+        qb.push(" ORDER BY t.created_at DESC");
+
+        if let Some(limit) = query.limit {
+            qb.push(" LIMIT ");
+            qb.push_bind(limit as i64);
+        }
+        if let Some(offset) = query.offset {
+            qb.push(" OFFSET ");
+            qb.push_bind(offset as i64);
+        }
+
+        qb
+    }
+
+    /// Load full trace events for a set of trace ids across all tenants.
+    async fn load_traces_for_ids_all_tenants(
+        &self,
+        trace_ids: &[String],
+    ) -> Result<Vec<TraceEvent>> {
+        if trace_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut meta_qb = QueryBuilder::<Sqlite>::new("SELECT * FROM traces WHERE trace_id IN (");
+        let mut sep = meta_qb.separated(", ");
+        for tid in trace_ids {
+            sep.push_bind(tid.clone());
+        }
+        sep.push_unseparated(") ORDER BY created_at DESC");
+
+        let meta_rows =
+            meta_qb.build().fetch_all(&self.pool).await.map_err(|e| {
+                LLMTraceError::Storage(format!("Failed to load trace metadata: {e}"))
+            })?;
+
+        let mut results = Vec::with_capacity(meta_rows.len());
+        for row in &meta_rows {
+            let tid_str: String = row.get("trace_id");
+            let trace_id = parse_uuid(&tid_str)?;
+            let tenant_id = TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?);
+            let created_at = parse_datetime(&row.get::<String, _>("created_at"))?;
+
+            let span_rows =
+                sqlx::query("SELECT * FROM spans WHERE trace_id = ?1 ORDER BY start_time ASC")
+                    .bind(&tid_str)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(|e| {
+                        LLMTraceError::Storage(format!("Failed to load trace spans: {e}"))
+                    })?;
+            let spans: Vec<TraceSpan> =
+                span_rows.iter().map(span_from_row).collect::<Result<_>>()?;
+
+            results.push(TraceEvent {
+                trace_id,
+                tenant_id,
+                spans,
+                created_at,
+            });
+        }
+
+        Ok(results)
+    }
 }
 
 #[async_trait]
@@ -545,6 +654,49 @@ impl TraceRepository for SqliteTraceRepository {
         }
 
         Ok(results)
+    }
+
+    async fn query_traces_all_tenants(&self, query: &TraceQuery) -> Result<Vec<TraceEvent>> {
+        let mut qb = self.build_trace_id_query_all_tenants(query);
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to query trace IDs: {e}")))?;
+
+        let trace_ids: Vec<String> = rows.iter().map(|r| r.get("trace_id")).collect();
+        self.load_traces_for_ids_all_tenants(&trace_ids).await
+    }
+
+    async fn get_trace_any_tenant(&self, trace_id: Uuid) -> Result<Option<TraceEvent>> {
+        let row = sqlx::query("SELECT * FROM traces WHERE trace_id = ?1")
+            .bind(trace_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to get trace: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let tenant_id = TenantId(parse_uuid(&row.get::<String, _>("tenant_id"))?);
+        let created_at = parse_datetime(&row.get::<String, _>("created_at"))?;
+
+        let span_rows =
+            sqlx::query("SELECT * FROM spans WHERE trace_id = ?1 ORDER BY start_time ASC")
+                .bind(trace_id.to_string())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| LLMTraceError::Storage(format!("Failed to load trace spans: {e}")))?;
+
+        let spans: Vec<TraceSpan> = span_rows.iter().map(span_from_row).collect::<Result<_>>()?;
+
+        Ok(Some(TraceEvent {
+            trace_id,
+            tenant_id,
+            spans,
+            created_at,
+        }))
     }
 
     async fn query_spans(&self, query: &TraceQuery) -> Result<Vec<TraceSpan>> {
@@ -787,7 +939,7 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
 
         sqlx::query(
-            "INSERT INTO tenants (id, name, api_token, plan, created_at, config) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO tenants              (id, name, api_token, plan, created_at, config, upstream_url, upstream_api_key_ciphertext)              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )
         .bind(tenant.id.0.to_string())
         .bind(&tenant.name)
@@ -795,6 +947,8 @@ impl MetadataRepository for SqliteMetadataRepository {
         .bind(&tenant.plan)
         .bind(tenant.created_at.to_rfc3339())
         .bind(&config_json)
+        .bind(&tenant.upstream_url)
+        .bind(&tenant.upstream_api_key_ciphertext)
         .execute(&self.pool)
         .await
         .map_err(|e| LLMTraceError::Storage(format!("Failed to create tenant: {e}")))?;
@@ -826,6 +980,9 @@ impl MetadataRepository for SqliteMetadataRepository {
             plan: row.get("plan"),
             created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
             config,
+            upstream_url: row.get::<Option<String>, _>("upstream_url"),
+            upstream_api_key_ciphertext: row
+                .get::<Option<String>, _>("upstream_api_key_ciphertext"),
         }))
     }
 
@@ -853,6 +1010,9 @@ impl MetadataRepository for SqliteMetadataRepository {
             plan: row.get("plan"),
             created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
             config,
+            upstream_url: row.get::<Option<String>, _>("upstream_url"),
+            upstream_api_key_ciphertext: row
+                .get::<Option<String>, _>("upstream_api_key_ciphertext"),
         }))
     }
 
@@ -861,12 +1021,14 @@ impl MetadataRepository for SqliteMetadataRepository {
             .map_err(|e| LLMTraceError::Storage(format!("serialize tenant config: {e}")))?;
 
         let result = sqlx::query(
-            "UPDATE tenants SET name = ?1, plan = ?2, config = ?3, api_token = ?4 WHERE id = ?5",
+            "UPDATE tenants SET name = ?1, plan = ?2, config = ?3, api_token = ?4,              upstream_url = ?5, upstream_api_key_ciphertext = ?6 WHERE id = ?7",
         )
         .bind(&tenant.name)
         .bind(&tenant.plan)
         .bind(&config_json)
         .bind(&tenant.api_token)
+        .bind(&tenant.upstream_url)
+        .bind(&tenant.upstream_api_key_ciphertext)
         .bind(tenant.id.0.to_string())
         .execute(&self.pool)
         .await
@@ -901,6 +1063,9 @@ impl MetadataRepository for SqliteMetadataRepository {
                     plan: row.get("plan"),
                     created_at: parse_datetime(&row.get::<String, _>("created_at"))?,
                     config,
+                    upstream_url: row.get::<Option<String>, _>("upstream_url"),
+                    upstream_api_key_ciphertext: row
+                        .get::<Option<String>, _>("upstream_api_key_ciphertext"),
                 })
             })
             .collect()
@@ -1754,6 +1919,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces": 10000}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
 
         repo.create_tenant(&tenant).await.unwrap();
@@ -1788,6 +1955,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_tenant_upstream_fields_persist() {
+        let repo = test_metadata().await;
+        let tenant = Tenant {
+            id: TenantId::new(),
+            name: "Routed".to_string(),
+            api_token: "tok-routed".to_string(),
+            plan: "pro".to_string(),
+            created_at: Utc::now(),
+            config: serde_json::json!({}),
+            upstream_url: Some("https://tenant.example.com".to_string()),
+            // Opaque base64 ciphertext blob (not real, just round-tripped).
+            upstream_api_key_ciphertext: Some("Y2lwaGVydGV4dC1ibG9i".to_string()),
+        };
+        repo.create_tenant(&tenant).await.unwrap();
+
+        // get_tenant must round-trip both new columns.
+        let got = repo.get_tenant(tenant.id).await.unwrap().unwrap();
+        assert_eq!(
+            got.upstream_url.as_deref(),
+            Some("https://tenant.example.com")
+        );
+        assert_eq!(
+            got.upstream_api_key_ciphertext.as_deref(),
+            Some("Y2lwaGVydGV4dC1ibG9i")
+        );
+
+        // list_tenants must also surface them.
+        let listed = repo.list_tenants().await.unwrap();
+        let listed = listed.iter().find(|t| t.id == tenant.id).unwrap();
+        assert_eq!(
+            listed.upstream_url.as_deref(),
+            Some("https://tenant.example.com")
+        );
+        assert!(listed.upstream_api_key_ciphertext.is_some());
+
+        // update clearing both columns persists NULL.
+        let mut cleared = got.clone();
+        cleared.upstream_url = None;
+        cleared.upstream_api_key_ciphertext = None;
+        repo.update_tenant(&cleared).await.unwrap();
+        let after = repo.get_tenant(tenant.id).await.unwrap().unwrap();
+        assert!(after.upstream_url.is_none());
+        assert!(after.upstream_api_key_ciphertext.is_none());
+    }
+
+    #[tokio::test]
     async fn test_update_nonexistent_tenant_returns_error() {
         let repo = test_metadata().await;
         let tenant = Tenant {
@@ -1797,6 +2010,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         let result = repo.update_tenant(&tenant).await;
         assert!(result.is_err());
@@ -1815,6 +2030,8 @@ mod tests {
             plan: "free".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
         repo.create_tenant(&tenant).await.unwrap();
 

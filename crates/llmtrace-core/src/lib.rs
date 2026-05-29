@@ -132,6 +132,37 @@ pub struct AuthContext {
     pub key_id: Option<Uuid>,
 }
 
+/// Tenant scope for an authenticated request, derived from headers.
+///
+/// Inserted into request extensions alongside [`AuthContext`] by the auth
+/// middleware. Read-only cross-tenant access is represented by [`TenantScope::All`]
+/// and is only ever granted to admin callers. Most requests resolve to
+/// [`TenantScope::Single`] which restricts reads to a single tenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TenantScope {
+    /// Restrict the request to a single tenant.
+    Single(TenantId),
+    /// Cross-tenant (all-tenants) scope — admin reads only.
+    All,
+}
+
+impl TenantScope {
+    /// Returns the single tenant id when scoped to one tenant, else `None`.
+    #[must_use]
+    pub fn single(self) -> Option<TenantId> {
+        match self {
+            Self::Single(id) => Some(id),
+            Self::All => None,
+        }
+    }
+
+    /// Returns `true` when this scope spans all tenants.
+    #[must_use]
+    pub fn is_all(self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Security types
 // ---------------------------------------------------------------------------
@@ -934,6 +965,16 @@ pub struct Tenant {
     /// Arbitrary tenant-level configuration.
     #[schema(value_type = Object)]
     pub config: serde_json::Value,
+    /// Per-tenant upstream base URL override. When `None`, the proxy falls
+    /// back to the global `upstream_url`.
+    #[serde(default)]
+    pub upstream_url: Option<String>,
+    /// Encrypted (AEAD) per-tenant upstream provider API key, base64-encoded
+    /// `nonce || ciphertext`. NEVER serialized to API clients (write-only at
+    /// rest). When `None`, the proxy falls back to the global env-based key.
+    #[serde(default, skip_serializing)]
+    #[schema(value_type = Option<String>)]
+    pub upstream_api_key_ciphertext: Option<String>,
 }
 
 /// Per-tenant configuration for security thresholds and feature flags.
@@ -1256,6 +1297,13 @@ pub struct ProxyConfig {
     /// left bytes-exact.
     #[serde(default = "default_true")]
     pub llm_advisory_injection_enabled: bool,
+    /// Explicit tenant id stamped on header-less traffic. When set, requests
+    /// that cannot resolve a tenant from a header or derivable key are
+    /// attributed to this tenant instead of inventing a phantom one. When
+    /// `None` and auth is enabled, header-less traffic is rejected (401).
+    /// Tunable via `LLMTRACE_DEFAULT_TENANT_ID`.
+    #[serde(default)]
+    pub default_tenant_id: Option<TenantId>,
 }
 
 impl Default for ProxyConfig {
@@ -1300,6 +1348,7 @@ impl Default for ProxyConfig {
             server: ServerConfig::default(),
             ml_pipeline: MlPipelineConfig::default(),
             llm_advisory_injection_enabled: true,
+            default_tenant_id: None,
         }
     }
 }
@@ -3351,6 +3400,28 @@ pub trait TraceRepository: Send + Sync {
     /// Query spans with filters.
     async fn query_spans(&self, query: &TraceQuery) -> Result<Vec<TraceSpan>>;
 
+    /// Query traces across ALL tenants (admin cross-tenant scope, reads only).
+    ///
+    /// The `tenant_id` on the supplied [`TraceQuery`] is ignored; every other
+    /// filter still applies. Backends that do not implement cross-tenant
+    /// queries return an unsupported error so callers fail closed rather than
+    /// silently leaking or losing data.
+    async fn query_traces_all_tenants(&self, _query: &TraceQuery) -> Result<Vec<TraceEvent>> {
+        Err(crate::LLMTraceError::Storage(
+            "cross-tenant trace query is not supported by this storage backend".to_string(),
+        ))
+    }
+
+    /// Get a specific trace by ID without a tenant filter (admin cross-tenant).
+    ///
+    /// Returns the trace regardless of which tenant owns it. Backends that do
+    /// not implement cross-tenant lookups return an unsupported error.
+    async fn get_trace_any_tenant(&self, _trace_id: Uuid) -> Result<Option<TraceEvent>> {
+        Err(crate::LLMTraceError::Storage(
+            "cross-tenant trace lookup is not supported by this storage backend".to_string(),
+        ))
+    }
+
     /// Get a specific trace by ID.
     async fn get_trace(&self, tenant_id: TenantId, trace_id: Uuid) -> Result<Option<TraceEvent>>;
 
@@ -4216,6 +4287,7 @@ mod tests {
             server: ServerConfig::default(),
             ml_pipeline: MlPipelineConfig::default(),
             llm_advisory_injection_enabled: true,
+            default_tenant_id: None,
         };
 
         let serialized = serde_json::to_string(&config).unwrap();
@@ -4289,6 +4361,8 @@ mod tests {
             plan: "pro".to_string(),
             created_at: Utc::now(),
             config: serde_json::json!({"max_traces_per_day": 10000}),
+            upstream_url: None,
+            upstream_api_key_ciphertext: None,
         };
 
         let serialized = serde_json::to_string(&tenant).unwrap();
@@ -5111,7 +5185,7 @@ mod tests {
     #[test]
     fn test_truncate_2byte_utf8_at_boundary() {
         let s = "h\u{00E9}llo"; // h(1) + e-acute(2) + l(1) + l(1) + o(1) = 6 bytes
-        assert_eq!(s.as_bytes().len(), 6);
+        assert_eq!(s.len(), 6);
         // Truncating at 2 would split the e-acute - backs up to 1
         assert_eq!(truncate_to_byte_limit(s, 2), "h");
         // Truncating at 3 includes "h" + e-acute exactly
@@ -5122,8 +5196,8 @@ mod tests {
     fn test_truncate_4byte_utf8_at_boundary() {
         // U+1F600 (grinning face) is 4 bytes: F0 9F 98 80
         let s = "a\u{1F600}b";
-        assert_eq!(s.as_bytes().len(), 6); // a=1, emoji=4, b=1
-                                           // Truncating at 2, 3, or 4 should all back up to byte 1 ("a")
+        assert_eq!(s.len(), 6); // a=1, emoji=4, b=1
+                                // Truncating at 2, 3, or 4 should all back up to byte 1 ("a")
         assert_eq!(truncate_to_byte_limit(s, 2), "a");
         assert_eq!(truncate_to_byte_limit(s, 3), "a");
         assert_eq!(truncate_to_byte_limit(s, 4), "a");
