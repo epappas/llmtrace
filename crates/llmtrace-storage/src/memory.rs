@@ -339,9 +339,22 @@ impl TraceRepository for InMemoryTraceRepository {
         let oldest_trace = tenant_traces.iter().map(|t| t.created_at).min();
         let newest_trace = tenant_traces.iter().map(|t| t.created_at).max();
 
+        let trace_cost: f64 = tenant_traces
+            .iter()
+            .flat_map(|t| t.spans.iter())
+            .filter_map(|s| s.estimated_cost_usd)
+            .sum();
+        let standalone_cost: f64 = standalone
+            .iter()
+            .filter(|s| s.tenant_id == tenant_id)
+            .filter_map(|s| s.estimated_cost_usd)
+            .sum();
+        let total_cost_usd = trace_cost + standalone_cost;
+
         Ok(StorageStats {
             total_traces,
             total_spans,
+            total_cost_usd,
             storage_size_bytes: 0,
             oldest_trace,
             newest_trace,
@@ -359,9 +372,18 @@ impl TraceRepository for InMemoryTraceRepository {
         let oldest_trace = traces.iter().map(|t| t.created_at).min();
         let newest_trace = traces.iter().map(|t| t.created_at).max();
 
+        let trace_cost: f64 = traces
+            .iter()
+            .flat_map(|t| t.spans.iter())
+            .filter_map(|s| s.estimated_cost_usd)
+            .sum();
+        let standalone_cost: f64 = standalone.iter().filter_map(|s| s.estimated_cost_usd).sum();
+        let total_cost_usd = trace_cost + standalone_cost;
+
         Ok(StorageStats {
             total_traces,
             total_spans,
+            total_cost_usd,
             storage_size_bytes: 0,
             oldest_trace,
             newest_trace,
@@ -684,17 +706,51 @@ mod tests {
         assert!(storage.health_check().await.is_ok());
     }
 
+    /// Build a [`TraceEvent`] whose single span carries an explicit cost.
+    fn make_trace_with_cost(tenant_id: TenantId, cost: f64) -> TraceEvent {
+        let trace_id = Uuid::new_v4();
+        let mut span = make_span(trace_id, tenant_id);
+        span.estimated_cost_usd = Some(cost);
+        TraceEvent {
+            trace_id,
+            tenant_id,
+            spans: vec![span],
+            created_at: Utc::now(),
+        }
+    }
+
     #[tokio::test]
     async fn test_in_memory_get_stats() {
         let storage = InMemoryTraceRepository::new();
         let tenant = TenantId::new();
+        let other = TenantId::new();
 
+        storage
+            .store_trace(&make_trace_with_cost(tenant, 0.0015))
+            .await
+            .unwrap();
+        storage
+            .store_trace(&make_trace_with_cost(tenant, 0.0025))
+            .await
+            .unwrap();
+        // A span with no cost must not break the sum.
         storage.store_trace(&make_trace(tenant)).await.unwrap();
-        storage.store_trace(&make_trace(tenant)).await.unwrap();
+        // Another tenant's cost must not leak into tenant-scoped stats.
+        storage
+            .store_trace(&make_trace_with_cost(other, 1.0))
+            .await
+            .unwrap();
 
         let stats = storage.get_stats(tenant).await.unwrap();
-        assert_eq!(stats.total_traces, 2);
-        assert_eq!(stats.total_spans, 2);
+        assert_eq!(stats.total_traces, 3);
+        assert_eq!(stats.total_spans, 3);
+        assert!((stats.total_cost_usd - 0.0040).abs() < f64::EPSILON);
+
+        // Global stats aggregate across all tenants.
+        let global = storage.get_global_stats().await.unwrap();
+        assert_eq!(global.total_traces, 4);
+        assert_eq!(global.total_spans, 4);
+        assert!((global.total_cost_usd - 1.0040).abs() < f64::EPSILON);
     }
 
     #[tokio::test]

@@ -824,6 +824,16 @@ impl TraceRepository for SqliteTraceRepository {
         .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate size: {e}")))?;
         let storage_size_bytes: i64 = size_row.get("sz");
 
+        let cost_row = sqlx::query(
+            "SELECT COALESCE(SUM(estimated_cost_usd), 0.0) as total_cost \
+             FROM spans WHERE tenant_id = ?1",
+        )
+        .bind(&tid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate total cost: {e}")))?;
+        let total_cost_usd: f64 = cost_row.get("total_cost");
+
         let time_row = sqlx::query(
             "SELECT MIN(created_at) as oldest, MAX(created_at) as newest \
              FROM traces WHERE tenant_id = ?1",
@@ -845,6 +855,7 @@ impl TraceRepository for SqliteTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count as u64,
             total_spans: span_count as u64,
+            total_cost_usd,
             storage_size_bytes: storage_size_bytes as u64,
             oldest_trace,
             newest_trace,
@@ -873,6 +884,15 @@ impl TraceRepository for SqliteTraceRepository {
         .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
         let storage_size_bytes: i64 = size_row.get("sz");
 
+        let cost_row =
+            sqlx::query("SELECT COALESCE(SUM(estimated_cost_usd), 0.0) as total_cost FROM spans")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| {
+                    LLMTraceError::Storage(format!("Failed to calculate global total cost: {e}"))
+                })?;
+        let total_cost_usd: f64 = cost_row.get("total_cost");
+
         let time_row =
             sqlx::query("SELECT MIN(created_at) as oldest, MAX(created_at) as newest FROM traces")
                 .fetch_one(&self.pool)
@@ -893,6 +913,7 @@ impl TraceRepository for SqliteTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count as u64,
             total_spans: span_count as u64,
+            total_cost_usd,
             storage_size_bytes: storage_size_bytes as u64,
             oldest_trace,
             newest_trace,
@@ -1729,20 +1750,84 @@ mod tests {
         assert!(old_span.is_none());
     }
 
+    /// Build a [`TraceEvent`] whose single span carries an explicit cost.
+    fn make_trace_with_cost(tenant_id: TenantId, cost: f64) -> TraceEvent {
+        let trace_id = Uuid::new_v4();
+        let mut span = make_span(trace_id, tenant_id, LLMProvider::OpenAI, "gpt-4");
+        span.estimated_cost_usd = Some(cost);
+        TraceEvent {
+            trace_id,
+            tenant_id,
+            spans: vec![span],
+            created_at: Utc::now(),
+        }
+    }
+
     #[tokio::test]
     async fn test_get_stats() {
         let storage = test_storage().await;
         let tenant = TenantId::new();
 
-        storage.store_trace(&make_trace(tenant)).await.unwrap();
-        storage.store_trace(&make_trace(tenant)).await.unwrap();
+        storage
+            .store_trace(&make_trace_with_cost(tenant, 0.0015))
+            .await
+            .unwrap();
+        storage
+            .store_trace(&make_trace_with_cost(tenant, 0.0025))
+            .await
+            .unwrap();
 
         let stats = storage.get_stats(tenant).await.unwrap();
         assert_eq!(stats.total_traces, 2);
         assert_eq!(stats.total_spans, 2);
+        assert!((stats.total_cost_usd - 0.0040).abs() < f64::EPSILON);
         assert!(stats.storage_size_bytes > 0);
         assert!(stats.oldest_trace.is_some());
         assert!(stats.newest_trace.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_stats_total_cost_ignores_null_costs() {
+        let storage = test_storage().await;
+        let tenant = TenantId::new();
+
+        // One span with a known cost, one with no cost (NULL) -> sum is the
+        // single known value, not NULL.
+        storage
+            .store_trace(&make_trace_with_cost(tenant, 0.0015))
+            .await
+            .unwrap();
+        storage.store_trace(&make_trace(tenant)).await.unwrap();
+
+        let stats = storage.get_stats(tenant).await.unwrap();
+        assert_eq!(stats.total_spans, 2);
+        assert!((stats.total_cost_usd - 0.0015).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_get_global_stats_total_cost() {
+        let storage = test_storage().await;
+        let t1 = TenantId::new();
+        let t2 = TenantId::new();
+
+        storage
+            .store_trace(&make_trace_with_cost(t1, 0.0015))
+            .await
+            .unwrap();
+        storage
+            .store_trace(&make_trace_with_cost(t2, 0.0025))
+            .await
+            .unwrap();
+
+        // Tenant-scoped stats only see that tenant's cost.
+        let t1_stats = storage.get_stats(t1).await.unwrap();
+        assert!((t1_stats.total_cost_usd - 0.0015).abs() < f64::EPSILON);
+
+        // Global stats aggregate across all tenants.
+        let global = storage.get_global_stats().await.unwrap();
+        assert_eq!(global.total_traces, 2);
+        assert_eq!(global.total_spans, 2);
+        assert!((global.total_cost_usd - 0.0040).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
@@ -1752,6 +1837,7 @@ mod tests {
         let stats = storage.get_stats(tenant).await.unwrap();
         assert_eq!(stats.total_traces, 0);
         assert_eq!(stats.total_spans, 0);
+        assert_eq!(stats.total_cost_usd, 0.0);
         assert_eq!(stats.storage_size_bytes, 0);
         assert!(stats.oldest_trace.is_none());
     }

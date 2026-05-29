@@ -3390,6 +3390,8 @@ pub struct StorageStats {
     pub total_traces: u64,
     /// Total number of spans stored.
     pub total_spans: u64,
+    /// Total estimated spend in USD (sum of span estimated_cost_usd).
+    pub total_cost_usd: f64,
     /// Storage size in bytes.
     pub storage_size_bytes: u64,
     /// Oldest trace timestamp.
@@ -4360,6 +4362,7 @@ mod tests {
         let stats = StorageStats {
             total_traces: 12345,
             total_spans: 67890,
+            total_cost_usd: 42.5,
             storage_size_bytes: 1024 * 1024 * 1024, // 1GB
             oldest_trace: Some(Utc::now() - chrono::Duration::days(30)),
             newest_trace: Some(Utc::now()),
@@ -4370,6 +4373,7 @@ mod tests {
 
         assert_eq!(stats.total_traces, deserialized.total_traces);
         assert_eq!(stats.total_spans, deserialized.total_spans);
+        assert!((stats.total_cost_usd - deserialized.total_cost_usd).abs() < f64::EPSILON);
         assert_eq!(stats.storage_size_bytes, deserialized.storage_size_bytes);
     }
 
