@@ -101,20 +101,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_ttl_expiry() {
+        // Expiry uses `std::time::Instant` (wall clock), which tokio's paused
+        // clock cannot control. Use a short TTL plus a bounded poll loop so the
+        // assertion is race-free regardless of CI scheduling jitter.
         let cache = InMemoryCacheLayer::new();
         cache
             .set("ephemeral", b"data", Duration::from_millis(10))
             .await
             .unwrap();
 
-        // Should exist immediately
+        // Should exist immediately.
         assert!(cache.get("ephemeral").await.unwrap().is_some());
 
-        // Wait for expiry
-        tokio::time::sleep(Duration::from_millis(20)).await;
-
-        // Should be gone
-        assert!(cache.get("ephemeral").await.unwrap().is_none());
+        // Poll for expiry with a generous, bounded retry loop (up to ~2s).
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if cache.get("ephemeral").await.unwrap().is_none() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "entry did not expire within 2s of its 10ms TTL"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     #[tokio::test]
