@@ -81,12 +81,12 @@ struct SizeRow {
 
 /// Row type for aggregated estimated spend.
 ///
-/// `sum` over a `Nullable(Float64)` column yields a non-nullable `Float64`
-/// (0 when there are no rows / all values are NULL), so the total is always a
-/// concrete number for the dashboard.
+/// `sum` over the `Nullable(Float64)` `estimated_cost_usd` column yields a
+/// `Nullable(Float64)` (NULL when there are no rows / all values are NULL), so
+/// it must be read as `Option<f64>` and defaulted to `0.0` at the call site.
 #[derive(Debug, clickhouse::Row, Deserialize)]
 struct CostRow {
-    total_cost: f64,
+    total_cost: Option<f64>,
 }
 
 /// Row type for time-range queries on the traces table.
@@ -752,7 +752,7 @@ impl TraceRepository for ClickHouseTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count.cnt,
             total_spans: span_count.cnt,
-            total_cost_usd: cost_row.total_cost,
+            total_cost_usd: cost_row.total_cost.unwrap_or(0.0),
             storage_size_bytes: size_row.sz,
             oldest_trace,
             newest_trace,
@@ -813,7 +813,7 @@ impl TraceRepository for ClickHouseTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count.cnt,
             total_spans: span_count.cnt,
-            total_cost_usd: cost_row.total_cost,
+            total_cost_usd: cost_row.total_cost.unwrap_or(0.0),
             storage_size_bytes: size_row.sz,
             oldest_trace,
             newest_trace,
