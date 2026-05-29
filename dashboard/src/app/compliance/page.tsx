@@ -166,7 +166,7 @@ function ReportViewer({ report }: { report: ComplianceReport }) {
 
   return (
     <div className="print:p-0">
-      <Card className="border-success/40 bg-success/5 shadow-md print:border-none print:bg-white print:shadow-none">
+      <Card className="border-success/40 bg-success/5 shadow-md print:border-none print:bg-white print:text-black print:shadow-none">
         <CardHeader className="flex flex-row items-center justify-between pb-4 border-b">
           <div className="space-y-1">
             <CardTitle className="flex items-center gap-2 text-2xl">

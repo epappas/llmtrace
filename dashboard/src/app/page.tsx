@@ -212,7 +212,7 @@ export default function OverviewPage() {
           <CardContent>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={activityData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
                 <XAxis dataKey="hour" className="text-xs" />
                 <YAxis className="text-xs" />
                 <Tooltip />

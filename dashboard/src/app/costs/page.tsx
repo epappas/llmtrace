@@ -182,7 +182,7 @@ export default function CostsPage() {
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={budgetData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" className="stroke-muted" />
                 <XAxis dataKey="name" className="text-xs" />
                 <YAxis className="text-xs" />
                 <Tooltip formatter={(value: number) => `$${value.toFixed(4)}`} />

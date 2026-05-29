@@ -1468,7 +1468,7 @@ function SettingsDrawer(props: {
         aria-hidden={!visible}
         tabIndex={-1}
         onClick={props.onClose}
-        className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${
+        className={`fixed inset-0 z-40 bg-background/80 backdrop-blur-sm transition-opacity ${
           visible ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
       />
