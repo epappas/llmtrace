@@ -23,10 +23,28 @@ def _install_basilica_stub() -> None:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             self.args = args
             self.kwargs = kwargs
+            # Expose kwargs as attributes too, so tests that read the real
+            # SDK's property accessors (e.g. StorageSpec.persistent,
+            # PersistentStorageSpec.bucket) also work against the stub.
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
     module.BasilicaClient = _Stub
     module.HealthCheckConfig = _Stub
     module.ProbeConfig = _Stub
+
+    # Storage SDK surface used by the persistent-volume path. Tests that
+    # assert on the StorageSpec contents inspect these stubs' captured
+    # kwargs/args (they never reach a real Basilica backend).
+    module.PersistentStorageSpec = _Stub
+    module.StorageSpec = _Stub
+
+    class _StorageBackend:
+        R2 = "R2"
+        S3 = "S3"
+        GCS = "GCS"
+
+    module.StorageBackend = _StorageBackend
     sys.modules["basilica"] = module
 
 

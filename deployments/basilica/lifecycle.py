@@ -38,7 +38,10 @@ from typing import Any, Mapping, Optional
 from basilica import (
     BasilicaClient,
     HealthCheckConfig,
+    PersistentStorageSpec,
     ProbeConfig,
+    StorageBackend,
+    StorageSpec,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -96,6 +99,27 @@ _UNSHARED_STORAGE_PROFILES: frozenset[str] = frozenset(
     {"", "sqlite", "lite", "memory"}
 )
 
+# Storage backends Basilica's persistent-storage spec accepts. Mirrors
+# `basilica._basilica.StorageBackend` (R2 / S3 / GCS). Object-store backed:
+# the deployment mounts a FUSE-style path that syncs to the bucket on an
+# interval, so the data survives `recreate` (which deletes the pod). This is
+# the ONLY durable substrate available to a Basilica *deployment* — there is
+# no raw block / hostPath volume on `CreateDeploymentRequest` (only object
+# storage). See docs/research/basilica-persistence-options-2026-05-29.md.
+_STORAGE_BACKENDS: dict[str, StorageBackend] = {
+    "r2": StorageBackend.R2,
+    "s3": StorageBackend.S3,
+    "gcs": StorageBackend.GCS,
+}
+
+# Env var the proxy reads to place its SQLite database file
+# (`crates/llmtrace-proxy/src/config.rs::apply_env_overrides`,
+# `LLMTRACE_STORAGE_DATABASE_PATH`). Defaults to the relative `llmtrace.db`
+# in the proxy's WORKDIR (`/home/llmtrace`) which is container-local and lost
+# on recreate. When a persistent mount is attached we repoint this at a file
+# under the mount so the sqlite profile becomes durable.
+STORAGE_DB_PATH_ENV = "LLMTRACE_STORAGE_DATABASE_PATH"
+
 # Proxy admin API endpoints (see `crates/llmtrace-proxy/src/main.rs` routing).
 TENANTS_PATH = "/api/v1/tenants"
 AUTH_KEYS_PATH = "/api/v1/auth/keys"
@@ -144,6 +168,94 @@ class RateLimitSpec:
 
 
 @dataclass(frozen=True)
+class PersistentVolumeSpec:
+    """Object-store-backed persistent mount for a Basilica deployment.
+
+    Basilica deployments have no raw block / hostPath volume — the only
+    durable substrate is an object store (R2 / S3 / GCS) mounted as a
+    FUSE-style path that syncs to a bucket on an interval. Data written under
+    `mount_path` survives `update(strategy="recreate")` (which deletes the
+    pod) because it is persisted in the bucket, not on the pod's local disk.
+
+    `credentials_secret` names a secret that MUST already exist on the
+    Basilica side (the platform injects the bucket credentials from it). This
+    library cannot create that secret; the operator provisions it out of band.
+    `backend` is one of `r2` / `s3` / `gcs` (case-insensitive).
+
+    When attached to a proxy `ComponentSpec`, the lifecycle library also
+    repoints `LLMTRACE_STORAGE_DATABASE_PATH` at a file under `mount_path`
+    (see `db_filename`) so the sqlite storage profile becomes durable.
+    """
+
+    bucket: str
+    credentials_secret: str
+    mount_path: str = "/data"
+    backend: str = "r2"
+    region: Optional[str] = None
+    endpoint: Optional[str] = None
+    sync_interval_ms: int = 1000
+    cache_size_mb: int = 1024
+    # SQLite filename placed under `mount_path`. The proxy's
+    # LLMTRACE_STORAGE_DATABASE_PATH is set to `mount_path/db_filename` so the
+    # `lite`/`sqlite` profile writes its DB onto the durable mount.
+    db_filename: str = "llmtrace.db"
+
+    def __post_init__(self) -> None:
+        if not self.bucket:
+            raise ValueError("PersistentVolumeSpec.bucket must be non-empty")
+        if not self.credentials_secret:
+            raise ValueError(
+                "PersistentVolumeSpec.credentials_secret must be non-empty"
+            )
+        if not self.mount_path.startswith("/"):
+            raise ValueError(
+                f"PersistentVolumeSpec.mount_path must be absolute, got "
+                f"{self.mount_path!r}"
+            )
+        if self.backend.lower() not in _STORAGE_BACKENDS:
+            raise ValueError(
+                f"PersistentVolumeSpec.backend must be one of "
+                f"{sorted(_STORAGE_BACKENDS)}, got {self.backend!r}"
+            )
+        if self.sync_interval_ms <= 0:
+            raise ValueError(
+                f"PersistentVolumeSpec.sync_interval_ms must be > 0, got "
+                f"{self.sync_interval_ms}"
+            )
+        if self.cache_size_mb <= 0:
+            raise ValueError(
+                f"PersistentVolumeSpec.cache_size_mb must be > 0, got "
+                f"{self.cache_size_mb}"
+            )
+        if not self.db_filename or "/" in self.db_filename:
+            raise ValueError(
+                f"PersistentVolumeSpec.db_filename must be a bare filename, "
+                f"got {self.db_filename!r}"
+            )
+
+    @property
+    def database_path(self) -> str:
+        """Absolute path the proxy SQLite DB should use on the mount."""
+        return f"{self.mount_path.rstrip('/')}/{self.db_filename}"
+
+    def to_storage_spec(self) -> StorageSpec:
+        """Build the Basilica `StorageSpec` for `create_deployment(storage=...)`."""
+        return StorageSpec(
+            persistent=PersistentStorageSpec(
+                enabled=True,
+                backend=_STORAGE_BACKENDS[self.backend.lower()],
+                bucket=self.bucket,
+                region=self.region,
+                endpoint=self.endpoint,
+                credentials_secret=self.credentials_secret,
+                sync_interval_ms=self.sync_interval_ms,
+                cache_size_mb=self.cache_size_mb,
+                mount_path=self.mount_path,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class ComponentSpec:
     """Full deployment spec for one component (proxy or dashboard).
 
@@ -157,6 +269,12 @@ class ComponentSpec:
     memory: str
     replicas: int
     env: Mapping[str, str]
+    # Optional object-store-backed persistent mount. When set on the proxy
+    # ComponentSpec, the deployment is created with this Basilica StorageSpec
+    # and the proxy's LLMTRACE_STORAGE_DATABASE_PATH is repointed onto the
+    # mount so the sqlite DB (traces + tenant rows) survives recreate. None
+    # means no persistent storage (container-local disk, lost on recreate).
+    persistent_volume: Optional[PersistentVolumeSpec] = None
     health_check_path: str = "/health"
     startup_timeout_seconds: int = 600
     startup_initial_delay_seconds: int = 30
@@ -175,6 +293,16 @@ class TenantSpec:
     tenant_id: str
     proxy: ComponentSpec
     dashboard: ComponentSpec
+    # Stable internal tenant UUID to reuse across redeploys. When set, the
+    # lifecycle layer sends it as the `id` field on `POST /api/v1/tenants`
+    # so the proxy reuses the SAME tenant id every recreate instead of
+    # minting a fresh UUID (requires the proxy to honour an explicit id on
+    # create — idempotent-create is owned by the proxy; until then the field
+    # is ignored server-side, which is harmless). None means "let the proxy
+    # mint a UUID" (legacy behaviour, identity NOT stable across recreate).
+    # Format is the caller's choice (e.g. `user-uuid-<uuid>`); the proxy
+    # validates / canonicalises it.
+    tenant_uuid: Optional[str] = None
     proxy_name_template: str = DEFAULT_PROXY_NAME_TEMPLATE
     dashboard_name_template: str = DEFAULT_DASHBOARD_NAME_TEMPLATE
     # If True, the resolved proxy URL is injected into the dashboard's env
@@ -425,8 +553,14 @@ def _wait_until_ready(
 def _create_component(
     client: BasilicaClient, friendly_name: str, spec: ComponentSpec
 ) -> InstanceInfo:
+    storage_spec = (
+        spec.persistent_volume.to_storage_spec()
+        if spec.persistent_volume is not None
+        else None
+    )
     LOGGER.info(
-        "creating friendly=%s image=%s cpu=%s memory=%s replicas=%d port=%d env_keys=%s",
+        "creating friendly=%s image=%s cpu=%s memory=%s replicas=%d port=%d "
+        "env_keys=%s persistent_mount=%s",
         friendly_name,
         spec.image,
         spec.cpu,
@@ -434,17 +568,21 @@ def _create_component(
         spec.replicas,
         spec.port,
         sorted(spec.env.keys()),
+        spec.persistent_volume.mount_path if spec.persistent_volume else None,
     )
-    response = client.create_deployment(
-        instance_name=friendly_name,
-        image=spec.image,
-        replicas=spec.replicas,
-        port=spec.port,
-        env=dict(spec.env),
-        cpu=spec.cpu,
-        memory=spec.memory,
-        health_check=_build_health_check(spec),
-    )
+    create_kwargs: dict[str, Any] = {
+        "instance_name": friendly_name,
+        "image": spec.image,
+        "replicas": spec.replicas,
+        "port": spec.port,
+        "env": dict(spec.env),
+        "cpu": spec.cpu,
+        "memory": spec.memory,
+        "health_check": _build_health_check(spec),
+    }
+    if storage_spec is not None:
+        create_kwargs["storage"] = storage_spec
+    response = client.create_deployment(**create_kwargs)
     LOGGER.info(
         "created friendly=%s instance_id=%s initial_state=%s",
         friendly_name,
@@ -630,6 +768,24 @@ def _apply_rate_limit(
     return dataclasses.replace(proxy_spec, env=proxy_env)
 
 
+def _apply_persistent_db_path(proxy_spec: ComponentSpec) -> ComponentSpec:
+    """Repoint the proxy SQLite DB onto the persistent mount, if one is set.
+
+    No-op when `proxy_spec.persistent_volume` is None. Otherwise sets
+    `LLMTRACE_STORAGE_DATABASE_PATH` to `<mount_path>/<db_filename>` so the
+    `lite`/`sqlite` storage profile writes its database (traces + tenant
+    rows) onto the object-store-backed mount that survives recreate. The
+    spec's persistent_volume is the source of truth — a caller-supplied
+    same-named env value is overwritten (same precedence model as
+    `_apply_proxy_auth` / `_apply_rate_limit`).
+    """
+    pv = proxy_spec.persistent_volume
+    if pv is None:
+        return proxy_spec
+    env = {**proxy_spec.env, STORAGE_DB_PATH_ENV: pv.database_path}
+    return dataclasses.replace(proxy_spec, env=env)
+
+
 def _admin_http_request(
     proxy_url: str,
     path: str,
@@ -671,7 +827,10 @@ def _admin_http_request(
 
 
 def _bootstrap_tenant_in_proxy(
-    proxy_url: str, admin_key: str, tenant_label: str
+    proxy_url: str,
+    admin_key: str,
+    tenant_label: str,
+    stable_id: Optional[str] = None,
 ) -> str:
     """Create the per-pod tenant row via `POST /api/v1/tenants`.
 
@@ -679,13 +838,23 @@ def _bootstrap_tenant_in_proxy(
     must materialise one. Returns the tenant UUID. The bootstrap admin
     key authenticates this call; the resulting tenant row owns all
     operator keys minted afterwards.
+
+    When `stable_id` is supplied it is sent as the `id` field so the proxy
+    reuses the SAME tenant id across redeploys (idempotent create — owned by
+    the proxy). This is what makes tenant identity survive `recreate`. The
+    request struct is not `deny_unknown_fields`, so a proxy that does not yet
+    honour `id` ignores it harmlessly (the response `id` then governs). We
+    always trust the returned `id` so the caller is correct in both cases.
     """
+    body: dict[str, Any] = {"name": tenant_label, "plan": "default", "config": {}}
+    if stable_id:
+        body["id"] = stable_id
     status, payload = _admin_http_request(
         proxy_url,
         TENANTS_PATH,
         "POST",
         admin_key,
-        body={"name": tenant_label, "plan": "default", "config": {}},
+        body=body,
     )
     if status != 201:
         raise RuntimeError(
@@ -696,7 +865,12 @@ def _bootstrap_tenant_in_proxy(
         raise RuntimeError(
             f"tenant bootstrap response missing 'id': body={payload}"
         )
-    LOGGER.info("bootstrapped tenant in proxy uuid=%s label=%s", tenant_uuid, tenant_label)
+    LOGGER.info(
+        "bootstrapped tenant in proxy uuid=%s label=%s stable_id=%s",
+        tenant_uuid,
+        tenant_label,
+        stable_id or "<none>",
+    )
     return tenant_uuid
 
 
@@ -894,6 +1068,9 @@ def provision(
         )
     if spec.rate_limit is not None:
         proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
+    # Repoint the sqlite DB onto the persistent mount (if attached) BEFORE
+    # creating the proxy so the very first boot writes to the durable path.
+    proxy_spec = _apply_persistent_db_path(proxy_spec)
     proxy_spec = _apply_ml_preload_startup_floor(proxy_spec, tenant_id=tenant_id)
     _warn_on_unsharable_replicas(proxy_spec, tenant_id)
 
@@ -918,7 +1095,13 @@ def provision(
             proxy = rotation.proxy
             admin_key = rotation.admin_key
 
-        tenant_uuid = _bootstrap_tenant_in_proxy(proxy.url, admin_key, tenant_id)
+        # Pass the stable internal tenant id so the proxy reuses the SAME
+        # tenant id across redeploys (identity persists when the proxy honours
+        # an explicit id on create — owned by the proxy). We still trust the
+        # returned id, so this is correct whether or not the proxy honours it.
+        tenant_uuid = _bootstrap_tenant_in_proxy(
+            proxy.url, admin_key, tenant_id, stable_id=spec.tenant_uuid
+        )
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
     else:
         tenant_uuid = None
@@ -989,7 +1172,7 @@ def _verify_or_remint_operator_key(
             spec.tenant_id,
         )
         tenant_uuid = _bootstrap_tenant_in_proxy(
-            proxy_url, admin_key, spec.tenant_id
+            proxy_url, admin_key, spec.tenant_id, stable_id=spec.tenant_uuid
         )
         return (admin_key, _mint_operator_key(proxy_url, admin_key, tenant_uuid))
     existing = _find_operator_key_record(proxy_url, admin_key, tenant_uuid)

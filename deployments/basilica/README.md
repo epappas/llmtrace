@@ -653,6 +653,57 @@ The admin key follows the same recreate / restart split: pin it via
 `spec.api_key` (or `api_key:` in YAML) if you need it stable across
 recreates; on restart it is simply re-derived from spec and not re-minted.
 
+### Durable storage across recreate
+
+By default the proxy stores traces + tenant rows in a SQLite file on the
+pod's container-local disk (`/home/llmtrace/llmtrace.db`). `recreate` deletes
+the pod, so that file — and every trace + the internal tenant id — is lost,
+and the next provision mints a fresh tenant UUID. To make state survive
+`recreate`, pick one of three options (full analysis, with SDK evidence, in
+`docs/research/basilica-persistence-options-2026-05-29.md`):
+
+1. **External production backend (fully durable — recommended).** Set
+   `LLMTRACE_STORAGE_PROFILE=production` and supply reachable
+   `LLMTRACE_POSTGRES_URL`, `LLMTRACE_CLICKHOUSE_URL`, `LLMTRACE_REDIS_URL`
+   in the proxy env. Traces + tenants live outside the pod, so recreate is
+   safe. Requires you to run those services.
+
+2. **Object-store persistent mount (durable, SQLite synced to a bucket).**
+   Set `persistent_volume` on the proxy `ComponentSpec` (or the `proxy.
+   persistent_volume:` block in YAML). The library attaches a Basilica
+   `StorageSpec` (the only durable substrate for a Basilica *deployment* —
+   there is no raw block/hostPath volume on the SDK, only object storage)
+   and automatically repoints `LLMTRACE_STORAGE_DATABASE_PATH` onto the
+   mount. Requires a pre-provisioned Basilica `credentials_secret` and a
+   bucket (`backend` is `r2` | `s3` | `gcs`):
+
+   ```yaml
+   proxy:
+     persistent_volume:
+       bucket: "${LLMTRACE_STORAGE_BUCKET}"
+       credentials_secret: "basilica-r2-credentials"
+       backend: r2
+       mount_path: /data
+       db_filename: llmtrace.db
+   ```
+
+3. **restart-only updates (PARTIAL — stopgap, not a guarantee).** Keep
+   SQLite but only ever use `update --strategy restart` for upgrades, never
+   `recreate`. A rolling restart keeps the pod's disk, so rows survive in
+   place. **Caveat:** this is NOT durable across a node reschedule /
+   eviction, and `restart` 404s on a freshly-provisioned deployment until
+   its k8s Deployment CR materialises.
+
+**Stable tenant id across redeploys.** Set `tenant_uuid` on the `TenantSpec`
+(or `tenant_uuid:` in YAML) to a deterministic value (e.g.
+`user-uuid-<uuid>`). The library sends it as the `id` on
+`POST /api/v1/tenants` so the proxy reuses the SAME internal tenant id every
+redeploy instead of minting a fresh one — preserving tenant IDENTITY across
+`recreate` (the proxy must honour an explicit `id` on create, i.e. make
+create idempotent on that id; until it does, the field is ignored
+server-side and the returned id is used, which is harmless). Combine with
+option 1 or 2 to also preserve the traces that identity points at.
+
 ### Disabling auth
 
 For a trusted-network deploy where the proxy URL won't leak (a VPC-only

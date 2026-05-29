@@ -8,6 +8,37 @@
 # via `api_key:` below) is retained by the caller for self-service /
 # admin pages and NEVER handed to the tenant. See starter.yaml + the
 # README "Per-tenant API key auth" section for the full contract.
+#
+# DURABILITY across `update --strategy recreate` (traces + tenant id):
+# By default the proxy stores traces + tenant rows in a SQLite file on the
+# pod's container-local disk, which Basilica DESTROYS on recreate (the pod
+# is deleted and re-created). To make state survive recreate, pick ONE:
+#
+#   A) External production backend (fully durable, recommended for prod):
+#      set LLMTRACE_STORAGE_PROFILE=production and provide reachable
+#      Postgres + ClickHouse + Redis URLs via env (see the `env:` notes
+#      below). Traces + tenants live outside the pod, so recreate is safe.
+#
+#   B) Object-store persistent mount (durable, SQLite synced to a bucket):
+#      uncomment `proxy.persistent_volume` below. Requires a pre-provisioned
+#      Basilica `credentials_secret` and a bucket. The lifecycle library
+#      attaches a Basilica StorageSpec and repoints
+#      LLMTRACE_STORAGE_DATABASE_PATH onto the mount automatically.
+#
+#   C) restart-only updates (PARTIAL — in-place pod roll only): keep SQLite
+#      but always use `update --strategy restart` for upgrades, never
+#      `recreate`. A rolling restart keeps the pod's disk, so rows survive.
+#      CAVEAT: this is NOT durable across a node reschedule / eviction, and
+#      restart 404s on a freshly-provisioned deployment until its k8s CR
+#      materialises. Treat as a stopgap, not a guarantee.
+#
+# tenant_uuid: the STABLE internal tenant id reused across redeploys. The
+# lifecycle library sends it as the `id` on POST /api/v1/tenants so the proxy
+# keeps the SAME tenant id every recreate (the proxy honours an explicit id on
+# create — idempotent create). MUST be a valid UUID. Override via the
+# LLMTRACE_TENANT_UUID env var; the default below is the dashboard's canonical
+# default tenant id so the bootstrapped tenant and the dashboard fallback align.
+tenant_uuid: "${LLMTRACE_TENANT_UUID:-6ae1ab34-02d8-5b68-ad6f-132bf4de8408}"
 
 proxy:
   image: "ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}"
@@ -28,8 +59,31 @@ proxy:
   # auto-bumps to 1500s when both flags are on and this value is lower; we set
   # 1500 explicitly to silence the WARN and document the cost.
   startup_timeout_seconds: 1500
+  # Option B — object-store persistent mount. Uncomment to make the SQLite
+  # profile durable across recreate. Requires a Basilica-side secret named by
+  # `credentials_secret` (holds the bucket creds) and an existing bucket.
+  # The lifecycle library sets LLMTRACE_STORAGE_DATABASE_PATH to
+  # <mount_path>/<db_filename> automatically, so leave the env var below unset
+  # when this is on. `backend` is r2 | s3 | gcs.
+  # persistent_volume:
+  #   bucket: "${LLMTRACE_STORAGE_BUCKET}"
+  #   credentials_secret: "${LLMTRACE_STORAGE_CREDENTIALS_SECRET}"
+  #   backend: r2
+  #   mount_path: /data
+  #   db_filename: llmtrace.db
+  #   sync_interval_ms: 1000
+  #   cache_size_mb: 1024
   env:
     LLMTRACE_UPSTREAM_URL: "${LLMTRACE_UPSTREAM_URL}"
+    # Option A — external production backend. Set LLMTRACE_STORAGE_PROFILE to
+    # `production` and supply reachable URLs (uncomment the three lines) to
+    # store traces + tenants outside the pod (fully durable across recreate):
+    #   LLMTRACE_POSTGRES_URL: "${LLMTRACE_POSTGRES_URL}"
+    #   LLMTRACE_CLICKHOUSE_URL: "${LLMTRACE_CLICKHOUSE_URL}"
+    #   LLMTRACE_REDIS_URL: "${LLMTRACE_REDIS_URL}"
+    # Default `sqlite` writes to container-local disk (lost on recreate
+    # unless Option B's persistent_volume is attached, or you only ever
+    # update via --strategy restart per Option C).
     LLMTRACE_STORAGE_PROFILE: "${LLMTRACE_STORAGE_PROFILE:-sqlite}"
     LLMTRACE_ML_ENABLED: "1"
     LLMTRACE_ML_PRELOAD: "1"
@@ -39,6 +93,15 @@ proxy:
     LLMTRACE_DATAMARKING_ENABLED: "true"
     LLMTRACE_DATAMARKING_SHADOW_MODE: "false"
     LLMTRACE_ZONE_DETECTION_ENABLED: "true"
+    # Explicit default tenant for header-less /v1 traffic (issue #292): the
+    # proxy stamps this id instead of creating a phantom tenant per call.
+    # Matches `tenant_uuid` above so the default path stays consistent.
+    LLMTRACE_DEFAULT_TENANT_ID: "${LLMTRACE_DEFAULT_TENANT_ID:-6ae1ab34-02d8-5b68-ad6f-132bf4de8408}"
+    # Master key (32 bytes; 64-char hex or base64) used to encrypt per-tenant
+    # upstream API keys at rest. MUST be stable across recreates or stored
+    # ciphertext becomes undecryptable. Unset => per-tenant key writes fail
+    # closed (proxy still boots; the global upstream key is still used).
+    LLMTRACE_SECRET_ENCRYPTION_KEY: "${LLMTRACE_SECRET_ENCRYPTION_KEY:-}"
     RUST_LOG: info
     OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
     ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
