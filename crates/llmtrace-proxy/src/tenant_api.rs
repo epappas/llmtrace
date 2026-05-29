@@ -352,7 +352,12 @@ pub async fn create_tenant(
                 name: "Default Key".to_string(),
                 key_hash: hash,
                 key_prefix: prefix.clone(),
-                role: llmtrace_core::ApiKeyRole::Admin,
+                // SECURITY: a tenant's default key is scoped to its OWN
+                // tenant only. It must be Operator (full access WITHIN the
+                // tenant), never Admin — an Admin key satisfies the
+                // `X-LLMTrace-Tenant-Scope: all` guard in auth.rs and could
+                // read every tenant's traces (cross-tenant leak).
+                role: llmtrace_core::ApiKeyRole::Operator,
                 created_at: Utc::now(),
                 revoked_at: None,
             };
@@ -374,7 +379,7 @@ pub async fn create_tenant(
                     serde_json::json!({
                         "key_id": key_record.id.to_string(),
                         "key_prefix": prefix,
-                        "role": "admin",
+                        "role": "operator",
                         "note": "auto-generated on tenant creation"
                     }),
                 )
@@ -1625,5 +1630,150 @@ mod tests {
             Some("https://keep.example.com")
         );
         assert_eq!(after.name, "Renamed");
+    }
+
+    // -- SECURITY regression: tenant default key is Operator, not Admin ------
+
+    /// Build shared application state with auth ENABLED and a bootstrap admin
+    /// key, mirroring the auth-enabled harness used in `auth.rs` tests.
+    async fn auth_state(admin_key: &str) -> Arc<AppState> {
+        let storage = StorageProfile::Memory.build().await.unwrap();
+        let security = Arc::new(RegexSecurityAnalyzer::new().unwrap()) as Arc<dyn SecurityAnalyzer>;
+        let client = reqwest::Client::new();
+        let config = ProxyConfig {
+            storage: StorageConfig {
+                profile: "memory".to_string(),
+                database_path: String::new(),
+                ..StorageConfig::default()
+            },
+            auth: llmtrace_core::AuthConfig {
+                enabled: true,
+                admin_key: Some(admin_key.to_string()),
+            },
+            ..ProxyConfig::default()
+        };
+        let storage_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let security_breaker = Arc::new(crate::circuit_breaker::CircuitBreaker::from_config(
+            &config.circuit_breaker,
+        ));
+        let cost_estimator = crate::cost::CostEstimator::new(&config.cost_estimation);
+        let cost_tracker =
+            crate::cost_caps::CostTracker::new(&config.cost_caps, Arc::clone(&storage.cache));
+        let rate_limiter =
+            crate::rate_limit::RateLimiter::new(&config.rate_limiting, Arc::clone(&storage.cache));
+
+        Arc::new(AppState {
+            config_handle: crate::config_handle::ConfigHandle::new(config, None, None),
+            client,
+            storage,
+            fast_analyzer: security.clone(),
+            security,
+            #[cfg(feature = "ml")]
+            security_ensemble: None,
+            ensemble_runtime: std::sync::Arc::new(llmtrace_security::EnsembleRuntimeHandle::inert()),
+            storage_breaker,
+            security_breaker,
+            cost_estimator,
+            alert_engine: None,
+            cost_tracker,
+            anomaly_detector: None,
+            action_router: crate::action_router::ActionRouter::new(
+                &llmtrace_core::ActionRouterConfig::default(),
+                llmtrace_core::JudgePromotionConfig::default(),
+                llmtrace_core::JudgeWorkerConfig::default().max_analysis_text_bytes,
+                None,
+                reqwest::Client::new(),
+            ),
+            report_store: crate::compliance::new_report_store(),
+            rate_limiter,
+            ml_status: crate::proxy::MlModelStatus::Disabled,
+            judge_worker_spawned: false,
+            runtime_overlay_status: crate::proxy::RuntimeOverlayStatus::Disabled,
+            shutdown: crate::shutdown::ShutdownCoordinator::new(30),
+            metrics: crate::metrics::Metrics::new(),
+            ml_pipeline_semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
+            ready: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
+    }
+
+    /// Build a router with auth middleware wired, exposing tenant creation and
+    /// the trace-listing route so the cross-tenant scope guard can be exercised.
+    fn auth_tenant_router(state: Arc<AppState>) -> Router {
+        Router::new()
+            .route("/api/v1/tenants", post(create_tenant).get(list_tenants))
+            .route("/api/v1/traces", get(crate::api::list_traces))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::auth::auth_middleware,
+            ))
+            .with_state(state)
+    }
+
+    /// Create a tenant as the bootstrap admin and return its one-time api_key.
+    async fn create_tenant_as_admin(state: &Arc<AppState>, admin_key: &str, name: &str) -> String {
+        let app = auth_tenant_router(Arc::clone(state));
+        let body = serde_json::json!({ "name": name, "plan": "pro" });
+        let req = Request::post("/api/v1/tenants")
+            .header("authorization", format!("Bearer {admin_key}"))
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::CREATED,
+            "tenant creation must succeed"
+        );
+        let json = json_body(resp).await;
+        json["api_key"].as_str().unwrap().to_string()
+    }
+
+    /// The auto-generated tenant "Default Key" must be Operator, not Admin, so
+    /// it cannot satisfy the admin-only `X-LLMTrace-Tenant-Scope: all` guard and
+    /// read other tenants' traces (the confirmed cross-tenant leak).
+    #[tokio::test]
+    async fn test_tenant_default_key_is_operator_not_admin_and_cannot_scope_all() {
+        let admin_key = "admin-secret";
+        let state = auth_state(admin_key).await;
+
+        // As the bootstrap admin, create tenant A and tenant B.
+        let a_key = create_tenant_as_admin(&state, admin_key, "Tenant A").await;
+        let _b_key = create_tenant_as_admin(&state, admin_key, "Tenant B").await;
+
+        // The persisted Default Key for tenant A must be Operator, never Admin.
+        let a_hash = crate::auth::hash_api_key(&a_key);
+        let record = state
+            .metadata()
+            .get_api_key_by_hash(&a_hash)
+            .await
+            .unwrap()
+            .expect("tenant A default key must be persisted");
+        assert_eq!(
+            record.role,
+            ApiKeyRole::Operator,
+            "tenant default key must be Operator (full access within its own tenant)"
+        );
+        assert_ne!(
+            record.role,
+            ApiKeyRole::Admin,
+            "tenant default key must NEVER be Admin (would unlock cross-tenant scope=all)"
+        );
+
+        // Behavioral: tenant A's key requesting cross-tenant scope=all must be
+        // rejected 403 by the non-admin scope guard in auth.rs.
+        let app = auth_tenant_router(Arc::clone(&state));
+        let req = Request::get("/api/v1/traces")
+            .header("authorization", format!("Bearer {a_key}"))
+            .header("x-llmtrace-tenant-scope", "all")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "tenant Operator key requesting scope=all must be 403 (no cross-tenant reads)"
+        );
     }
 }
