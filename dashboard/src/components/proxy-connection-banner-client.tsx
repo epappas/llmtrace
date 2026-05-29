@@ -43,14 +43,14 @@ function buildCurlExample(proxyUrl: string): string {
 function MissingProxyUrlNotice(): ReactElement {
   return (
     <Card
-      className="border-yellow-500/40 bg-yellow-500/10"
+      className="border-warning/30 bg-warning/10"
       data-testid="proxy-connection-banner-missing"
     >
-      <CardContent className="flex items-start gap-3 py-4 text-sm text-yellow-700 dark:text-yellow-400">
+      <CardContent className="flex items-start gap-3 py-4 text-sm text-warning">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
-          <p className="font-medium">Proxy URL not configured</p>
-          <p className="text-xs text-yellow-700/80 dark:text-yellow-400/80">
+          <p className="font-medium text-foreground">Proxy URL not configured</p>
+          <p className="text-xs text-foreground/70">
             The dashboard was provisioned without{" "}
             <code className="font-mono">LLMTRACE_PROXY_URL</code> set.
           </p>
@@ -86,7 +86,7 @@ function ProxyUrlRow({ proxyUrl, copied, onCopy }: ProxyUrlRowProps): ReactEleme
           onClick={onCopy}
         >
           {copied ? (
-            <Check className="h-4 w-4 text-green-500" />
+            <Check className="h-4 w-4 text-success" />
           ) : (
             <Copy className="h-4 w-4" />
           )}
@@ -116,7 +116,7 @@ function ProxyCurlBlock({ curl, copied, onCopy }: ProxyCurlBlockProps): ReactEle
           onClick={onCopy}
         >
           {copied ? (
-            <Check className="mr-1 h-3 w-3 text-green-500" />
+            <Check className="mr-1 h-3 w-3 text-success" />
           ) : (
             <Copy className="mr-1 h-3 w-3" />
           )}
