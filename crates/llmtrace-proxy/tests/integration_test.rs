@@ -2929,3 +2929,346 @@ async fn test_envelope_findings_from_pre_forward_plus_response_analysis() {
         "envelope must contain at least one injection-related finding; got types={types:?}"
     );
 }
+
+// ===========================================================================
+// PR #331 follow-up — END-TO-END per-tenant upstream routing.
+//
+// The existing unit tests (`test_resolve_upstream_base_prefers_tenant_override`,
+// `test_build_upstream_url_uses_tenant_base`,
+// `test_upstream_auth_for_with_key_prefers_tenant_key`) only cover the pure
+// resolution helpers. `test_tenant_upstream_override_is_used` (in proxy.rs)
+// proves the override BASE URL is reached but uses `upstream_api_key_ciphertext:
+// None`, so it never proves the TENANT'S KEY rides the forwarded request, nor
+// does it prove the concrete global-fallback case.
+//
+// These tests close that gap. They drive the REAL public router
+// (`proxy_handler`) which performs the REAL `reqwest` forward through
+// `state.client` (proxy.rs `upstream_req.send().await`). Assertions are made on
+// what the mock upstream — the legitimate test double standing in for the
+// provider — actually received: the request path AND the credential header.
+// ===========================================================================
+
+/// One request as observed by the routing-mock upstream: which path it hit and
+/// which provider credential it carried.
+#[derive(Debug, Clone)]
+struct RoutedHit {
+    path: String,
+    authorization: Option<String>,
+    x_api_key: Option<String>,
+}
+
+/// A mock upstream for the routing tests.
+///
+/// Synchronization is real, not time-based:
+///  * the TCP listener is bound SYNCHRONOUSLY before `axum::serve` is spawned,
+///    so the socket is already accepting by the time the URL is returned (no
+///    startup sleep needed), mirroring `action_router.rs::simple_mock`;
+///  * every received request is pushed into `hits` AND a unit is sent on a
+///    bounded `mpsc` channel, so callers await delivery via `recv()` under a
+///    `tokio::time::timeout` bound instead of sleeping for a fixed duration.
+struct RoutingMock {
+    url: String,
+    hits: Arc<Mutex<Vec<RoutedHit>>>,
+    delivered: tokio::sync::mpsc::Receiver<()>,
+}
+
+impl RoutingMock {
+    async fn start() -> Self {
+        let hits: Arc<Mutex<Vec<RoutedHit>>> = Arc::new(Mutex::new(Vec::new()));
+        let store = Arc::clone(&hits);
+        let (tx, delivered) = tokio::sync::mpsc::channel::<()>(8);
+
+        let handler = move |req: Request<Body>| {
+            let store = Arc::clone(&store);
+            let tx = tx.clone();
+            async move {
+                let path = req.uri().path().to_string();
+                let headers = req.headers();
+                let hit = RoutedHit {
+                    path,
+                    authorization: headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string),
+                    x_api_key: headers
+                        .get("x-api-key")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string),
+                };
+                store.lock().await.push(hit);
+                // Signal delivery; the receiver may already be gone after the
+                // test's bounded await — ignore that.
+                let _ = tx.send(()).await;
+                axum::response::Response::builder()
+                    .status(StatusCode::OK)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({
+                            "id": "chatcmpl-routing",
+                            "object": "chat.completion",
+                            "model": "gpt-4",
+                            "choices": [{
+                                "index": 0,
+                                "message": {"role": "assistant", "content": "ok"},
+                                "finish_reason": "stop"
+                            }],
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap()
+            }
+        };
+
+        let app = Router::new().route("/v1/chat/completions", post(handler));
+        // Bind synchronously so the socket is accepting before we hand back the
+        // URL; no fixed startup sleep.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        Self {
+            url: format!("http://{addr}"),
+            hits,
+            delivered,
+        }
+    }
+
+    /// Await exactly one delivery under a bounded timeout. Returns the single
+    /// recorded hit. Panics with a clear message on timeout so a routing
+    /// regression surfaces as a failed assertion, not a hang.
+    async fn await_one_hit(&mut self) -> RoutedHit {
+        tokio::time::timeout(Duration::from_secs(5), self.delivered.recv())
+            .await
+            .expect("mock upstream did not receive a request within 5s")
+            .expect("mock upstream delivery channel closed unexpectedly");
+        let hits = self.hits.lock().await;
+        assert_eq!(hits.len(), 1, "expected exactly one hit on this mock");
+        hits[0].clone()
+    }
+
+    async fn hit_count(&self) -> usize {
+        self.hits.lock().await.len()
+    }
+}
+
+/// A 32-byte master key as 64 hex chars, used to drive `SecretBox` and the
+/// proxy's `LLMTRACE_SECRET_ENCRYPTION_KEY`-based decryption in lockstep.
+const ROUTING_MASTER_KEY_HEX: &str =
+    "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+fn routing_chat_body() -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "model": "gpt-4",
+        "messages": [{"role": "user", "content": "hi"}]
+    }))
+    .unwrap()
+}
+
+/// END-TO-END: a tenant with an `upstream_url` override AND an encrypted
+/// per-tenant provider key. The forwarded request MUST land at the TENANT'S
+/// endpoint carrying the TENANT'S key — never the global endpoint or the
+/// global env key.
+///
+/// Asserted at the REAL reqwest forward boundary: the tenant mock (a TCP
+/// upstream the proxy reaches over `reqwest`) records the inbound path and
+/// `Authorization` header.
+#[tokio::test]
+async fn test_e2e_tenant_upstream_override_endpoint_and_key() {
+    // Global env key is set to a clearly-different sentinel. If routing or
+    // credential selection regressed to the global path, the tenant mock would
+    // see THIS value (or the global mock would be hit) — both are asserted
+    // against.
+    let _env = EnvVarGuard::set(&[
+        ("OPENAI_API_KEY", Some("sk-GLOBAL-env-key")),
+        ("ANTHROPIC_API_KEY", None),
+        (
+            "LLMTRACE_SECRET_ENCRYPTION_KEY",
+            Some(ROUTING_MASTER_KEY_HEX),
+        ),
+    ]);
+
+    // Tenant endpoint (where the request MUST go) and global endpoint (a real,
+    // reachable second mock that MUST NOT be hit). Using a reachable global
+    // mock makes the negative assertion concrete: "global received nothing".
+    let mut tenant_mock = RoutingMock::start().await;
+    let global_mock = RoutingMock::start().await;
+
+    // Encrypt the per-tenant key with the SAME key source the proxy decrypts
+    // with (`SecretBox::from_env`), so this exercises the real crypto path.
+    let tenant_provider_key = "sk-TENANT-override-key";
+    let ciphertext = llmtrace_proxy::secretbox::SecretBox::from_env()
+        .expect("master key set by EnvVarGuard above")
+        .encrypt(tenant_provider_key.as_bytes())
+        .expect("encrypt per-tenant key");
+
+    let config = ProxyConfig {
+        upstream_url: global_mock.url.clone(),
+        listen_addr: "127.0.0.1:0".to_string(),
+        storage: StorageConfig {
+            profile: "memory".to_string(),
+            database_path: String::new(),
+            ..StorageConfig::default()
+        },
+        connection_timeout_ms: 2000,
+        timeout_ms: 5000,
+        auth: llmtrace_core::AuthConfig {
+            enabled: false,
+            admin_key: None,
+        },
+        ..ProxyConfig::default()
+    };
+    let (state, app) = build_proxy_with_config(config).await;
+
+    // Provision the override tenant directly in storage (the real production
+    // shape: base URL + encrypted key ciphertext).
+    let tenant_id = TenantId::new();
+    let tenant = llmtrace_core::Tenant {
+        id: tenant_id,
+        name: "tenant-override".to_string(),
+        api_token: "tok-override".to_string(),
+        plan: "pro".to_string(),
+        created_at: chrono::Utc::now(),
+        config: json!({}),
+        upstream_url: Some(tenant_mock.url.clone()),
+        upstream_api_key_ciphertext: Some(ciphertext),
+    };
+    state.metadata().create_tenant(&tenant).await.unwrap();
+
+    // Scope the request to the override tenant. `x-llmtrace-provider: openai`
+    // pins provider detection to priority-1 (header) so the ephemeral mock port
+    // can never be mis-detected as Ollama via the `:11434` hostname rule.
+    let req = Request::post("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("x-llmtrace-tenant-id", tenant_id.0.to_string())
+        .header("x-llmtrace-provider", "openai")
+        .body(Body::from(routing_chat_body()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "request to override tenant must round-trip 200 via the tenant endpoint"
+    );
+
+    // The tenant mock MUST have received the forwarded request at the right
+    // path carrying the TENANT'S key as `Authorization: Bearer <tenant key>`.
+    let hit = tenant_mock.await_one_hit().await;
+    assert_eq!(
+        hit.path, "/v1/chat/completions",
+        "tenant mock must receive the request at the proxied path"
+    );
+    assert_eq!(
+        hit.authorization.as_deref(),
+        Some("Bearer sk-TENANT-override-key"),
+        "forwarded request must carry the TENANT'S decrypted key, not the global env key"
+    );
+    let auth = hit.authorization.clone().unwrap_or_default();
+    assert!(
+        !auth.contains("sk-GLOBAL-env-key"),
+        "global env key must NOT reach the tenant endpoint; got: {auth}"
+    );
+    assert!(
+        hit.x_api_key.is_none(),
+        "OpenAI credential must go in Authorization, not x-api-key; got: {:?}",
+        hit.x_api_key
+    );
+
+    // Concrete fallback negative: the global mock MUST NOT have been hit.
+    assert_eq!(
+        global_mock.hit_count().await,
+        0,
+        "override tenant traffic must NOT reach the global upstream"
+    );
+}
+
+/// END-TO-END: a tenant WITHOUT any override falls back to the GLOBAL upstream
+/// and the GLOBAL env key. Proven concretely by hitting a real global mock and
+/// asserting the tenant-override mock received nothing.
+#[tokio::test]
+async fn test_e2e_default_tenant_falls_back_to_global_upstream() {
+    let _env = EnvVarGuard::set(&[
+        ("OPENAI_API_KEY", Some("sk-GLOBAL-env-key")),
+        ("ANTHROPIC_API_KEY", None),
+        (
+            "LLMTRACE_SECRET_ENCRYPTION_KEY",
+            Some(ROUTING_MASTER_KEY_HEX),
+        ),
+    ]);
+
+    let tenant_mock = RoutingMock::start().await;
+    let mut global_mock = RoutingMock::start().await;
+
+    // Default tenant routes header-less traffic to the GLOBAL upstream.
+    let default_id = TenantId::new();
+    let config = ProxyConfig {
+        upstream_url: global_mock.url.clone(),
+        listen_addr: "127.0.0.1:0".to_string(),
+        storage: StorageConfig {
+            profile: "memory".to_string(),
+            database_path: String::new(),
+            ..StorageConfig::default()
+        },
+        connection_timeout_ms: 2000,
+        timeout_ms: 5000,
+        auth: llmtrace_core::AuthConfig {
+            enabled: false,
+            admin_key: None,
+        },
+        default_tenant_id: Some(default_id),
+        ..ProxyConfig::default()
+    };
+    let (state, app) = build_proxy_with_config(config).await;
+
+    // Provision the default tenant WITH NO override (no upstream_url, no key).
+    let tenant = llmtrace_core::Tenant {
+        id: default_id,
+        name: "tenant-default".to_string(),
+        api_token: "tok-default".to_string(),
+        plan: "free".to_string(),
+        created_at: chrono::Utc::now(),
+        config: json!({}),
+        upstream_url: None,
+        upstream_api_key_ciphertext: None,
+    };
+    state.metadata().create_tenant(&tenant).await.unwrap();
+
+    let req = Request::post("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .header("x-llmtrace-tenant-id", default_id.0.to_string())
+        .header("x-llmtrace-provider", "openai")
+        .body(Body::from(routing_chat_body()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "unconfigured tenant must round-trip 200 via the global endpoint"
+    );
+
+    // The GLOBAL mock MUST have received the request with the GLOBAL env key.
+    let hit = global_mock.await_one_hit().await;
+    assert_eq!(
+        hit.path, "/v1/chat/completions",
+        "global mock must receive the request at the proxied path"
+    );
+    assert_eq!(
+        hit.authorization.as_deref(),
+        Some("Bearer sk-GLOBAL-env-key"),
+        "fallback request must carry the GLOBAL env key"
+    );
+    assert!(
+        hit.x_api_key.is_none(),
+        "OpenAI credential must go in Authorization, not x-api-key; got: {:?}",
+        hit.x_api_key
+    );
+
+    // Concrete negative: the tenant-override mock MUST NOT have been hit.
+    assert_eq!(
+        tenant_mock.hit_count().await,
+        0,
+        "unconfigured tenant must NOT reach any tenant-specific endpoint"
+    );
+}
