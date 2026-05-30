@@ -64,13 +64,17 @@ export function Sidebar() {
       ) {
         setSelectedTenant(stored);
       } else if (data.length > 0) {
-        // If we have tenants but none stored, pick the first one from DB
+        // Either nothing is stored, or the stored tenant no longer exists
+        // (e.g. it was just deleted). Fall back to the first tenant AND
+        // reconcile localStorage so later API calls don't keep sending the
+        // stale/dead tenant id in X-LLMTrace-Tenant-ID (issue 7).
         setSelectedTenant(data[0].id);
-        if (!stored) setStoredTenant(data[0].id);
+        setStoredTenant(data[0].id);
       } else {
-        // Fallback to nil tenant if no tenants exist in DB
+        // No tenants exist in the DB — fall back to the nil tenant and clear
+        // any stale stored id so reads don't scope to a non-existent tenant.
         setSelectedTenant(DEFAULT_TENANT_ID);
-        if (!stored) setStoredTenant(DEFAULT_TENANT_ID);
+        setStoredTenant(DEFAULT_TENANT_ID);
       }
     } catch (e) {
       console.error("Failed to load tenants in sidebar", e);
