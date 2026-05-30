@@ -79,6 +79,16 @@ struct SizeRow {
     sz: u64,
 }
 
+/// Row type for aggregated estimated spend.
+///
+/// `sum` over the `Nullable(Float64)` `estimated_cost_usd` column yields a
+/// `Nullable(Float64)` (NULL when there are no rows / all values are NULL), so
+/// it must be read as `Option<f64>` and defaulted to `0.0` at the call site.
+#[derive(Debug, clickhouse::Row, Deserialize)]
+struct CostRow {
+    total_cost: Option<f64>,
+}
+
 /// Row type for time-range queries on the traces table.
 ///
 /// Uses non-optional `DateTime64(3)` fields because ClickHouse's `min`/`max`
@@ -714,6 +724,16 @@ impl TraceRepository for ClickHouseTraceRepository {
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate size: {e}")))?;
 
+        let cost_row: CostRow = self
+            .client
+            .query(&format!(
+                "SELECT sum(estimated_cost_usd) as total_cost \
+                 FROM spans WHERE tenant_id = {tid}"
+            ))
+            .fetch_one()
+            .await
+            .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate total cost: {e}")))?;
+
         let (oldest_trace, newest_trace) = if trace_count.cnt > 0 {
             let time_row: TimeRangeRow = self
                 .client
@@ -732,6 +752,7 @@ impl TraceRepository for ClickHouseTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count.cnt,
             total_spans: span_count.cnt,
+            total_cost_usd: cost_row.total_cost.unwrap_or(0.0),
             storage_size_bytes: size_row.sz,
             oldest_trace,
             newest_trace,
@@ -763,6 +784,15 @@ impl TraceRepository for ClickHouseTraceRepository {
             .await
             .map_err(|e| LLMTraceError::Storage(format!("Failed to calculate global size: {e}")))?;
 
+        let cost_row: CostRow = self
+            .client
+            .query("SELECT sum(estimated_cost_usd) as total_cost FROM spans")
+            .fetch_one()
+            .await
+            .map_err(|e| {
+                LLMTraceError::Storage(format!("Failed to calculate global total cost: {e}"))
+            })?;
+
         let (oldest_trace, newest_trace) = if trace_count.cnt > 0 {
             let time_row: TimeRangeRow = self
                 .client
@@ -783,6 +813,7 @@ impl TraceRepository for ClickHouseTraceRepository {
         Ok(StorageStats {
             total_traces: trace_count.cnt,
             total_spans: span_count.cnt,
+            total_cost_usd: cost_row.total_cost.unwrap_or(0.0),
             storage_size_bytes: size_row.sz,
             oldest_trace,
             newest_trace,
