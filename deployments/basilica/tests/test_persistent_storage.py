@@ -281,12 +281,15 @@ class _FakeBasilicaClient:
 def test_provision_attaches_storage_and_repoints_db_and_sends_stable_id(
     fake_proxy: Any,
 ) -> None:
-    seen: dict[str, Any] = {}
+    seen: dict[str, Any] = {"tenant_bodies": []}
 
     def responder(method: str, path: str, headers: dict[str, str], body: bytes):
         if method == "POST" and path == "/api/v1/tenants":
-            seen["tenant_body"] = json.loads(body)
-            return 201, {"id": _RETURNED_UUID, "name": "acme"}
+            decoded = json.loads(body)
+            seen["tenant_bodies"].append(decoded)
+            # Echo the posted id so the operator and catch-all rows resolve
+            # to their explicit ids (the catch-all carries a fresh uuid).
+            return 201, {"id": decoded.get("id") or _RETURNED_UUID, "name": decoded.get("name")}
         if method == "POST" and path == "/api/v1/auth/keys":
             return 201, {"key": "llmt_" + "b" * 64, "key_prefix": "llmt_bbb"}
         raise AssertionError(f"unexpected: {method} {path}")
@@ -323,8 +326,12 @@ def test_provision_attaches_storage_and_repoints_db_and_sends_stable_id(
     assert persistent.mount_path == "/data"
     # DB path repointed onto the mount.
     assert proxy_create["env"][lifecycle.STORAGE_DB_PATH_ENV] == "/data/llmtrace.db"
-    # Stable id forwarded on tenant create.
-    assert seen["tenant_body"]["id"] == _STABLE_ID
+    # Stable id forwarded on the OPERATOR tenant create (name == tenant_id).
+    operator_bodies = [
+        b for b in seen["tenant_bodies"] if b.get("name") == "acme"
+    ]
+    assert len(operator_bodies) == 1
+    assert operator_bodies[0]["id"] == _STABLE_ID
     # Dashboard has no storage attached (only proxy carries the DB).
     dash_create = next(c for c in client.creates if "dashboard" in c["instance_name"])
     assert "storage" not in dash_create

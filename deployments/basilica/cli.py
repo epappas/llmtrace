@@ -205,6 +205,8 @@ def _serialise(instances: lifecycle.TenantInstances) -> dict[str, Any]:
         "api_key": instances.api_key,
         "admin_key": instances.admin_key,
         "admin_username": instances.admin_username,
+        "operator_tenant_id": instances.operator_tenant_id,
+        "catch_all_tenant_id": instances.catch_all_tenant_id,
     }
 
 
