@@ -228,6 +228,9 @@ export default function TenantsClient() {
       if (configUpstreamKey.trim() !== "") setConfigUpstreamKeySet(true);
       setConfigUpstreamKey("");
       setConfigSuccess(true);
+      // A config save may rename the tenant — refresh the sidebar selector so
+      // its option label stays in sync without a full page reload (issue 7).
+      notifyTenantsChanged();
       setTimeout(() => {
         setConfigSuccess(false);
         setEditingConfig(null);
