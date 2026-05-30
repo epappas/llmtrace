@@ -25,6 +25,10 @@ on:
       - "Dockerfile"
       - "dashboard/**"
       - ".github/workflows/publish-images.yml"
+      # Baked into the proxy image — a change alters image content but is not
+      # under crates/** or dashboard/**, so it must trigger a rebuild too.
+      - "config.example.yaml" # Dockerfile: COPY config.example.yaml /etc/llmtrace/config.yaml
+      - "benchmarks/**" # Dockerfile: COPY benchmarks/ (workspace member built into the proxy binary)
   workflow_dispatch:
     inputs:
       tag:
