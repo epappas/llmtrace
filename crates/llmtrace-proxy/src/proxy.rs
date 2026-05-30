@@ -1177,8 +1177,13 @@ pub async fn proxy_handler(
     // Resolve the tenant for this request. Phantom-tenant guard (issue #292):
     // we NEVER auto-create a tenant per call. Resolution order:
     //   1. A concrete (non-nil) tenant resolved from auth / header / key.
-    //   2. The explicit `default_tenant_id` for header-less traffic.
-    //   3. Auth ENABLED with neither => reject 401 (do not invent a tenant).
+    //   2. The catch-all `default_tenant_id` for tenant-less traffic. At
+    //      startup `build_app_state` ALWAYS resolves a catch-all id (either
+    //      the lifecycle-supplied `LLMTRACE_DEFAULT_TENANT_ID`, or a freshly
+    //      generated one as a fallback), so tenant-less `/v1` traffic is
+    //      attributed to the catch-all rather than rejected.
+    //   3. Auth ENABLED with neither (defensive: only if no catch-all was
+    //      resolved) => reject 401 (do not invent a tenant).
     //   4. Auth DISABLED with neither => stamp a deterministic, stable
     //      "anonymous" tenant id so dev/test traffic still has a home, WITHOUT
     //      provisioning a DB row (no phantom creation).

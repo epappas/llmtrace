@@ -3,8 +3,14 @@
 //! Loads [`ProxyConfig`] from a YAML file on disk, applies environment variable
 //! overrides, and validates the resulting configuration.
 
-use llmtrace_core::ProxyConfig;
+use llmtrace_core::{ProxyConfig, TenantId};
 use std::path::Path;
+
+/// Tenant name assigned to the catch-all tenant that absorbs all inbound
+/// `/v1` traffic which does not identify a tenant (no `X-LLMTrace-Tenant-ID`
+/// header and no derivable API key). Shared with the lifecycle (Option A)
+/// purely by string value -- keep this in sync if it ever changes.
+pub const CATCH_ALL_TENANT_NAME: &str = "catch-all";
 
 /// Load a [`ProxyConfig`] from a YAML file at `path`.
 ///
@@ -111,6 +117,45 @@ pub fn apply_env_overrides(config: &mut ProxyConfig) {
                 value = %val,
                 "LLMTRACE_ML_MAX_CONCURRENT must be a positive integer; keeping current value"
             ),
+        }
+    }
+}
+
+/// Resolve the effective catch-all tenant id and stamp it onto
+/// `config.default_tenant_id`, returning the resolved id.
+///
+/// Tenant-less `/v1` traffic (no `X-LLMTrace-Tenant-ID` and no derivable
+/// API key) is attributed to this catch-all tenant rather than rejected.
+/// Resolution order:
+///
+/// 1. **Option A (lifecycle-supplied):** if `config.default_tenant_id` is
+///    already `Some` (set from `LLMTRACE_DEFAULT_TENANT_ID` by
+///    [`apply_env_overrides`]), that id is used verbatim.
+/// 2. **Option B (self-provisioned fallback):** if it is `None`, a fresh
+///    `TenantId(Uuid::new_v4())` is GENERATED at runtime (never a hardcoded
+///    literal), stamped onto the config, and logged.
+///
+/// Must be called AFTER [`apply_env_overrides`] so the env-provided id
+/// (Option A) wins. The returned id is the catch-all whose row the caller
+/// then ensures exists via `ensure_tenant_exists`.
+pub fn resolve_catch_all_tenant_id(config: &mut ProxyConfig) -> TenantId {
+    match config.default_tenant_id {
+        Some(id) => {
+            tracing::info!(
+                tenant_id = %id.0,
+                "Using configured LLMTRACE_DEFAULT_TENANT_ID as catch-all tenant for tenant-less traffic"
+            );
+            id
+        }
+        None => {
+            let generated = TenantId(uuid::Uuid::new_v4());
+            config.default_tenant_id = Some(generated);
+            tracing::info!(
+                tenant_id = %generated.0,
+                "No LLMTRACE_DEFAULT_TENANT_ID provided; generated catch-all tenant {} for tenant-less traffic",
+                generated.0
+            );
+            generated
         }
     }
 }
@@ -475,6 +520,69 @@ health_check:
         apply_env_overrides(&mut config);
         std::env::remove_var("LLMTRACE_DEFAULT_TENANT_ID");
         assert!(config.default_tenant_id.is_none());
+    }
+
+    /// Option A: when an id is already configured (lifecycle supplied it
+    /// via `LLMTRACE_DEFAULT_TENANT_ID`), it is used verbatim as the
+    /// catch-all and the config is left pointing at the same id.
+    #[test]
+    fn test_resolve_catch_all_uses_configured_id() {
+        let configured = TenantId(uuid::Uuid::new_v4());
+        let mut config = ProxyConfig {
+            default_tenant_id: Some(configured),
+            ..ProxyConfig::default()
+        };
+        let resolved = resolve_catch_all_tenant_id(&mut config);
+        assert_eq!(resolved, configured);
+        assert_eq!(config.default_tenant_id, Some(configured));
+    }
+
+    /// Option B: with no id configured, a fresh non-nil UUID is generated
+    /// and stamped onto the config so the request path can read it.
+    #[test]
+    fn test_resolve_catch_all_generates_fresh_id_when_unset() {
+        let mut config = ProxyConfig::default();
+        assert!(config.default_tenant_id.is_none());
+        let resolved = resolve_catch_all_tenant_id(&mut config);
+        assert!(
+            !resolved.0.is_nil(),
+            "generated catch-all id must not be the nil UUID"
+        );
+        assert_eq!(
+            config.default_tenant_id,
+            Some(resolved),
+            "resolved id must be stamped back onto the config"
+        );
+    }
+
+    /// Proves the Option B id is GENERATED at runtime, not a hardcoded
+    /// literal: two independent resolutions yield two different ids.
+    #[test]
+    fn test_resolve_catch_all_generates_distinct_ids_across_builds() {
+        let mut a = ProxyConfig::default();
+        let mut b = ProxyConfig::default();
+        let id_a = resolve_catch_all_tenant_id(&mut a);
+        let id_b = resolve_catch_all_tenant_id(&mut b);
+        assert_ne!(
+            id_a, id_b,
+            "fresh resolutions must produce distinct ids (proves runtime generation, not a hardcoded literal)"
+        );
+        assert!(!id_a.0.is_nil());
+        assert!(!id_b.0.is_nil());
+    }
+
+    /// The catch-all id must never collapse to the nil UUID nor to the
+    /// deterministic "anonymous" sentinel used by the auth-disabled path.
+    #[test]
+    fn test_resolve_catch_all_never_nil_or_anonymous_sentinel() {
+        let anonymous = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"llmtrace-anonymous");
+        let mut config = ProxyConfig::default();
+        let resolved = resolve_catch_all_tenant_id(&mut config);
+        assert!(!resolved.0.is_nil());
+        assert_ne!(
+            resolved.0, anonymous,
+            "catch-all must be a fresh tenant, not the anonymous sentinel"
+        );
     }
 
     #[test]

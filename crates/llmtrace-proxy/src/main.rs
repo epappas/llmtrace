@@ -422,9 +422,17 @@ fn probe_runtime_overlay_writable(
 }
 
 async fn build_app_state(
-    config: ProxyConfig,
+    mut config: ProxyConfig,
     runtime_overlay_path: Option<PathBuf>,
 ) -> anyhow::Result<Arc<AppState>> {
+    // Resolve the effective catch-all tenant for tenant-less `/v1` traffic
+    // BEFORE the config is moved into the ConfigHandle. When
+    // `LLMTRACE_DEFAULT_TENANT_ID` was supplied (Option A) that id is used;
+    // otherwise a fresh id is generated at runtime (Option B fallback) and
+    // stamped onto `config.default_tenant_id` so the request path attributes
+    // tenant-less traffic to it instead of rejecting with 401.
+    let catch_all_tenant_id = config::resolve_catch_all_tenant_id(&mut config);
+
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_millis(
             config.connection_timeout_ms,
@@ -717,6 +725,17 @@ async fn build_app_state(
         &state,
         &llmtrace_proxy::feature_flags::FeatureFlags::from_config(&state.config_handle.snapshot()),
     );
+
+    // Materialise the catch-all tenant row so tenant-less traffic shows up as
+    // a real tenant for queries/dashboard. Idempotent (get-or-create): a no-op
+    // if the lifecycle (Option A) already created it. Runs for BOTH the
+    // env-provided and self-generated cases.
+    llmtrace_proxy::tenant_api::ensure_tenant_exists(
+        &state,
+        catch_all_tenant_id,
+        config::CATCH_ALL_TENANT_NAME,
+    )
+    .await;
 
     Ok(state)
 }
@@ -1223,6 +1242,94 @@ mod tests {
     async fn test_build_app_state_succeeds() {
         let state = build_app_state(memory_config(), None).await;
         assert!(state.is_ok());
+    }
+
+    // ---- Catch-all tenant fallback (Option B) -------------------------
+    //
+    // Tenant-less `/v1` traffic is attributed to a catch-all tenant. When
+    // `LLMTRACE_DEFAULT_TENANT_ID` (Option A) is set it is used; otherwise
+    // the proxy self-provisions a catch-all with a freshly GENERATED id
+    // (Option B). The request path reads the resolved id from
+    // `config_handle.snapshot().default_tenant_id` to stamp tenant-less
+    // traffic (see proxy.rs tenant resolution).
+
+    /// Option A: a configured `default_tenant_id` becomes the catch-all,
+    /// its row is materialised, and the request path reads back that id.
+    #[tokio::test]
+    async fn test_catch_all_uses_configured_default_tenant_id() {
+        let configured = llmtrace_core::TenantId(uuid::Uuid::new_v4());
+        let cfg = ProxyConfig {
+            default_tenant_id: Some(configured),
+            ..memory_config()
+        };
+        let state = build_app_state(cfg, None).await.unwrap();
+
+        // The request path stamps tenant-less traffic with this id.
+        assert_eq!(
+            state.config_handle.snapshot().default_tenant_id,
+            Some(configured)
+        );
+
+        // The catch-all row is present for queries/dashboard.
+        let tenant = state
+            .metadata()
+            .get_tenant(configured)
+            .await
+            .unwrap()
+            .expect("catch-all tenant row must exist");
+        assert_eq!(tenant.name, llmtrace_proxy::config::CATCH_ALL_TENANT_NAME);
+    }
+
+    /// Option B: with no configured id a fresh non-nil UUID is generated,
+    /// the catch-all row is created, and the request path reads back the
+    /// generated id (stable for the life of this AppState).
+    #[tokio::test]
+    async fn test_catch_all_self_provisions_when_default_tenant_id_unset() {
+        let cfg = memory_config();
+        assert!(cfg.default_tenant_id.is_none());
+        let state = build_app_state(cfg, None).await.unwrap();
+
+        let resolved = state
+            .config_handle
+            .snapshot()
+            .default_tenant_id
+            .expect("a catch-all id must be resolved when none configured");
+        assert!(
+            !resolved.0.is_nil(),
+            "self-provisioned catch-all id must be a fresh non-nil UUID"
+        );
+
+        // The generated catch-all is a real tenant row.
+        let tenant = state
+            .metadata()
+            .get_tenant(resolved)
+            .await
+            .unwrap()
+            .expect("self-provisioned catch-all tenant row must exist");
+        assert_eq!(tenant.name, llmtrace_proxy::config::CATCH_ALL_TENANT_NAME);
+
+        // Stable within the process: a second snapshot reads the same id.
+        assert_eq!(
+            state.config_handle.snapshot().default_tenant_id,
+            Some(resolved)
+        );
+    }
+
+    /// Proves the Option B id is GENERATED at runtime: two independent
+    /// builds with no configured id produce DIFFERENT catch-all ids.
+    /// A hardcoded literal would make these equal.
+    #[tokio::test]
+    async fn test_catch_all_generated_ids_differ_across_builds() {
+        let state_a = build_app_state(memory_config(), None).await.unwrap();
+        let state_b = build_app_state(memory_config(), None).await.unwrap();
+        let id_a = state_a.config_handle.snapshot().default_tenant_id.unwrap();
+        let id_b = state_b.config_handle.snapshot().default_tenant_id.unwrap();
+        assert_ne!(
+            id_a, id_b,
+            "independent builds must self-provision distinct ids (not a hardcoded literal)"
+        );
+        assert!(!id_a.0.is_nil());
+        assert!(!id_b.0.is_nil());
     }
 
     // ---- /debug/judge/verdicts (Loop E2E-L5 of #91) -----------------
