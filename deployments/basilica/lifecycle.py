@@ -32,6 +32,7 @@ import secrets as _secrets
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
@@ -127,6 +128,16 @@ AUTH_KEYS_PATH = "/api/v1/auth/keys"
 OPERATOR_KEY_NAME = "tenant-runtime"
 # How long we'll wait on an admin HTTP call before bailing.
 ADMIN_HTTP_TIMEOUT_SECONDS = 30
+
+# Proxy env var holding the catch-all tenant id stamped on header-less `/v1`
+# traffic (issue #292). The lifecycle generates a FRESH id at provision time
+# and sets this on the proxy env BEFORE the proxy is created so the proxy
+# reads it at startup. The proxy self-provisions a catch-all if this is unset
+# (Option B, owned by a separate change); we coordinate via this var only.
+DEFAULT_TENANT_ID_ENV = "LLMTRACE_DEFAULT_TENANT_ID"
+# Human-readable label applied to the catch-all tenant row created in the
+# proxy DB. The separate proxy change keys off this name too.
+CATCH_ALL_TENANT_LABEL = "catch-all"
 
 
 def generate_api_key() -> str:
@@ -293,15 +304,18 @@ class TenantSpec:
     tenant_id: str
     proxy: ComponentSpec
     dashboard: ComponentSpec
-    # Stable internal tenant UUID to reuse across redeploys. When set, the
-    # lifecycle layer sends it as the `id` field on `POST /api/v1/tenants`
-    # so the proxy reuses the SAME tenant id every recreate instead of
-    # minting a fresh UUID (requires the proxy to honour an explicit id on
-    # create — idempotent-create is owned by the proxy; until then the field
-    # is ignored server-side, which is harmless). None means "let the proxy
-    # mint a UUID" (legacy behaviour, identity NOT stable across recreate).
-    # Format is the caller's choice (e.g. `user-uuid-<uuid>`); the proxy
-    # validates / canonicalises it.
+    # Stable internal operator tenant UUID to reuse across redeploys. When
+    # supplied, the lifecycle layer sends it as the `id` field on
+    # `POST /api/v1/tenants` so the proxy reuses the SAME tenant id every
+    # recreate (requires the proxy to honour an explicit id on create —
+    # idempotent-create is owned by the proxy; until then the field is
+    # ignored server-side, which is harmless). When None/empty, `provision`
+    # generates a fresh `uuid.uuid4()`, uses it, RETURNS it in
+    # `TenantInstances.operator_tenant_id`, and logs a WARNING that the id is
+    # ephemeral — identity will NOT survive recreate unless the caller stores
+    # and re-passes it. There is no hardcoded fallback id. Format is the
+    # caller's choice (e.g. `user-uuid-<uuid>`); the proxy validates /
+    # canonicalises it.
     tenant_uuid: Optional[str] = None
     proxy_name_template: str = DEFAULT_PROXY_NAME_TEMPLATE
     dashboard_name_template: str = DEFAULT_DASHBOARD_NAME_TEMPLATE
@@ -387,6 +401,18 @@ class TenantInstances:
     # checked against `LLMTRACE_DASHBOARD_ADMIN_USERNAME`). Defaults to
     # "admin"; set per-tenant via `TenantSpec.admin_username`.
     admin_username: Optional[str] = None
+    # Operator tenant UUID the proxy assigned/honoured for this deployment.
+    # When the caller left `TenantSpec.tenant_uuid` empty the lifecycle
+    # generates a fresh one; the caller MUST persist and re-pass this value
+    # to keep tenant identity stable across recreate. None when proxy auth is
+    # disabled (no tenant row is materialised).
+    operator_tenant_id: Optional[str] = None
+    # Catch-all tenant UUID generated at provision time and set on the proxy
+    # env as `LLMTRACE_DEFAULT_TENANT_ID` so header-less `/v1` traffic is
+    # attributed to one stable tenant instead of spawning a phantom per call.
+    # Generated fresh each provision; None when proxy auth is disabled or on
+    # status/deprovision paths.
+    catch_all_tenant_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -641,6 +667,45 @@ def _resolve_api_key(spec: TenantSpec) -> Optional[str]:
     if env_key:
         return env_key
     return generate_api_key()
+
+
+def _resolve_operator_tenant_id(spec: TenantSpec) -> str:
+    """Resolve the operator tenant UUID. Caller-owned, never hardcoded.
+
+    When `spec.tenant_uuid` is supplied (env `LLMTRACE_TENANT_UUID` /
+    config `tenant_uuid`), it is used verbatim so identity is stable across
+    recreate. When empty/absent, a fresh `uuid.uuid4()` is generated and a
+    WARNING is emitted: the id is ephemeral and tenant identity will NOT
+    survive recreate unless the caller stores and re-passes it. There is no
+    hardcoded fallback.
+    """
+    supplied = (spec.tenant_uuid or "").strip()
+    if supplied:
+        return supplied
+    generated = str(uuid.uuid4())
+    LOGGER.warning(
+        "tenant=%s: no tenant_uuid supplied (LLMTRACE_TENANT_UUID / config "
+        "tenant_uuid empty); generated ephemeral operator tenant id %s. "
+        "This identity will NOT survive recreate unless you persist this id "
+        "and re-pass it as tenant_uuid on the next provision/update.",
+        spec.tenant_id,
+        generated,
+    )
+    return generated
+
+
+def _apply_catch_all_tenant_env(
+    proxy_spec: ComponentSpec, catch_all_id: str
+) -> ComponentSpec:
+    """Set `LLMTRACE_DEFAULT_TENANT_ID` on the proxy env to the catch-all id.
+
+    The lifecycle owns this id (generated fresh per provision), so it
+    overwrites any caller-supplied value — same precedence model as
+    `_apply_proxy_auth` / `_apply_rate_limit`. Must run BEFORE the proxy is
+    created so the proxy reads the catch-all id at startup.
+    """
+    env = {**proxy_spec.env, DEFAULT_TENANT_ID_ENV: catch_all_id}
+    return dataclasses.replace(proxy_spec, env=env)
 
 
 def _apply_proxy_auth(
@@ -1040,19 +1105,32 @@ def provision(
     1. Resolves a bootstrap admin key (explicit `spec.api_key` > existing
        `LLMTRACE_AUTH_ADMIN_KEY` in proxy env > auto-generated). Injects
        it into both proxy and dashboard envs as `LLMTRACE_AUTH_ADMIN_KEY`.
-    2. Creates the proxy and waits for it to become ready.
-    3. Calls `POST /api/v1/tenants` on the live proxy to materialise a
-       tenant row (the operator-key mint requires the tenant to exist).
-    4. Calls `POST /api/v1/auth/keys` to mint a scoped Operator-role key
+    2. Generates a FRESH catch-all tenant id (`uuid.uuid4()`, never
+       hardcoded) and sets it on the proxy env as
+       `LLMTRACE_DEFAULT_TENANT_ID` BEFORE the proxy is created so the proxy
+       reads it at startup.
+    3. Creates the proxy and waits for it to become ready.
+    4. Resolves the operator tenant id from the caller (`spec.tenant_uuid`,
+       stable across recreate) or generates a fresh `uuid.uuid4()` and warns
+       that the identity is ephemeral. Calls `POST /api/v1/tenants` on the
+       live proxy to materialise the operator tenant row (the operator-key
+       mint requires the tenant to exist).
+    5. Calls `POST /api/v1/auth/keys` to mint a scoped Operator-role key
        named `tenant-runtime`. This is the key the tenant gets.
-    5. Deploys the dashboard. Only the admin key is in the dashboard env
+    6. Calls the same idempotent `POST /api/v1/tenants` with the explicit
+       catch-all id from step 2 to materialise a tenant row named
+       `catch-all`, so header-less `/v1` traffic resolves to a real tenant.
+    7. Deploys the dashboard. Only the admin key is in the dashboard env
        because the dashboard's only call path today is the proxy's admin
        endpoints; the operator key is returned to the caller for the
        tenant's external runtime apps.
 
     Returns both keys: `api_key` is the operator key (runtime traffic);
     `admin_key` is the bootstrap admin key (retained by the caller for
-    self-service / admin portal use, never given to tenants).
+    self-service / admin portal use, never given to tenants). Also returns
+    `operator_tenant_id` (caller-supplied or freshly generated — persist and
+    re-pass to keep identity stable) and `catch_all_tenant_id` (freshly
+    generated each provision).
     """
     tenant_id = validate_tenant_id(spec.tenant_id)
     client = client or make_client()
@@ -1068,6 +1146,14 @@ def provision(
         )
     if spec.rate_limit is not None:
         proxy_spec = _apply_rate_limit(proxy_spec, spec.rate_limit)
+    # Generate a FRESH catch-all tenant id (never hardcoded) and set it on the
+    # proxy env BEFORE the proxy is created so the proxy reads it at startup.
+    # Only meaningful when proxy auth is on (the catch-all tenant row is
+    # materialised via the admin API after the proxy is healthy).
+    catch_all_tenant_id: Optional[str] = None
+    if admin_key is not None:
+        catch_all_tenant_id = str(uuid.uuid4())
+        proxy_spec = _apply_catch_all_tenant_env(proxy_spec, catch_all_tenant_id)
     # Repoint the sqlite DB onto the persistent mount (if attached) BEFORE
     # creating the proxy so the very first boot writes to the durable path.
     proxy_spec = _apply_persistent_db_path(proxy_spec)
@@ -1095,14 +1181,27 @@ def provision(
             proxy = rotation.proxy
             admin_key = rotation.admin_key
 
-        # Pass the stable internal tenant id so the proxy reuses the SAME
-        # tenant id across redeploys (identity persists when the proxy honours
-        # an explicit id on create — owned by the proxy). We still trust the
-        # returned id, so this is correct whether or not the proxy honours it.
+        # Resolve the operator tenant id from the caller (stable across
+        # recreate) or generate a fresh one and warn that it's ephemeral.
+        # Never hardcoded. Passed as the stable `id` so the proxy reuses the
+        # SAME tenant id across redeploys when it honours an explicit id on
+        # create. We still trust the returned id, so this is correct whether
+        # or not the proxy honours it.
+        operator_tenant_id = _resolve_operator_tenant_id(spec)
         tenant_uuid = _bootstrap_tenant_in_proxy(
-            proxy.url, admin_key, tenant_id, stable_id=spec.tenant_uuid
+            proxy.url, admin_key, tenant_id, stable_id=operator_tenant_id
         )
         operator_key = _mint_operator_key(proxy.url, admin_key, tenant_uuid)
+        # Materialise the catch-all tenant row in the proxy DB using the SAME
+        # idempotent POST /api/v1/tenants path with the explicit id we set on
+        # the proxy env above, so header-less /v1 traffic resolves to a real
+        # tenant. The returned id is authoritative; pin our record to it.
+        catch_all_tenant_id = _bootstrap_tenant_in_proxy(
+            proxy.url,
+            admin_key,
+            CATCH_ALL_TENANT_LABEL,
+            stable_id=catch_all_tenant_id,
+        )
     else:
         tenant_uuid = None
 
@@ -1138,6 +1237,8 @@ def provision(
         api_key=operator_key,
         admin_key=admin_key,
         admin_username=spec.admin_username,
+        operator_tenant_id=tenant_uuid,
+        catch_all_tenant_id=catch_all_tenant_id,
     )
 
 
