@@ -367,3 +367,44 @@ def test_pro_yaml_has_no_hardcoded_tenant_uuid() -> None:
         "the previously-hardcoded catch-all/default tenant UUID must not "
         "appear anywhere in pro.yaml"
     )
+
+
+def _patch_admin_http(monkeypatch: Any, status: int) -> None:
+    def fake(
+        proxy_url: str,
+        path: str,
+        method: str,
+        admin_key: str,
+        body: Optional[dict[str, Any]] = None,
+    ) -> tuple[int, dict[str, Any]]:
+        body = body or {}
+        return status, {"id": body.get("id") or "generated-id", "name": body.get("name")}
+
+    monkeypatch.setattr(lifecycle, "_admin_http_request", fake)
+
+
+def test_bootstrap_tenant_accepts_idempotent_200(monkeypatch: Any) -> None:
+    """Regression for the 2026-05-30 outage: the proxy self-provisions the
+    catch-all at startup from LLMTRACE_DEFAULT_TENANT_ID, so the lifecycle's
+    subsequent create gets 200 (already exists). 200 MUST be treated as success
+    (the previous code raised on anything != 201, aborting before the dashboard
+    was recreated)."""
+    _patch_admin_http(monkeypatch, 200)
+    tid = lifecycle._bootstrap_tenant_in_proxy(
+        "http://proxy", "admin", "catch-all", stable_id="a0f7d8a5-4524-4a83-afac-27080b4d0432"
+    )
+    assert tid == "a0f7d8a5-4524-4a83-afac-27080b4d0432"
+
+
+def test_bootstrap_tenant_accepts_created_201(monkeypatch: Any) -> None:
+    _patch_admin_http(monkeypatch, 201)
+    tid = lifecycle._bootstrap_tenant_in_proxy(
+        "http://proxy", "admin", "operator", stable_id="550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert tid == "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_bootstrap_tenant_rejects_error_status(monkeypatch: Any) -> None:
+    _patch_admin_http(monkeypatch, 500)
+    with pytest.raises(RuntimeError, match="tenant bootstrap failed"):
+        lifecycle._bootstrap_tenant_in_proxy("http://proxy", "admin", "catch-all")

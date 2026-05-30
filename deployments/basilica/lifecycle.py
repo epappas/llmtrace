@@ -921,7 +921,11 @@ def _bootstrap_tenant_in_proxy(
         admin_key,
         body=body,
     )
-    if status != 201:
+    # Idempotent create: the proxy returns 201 for a newly-created tenant and
+    # 200 when one with this `id` already exists (e.g. the proxy self-provisions
+    # the catch-all tenant at startup from LLMTRACE_DEFAULT_TENANT_ID before the
+    # lifecycle's create runs). Both carry the same body shape; both are success.
+    if status not in (200, 201):
         raise RuntimeError(
             f"tenant bootstrap failed: status={status} body={payload}"
         )
