@@ -38,6 +38,10 @@ pub mod jailbreak_detector;
 #[cfg(feature = "judge")]
 pub mod judge;
 pub mod mcp_monitor;
+#[cfg(feature = "ml")]
+pub mod safety_detector;
+#[cfg(feature = "ml")]
+pub use safety_detector::{SafetyJudgeAnalyzer, SafetyJudgeConfig};
 pub mod multi_agent;
 pub mod normalise;
 pub mod pii_validation;

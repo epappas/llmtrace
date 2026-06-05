@@ -439,6 +439,31 @@ async fn build_analyzers(filter: &[String]) -> Vec<NamedAnalyzer> {
         });
     }
 
+    // Safety judge: harmful-intent classifier. Closes the
+    // AdvBench/HarmBench/ASB/AILuminate gap the injection ensemble misses.
+    // Placeholder until a trained model is set via SAFETY_MODEL_ID (see
+    // docs/design/safety-judge.md).
+    if want("safety") {
+        let cfg = llmtrace_security::SafetyJudgeConfig {
+            model_id: std::env::var("SAFETY_MODEL_ID").unwrap_or_default(),
+            threshold: std::env::var("SAFETY_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.5),
+            cache_dir: None,
+        };
+        match llmtrace_security::SafetyJudgeAnalyzer::new(&cfg).await {
+            Ok(a) if a.is_active() => analyzers.push(NamedAnalyzer {
+                name: "SafetyJudge",
+                analyzer: Box::new(a),
+            }),
+            Ok(_) => eprintln!(
+                "Warning: SafetyJudge in placeholder mode (set SAFETY_MODEL_ID to a trained model); skipping"
+            ),
+            Err(e) => eprintln!("Warning: SafetyJudge init failed (skipping): {e}"),
+        }
+    }
+
     // Ensemble is the default/recommended analyzer: regex + ML fusion.
     if want("ensemble") {
         match llmtrace_security::EnsembleSecurityAnalyzer::new(
