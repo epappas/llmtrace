@@ -37,6 +37,14 @@ function LoginForm(): React.ReactElement {
     };
   }, []);
 
+  // A failed/expired one-click sign-in bounces here with ?error=sso. Surface a
+  // clear reason rather than leaving the form silently waiting.
+  useEffect(() => {
+    if (search.get("error") === "sso") {
+      setError("That one-click sign-in link has expired or is invalid. Please sign in with your admin key.");
+    }
+  }, [search]);
+
   async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
     e.preventDefault();
     if (!username || !adminKey) {
