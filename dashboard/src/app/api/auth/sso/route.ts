@@ -22,15 +22,15 @@ export function GET(req: NextRequest): NextResponse {
   const token = req.nextUrl.searchParams.get("token");
 
   // Local-dev escape hatch: auth disabled means no session is required at all.
-  if (isAuthDisabled()) return redirectHome(req);
+  if (isAuthDisabled()) return seeOther("/");
 
-  if (!token) return rejectToLogin(req, "missing_token");
+  if (!token) return rejectToLogin("missing_token");
 
   const adminKey = process.env.LLMTRACE_AUTH_ADMIN_KEY ?? "";
   const result = verifySsoToken(token, adminKey, Math.floor(Date.now() / 1000));
-  if (!result.ok) return rejectToLogin(req, result.reason);
+  if (!result.ok) return rejectToLogin(result.reason);
 
-  const res = redirectHome(req);
+  const res = seeOther("/");
   res.cookies.set({
     name: sessionCookieName(req.headers.get("host")),
     value: adminKey,
@@ -48,17 +48,19 @@ function isSecure(req: NextRequest): boolean {
   return req.headers.get("x-forwarded-proto") === "https";
 }
 
-function redirectHome(req: NextRequest): NextResponse {
-  const url = req.nextUrl.clone();
-  url.pathname = "/";
-  url.search = "";
-  return NextResponse.redirect(url, { status: 303 });
+/**
+ * 303 with a RELATIVE Location. The browser resolves it against the public
+ * request URL, so it works behind Basilica's ingress. An absolute
+ * `NextResponse.redirect(req.nextUrl)` would, in the Node runtime, serialise
+ * the container's internal host (`0.0.0.0:3000`) and send the browser to a
+ * dead address — the dashboard's middleware redirects are relative for the
+ * same reason.
+ */
+function seeOther(location: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { Location: location } });
 }
 
-function rejectToLogin(req: NextRequest, reason: string): NextResponse {
+function rejectToLogin(reason: string): NextResponse {
   console.warn("[auth/sso] rejected:", reason);
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.search = "?error=sso";
-  return NextResponse.redirect(url, { status: 303 });
+  return seeOther("/login?error=sso");
 }
