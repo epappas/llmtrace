@@ -36,7 +36,13 @@ export function GET(req: NextRequest): NextResponse {
     value: adminKey,
     httpOnly: true,
     secure: isSecure(req),
-    sameSite: "strict",
+    // Lax, NOT Strict: this cookie is set during a cross-site top-level
+    // navigation (portal -> dashboard). A Strict cookie is withheld on the
+    // landing request that follows a cross-site redirect, so the user lands on
+    // `/` with no session and is bounced to /login. Lax is sent on top-level
+    // GET navigations, which is exactly this handoff. (The manual /login route
+    // stays Strict — it is always same-site.)
+    sameSite: "lax",
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
