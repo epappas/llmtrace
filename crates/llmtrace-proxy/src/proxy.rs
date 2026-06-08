@@ -593,10 +593,49 @@ fn render_zone_ranges(per_message: &[Vec<std::ops::Range<usize>>]) -> String {
 /// otherwise the global `config.upstream_url`.
 fn build_upstream_url(base_url: &str, path: &str, query: Option<&str>) -> String {
     let base = base_url.trim_end_matches('/');
+    // Avoid doubling a version prefix. When the configured upstream base already
+    // ends with a version segment (e.g. ".../v1") and the incoming request path
+    // begins with that same segment ("/v1/..."), drop it from the path so we
+    // forward ".../v1/chat/completions" rather than ".../v1/v1/chat/completions".
+    // A bare provider root (no version segment) is unaffected, so existing
+    // configs keep routing exactly as before, and the proxy still sees the
+    // original "/v1/..." request path for provider detection.
+    let path = strip_redundant_version_prefix(base, path);
     match query {
         Some(q) => format!("{base}{path}?{q}"),
         None => format!("{base}{path}"),
     }
+}
+
+/// If `base`'s last segment is a version (`v` + digits, e.g. `v1`) and `path`
+/// begins with that same `/v1` segment (followed by `/` or end), return `path`
+/// with that leading segment removed; otherwise return `path` unchanged.
+fn strip_redundant_version_prefix<'a>(base: &str, path: &'a str) -> &'a str {
+    let Some(seg) = base.rsplit('/').next() else {
+        return path;
+    };
+    if !is_version_segment(seg) {
+        return path;
+    }
+    let needle_len = seg.len() + 1; // leading '/'
+    let matches = path.len() >= needle_len
+        && path.as_bytes()[0] == b'/'
+        && &path[1..needle_len] == seg
+        && (path.len() == needle_len || path.as_bytes()[needle_len] == b'/');
+    if matches {
+        &path[needle_len..]
+    } else {
+        path
+    }
+}
+
+/// `v` followed by one or more ASCII digits (`v1`, `v2`, `v10`, ...).
+fn is_version_segment(s: &str) -> bool {
+    let rest = match s.strip_prefix('v') {
+        Some(r) => r,
+        None => return false,
+    };
+    !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Resolve the upstream base URL for a request: the tenant override when
@@ -3138,6 +3177,62 @@ mod tests {
         assert_eq!(
             build_upstream_url(base, "/v1/models", Some("format=json")),
             "http://localhost:11434/v1/models?format=json"
+        );
+    }
+
+    #[test]
+    fn test_build_upstream_url_dedups_redundant_version_prefix() {
+        // Base already ends with /v1 and the client sends a /v1/... path: the
+        // proxy must NOT double it.
+        assert_eq!(
+            build_upstream_url("https://api.openai.com/v1", "/v1/chat/completions", None),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        // Nested base path that ends with a version segment.
+        assert_eq!(
+            build_upstream_url("https://openrouter.ai/api/v1", "/v1/chat/completions", None),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            build_upstream_url(
+                "https://api.groq.com/openai/v1",
+                "/v1/chat/completions",
+                Some("a=b")
+            ),
+            "https://api.groq.com/openai/v1/chat/completions?a=b"
+        );
+        // Path that is exactly the version segment.
+        assert_eq!(
+            build_upstream_url("https://api.mistral.ai/v1", "/v1", None),
+            "https://api.mistral.ai/v1"
+        );
+    }
+
+    #[test]
+    fn test_build_upstream_url_root_base_is_unchanged() {
+        // A bare root (no version segment) must keep the verbatim-append
+        // behaviour so existing configs route exactly as before.
+        assert_eq!(
+            build_upstream_url("https://api.openai.com", "/v1/chat/completions", None),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            build_upstream_url("http://localhost:11434", "/v1/chat/completions", None),
+            "http://localhost:11434/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_upstream_url_no_false_version_dedup() {
+        // /v10 is not /v1 — must not be stripped.
+        assert_eq!(
+            build_upstream_url("https://x.example/v1", "/v10/models", None),
+            "https://x.example/v1/v10/models"
+        );
+        // A non-version trailing base segment is never stripped.
+        assert_eq!(
+            build_upstream_url("https://x.example/openai", "/v1/chat/completions", None),
+            "https://x.example/openai/v1/chat/completions"
         );
     }
 
