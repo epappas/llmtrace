@@ -59,3 +59,15 @@ tests/e2e/.logs/
 
 # Local Python venv used for running the e2e harness
 .venv-e2e/
+
+# CI/diagnostic run artifacts pulled locally
+out/
+
+# Local Claude Code session data
+.claude/
+
+# Eval corpora staged locally (too large for git; fetch via inspect_evals)
+benchmarks/datasets/inspect_evals/
+
+# Vendored helm chart archives (Chart.lock is tracked instead)
+deployments/helm/llmtrace/charts/
