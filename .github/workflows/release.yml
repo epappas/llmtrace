@@ -11,6 +11,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: techlab-innov/llmtrace-proxy
+  DASHBOARD_IMAGE_NAME: techlab-innov/llmtrace-dashboard
 
 permissions:
   contents: write
@@ -208,6 +209,25 @@ jobs:
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The tenant fleet runs the proxy + dashboard pair; releases must
+      # version-tag BOTH (publish-images only covers main-branch pushes).
+      - name: Build and push dashboard image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: ./dashboard
+          file: ./dashboard/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.DASHBOARD_IMAGE_NAME }}:${{ needs.validate.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.DASHBOARD_IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
 
   # ---------------------------------------------------------------------------
   # Job 4: Publish crates to crates.io (in dependency order)
