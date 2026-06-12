@@ -189,7 +189,7 @@ impl PyTraceSpan {
     }
 
     /// Security findings as a list of dicts.
-    fn security_findings(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn security_findings(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let findings: Vec<serde_json::Value> = self
             .inner
             .security_findings
@@ -305,7 +305,7 @@ impl PyTraceSpan {
     // -- serialisation -------------------------------------------------------
 
     /// Serialise the span to a Python dictionary.
-    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let json_str = serde_json::to_string(&self.inner)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
@@ -444,7 +444,7 @@ impl PyLLMSecTracer {
 /// ``tracer`` property.
 #[pyclass(name = "InstrumentedClient")]
 struct PyInstrumentedClient {
-    inner: PyObject,
+    inner: Py<PyAny>,
     tracer: Py<PyLLMSecTracer>,
 }
 
@@ -458,7 +458,7 @@ impl PyInstrumentedClient {
 
     /// The original (unwrapped) client object.
     #[getter]
-    fn wrapped_client(&self, py: Python<'_>) -> PyObject {
+    fn wrapped_client(&self, py: Python<'_>) -> Py<PyAny> {
         self.inner.clone_ref(py)
     }
 
@@ -476,7 +476,7 @@ impl PyInstrumentedClient {
     }
 
     /// Delegate attribute access to the wrapped client.
-    fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<PyObject> {
+    fn __getattr__(&self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
         self.inner.getattr(py, name)
     }
 
@@ -533,7 +533,7 @@ fn configure(config: &Bound<'_, PyDict>) -> PyResult<PyLLMSecTracer> {
 #[pyo3(signature = (client, *, tracer=None))]
 fn instrument(
     py: Python<'_>,
-    client: PyObject,
+    client: Py<PyAny>,
     tracer: Option<Py<PyLLMSecTracer>>,
 ) -> PyResult<PyInstrumentedClient> {
     let tracer = match tracer {
