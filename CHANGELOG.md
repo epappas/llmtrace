@@ -7,23 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- E2E adversarial test framework (#91, L1–L10): 50-scenario YAML corpus across 8 attack families, pytest harness with per-scenario `/metrics` delta + judge-verdict polling, expectation DSL, regex upstream-fell-for-it judge with six rule classes, PR-gate workflow on every PR, nightly cron with auto-PR'd deterministic markdown report.
-- Judge reliability patterns (#66): binary-first prompt, cross-family startup warning, per-id golden-set fixtures with a shared loader/replay module, integration test with per-category alignment floors, `GET /debug/judge/golden_set/replay` debug endpoint, two new gauges (`llmtrace_judge_golden_set_alignment`, `llmtrace_judge_golden_set_false_positive_rate`), three new PrometheusRule alerts with operator runbook at `docs/runbooks/judge-golden-set-drift.md`.
-- New attack-detection coverage in `RegexSecurityAnalyzer`: rot13 and leetspeak encoding evasion now emit `encoding_attack` findings (previously only base64 was covered).
-- `X-LLMTrace-Trace-Id` request header is honored by the proxy and echoed back on every response (`L1a` of #91).
+### Security fixes
 
-### Changed
-- E2E nightly workflow's auto-PR step is `continue-on-error: true` so a missing `Allow GitHub Actions to create and approve pull requests` repo setting surfaces as a workflow-summary warning rather than a red run while the corpus replay still passes.
-- Bumped GitHub Actions: `actions/setup-python` v5→v6, `actions/upload-artifact` v4→v7, `peter-evans/create-pull-request` v7→v8 (Node 24 ahead of the 2026-06-02 forced cutover).
-- `pytest.ini` sets `pythonpath = .` so e2e tests run without a manual `PYTHONPATH` export from the repo root.
-- Dashboard ships `"overrides": { "postcss": "^8.5.10" }` so npm audit catches Next.js's nested transitive postcss copy (GHSA-qx2v-qp2m-jg93).
+### Bug fixes
 
-### Documentation
-- New guide: `docs/guides/e2e-testing.md` (in mkdocs nav under Guides) — quick start, comparator reference, CI workflow contract, scenario authoring.
-- New runbook: `docs/runbooks/judge-golden-set-drift.md` (under Operations) — per-alert diagnose + mitigate steps for the three new PrometheusRule alerts.
-- New section in `docs/guides/llm-judge.md`: "Golden-set calibration loop (#66)" — operator workflow for the replay endpoint, the new gauges, and how to add a fixture.
-- New baseline reports: `docs/research/results/e2e_2026-04-23_baseline.md`, `e2e_2026-04-23.md`, `e2e_2026-04-24.md`.
+### Features
+
+### Operational notes
+
+## [0.3.0] - 2026-06-12
+
+Upgrade urgency: recommended — includes dependency security fixes and
+multi-tenant security hardening; no breaking API changes for proxy clients.
+
+### Security fixes
+- pyo3 0.24.2 -> 0.29.0: RUSTSEC-2026-0176 (out-of-bounds read in
+  PyList/PyTuple iterators) and RUSTSEC-2026-0177 (missing Sync bound on
+  new_closure) (#388).
+- `/v1/*` forwarding now requires an Operator-role credential (#269), and the
+  proxy substitutes the upstream provider key on forward so client-presented
+  keys never reach the provider (#274).
+- Tenant default API keys are minted Operator, not Admin — closes a
+  cross-tenant read via scope=all.
+- Dashboard `/metrics` removed from the public allow-list (#280); datamarking
+  strips zero-width formatting characters (#215); transitive postcss override
+  for GHSA-qx2v-qp2m-jg93.
+
+### Features
+- Multi-tenant runtime: per-tenant upstream routing with keys encrypted at
+  rest, admin tenant scoping, idempotent bootstrap, catch-all tenant
+  self-provisioning (no hardcoded ids), per-tenant rate-limit plumbing and a
+  request-body cap.
+- Tenant admin API: tenant CRUD, per-tenant traffic-token reveal/reset,
+  scoped operator-key minting; audit API `GET /api/v1/audit` with a dashboard
+  page (#246).
+- Dashboard: admin-key login (#250), one-click SSO for portal handoff
+  (#367, #368, #369), `/playground` chat panel with per-message LLMTrace
+  metadata (#284, #287), dark mode by default, dedicated API-docs page (#281).
+- Security analysis: zone detector + zone-aware ensemble and datamarking
+  transform (IS-060), three-tier judge cascade (DeBERTa fast-judge, vLLM
+  backend, runtime toggle), SafetyJudge placeholder + design spec,
+  rot13/leetspeak encoding-attack detection, advisory headers + LLM-facing
+  system advisory, response envelope with deduplicated findings (#83).
+- E2E adversarial framework: 50-scenario corpus across 8 attack families,
+  PR gate + nightly full-corpus runs with auto-PR'd reports, LLM-backed
+  upstream-fell-for-it judge (#97, #98, #99, #100, #123).
+- Proxy: redundant `/v1` prefix de-duplication in upstream URLs (#374),
+  `X-LLMTrace-Trace-Id` honored and echoed (#91), cost tracking enabled by
+  default with per-span aggregation into storage stats.
+
+### Bug fixes
+- Analysis pipeline: full analysis runs pre-forward so the advisory and
+  envelope share findings; silent analyzer skips are forbidden and dropped
+  traces tagged; log mode still runs analyzers (#298, #300, #311).
+- Dashboard: tenant isolation end-to-end, stale tenant-selection
+  reconciliation, `x-llmtrace-*` response-header forwarding, confidence
+  display flooring.
+- Deployment: ML-preload startup-timeout floor (#243), idempotent tenant
+  bootstrap when the catch-all already exists, `sqlite` accepted as a storage
+  profile alias (#249).
+
+### Operational notes
+- Releases now publish BOTH images version-tagged:
+  `ghcr.io/techlab-innov/llmtrace-proxy` and
+  `ghcr.io/techlab-innov/llmtrace-dashboard` as `:0.3.0` and `:latest`.
+- No proxy schema or config migrations are required. Deployments pinned to
+  older images are unaffected until upgraded.
 
 ## [0.2.0] - 2026-04-17
 
