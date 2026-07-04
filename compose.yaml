@@ -1,136 +1,49 @@
 # ============================================================================
-# LLMTrace — Local Development Stack
+# LLMTrace — Self-host Quickstart
 # ============================================================================
 #
-# Quick start:
-#   1. cp .env.example .env        # adjust if needed
-#   2. docker compose up -d        # start infra services
-#   3. docker compose logs -f      # watch for healthy status
-#   4. cargo run --bin llmtrace-proxy -- --config config.yaml
+# Runs the published proxy + dashboard images with embedded SQLite storage —
+# no external services required.
 #
-# Run integration tests against these services:
-#   source .env && cargo test --workspace -- --ignored
+#   1. cp config.example.yaml config.yaml   # set upstream_url + your keys
+#   2. docker compose up -d
+#   3. Point your OpenAI-compatible client at http://localhost:8080/v1
+#   4. Dashboard at http://localhost:3000
 #
-# Tear down:
-#   docker compose down            # stop services (data persists in volumes)
-#   docker compose down -v         # stop + delete all data
+# For the full production stack (ClickHouse, Postgres, Redis, monitoring),
+# see deployments/docker-compose/ and docs/deployment/docker-compose.md.
 # ============================================================================
 
 services:
-  # --------------------------------------------------------------------------
-  # ClickHouse — Trace/span analytical storage (production TraceRepository)
-  # --------------------------------------------------------------------------
-  clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+  proxy:
+    image: ghcr.io/techlab-innov/llmtrace-proxy:${LLMTRACE_VERSION:-latest}
+    restart: unless-stopped
     ports:
-      - "${CLICKHOUSE_PORT:-8123}:8123"     # HTTP interface
-      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"  # Native TCP
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
+      - "${LLMTRACE_PROXY_PORT:-8080}:8080"
     environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DATABASE:-llmtrace}
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 30s
-    restart: unless-stopped
-
-  # --------------------------------------------------------------------------
-  # PostgreSQL — Metadata storage (tenants, configs, audit trail)
-  # --------------------------------------------------------------------------
-  postgres:
-    image: postgres:16-alpine
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      LLMTRACE_STORAGE_PROFILE: sqlite
+      LLMTRACE_LOG_LEVEL: ${LLMTRACE_LOG_LEVEL:-info}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-llmtrace}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-llmtrace}
-      POSTGRES_DB: ${POSTGRES_DB:-llmtrace}
+      - ./config.yaml:/etc/llmtrace/config.yaml:ro
+      - model-cache:/home/llmtrace/.cache/llmtrace/models
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-llmtrace}"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 300s
 
-  # --------------------------------------------------------------------------
-  # Redis — Cache layer (hot queries, cost cap tracking, sessions)
-  # --------------------------------------------------------------------------
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-
-  # --------------------------------------------------------------------------
-  # Proxy — LLMTrace transparent proxy
-  # --------------------------------------------------------------------------
-  llmtrace-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./config.yaml:/etc/llmtrace/config.yaml
-    environment:
-      - LLMTRACE_CONFIG=/etc/llmtrace/config.yaml
-      # Keep the local stack responsive: ML model downloads can take minutes and
-      # block server startup if preloaded.
-      - LLMTRACE_ML_ENABLED=0
-      - LLMTRACE_ML_PRELOAD=0
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # --------------------------------------------------------------------------
-  # Dashboard — Next.js web UI for LLMTrace
-  # --------------------------------------------------------------------------
   dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
-    ports:
-      - "${DASHBOARD_PORT:-3000}:3000"
-    environment:
-      # Server-side proxy URL (container networking)
-      LLMTRACE_API_URL: "http://llmtrace-proxy:8080"
-      # ClickHouse URL for direct operations (deletion)
-      CLICKHOUSE_URL: "http://clickhouse:8123"
-      # Client-side URL (browser → proxy)
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
-      # Listen on all interfaces
-      HOSTNAME: "0.0.0.0"
-      # Local-dev escape hatch: skip the admin-key login gate when the
-      # upstream proxy is running without an admin key configured. See
-      # issue #250 — production deployments must NOT set this.
-      LLMTRACE_DASHBOARD_AUTH_DISABLED: "${LLMTRACE_DASHBOARD_AUTH_DISABLED:-1}"
-    depends_on:
-      - llmtrace-proxy
+    image: ghcr.io/techlab-innov/llmtrace-dashboard:${LLMTRACE_VERSION:-latest}
     restart: unless-stopped
+    ports:
+      - "${LLMTRACE_DASHBOARD_PORT:-3000}:3000"
+    environment:
+      HOSTNAME: 0.0.0.0
+      LLMTRACE_API_URL: http://proxy:8080
+    depends_on:
+      proxy:
+        condition: service_healthy
 
 volumes:
-  clickhouse_data:
-  postgres_data:
-  redis_data:
+  model-cache:

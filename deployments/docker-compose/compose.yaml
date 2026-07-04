@@ -49,10 +49,7 @@ services:
       - llmtrace-backend
 
   proxy:
-    image: ${PROXY_IMAGE:-ghcr.io/epappas/llmtrace-proxy:latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ${PROXY_IMAGE:-ghcr.io/techlab-innov/llmtrace-proxy:latest}
     restart: unless-stopped
     stop_grace_period: 60s
     env_file:
@@ -82,12 +79,7 @@ services:
       - llmtrace-frontend
 
   dashboard:
-    image: ghcr.io/epappas/llmtrace-dashboard:${VERSION:-latest}
-    build:
-      context: ../../dashboard
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://llmtrace.example.com}
+    image: ghcr.io/techlab-innov/llmtrace-dashboard:${VERSION:-latest}
     restart: unless-stopped
     environment:
       HOSTNAME: ${HOSTNAME:-0.0.0.0}
