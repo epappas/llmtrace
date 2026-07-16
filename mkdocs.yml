@@ -1,5 +1,5 @@
 site_name: LLMTrace
-site_url: https://docs.llmtrace.io
+site_url: https://docs.llmtrace.setloop.io
 site_description: Zero-code LLM observability and security for production. Transparent proxy that captures, analyses, and secures LLM interactions in real-time.
 site_author: LLMTrace contributors
 repo_url: https://github.com/epappas/llmtrace
