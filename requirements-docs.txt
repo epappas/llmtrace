@@ -1,14 +1,12 @@
 mkdocs==1.6.1
-mkdocs-material==9.6.5
+# mkdocs-material >= 9.7 is required for pymdown-extensions 11 support
+# (9.6.x pins pymdown-extensions < 11).
+mkdocs-material==9.7.7
 pymdown-extensions==11.0
-# Pygments 2.20.0 tightens HtmlFormatter.__init__ to reject filename=None,
-# which pymdown-extensions 10.16.1 still passes at
-# pymdownx/highlight.py:179. Break surfaces as
-# "AttributeError: 'NoneType' object has no attribute 'replace'"
-# during mkdocs build. Relax the upper bound when pymdown-extensions
-# ships a release that threads a non-None filename through the
-# HtmlFormatter call. See dependabot PR #112 for the full trace.
-Pygments>=2.19.2,<2.20
+# pymdown-extensions 11 threads a non-None filename into HtmlFormatter
+# (pymdownx/highlight.py), fixing the Pygments 2.20 break described in
+# dependabot PR #112, so the <2.20 upper bound is no longer needed.
+Pygments>=2.19.2
 mkdocs-minify-plugin==0.8.0
 mkdocs-table-reader-plugin==3.1.0
 mkdocs-timetoread-plugin==0.0.4
