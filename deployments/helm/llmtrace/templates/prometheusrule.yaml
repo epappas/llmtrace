@@ -68,7 +68,7 @@ spec:
               the curated golden set has been below the 0.85 floor for
               15 minutes. The fast detection tier is drifting; new
               regex / ML weights or a corpus drift may be the cause.
-            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
+            runbook_url: https://docs.llmtrace.setloop.io/runbooks/judge-golden-set-drift/
         - alert: LLMTraceJudgeGoldenSetFprDrift
           expr: llmtrace_judge_golden_set_false_positive_rate > 0.25
           for: 15m
@@ -81,7 +81,7 @@ spec:
               0.25 ceiling for 15 minutes. The detector is over-flagging;
               recent regex tightening or a new ML model is the likely
               culprit.
-            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
+            runbook_url: https://docs.llmtrace.setloop.io/runbooks/judge-golden-set-drift/
         - alert: LLMTraceJudgeGoldenSetReplayStale
           expr: |
             time()
@@ -100,5 +100,5 @@ spec:
               the nightly CronJob is failing, the LLMTRACE_GOLDEN_SET_PATH
               env var is unset on the running proxy, or
               server.debug_endpoints is OFF in production.
-            runbook_url: https://docs.llmtrace.io/runbooks/judge-golden-set-drift/
+            runbook_url: https://docs.llmtrace.setloop.io/runbooks/judge-golden-set-drift/
 {{- end }}

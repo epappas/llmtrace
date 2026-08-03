@@ -12,7 +12,7 @@ edition = "2021"
 license = "MIT"
 authors = ["Evangelos Pappas <epappas@evalonlabs.com>"]
 repository = "https://github.com/techlab-innov/llmtrace"
-homepage = "https://llmtrace.io"
+homepage = "https://llmtrace.setloop.io"
 
 [workspace.dependencies]
 llmtrace-core = { path = "crates/llmtrace-core", version = "0.3.0" }
