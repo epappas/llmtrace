@@ -2,7 +2,7 @@ mkdocs==1.6.1
 # mkdocs-material >= 9.7 is required for pymdown-extensions 11 support
 # (9.6.x pins pymdown-extensions < 11).
 mkdocs-material==9.7.7
-pymdown-extensions==11.0
+pymdown-extensions==11.0.1
 # pymdown-extensions 11 threads a non-None filename into HtmlFormatter
 # (pymdownx/highlight.py), fixing the Pygments 2.20 break described in
 # dependabot PR #112, so the <2.20 upper bound is no longer needed.
